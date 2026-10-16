@@ -1,143 +1,181 @@
-# ER Mario
+<div align="center">
 
-## [Join the Discord server](https://discord.gg/6EvmBwXp4u) for regular updates, news and help with the mod
+# ER Mario · Combat Tuned
 
-Play Elden Ring as Mario, with Super Mario 64's real movement. Triple jumps, wall kicks, long
-jumps, ground pounds, punches and kicks that hurt enemies, Bowser's tail swing on staggered
-bosses, Bob-omb style enemy throws, SM64's health meter, coins and Lakitu's camera.
+**Super Mario 64's Mario in Elden Ring, with combat that keeps you on the enemy.**
 
-Work in progress.
+A fork of [deltarooo/er-mario](https://github.com/deltarooo/er-mario) that reworks how Mario's punches, kicks and stomps feel against Elden Ring enemies.
 
-You need your own Super Mario 64 ROM (US version): Mario's model, textures, sounds, animations
-and the menu icons come from it, built on your PC the first time you play.
+[![License: MIT](https://img.shields.io/badge/license-MIT-c9a227?style=flat-square)](LICENSE)
+[![Based on er-mario 0.4.2](https://img.shields.io/badge/based%20on-er--mario%200.4.2-d62828?style=flat-square)](https://github.com/deltarooo/er-mario/releases/tag/v0.4.2)
+[![Elden Ring 2.7.1](https://img.shields.io/badge/Elden%20Ring-2.7.1-3a3a3a?style=flat-square)](#requirements)
+[![Rust](https://img.shields.io/badge/built%20with-Rust%20%2B%20libsm64-b7410e?style=flat-square)](#building)
 
-## Getting started
+<img src="docs/screenshots/boss-closeup.jpg" alt="Mario squaring up to the Draconic Tree Sentinel" width="100%">
 
-You need Elden Ring on Steam and a Super Mario 64 ROM (US version).
+</div>
 
-1. Install **me3**, the mod loader: [me3.help](https://me3.help)
-2. Download **ER-Mario-x.y.z.zip** from the
-   [latest release](https://github.com/deltarooo/er-mario/releases/latest) (under Assets) and
-   unzip it somewhere you can write to, like your Documents folder.
-3. Put your Super Mario 64 ROM into the **ER-Mario** folder.
-4. Start the game by double-clicking **er-mario.me3**.
-5. The first time, the mod sets itself up from your ROM: a box on the title screen shows the
-   progress (a few seconds). When it says **Setup complete**, press any button to close the
-   game, then start it again with **er-mario.me3**. That's only needed once.
+---
 
-**ER MARIO** and the version in the title screen's bottom left corner
-show the mod is loaded. Start a new character, the mod uses its own save file.
+## Why this fork
 
-The game will let you know at the bottom left corner when a new update is available.
+The original mod puts libsm64 (Super Mario 64's real movement and animation) inside Elden Ring.
+It already plays really well. The one thing that felt off was combat: SM64's punches were made
+for Goombas and Bob-ombs, not for knights on horseback.
 
-Tested with an Xbox One controller, a PS5 controller (through Steam) and keyboard and mouse.
-The mod reads controllers the way Xbox pads report them: PlayStation, Switch and other pads
-work through Steam Input, which Steam turns on for them by default.
+In SM64 a punch pushes Mario **back** from what he hits. In Elden Ring that's a penalty, because
+backing away mid-combo gives the enemy free hits. Whiffs were common too: a punch thrown a few
+degrees to the side of an enemy standing right in front of you just missed.
 
-**Camera:** the mod uses SM64's Lakitu camera. Press **F9** in game to switch to Elden Ring's own
-camera and back. To start with Elden Ring's camera, set `camera = elden` in **er_mario.ini** in
-your ER-Mario folder.
+This fork makes Mario fight like a character in a hack and slash: every hit moves him forward, and
+the combo turns him toward the enemy.
 
-**Stuck?** Hold **F1** for 3 seconds: you die and wake up at the last grace.
+<div align="center">
+<img src="docs/screenshots/combat.gif" alt="Mario closing in on the Draconic Tree Sentinel, ground pound and stomps" width="80%">
+</div>
 
-**LEVELING AND ITEMS DO NOT AFFECT ANYTHING**:
-- Every hit takes a fixed share of the enemy's max health (67% for a punch, a kick or a ground pound, a twentieth of that on bosses). Strength, Dexterity and weapons play no part. The small real hit the   mod fires for the final blow is a flat 10 damage with stat scaling switched off.
-- Mario's health is always the 8 SM64 wedges, whatever your Vigor.
-- Stagger depends on the boss's poise, not on your stats.
-- Stamina, FP, equip load are not used at all.
+## What changed
 
-**Stay offline.** me3 starts the game offline with anti-cheat off. Never play this mod online.
+### Combat feel
 
-**FOR STREAMERS:** You need to use window capture or display capture for the HUD to appear properly.
+| | Original 0.4.2 | This fork |
+|---|---|---|
+| **Punch knockback** | A landed punch pushes Mario back (SM64's `-48` bounce) | Mario keeps his speed and stays in range for the next hit |
+| **Combo step** | Only the first punch steps forward | Every hit (punch, punch, kick) steps forward a little further |
+| **Auto-aim** | None | Each hit of the combo turns Mario to the nearest hostile within an 80° cone |
+| **Jump kick** | From a standstill it goes straight up | A small dash forward, aimed like the combo |
+| **Punch / kick reach** | 80 units, 50° cone, punches only | 135 units, 60° cone, punches **and** kicks |
+| **Head stomp** | Wide hitbox bounced Mario off heads he missed; walked on top of big beasts | Tighter stomp radius, height capped so large enemies can be stomped properly |
 
-## Known issues
+Auto-aim only targets enemies: regular foes, bosses, hostile groups and invaders. Friendly NPCs,
+allies, props, and enemies already down or being carried are left alone.
 
-- While alot of them should be fixed, there is still a chance that you might clip through some elevators. Let me know which ones and I will fix them ASAP.
-- Cutscenes show a crumpled Mario with the Tarnished's head.
-- Some big bosses' ragdolls go wild after a throw; the mod stops them early.
-- Mario's shadow can flicker or drop out from some camera angles in sunlight and moonlight.
+### Damage balance
 
-## Discord
+| Attack | Original | This fork |
+|---|---|---|
+| Stomp | 50% of enemy HP | **67%**, boss bonus ×1.4 |
+| Ground pound | 67%, no boss bonus | **100%** (one-shots regular enemies), boss bonus **×2** |
+| Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
 
-Questions, clips and news about the mod: [Delta's shenanigans](https://discord.gg/6EvmBwXp4u).
+The ground pound is slow and leaves Mario open, so now it's worth the risk.
 
-## Reporting problems
+### Fixes and quality of life
 
-Open an [issue](https://github.com/deltarooo/er-mario/issues) and say what happened and
-when. Attach both files from the **logs** folder inside your ER-Mario folder:
-`er_mario.log` (the last session) and `er_mario.prev.log` (the one before). If the game didn't
-start at all, me3's own log helps too: paste `%LOCALAPPDATA%\garyttierney\me3\data\logs` into
-the Explorer address bar, open the **er-mario** folder and attach the newest file.
+- **Yoshi kept coming back on his own.** Punching (X) while getting off Yoshi queued the game's
+  "use item" whistle, and he was summoned again every few seconds. X now reaches the game only
+  while Mario whistles.
+- **No more random slides.** Elden Ring's ground is full of small steep triangles that started a
+  slide in the middle of a walk or a fight. A slide now needs a slope steeper than ~40° held for a
+  few ticks (SM64's rules still apply once Mario is sliding).
+- **Audio survives device changes.** Unplugging headphones or switching the default output used to
+  leave Mario silent for the rest of the session. The audio thread now reopens the stream.
+- **Quieter background sounds.** Lakitu's camera clicks play at 25% and Yoshi's footsteps at 40%.
 
-The logs contain your mod folder's path, which can include your Windows user name; feel free
-to blank it out.
+All gameplay changes live in `src/combat.rs`, `src/lib.rs` and a few small, commented
+`er-mario:` patches inside `libsm64/src/decomp/game/` and `libsm64/src/fake_interaction.c`.
 
-## How it works
+## Gallery
 
-- A Rust DLL loaded by [me3](https://me3.help), offline only (Easy Anti-Cheat off, separate save).
-- [libsm64](https://github.com/libsm64/libsm64) runs Mario (SM64's own physics and animation),
-  fed with Elden Ring's live Havok collision.
-- The Tarnished stays in the game underneath and follows Mario, so doors, graces, menus, deaths
-  and saves keep working.
-- The `libsm64` folder is libsm64 with a few patches for the mod (ladder climbing, carrying,
-  dive grabs, head turning, model part export), compiled into the DLL.
-- At launch and every 5 minutes after, the mod asks GitHub for the latest release's version. The
-  title screen, and a small note in the bottom left corner in game, say when there's a newer one.
-  Nothing is downloaded or installed automatically. `update_check = off` in er_mario.ini turns the
-  check off.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/fire.jpg" alt="Mario dodging the Tree Sentinel's fire"></td>
+    <td width="50%"><img src="docs/screenshots/mounted-boss.jpg" alt="Mario facing the Draconic Tree Sentinel on horseback"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/yoshi.jpg" alt="Mario riding Yoshi"></td>
+    <td width="50%"><img src="docs/screenshots/exploring.jpg" alt="Mario exploring the golden forest"></td>
+  </tr>
+</table>
+
+## Everything from the original mod
+
+Triple jumps, wall kicks, long jumps, ground pounds, punches and kicks that hurt enemies, SM64's
+health meter and coins, Lakitu's camera, Bowser's tail swing on staggered bosses, Bob-omb style
+enemy throws, Yoshi in place of Torrent, Mario's own model, and Bowser laughing at you instead of
+YOU DIED. See the [original README](https://github.com/deltarooo/er-mario#readme) for the full
+feature list, controls and known issues.
+
+## Requirements
+
+- **Elden Ring** on Steam, exe version **2.7.1**. On any other version the mod switches itself off.
+- **[me3](https://me3.help)**, the mod loader.
+- **Your own Super Mario 64 ROM, US version** (`.z64`, `.n64` or `.v64`). Mario's model, textures,
+  sounds and icons are built from it on your PC the first time you play. No Nintendo data ships
+  with this repository.
+- An Xbox-layout controller, or mouse and keyboard.
+
+> [!WARNING]
+> **Offline only.** me3 starts Elden Ring offline with Easy Anti-Cheat off, and the mod uses its
+> own save file (`ER0000_mario.sl2`). Never play it online and never load the Mario save in the
+> normal game.
+
+## Install
+
+1. Install the original mod by following its
+   [Getting started](https://github.com/deltarooo/er-mario#getting-started) guide (me3, the
+   release zip, your ROM, the first launch setup).
+2. [Build](#building) this fork and copy `er_mario.dll` over the one in your **ER-Mario** folder
+   (`.\build.ps1 -Dist <ER-Mario folder>` does it for you).
+3. Launch with **er-mario.me3** as usual.
+
+The mod still checks the original repository for new releases. Updating to an upstream release
+replaces this fork's DLL with the original one.
+
+## Controls
+
+| Controller | Keyboard and mouse | Action |
+|---|---|---|
+| Left stick | W A S D | Move |
+| A | L / right mouse | Jump (double, triple, wall kick, long jump) |
+| X or B | , / left mouse | Punch, kick, dive (auto-aimed combo) |
+| LB or LT | K | Crouch, ground pound in the air |
+| Right stick | Arrow keys | Lakitu's camera |
+| Y | E | Interact |
+| RB or RT | R | Whistle for Yoshi |
+| | F9 | Switch between Lakitu's and Elden Ring's camera |
+| | F1 (hold 3 s) | Give up and respawn at the last grace |
 
 ## Building
 
 Windows, with [Rust](https://rustup.rs), Visual Studio Build Tools (C++),
 [LLVM](https://github.com/llvm/llvm-project/releases) (clang-cl compiles libsm64's C code) and
-Python. Cargo fetches fromsoftware-rs itself (pinned to a commit in `Cargo.toml`):
+Python. Cargo fetches fromsoftware-rs itself (pinned to a commit in `Cargo.toml`).
 
-```
-git clone https://github.com/deltarooo/er-mario
+```powershell
+git clone https://github.com/LucioFex/er-mario
 cd er-mario/libsm64
 python import-mario-geo.py
 cd ..
 .\build.ps1
 ```
 
-Linux can build the Windows DLL as well,
-using [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) alongside standard development packages
-`python3` `clang` and `llvm` (`sudo apt install` these on Debian/Ubuntu).
-Just `cargo install --locked cargo-xwin` and use `build.sh` instead of `build.ps1`.
+On Linux, install [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) plus `python3`,
+`clang` and `llvm`, then use `build.sh` instead of `build.ps1`.
 
-`import-mario-geo.py` (libsm64's own setup script) downloads Mario's model code, two files, from
-the SM64 decompilation once and strips his vertices, light colours and textures out of them:
-those are read from the player's ROM when the game starts. What's left is the order his parts
-are drawn in. The model code isn't part of this repository.
-
-`build.ps1 -Dist <ER-Mario folder>` also copies the DLL into an ER-Mario folder (it renames
-the old DLL first, so it works while the game is running; the next start loads the new one).
-The release zip is that folder without the generated `package` and `logs` folders.
-
-
-
-
-## License
-
-[MIT](LICENSE). This covers the mod's own code only, not Super Mario 64's or Elden Ring's
-content: Mario's model, textures, sounds and animations come from the player's ROM, and nothing
-of FromSoftware's is included. The `libsm64` folder
-keeps libsm64's own license, CC0 ([libsm64/LICENSE.md](libsm64/LICENSE.md)).
+`import-mario-geo.py` downloads Mario's model code from the SM64 decompilation once and strips
+his vertices, light colours and textures out of it: those are read from the player's ROM at
+runtime. The model code isn't part of this repository.
 
 ## Credits
 
+- **[Delta (deltarooo)](https://github.com/deltarooo)**, author of [ER Mario](https://github.com/deltarooo/er-mario). Almost everything here is their work.
 - [libsm64](https://github.com/libsm64/libsm64) (CC0) by the libsm64 contributors, built on the
   [Super Mario 64 decompilation](https://github.com/n64decomp/sm64) by the n64decomp team
 - [fromsoftware-rs](https://github.com/vswarte/fromsoftware-rs) (MIT / Apache-2.0) by Vincent
   Swarte and contributors
 - [me3](https://me3.help) by the me3 team
-- [hudhook](https://github.com/veeenu/hudhook) (MIT) by veeenu, for the overlay HUD
-- Item and inventory function patterns: The Grand Archives' Elden Ring cheat table
+- [hudhook](https://github.com/veeenu/hudhook) (MIT) by veeenu
+- [BenjaminMassey](https://github.com/BenjaminMassey): controller direction fix and the Linux build script (upstream)
+- The Grand Archives' Elden Ring cheat table, for the item and inventory function patterns
+- Combat tuning in this fork: [Luciano Esteban (LucioFex)](https://github.com/LucioFex)
 
-Contributors:
+## License
 
-- [BenjaminMassey](https://github.com/BenjaminMassey): the fix for Mario flicking between two
-  directions with some controllers, and the Linux build script
+[MIT](LICENSE), same as the original. It covers the mod's own code only, not Super Mario 64's or
+Elden Ring's content: Mario's model, textures, sounds and animations come from the player's ROM,
+and nothing of FromSoftware's is included. The `libsm64` folder keeps libsm64's own license, CC0
+([libsm64/LICENSE.md](libsm64/LICENSE.md)).
 
-Super Mario 64 and Mario are Nintendo's. Elden Ring is FromSoftware's. This is a free fan mod,
-not affiliated with either.
+<sub>Super Mario 64 and Mario are Nintendo's. Elden Ring is FromSoftware's. This is a free fan mod,
+not affiliated with either.</sub>
