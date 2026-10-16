@@ -1193,6 +1193,21 @@ static f32 get_sound_pan(f32 x, f32 z) {
 /**
  * Called from threads: thread4_sound, thread5_game_loop (EU only)
  */
+/**
+ * ER Mario (local tweak): extra per-sound volume.
+ * Lakitu camera (SOUND_MENU_CAMERA_*) at 25 %, Yoshi's steps (SOUND_GENERAL_YOSHI_WALK) at 40 %.
+ */
+static f32 er_sound_volume_scale(u8 bank, u8 soundIndex) {
+    u8 id = (sSoundBanks[bank][soundIndex].soundBits & SOUNDARGS_MASK_SOUNDID) >> SOUNDARGS_SHIFT_SOUNDID;
+    if (bank == SOUND_BANK_MENU && (id == 0x0F || id == 0x06 || id == 0x07 || id == 0x0E)) {
+        return 0.25f;
+    }
+    if (bank == SOUND_BANK_GENERAL && id == 0x6E) {
+        return 0.4f;
+    }
+    return 1.0f;
+}
+
 static f32 get_sound_volume(u8 bank, u8 soundIndex, f32 volumeRange) {
     f32 maxSoundDistance;
     f32 intensity;
@@ -1448,7 +1463,7 @@ void update_game_sound(void) {
                             func_802ad728(0x04020000 | ((channelIndex & 0xff) << 8),
                                           get_sound_freq_scale(bank, soundIndex));
 #else
-                            gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume = 1.0f;
+                            gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume = er_sound_volume_scale(bank, soundIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->pan = 0.5f;
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->freqScale = 1.0f;
 #endif
@@ -1501,7 +1516,8 @@ void update_game_sound(void) {
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->reverbVol =
                                 get_sound_reverb(bank, soundIndex, channelIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume =
-                                get_sound_volume(bank, soundIndex, VOLUME_RANGE_UNK2);
+                                get_sound_volume(bank, soundIndex, VOLUME_RANGE_UNK2)
+                                * er_sound_volume_scale(bank, soundIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->pan =
                                 get_sound_pan(*sSoundBanks[bank][soundIndex].x,
                                               *sSoundBanks[bank][soundIndex].z);
@@ -1632,7 +1648,7 @@ void update_game_sound(void) {
                             func_802ad728(0x04020000 | ((channelIndex & 0xff) << 8),
                                           get_sound_freq_scale(bank, soundIndex));
 #else
-                            gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume = 1.0f;
+                            gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume = er_sound_volume_scale(bank, soundIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->pan = 0.5f;
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->freqScale = 1.0f;
 #endif
@@ -1685,7 +1701,8 @@ void update_game_sound(void) {
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->reverbVol =
                                 get_sound_reverb(bank, soundIndex, channelIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->volume =
-                                get_sound_volume(bank, soundIndex, VOLUME_RANGE_UNK2);
+                                get_sound_volume(bank, soundIndex, VOLUME_RANGE_UNK2)
+                                * er_sound_volume_scale(bank, soundIndex);
                             gSequencePlayers[SEQ_PLAYER_SFX].channels[channelIndex]->pan =
                                 get_sound_pan(*sSoundBanks[bank][soundIndex].x,
                                               *sSoundBanks[bank][soundIndex].z);

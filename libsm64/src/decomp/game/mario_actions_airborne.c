@@ -14,6 +14,7 @@
 #include "level_update.h"
 #include "mario.h"
 #include "mario_step.h"
+#include "mario_actions_object.h"
 #include "save_file.h"
 //#include "thread6.h"
 #include "../include/mario_animation_ids.h"
@@ -1635,6 +1636,10 @@ s32 act_jump_kick(struct MarioState *m) {
         m->marioObj->header.gfx.animInfo.animID = -1;
         set_mario_animation(m, MARIO_ANIM_AIR_KICK);
         m->actionState = 1;
+        // er-mario: turned to a nearby enemy and a small dash forward (from a stand SM64's kick
+        // went straight up), never slower than Mario already goes
+        er_aim_turn(m);
+        mario_set_forward_vel(m, m->forwardVel > 8.0f ? m->forwardVel : 8.0f);
     }
 
     animFrame = m->marioObj->header.gfx.animInfo.animFrame;

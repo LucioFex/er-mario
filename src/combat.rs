@@ -51,18 +51,20 @@ impl Attack {
             Attack::Kick => (67.0, "damage_kick"),
             Attack::Sweep => (67.0, "damage_sweep"),
             Attack::Dash => (34.0, "damage_dive"),
-            Attack::Stomp => (50.0, "damage_stomp"),
-            Attack::GroundPound => (67.0, "damage_ground_pound"),
+            Attack::Stomp => (67.0, "damage_stomp"),
+            // slow and leaves Mario open: it has to be worth it (a regular enemy in one)
+            Attack::GroundPound => (100.0, "damage_ground_pound"),
         }
     }
 
-    /// On bosses the close hits count for more than a ground pound: Mario has to stand right in
-    /// front of them to land one.
+    /// On bosses the close hits count for more: Mario has to stand right in front of them to land
+    /// one. The ground pound most of all, it leaves him open the longest.
     fn boss_bonus(self) -> f32 {
         match self {
+            Attack::GroundPound => 2.0,
             Attack::Punch | Attack::Kick | Attack::Sweep => 1.5,
+            Attack::Stomp => 1.4,
             Attack::Dash => 1.1,
-            Attack::Stomp | Attack::GroundPound => 1.0,
         }
     }
 
@@ -134,6 +136,13 @@ pub fn own_side(team: u8) -> bool {
     matches!(team, 1 | 2 | 5 | 12)
 }
 
+/// Regular enemies (team 6).
+const TEAM_ENEMY: u8 = 6;
+/// Other hostiles, some bosses among them (team 9).
+const TEAM_HOSTILE: u8 = 9;
+/// Enemies in groups of their own (60, and a boss on 65, seen in the field): every team from here
+/// up. (10-49 are left out: friendly or neutral NPCs might be among them.)
+const TEAM_ENEMY_GROUPS: u8 = 50;
 /// Bosses and other strong enemies (team 7), also before their health bar shows.
 const TEAM_STRONG_ENEMY: u8 = 7;
 
@@ -216,7 +225,7 @@ pub struct Combat {
 
 /// What an Elden Ring hit does to Mario.
 pub enum Hurt {
-    /// wedges, with SM64's knockback
+    /// half wedges, with SM64's knockback
     Hit(u32),
     /// one wedge, no knockback
     Drain,
@@ -238,6 +247,8 @@ pub struct Target {
     pub height: f32,
     er: HavokPosition,
     pub sm: [f32; 3],
+    /// an enemy Mario's punches turn to (not a friendly NPC, an ally or a prop)
+    hostile: bool,
 }
 
 impl Target {
@@ -374,6 +385,9 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
                 // the bullet spawns 1 m above this: 0.4 m above the feet reaches sheep and dogs too
                 er: HavokPosition(p.0, p.1 - 0.6, p.2, 0.0),
                 sm: crate::collision::er_to_sm(origin, &p),
+                hostile: matches!(chr.team_type, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE)
+                    || chr.team_type >= TEAM_ENEMY_GROUPS
+                    || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc),
             });
         }
     }
@@ -390,6 +404,7 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
             height: 90.0,
             sm: crate::collision::er_to_sm(origin, &base),
             er: HavokPosition(p.x, p.y - lift - 0.6, p.z, 0.0),
+            hostile: false,
         });
     }
     out
@@ -690,10 +705,44 @@ fn take_share(handle: &FieldInsHandle, attack: Attack) -> bool {
 const TARGET_RADIUS: f32 = 55.0;
 const TARGET_HEIGHT: f32 = 180.0;
 /// Mario's own hitbox radius in SM64 (units) plus a little reach.
-const MARIO_RADIUS: f32 = 45.0;
-/// A punch's reach beyond the target's body (SM64 units), within this cone (cos 50°) in front.
-const PUNCH_REACH: f32 = 80.0;
-const PUNCH_CONE_COS: f32 = 0.64;
+const MARIO_RADIUS: f32 = 60.0;
+/// ...when landing on an enemy from above (a wider one bounced Mario off heads he missed)
+const STOMP_RADIUS: f32 = 52.0;
+/// The tallest body a stomp goes by (SM64 units): humans are shorter, beasts' capsules aren't.
+const STOMP_HEIGHT: f32 = 220.0;
+/// A punch's or kick's reach beyond the target's body (SM64 units), within this cone (cos 60°)
+/// in front.
+const PUNCH_REACH: f32 = 135.0;
+const PUNCH_CONE_COS: f32 = 0.5;
+/// Each hit of the punch combo turns Mario to the nearest enemy within this reach beyond its
+/// body (SM64 units) and this cone (cos 80°) around where he faces: punches thrown a little to
+/// the side of an enemy in front missed it.
+const AIM_REACH: f32 = 200.0;
+const AIM_CONE_COS: f32 = 0.17;
+
+/// The enemy (SM64 x, z) the next hit of Mario's punch combo turns him to, if any.
+pub fn aim(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32)> {
+    let m = state.position;
+    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+    targets
+        .iter()
+        .filter(|t| t.hostile && t.handle.as_ref().is_some_and(|h| !crate::swing::is_down(h) && !crate::carry::is_carried(h)))
+        .filter_map(|t| {
+            let (dx, dz) = (t.sm[0] - m[0], t.sm[2] - m[2]);
+            let horizontal = (dx * dx + dz * dz).sqrt();
+            if horizontal < 1.0 || horizontal > AIM_REACH + t.radius || m[1] > t.sm[1] + t.height || m[1] + 100.0 < t.sm[1] {
+                return None;
+            }
+            let cos = (dx * fx + dz * fz) / horizontal;
+            // the nearest, and of two as near the one more in front
+            (cos >= AIM_CONE_COS).then(|| ((horizontal - t.radius).max(0.0) + 100.0 * (1.0 - cos), t.sm[0], t.sm[2]))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, x, z)| (x, z))
+}
+/// Picking an enemy up (punch, or dive) only this close: farther hits just hurt.
+const PUNCH_GRAB_REACH: f32 = 80.0;
+const DIVE_GRAB_RADIUS: f32 = 45.0;
 
 /// Called on the libsm64 thread right after a tick: which targets Mario hits now.
 /// Stomps in a row on one enemy before Mario has to land (SM64's head bounce would juggle forever).
@@ -714,19 +763,28 @@ pub fn hits(id: i32, state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f3
         let (dx, dz) = (t[0] - m[0], t[2] - m[2]);
         let horizontal = (dx * dx + dz * dz).sqrt();
         let attack = classify(state);
-        // punches reach a bit further than SM64's (its hitbox is made for small objects): up to
-        // PUNCH_REACH, in front of Mario (picking enemies up from behind was hard to land)
+        // punches and kicks reach a bit further than SM64's (its hitbox is made for small
+        // objects): up to PUNCH_REACH, in front of Mario (picking enemies up from behind was hard
+        // to land)
         let in_front = horizontal > 1.0 && {
             let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
             (dx * fx + dz * fz) / horizontal >= PUNCH_CONE_COS
         };
-        let punch_reach = matches!(attack, Attack::Punch) && in_front && horizontal <= PUNCH_REACH + radius;
-        if (horizontal > MARIO_RADIUS + radius && !punch_reach) || m[1] > t[1] + height || m[1] + 100.0 < t[1] {
+        let punch_reach = matches!(attack, Attack::Punch | Attack::Kick) && in_front && horizontal <= PUNCH_REACH + radius;
+        let body = if matches!(attack, Attack::Stomp) { STOMP_RADIUS } else { MARIO_RADIUS };
+        if (horizontal > body + radius && !punch_reach) || m[1] > t[1] + height || m[1] + 100.0 < t[1] {
             continue;
         }
-        // aim at mid-body: stomps need Mario above that
+        // a pickup only as close as before the longer reach (from farther it looked like a grab
+        // at a distance)
+        let grab = (matches!(attack, Attack::Punch) && horizontal <= PUNCH_GRAB_REACH + radius)
+            || (diving && horizontal <= DIVE_GRAB_RADIUS + radius);
+        // aim at mid-body: stomps need Mario above that (and bounce him to the top), on a body no
+        // taller than STOMP_HEIGHT: a big beast's 5 m capsule left its back below "mid-body", so
+        // Mario walked on it, and a stomp that landed threw him up to 5 m
+        let height = if matches!(attack, Attack::Stomp) { height.min(STOMP_HEIGHT) } else { height };
         if unsafe { sm64::sm64_mario_attack(id, t[0], t[1] + height * 0.5, t[2], height * 0.5) } || punch_reach {
-            out.push((index, attack, diving));
+            out.push((index, attack, grab));
         }
     }
     out
@@ -836,7 +894,7 @@ impl Combat {
             log(format!("combat: final blow missed, finished directly (c{:04})", chr.character_id));
             false
         });
-        for &(index, attack, diving) in hits {
+        for &(index, attack, grab) in hits {
             let Some(target) = targets.get(index) else { continue };
             if self.cooldown.contains_key(&target.key) {
                 continue;
@@ -853,7 +911,7 @@ impl Combat {
                 }
                 // a regular enemy punched or dived into from behind: Mario picks it up like a
                 // Bob-omb (carry.rs)
-                if (matches!(attack, Attack::Punch) || diving) && liftable(handle) {
+                if grab && liftable(handle) {
                     let me = player.modules.physics.position;
                     if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius / 100.0, target.height / 100.0) {
                         self.victims.insert(target.key, (*handle, tick));
@@ -933,8 +991,8 @@ impl Combat {
 
     /// Game thread: how the Tarnished's HP loss since the last check turns into Mario's health
     /// (his HP is refilled right after, so SM64's power meter is what counts): a real hit costs
-    /// one or two wedges by its size with SM64's knockback, poison / bleed / rot ticks drain a
-    /// wedge per 10%.
+    /// half a wedge or a whole one by its size with SM64's knockback (a whole one, or two, on a
+    /// boss was too hard), poison / bleed / rot ticks drain a wedge per 10%.
     pub fn took_damage(&mut self, hp: i32, max: i32, scale: f32) -> Option<Hurt> {
         let lost = self.last_hp.map(|old| old - hp).unwrap_or(0);
         self.last_hp = Some(max);

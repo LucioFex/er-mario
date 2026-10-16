@@ -1352,8 +1352,8 @@ void update_mario_geometry_inputs(struct MarioState *m) {
         m->floorAngle = atan2s(m->floor->normal.z, m->floor->normal.x);
         m->terrainSoundAddend = mario_get_terrain_sound_addend(m);
 
-        if ((m->pos[1] > m->waterLevel - 40) && mario_floor_is_slippery(m)
-            && !er_floor_seam_has_flat_support(m)) {
+        if (er_slide_start(m, (m->pos[1] > m->waterLevel - 40) && mario_floor_is_slippery(m)
+                                  && !er_floor_seam_has_flat_support(m))) {
             m->input |= INPUT_ABOVE_SLIDE;
         }
 

@@ -66,7 +66,9 @@ uint32_t fake_damage_knock_back(struct MarioState *m, uint32_t damage,uint32_t i
             damage = 0;
         }
 
-        m->hurtCounter += 4 * damage; // apply hurt counter
+        // er-mario: half a wedge per point of damage (SM64's 4 is a whole one): Elden Ring hits
+        // took two wedges at a time
+        m->hurtCounter += 2 * damage; // apply hurt counter
 
         if (interactionSubtype & INT_SUBTYPE_BIG_KNOCKBACK) {
             m->forwardVel = 40.0f;
@@ -161,10 +163,10 @@ void fake_bounce_back_from_attack(struct MarioState *m, u32 interaction) {
             m->action = ACT_MOVE_PUNCHING;
         }
 
+        // er-mario: on the ground Mario keeps his speed (SM64's -48 pushback threw him out of
+        // reach of the next punch in a combo)
         if (m->action & ACT_FLAG_AIR) {
             mario_set_forward_vel(m, -16.0f);
-        } else {
-            mario_set_forward_vel(m, -48.0f);
         }
 
         //set_camera_shake_from_hit(SHAKE_ATTACK);

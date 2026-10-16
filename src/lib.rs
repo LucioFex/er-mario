@@ -205,8 +205,12 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         // the same frame, they kept the whistle from being used
         g.wButtons &= !XINPUT_GAMEPAD_RIGHT_SHOULDER;
         g.bRightTrigger = 0;
+        // X is Mario's punch and the game's "use item": the game only gets it for the whistle
+        // (punching while getting off Yoshi whistled him back, over and over in a fight)
         if WHISTLING.load(Ordering::Relaxed) {
             g.wButtons |= XINPUT_GAMEPAD_X;
+        } else {
+            g.wButtons &= !XINPUT_GAMEPAD_X;
         }
         // Torrent goes where the game's own camera looks, which nobody sees with Lakitu's on:
         // the stick is turned by the angle between the two
@@ -1337,18 +1341,12 @@ fn input_task() {
     if *bits(&mut req.new_action_presses) & ACTION != 0 {
         INTERACT_PRESSED.store(true, Ordering::Relaxed);
     }
-    // on Torrent the game needs the rider's buttons: dash (5), jump (6), the whistle (7, use
-    // item) and getting off (13)
+    // on Torrent the game needs the rider's buttons: dash (5), jump (6) and getting off (13)
     const USE_ITEM: u64 = 1 << 7;
-    const RIDER: u64 = 1 << 5 | 1 << 6 | USE_ITEM | 1 << 13;
-    // (and "use item" while Mario whistles, see below)
-    let keep = if mounted {
-        ACTION | RIDER
-    } else if WHISTLING.load(Ordering::Relaxed) {
-        ACTION | USE_ITEM
-    } else {
-        ACTION
-    };
+    const RIDER: u64 = 1 << 5 | 1 << 6 | 1 << 13;
+    // ("use item", the whistle, only while Mario whistles, see below: kept on Torrent, a punch
+    // while getting off was queued and whistled him back as soon as Mario was down)
+    let keep = ACTION | if mounted { RIDER } else { 0 } | if WHISTLING.load(Ordering::Relaxed) { USE_ITEM } else { 0 };
     for a in [
         &mut req.action_requests,
         &mut req.new_action_presses,
@@ -2433,6 +2431,8 @@ fn frame(data: &FD4TaskData) {
         let mut no_stomp = no_stomp;
         no_stomp.extend(targets.iter().enumerate().filter(|(_, t)| t.is_prop()).map(|(i, _)| i));
         let target_pos: Vec<([f32; 3], f32, f32, usize)> = targets.iter().enumerate().map(|(i, t)| (t.sm, t.radius, t.height, i)).collect();
+        // the enemy the next hit of a punch combo turns Mario to
+        let aim = combat::aim(&m.state, &targets);
         // SM64's health is Mario's: Elden Ring hits cost wedges, and the Tarnished's HP is kept full
         // (a hit bigger than his whole HP would still kill him outright, a low-level character
         // against a late boss: the game's own "player can't die" flag stops him at 1 HP, and it
@@ -2631,6 +2631,10 @@ fn frame(data: &FD4TaskData) {
                 },
                 None => unsafe { sm64::sm64_er_set_head(0, 0.0, 0.0) },
             }
+            match aim {
+                Some((x, z)) => unsafe { sm64::sm64_er_set_aim(1, x, z) },
+                None => unsafe { sm64::sm64_er_set_aim(0, 0.0, 0.0) },
+            }
             if rested {
                 unsafe { sm64::sm64_set_mario_health(id, 0x880) };
                 unsafe { sm64::sm64_play_sound_global(SOUND_HEART) };
@@ -2815,17 +2819,18 @@ fn frame(data: &FD4TaskData) {
         // doesn't run while the game drives, so it's done here: wedges off, his HP back to full.
         if riding && !m.dead {
             let (hp, max) = (player_ref.chr_ins.modules.data.hp, player_ref.chr_ins.modules.data.max_hp);
-            let wedges = match m.combat.took_damage(hp, max, combat::last_attacker(&player_ref.chr_ins).1) {
+            // (half wedges, like the hits on foot)
+            let halves = match m.combat.took_damage(hp, max, combat::last_attacker(&player_ref.chr_ins).1) {
                 Some(combat::Hurt::Hit(n)) => n as i32,
-                Some(combat::Hurt::Drain) => 1,
+                Some(combat::Hurt::Drain) => 2,
                 None => 0,
             };
-            if wedges > 0 {
-                let health = (m.state.health as i32 - wedges * 0x100).max(0xFF);
+            if halves > 0 {
+                let health = (m.state.health as i32 - halves * 0x80).max(0xFF);
                 m.state.health = health as i16;
                 let id = m.id;
                 worker::call("ride hurt", move |_| unsafe { sm64::sm64_set_mario_health(id, health as u16) });
-                log(format!("ride: hit in the saddle, {wedges} wedge(s), health {health:#x}"));
+                log(format!("ride: hit in the saddle, {} wedge(s), health {health:#x}", halves as f32 / 2.0));
                 if health < 0x100 {
                     log("Mario is out of health");
                     set_player_hp(0);

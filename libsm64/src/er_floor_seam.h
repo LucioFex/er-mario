@@ -3,4 +3,6 @@
 struct MarioState;
 /* A tiny default-terrain bevel supported on both sides by near-level floor. */
 int er_floor_seam_has_flat_support(struct MarioState *m);
+/* Whether a slippery floor (SM64's rule) starts a slide now. */
+int er_slide_start(struct MarioState *m, int slippery);
 #endif

@@ -23,6 +23,47 @@
  */
 s8 sPunchingForwardVelocities[8] = { 0, 1, 1, 2, 3, 5, 7, 10 };
 
+/**
+ * er-mario: every hit of the combo (first punch, second punch, kick) steps Mario forward, a bit
+ * further than SM64's first punch does alone, so the next hit still reaches an enemy.
+ */
+static s8 sComboStepVelocities[8] = { 0, 1, 2, 3, 5, 7, 10, 14 };
+
+/** er-mario: the enemy each hit of the combo turns Mario to (set by the mod every tick). */
+int er_aim_active = 0;
+f32 er_aim_x = 0.0f;
+f32 er_aim_z = 0.0f;
+
+/** er-mario: turns Mario to the enemy the mod aims at, if there is one. */
+void er_aim_turn(struct MarioState *m) {
+    if (er_aim_active) {
+        m->faceAngle[1] = atan2s(er_aim_z - m->pos[2], er_aim_x - m->pos[0]);
+    }
+}
+
+/**
+ * er-mario: the combo's step forward and aim. Keeps actionState nonzero (the jump kick check)
+ * and returns this tick's step speed.
+ */
+f32 er_punch_step(struct MarioState *m) {
+    u32 arg = m->actionArg;
+
+    // (the kick keeps actionArg 6 to its end: actionState marks the hit already stepped for)
+    if ((arg == 0 || arg == 3 || arg == 6) && m->actionState != arg + 2) {
+        m->actionState = arg + 2;
+        m->actionTimer = 7;
+        er_aim_turn(m);
+    } else if (m->actionState == 0) {
+        m->actionState = 1;
+    }
+
+    f32 step = sComboStepVelocities[m->actionTimer];
+    if (m->actionTimer > 0) {
+        m->actionTimer--;
+    }
+    return step;
+}
+
 void animated_stationary_ground_step(struct MarioState *m, s32 animation, u32 endAction) {
     stationary_ground_step(m);
     set_mario_animation(m, animation);
@@ -164,15 +205,7 @@ s32 act_punching(struct MarioState *m) {
         return set_mario_action(m, ACT_JUMP_KICK, 0);
     }
 
-    m->actionState = 1;
-    if (m->actionArg == 0) {
-        m->actionTimer = 7;
-    }
-
-    mario_set_forward_vel(m, sPunchingForwardVelocities[m->actionTimer]);
-    if (m->actionTimer > 0) {
-        m->actionTimer--;
-    }
+    mario_set_forward_vel(m, er_punch_step(m));
 
     mario_update_punch_sequence(m);
     perform_ground_step(m);

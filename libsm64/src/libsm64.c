@@ -848,3 +848,14 @@ SM64_LIB_FN void sm64_er_set_head(int active, float pitch, float yaw)
     er_head_pitch = (s16)(pitch * 32768.0f / 3.14159265f);
     er_head_yaw = (s16)(yaw * 32768.0f / 3.14159265f);
 }
+
+// the enemy the punch combo turns Mario to (mario_actions_object.c)
+extern int er_aim_active;
+extern f32 er_aim_x, er_aim_z;
+
+SM64_LIB_FN void sm64_er_set_aim(int active, float x, float z)
+{
+    er_aim_active = active;
+    er_aim_x = x;
+    er_aim_z = z;
+}

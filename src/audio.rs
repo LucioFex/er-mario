@@ -40,26 +40,65 @@ pub fn push(samples: &[i16]) {
     r.extend(samples.chunks_exact(2).map(|c| [c[0], c[1]]));
 }
 
-/// Starts the output stream on its own thread (the stream must stay alive).
+/// Set by a stream's error callback (its device was unplugged or switched off): the output
+/// thread opens a new one.
+static LOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts the output on its own thread (the stream must stay alive there). A lost device, or a
+/// new default one (headphones plugged in), gets a new stream: Mario went silent for the rest
+/// of the session when the device went away.
 pub fn start() {
     std::thread::spawn(|| {
         let host = cpal::default_host();
-        let Some(device) = host.default_output_device() else {
-            log("audio: no output device");
-            return;
-        };
-        let Ok(config) = device.default_output_config() else {
-            log("audio: no output config");
-            return;
-        };
-        let rate = config.sample_rate().0 as f32;
-        let channels = config.channels() as usize;
-        log(format!("audio: output {} Hz, {channels} ch, {:?}", rate, config.sample_format()));
-        let step = SM64_RATE / rate;
-        let mut pos = 0.0f32;
-        let mut cur = [0i16; 2];
-        let mut next = [0i16; 2];
-        let stream = device.build_output_stream(
+        let mut current: Option<(cpal::Stream, String)> = None;
+        let mut failed = false;
+        loop {
+            let lost = LOST.swap(false, std::sync::atomic::Ordering::Relaxed);
+            let default = host.default_output_device();
+            let name = default.as_ref().and_then(|d| d.name().ok()).unwrap_or_default();
+            let switched = current.as_ref().is_some_and(|(_, n)| *n != name);
+            if lost || switched {
+                log(if lost { "audio: device lost, reopening" } else { "audio: default device changed, switching" });
+                current = None;
+            }
+            if current.is_none() {
+                match default.map(|d| open(&d)) {
+                    Some(Ok(stream)) => {
+                        RING.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                        LOST.store(false, std::sync::atomic::Ordering::Relaxed);
+                        log(format!("audio: stream started ({name})"));
+                        current = Some((stream, name));
+                        failed = false;
+                    }
+                    // (no device right now: tried again every second, logged once)
+                    Some(Err(e)) if !failed => {
+                        log(format!("audio: {e}"));
+                        failed = true;
+                    }
+                    None if !failed => {
+                        log("audio: no output device");
+                        failed = true;
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(if current.is_some() { 2 } else { 1 }));
+        }
+    });
+}
+
+/// An output stream on `device`, playing the ring.
+fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
+    let config = device.default_output_config().map_err(|e| format!("no output config: {e}"))?;
+    let rate = config.sample_rate().0 as f32;
+    let channels = config.channels() as usize;
+    log(format!("audio: output {} Hz, {channels} ch, {:?}", rate, config.sample_format()));
+    let step = SM64_RATE / rate;
+    let mut pos = 0.0f32;
+    let mut cur = [0i16; 2];
+    let mut next = [0i16; 2];
+    let stream = device
+        .build_output_stream(
             &config.into(),
             move |out: &mut [f32], _| {
                 let mut ring = RING.lock().unwrap_or_else(|e| e.into_inner());
@@ -81,21 +120,15 @@ pub fn start() {
                     }
                 }
             },
-            |e| log(format!("audio stream error: {e}")),
+            |e| {
+                // (once per stream: the callback can fire over and over)
+                if !LOST.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    log(format!("audio stream error: {e}"));
+                }
+            },
             None,
-        );
-        match stream {
-            Ok(s) => {
-                if let Err(e) = s.play() {
-                    log(format!("audio: play failed: {e}"));
-                    return;
-                }
-                log("audio: stream started");
-                loop {
-                    std::thread::park();
-                }
-            }
-            Err(e) => log(format!("audio: could not open stream: {e}")),
-        }
-    });
+        )
+        .map_err(|e| format!("could not open stream: {e}"))?;
+    stream.play().map_err(|e| format!("play failed: {e}"))?;
+    Ok(stream)
 }

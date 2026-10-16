@@ -854,7 +854,9 @@ s32 act_move_punching(struct MarioState *m) {
         return set_mario_action(m, ACT_JUMP_KICK, 0);
     }
 
-    m->actionState = 1;
+    // er-mario: the combo's step forward (and aim), never slower than Mario already goes
+    f32 step = er_punch_step(m);
+    mario_set_forward_vel(m, m->forwardVel > step ? m->forwardVel : step);
 
     mario_update_punch_sequence(m);
 
