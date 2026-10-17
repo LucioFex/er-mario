@@ -641,9 +641,15 @@ s32 act_er_hammer_giro(struct MarioState *m) {
     return FALSE;
 }
 
+/* the plunge from high up lands as a charged slam: fully charged (the giant hammer's blow) after a
+ * drop of this much (SM64 units, 12 m), from a quarter of it on more and more */
+#define ER_PLUNGE_FULL_DROP 1200.0f
+static f32 sErPlungeFrom = 0.0f;
+
 /**
  * X (actionArg 0) in the air with the hammer: a full turn with it held out. Y (actionArg 1): the
- * plunge, a moment held up high, then straight down onto it: lands as the slam's blow.
+ * plunge, a moment held up high, then straight down onto it: lands as the slam's blow, the bigger
+ * the higher it came down from.
  */
 s32 act_er_hammer_air(struct MarioState *m) {
     s32 t = m->actionTimer;
@@ -689,6 +695,7 @@ s32 act_er_hammer_air(struct MarioState *m) {
             if (t == 6) {
                 er_sound(m, SOUND_MARIO_GROUND_POUND_WAH);
                 set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
+                sErPlungeFrom = m->pos[1];
             }
             m->vel[1] = -75.0f;
             er_hammer(0.0f, -80.0f, 1.1f);
@@ -699,7 +706,13 @@ s32 act_er_hammer_air(struct MarioState *m) {
     switch (perform_air_step(m, 0)) {
         case AIR_STEP_LANDED:
             if (m->actionArg == 1) {
-                return set_mario_action(m, ACT_ER_HAMMER_SLAM, 1);
+                // (the drop charges the slam: its charge is the slam's actionState)
+                f32 drop = t > 6 ? sErPlungeFrom - m->pos[1] : 0.0f;
+                f32 k = (drop / ER_PLUNGE_FULL_DROP - 0.25f) / 0.75f;
+                s32 charge = k <= 0.0f ? 0 : k >= 1.0f ? ER_SLAM_CHARGE_MAX : (s32)(k * ER_SLAM_CHARGE_MAX);
+                set_mario_action(m, ACT_ER_HAMMER_SLAM, 1);
+                m->actionState = charge;
+                return TRUE;
             }
             return set_mario_action(m, ACT_FREEFALL_LAND, 0);
 
