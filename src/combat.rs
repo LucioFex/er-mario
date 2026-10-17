@@ -20,7 +20,7 @@ use crate::{log, sm64};
 
 /// (bullet row, attack row, damage (flat, and % of the weapon's attack rating), poise damage,
 /// hit reaction level, hit radius m)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Attack {
     Punch,
     Kick,
@@ -256,6 +256,7 @@ impl Attack {
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
+            Attack::FireSweep | Attack::Trample => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
@@ -353,6 +354,8 @@ const FIST_SHARE: u16 = 100;
 const BOSS_FACTOR: f32 = 0.065;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
 const DAMAGE_FACTOR: f32 = 0.75;
+/// Mega Mario's steps hurt the same enemy at most this often (ticks)
+const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
@@ -446,6 +449,8 @@ pub struct Combat {
     drain: f32,
     /// stomps per enemy since Mario last stood on the ground
     stomps: HashMap<u64, u32>,
+    /// Mega Mario's steps: the tick each enemy was last stepped on
+    trampled: HashMap<u64, u32>,
     /// stomps per enemy in a row since Mario last stood on the ground (their damage fades)
     stomp_run: HashMap<u64, u32>,
     /// blows on each enemy in the current string, and the tick of the last one (their damage fades
@@ -463,7 +468,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
     }
 }
 
@@ -1528,8 +1533,9 @@ impl Combat {
             if self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
                 continue;
             }
-            // (the hook's tug leaves the next blow free: it's what it's for)
-            if !matches!(attack, Attack::Hook) {
+            // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
+            // burn and Mega's steps come at their own pace and leave Mario's blows free)
+            if !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Trample) {
                 self.cooldown.insert(target.key, tick);
             }
             if let Some(handle) = &target.handle {
@@ -1559,7 +1565,7 @@ impl Combat {
                     crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::Egg | Attack::Tongue) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Trample | Attack::Egg | Attack::Tongue) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -1567,7 +1573,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_) | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Trample | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
@@ -1600,8 +1606,11 @@ impl Combat {
                 if tick.wrapping_sub(run.1) > STRING_GAP {
                     run.0 = 0;
                 }
-                run.0 += 1;
-                run.1 = tick;
+                // (the giant fireball's burn and Mega's steps aren't blows of a string)
+                if !matches!(attack, Attack::FireSweep | Attack::Trample) {
+                    run.0 += 1;
+                    run.1 = tick;
+                }
                 let fade = STRING_FADE.powi(run.0.saturating_sub(STRING_FULL) as i32).max(STRING_FLOOR);
                 let fade = if attack.finisher() { fade.max(STRING_FINISHER_FLOOR) } else { fade };
                 if fade < 1.0 && run.0 % 5 == 0 {
@@ -1615,11 +1624,11 @@ impl Combat {
                 }
             }
             let (bullet, ..) = attack.spec();
-            if !target.is_prop() {
+            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Trample) {
                 crate::style::hit(attack);
             }
             // (breaking a jar or a crate is no blow to stop for)
-            if !matches!(attack, Attack::Fire(_)) && !target.is_prop() {
+            if !matches!(attack, Attack::Fire(_) | Attack::FireSweep) && !target.is_prop() {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
@@ -1697,6 +1706,8 @@ impl Combat {
     /// Game thread: a blast on the ground at `feet` (Elden Ring) reaching `reach` m: every enemy
     /// standing in it (feet within 1.5 m up or down) takes `attack`. Mega Mario's steps and landings,
     /// the giant fireball's explosion.
+    /// A finishing blast (the explosion, a landing) lands whatever hit came just before; Mega's steps
+    /// hurt each enemy at most every TRAMPLE_EVERY ticks (walking over one mustn't stunlock it).
     pub fn blast(&mut self, player: &ChrIns, feet: glam::Vec3, reach: f32, attack: Attack, origin: [f32; 3], tick: u32) -> usize {
         let center = HavokPosition(feet.x, feet.y, feet.z, 0.0);
         let near = nearby(&center, reach + 4.0, origin);
@@ -1710,8 +1721,17 @@ impl Combat {
                 let h = t.height * crate::scale();
                 (p - feet).with_y(0.0).length() <= reach + r && feet.y + 1.5 >= p.y && feet.y - 1.5 <= p.y + h
             })
+            .filter(|(_, t)| attack != Attack::Trample || self.trampled.get(&t.key).is_none_or(|&at| tick.wrapping_sub(at) >= TRAMPLE_EVERY))
             .map(|(i, _)| (i, attack, false))
             .collect();
+        for &(i, ..) in &hits {
+            if attack == Attack::Trample {
+                self.trampled.insert(near[i].key, tick);
+            } else {
+                self.cooldown.remove(&near[i].key);
+            }
+        }
+        self.trampled.retain(|_, at| tick.wrapping_sub(*at) < TRAMPLE_EVERY);
         if !hits.is_empty() {
             self.deal(player, &near, &hits, tick);
         }

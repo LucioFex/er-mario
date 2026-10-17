@@ -449,7 +449,7 @@ impl Fire {
                 }
                 let Some(h) = t.shootable().copied() else { continue };
                 shot.hit.push(t.key());
-                sound(SOUND_BOMB);
+                worker::call("fireball sweep", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BOMB, 0.4) });
                 self.bursts.push(Burst { pos: center, level: 3, born: tick });
                 if combat::blowable(&h) {
                     shot.swept.push(h);
@@ -493,7 +493,8 @@ impl Fire {
             if !burning.is_empty() {
                 combat.deal(player, &near, &burning, tick);
             }
-            sound(SOUND_FLAME_BLOWN);
+            // (soft: it comes again and again)
+            worker::call("fireball burn", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_FLAME_BLOWN, 0.25) });
         }
         // the end: a wall, its range, long enough on a boss
         if !blow_up && shot.stuck.is_none() {

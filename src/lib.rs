@@ -2612,7 +2612,8 @@ fn frame(data: &FD4TaskData) {
         let pressed = inputs.button_a != 0 || inputs.button_b != 0 || inputs.button_z != 0 || b_fire || b_dash || y_move || x_move;
         if status::holds(pressed, m.id) {
             inputs = sm64::SM64MarioInputs::default();
-            (b_fire, b_dash, y_move, x_move, l_hammer) = (false, false, false, false, false);
+            (b_fire, b_dash, y_move, x_move, l_hammer, b_hook) = (false, false, false, false, false, false);
+            dpad = [false; 4];
         }
         if let Ok(cam) = unsafe { CSCamera::instance() } {
             // the SM64 camera's direction when it's on (the game's own camera keeps running
@@ -2755,7 +2756,8 @@ fn frame(data: &FD4TaskData) {
         {
             let p = player_ref.chr_ins.modules.physics.position;
             let calm = !m.dead && !mega::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
-            status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm);
+            let data = &player_ref.chr_ins.modules.data;
+            status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm, data.hp < data.max_hp);
         }
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
@@ -2799,6 +2801,10 @@ fn frame(data: &FD4TaskData) {
             }
             hurt
         };
+        // (a hit wakes him up)
+        if matches!(hurt, Some(combat::Hurt::Hit(_))) {
+            status::hit();
+        }
         // the Metal and Vanish caps: Elden Ring's hits do nothing (on Metal Mario they clang)
         if matches!(hurt, Some(combat::Hurt::Hit(_))) && caps::active() == Some(caps::METAL) {
             worker::call("metal clang", |_| unsafe { sm64::sm64_play_sound_global(SOUND_METAL_BONK) });
@@ -2935,7 +2941,7 @@ fn frame(data: &FD4TaskData) {
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
         let still_flying = blown::flying();
         let blown_away = match hurt {
-            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() && !status::just_bled() => {
+            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() && !status::just_set_in() => {
                 const ACT_FLAG_SWIMMING: u32 = 0x2000;
                 const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
@@ -2949,7 +2955,7 @@ fn frame(data: &FD4TaskData) {
             _ => false,
         };
         let mario_at = m.state.position;
-        let bled = status::just_bled();
+        let bled = status::just_set_in();
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };

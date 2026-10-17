@@ -64,10 +64,10 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one (see below). Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
-| D-pad left / up | Metal and Wing caps (they recharge in about 40 s) |
+| D-pad left / up | Metal and Wing caps (they recharge in about 55-60 s) |
 | D-pad right | **Mega Mushroom** (see below) |
 
 **Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, Chain Chomp, boomerang. Holding
@@ -100,7 +100,8 @@ sends them back up. Launched enemies leave a streak and land with a thud of dust
 **Squash and stretch.** The weapons move like a cartoon's: the hammer stretches out and smears
 along its swing and squashes flat on a heavy blow, the Chain Chomp stretches long as it flies and
 squashes when it slams into something, its chain's links pull long and thin when taut, and the
-boomerangs pop out of Mario's hand.
+boomerangs pop out of Mario's hand. Between throws the big boomerang hangs across Mario's back,
+like the hammer, and he grabs it for each throw.
 
 **Real 3D weapons.** The hammer, the boomerangs and the Chain Chomp are 3D models built into
 Mario's own mesh, each on a bone of its own (`src/assets/gear.rs`): the boomerangs spin flat and
@@ -115,7 +116,7 @@ louder or softer each time, and the boomerangs whir one at a time.
 |---|---|
 | X | Throw one, from one hand then the other. It curves out, hits on the way out and again on the way back. Up to three in the air |
 | Y | Three at once in a fan |
-| Y (hold) | The big boomerang: it flies far (up to 28 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
+| Y (hold) | The big boomerang: Mario whirls round on the spot with it held out (like swinging Bowser by the tail), faster and faster as it grows in his hand, then lets fly. It flies far (up to 28 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
 | X, X, Y | Boomerang launcher: thrown up in an arc, it sends enemies flying up |
 | X / Y in the air | Throws in the air; the first few hold Mario up, Devil May Cry style |
 
@@ -140,8 +141,9 @@ recharge), in SM64 power-up steps with the power-up music. His whole SM64 world 
 collisions grow with him: low ceilings and narrow passages stop him, and if there is no room
 where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's a titan:
 all of him moves at 70% pace (walk, blows, jumps; the music keeps its own), he walks slowly for
-his size, fists only, every hit does 2.3x and shakes the screen, enemy hits hurt about a third as
-much, his steps and landings shake the ground, his jumps go up a giant's way, and Y is a
+his size, fists only, every hit does 2.5x and shakes the screen, enemy hits hurt about a third as
+much, his steps crush whoever is under his feet and his landings send a quake through everyone
+around (5.5 m), his jumps go up a giant's way, and Y is a
 two-fisted slam with a huge shockwave (hold Y to charge it; one every 2.5 s). No dashes, shell,
 meteor dive or super jump punch (too fast for a giant), no caps, no Yoshi and no first-person
 view while he's big. D-pad right again ends it early, and so do a door, a fog wall, a ladder, a
@@ -205,7 +207,22 @@ and Mario (or around the camera) turns see-through until it's out of the way.
 him up. The game holds him and carries him through its throw while Mario dangles in its grip,
 kicking and groaning (SM64's Chuckya grab); one that holds him inside its body swallows him whole,
 Bubba style, and he's gone until it spits him out. Let go, he's thrown off with a cry. The throw's
-damage counts in wedges (`src/grab.rs`).
+damage counts in wedges (`src/grab.rs`). When the enemy's animation lifts or swings the Tarnished's
+body, Mario's pose follows it (`src/engine_mario.rs`), so he's really up in the troll's fist.
+
+**Ailments and fire.** Elden Ring's ailments build up on Mario as on any Tarnished, the game does
+their damage (in wedges), and Mario shows them the SM64 way (`src/status.rs`): poison and scarlet
+rot make him cough (Hazy Maze's gas) in green or orange puffs, blood loss bursts red (that wedge
+costs no knockback), frostbite freezes him stiff for a second and leaves him shivering, sleep
+knocks him out (mash buttons to wake up sooner), madness shocks him, and a fire on him sends him
+running round in flames like SM64's (the burn's damage is Elden Ring's, not SM64's). Deathblight
+stays off.
+
+**Giant fireball.** Held 10 s, RB throws a ball of fire that works like a kamehameha: regular
+enemies it runs into are swept along inside it, burning a little at a time; a boss or a big body
+stops it and it clings to him, burning, for a second and a half; then it blows up, hurting
+everyone within 5 m, and the enemies it carried fly off. It also blows up against a wall or at the
+end of its range.
 
 **Big blows hurt more than wedges.** A heavy hit from a boss or a big brute sometimes (a roll of
 the dice, never twice in a row) sends Mario flying far off, screaming; if a wall is in the way he
@@ -226,7 +243,7 @@ close and risky hits.
 | Long strings | — | Past 10 hits on the same enemy each hit is worth 5% less than the one before (down to 40%, finishers 70%), so long combos last instead of melting the enemy |
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
-| Fireball | — | **9-25%** by charge; the giant one blows a regular enemy away |
+| Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -310,7 +327,7 @@ replaces this fork's DLL with the original one.
 | X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive (into an enemy's back or side it picks the enemy up) |
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
-| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
+| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up |
 | D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
 | RT | Middle mouse button | The hook (see above) |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |

@@ -400,7 +400,9 @@ impl Boomerang {
         // grows in his hand as he winds it up
         let throwing = matches!(action, moves::ACT_ER_THROW | moves::ACT_ER_AIR_THROW) && mv.action_arg <= moves::THROW_BIG;
         let winding = action == moves::ACT_ER_THROW && mv.action_arg == moves::THROW_BIG && mv.action_timer == 2;
-        self.winding = if winding { self.winding + 1 } else { 0 };
+        // (let go, it keeps its wound-up size until it leaves his hand)
+        let big_throw = action == moves::ACT_ER_THROW && mv.action_arg == moves::THROW_BIG;
+        self.winding = if winding { self.winding + 1 } else if big_throw { self.winding } else { 0 };
         self.idle = if throwing { 0 } else { self.idle.saturating_add(1) };
         let want = if self.idle <= HOLD { 1.0 } else { 0.0 };
         self.in_hand += (want - self.in_hand).clamp(-TO_BACK, TO_HAND);
@@ -409,11 +411,11 @@ impl Boomerang {
         // whirls: it swings round with him)
         let hand = parts[9].pos;
         let arm = (hand - parts[7].pos).with_y(0.0).normalize_or_zero();
-        let ahead = if self.winding > 0 && arm != Vec3::ZERO { arm } else { Vec3::new(-face_angle.sin(), 0.0, face_angle.cos()) };
+        let ahead = if winding && arm != Vec3::ZERO { arm } else { Vec3::new(-face_angle.sin(), 0.0, face_angle.cos()) };
         let right = Vec3::Y.cross(ahead).normalize_or(Vec3::X);
         let face = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, ahead));
         // (wound up it's held out level, swung round like a hammer thrower's)
-        let lift = if self.winding > 0 { -0.35 } else { -1.25 };
+        let lift = if winding { -0.35 } else { -1.25 };
         let held_rot = (face * Quat::from_rotation_x(lift) * Quat::from_rotation_y(0.4)).normalize();
         let wound = (self.winding as f32 / WIND_TICKS).min(1.0);
         let full = self.winding as f32 >= WIND_TICKS;
