@@ -64,28 +64,73 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
-| D-pad | Metal, Wing and Vanish caps (they recharge in about 40 s) |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
+| B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
+| D-pad left / up | Metal and Wing caps (they recharge in about 40 s) |
+| D-pad right | **Mega Mushroom** (see below) |
 
-**Hammer mode (LB).** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
+**Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, boomerang, Chain Chomp. Holding
+LB goes back to the fists. A banner shows the weapon's name for a moment.
+
+**Hammer.** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
 moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air), a
 Donkey Kong flurry that ends with a giant hammer (X, X, Y), a Bowser spin (Y, X) and a
 launcher (X, Y): a golf swing that sends enemies flying high, where they hang for a moment so
 Mario can jump after them and keep the combo going in the air. When he's
 not swinging it, the hammer hangs across his back and he grabs it for each attack.
 
-Holding Y with the hammer charges the slam: it grows with a chime per level, and fully charged it
-comes down as the giant hammer. Enemies that fall out of an air combo bounce off the ground once,
-and a hit on the bounce sends them back up.
+Holding Y with the hammer charges the slam: Mario squats and trembles with the hammer raised (he can
+still turn), it grows with a soft chime per level, and fully charged it comes down as the giant
+hammer. Enemies that fall out of an air combo bounce off the ground once, and a hit on the bounce
+sends them back up. Launched enemies leave a streak and land with a thud of dust.
 
-**Style meter.** Devil May Cry's: every hit in a row counts, and the string earns a rank (D, C, B,
-A, S, SS, SSS) with SM64's red coin chime a note higher each time and Mario cheering from S up.
-Getting hurt or stopping for a few seconds ends it. A finisher that takes an enemy out, or any
-kill from rank B up, slows the world down for a moment (`src/style.rs`).
+**Boomerang** (the Boomerang Bros.'), the ranged weapon (`src/boomerang.rs`):
+
+| Input | Move |
+|---|---|
+| X | Throw one, from one hand then the other. It curves out, hits on the way out and again on the way back. Up to three in the air |
+| Y | Three at once in a fan |
+| Y (hold) | The big boomerang: it flies to the enemy and hangs there spinning, hitting everyone around it again and again |
+| X, X, Y | Boomerang launcher: thrown up in an arc, it sends enemies flying up |
+| X / Y in the air | Throws in the air; the first few hold Mario up, Devil May Cry style |
+
+Boomerangs and fireballs keep a launched enemy floating where it is, so you can launch one with
+the hammer or the boomerang and keep it up from a distance.
+
+**Chain Chomp**, the crowd weapon (`src/chomp.rs`): wide reach, low damage, many enemies at once. It
+hops along beside Mario between attacks.
+
+| Input | Move |
+|---|---|
+| X, X, X | Lunge straight ahead, wide sweep in front, crash down far ahead (shockwave) |
+| X, Y | Bite: it lunges low, bites and tosses enemies up for an air combo |
+| Y | Cyclone: Mario swings it around himself (steer with the stick), then lets it fly ahead |
+| X in the air | It swings once all the way around him |
+| Y in the air | Crash: Mario drops with it under him, shockwave on landing |
+
+**Mega Mushroom (D-pad right).** Mario grows to 2.5 times his height for 20 seconds (75 s
+recharge), in SM64 power-up steps with the power-up music. His whole SM64 world is scaled, so
+collisions grow with him: low ceilings and narrow passages stop him, and if there is no room
+where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's slow for
+his size and heavy: fists only, every hit does 1.35x and shakes the screen, enemy hits hurt half
+as much, his steps and landings shake the ground, and Y is a two-fisted slam with a huge
+shockwave (hold Y to charge it; one every 2.5 s). D-pad right again ends it early. It replaced the
+Vanish cap.
+
+**Style meter.** Devil May Cry's: every hit in a row scores style points (finishers more, and a
+hit of a different kind than the last one a bonus, so varied strings climb faster), and the string
+earns a rank: D DANDY, C COOL, B BONKERS, A AWESOME, S SUPER, SS SUPER STAR, SSS WAHOO. A new rank
+slams in with its word, a soft red coin chime a note higher each time and Mario cheering from S up;
+a bar shows the time left before the string drops. Getting hurt ends it ("MAMMA MIA"). From rank
+S, a combo's finisher is a **Star Finish**: a golden flash, stars and coins flying out, a banner
+and a longer slow motion. A finisher that takes an enemy out, or any kill from rank B up, slows the
+world down for a moment (`src/style.rs`).
 
 Hits come with hit-stop, star bursts, shockwave rings, a swing trail and a camera shake on the
 heavy ones (`src/impact.rs`). Next to a big enemy Lakitu's camera backs off and looks up at it,
-more the bigger and closer it is.
+more the bigger and closer it is, and a big enemy that gets between the camera and Mario (or
+around the camera) turns see-through until it's out of the way.
 
 ### Damage balance
 
@@ -95,6 +140,9 @@ close and risky hits.
 | Attack | Original | This fork |
 |---|---|---|
 | Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch |
+| Boomerang | — | **2-4%** per pass (it hits going and coming back); the big one about 2% per hit while it hovers |
+| Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least |
+| Long strings | — | Past 10 hits on the same enemy each hit is worth 5% less than the one before (down to 40%, finishers 70%), so long combos last instead of melting the enemy |
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one blows a regular enemy away |
@@ -112,7 +160,10 @@ The ground pound is slow and leaves Mario open, so it's worth the risk.
   few ticks (SM64's rules still apply once Mario is sliding).
 - **Audio survives device changes.** Unplugging headphones or switching the default output used to
   leave Mario silent for the rest of the session. The audio thread now reopens the stream.
-- **Quieter background sounds.** Lakitu's camera clicks play at 25% and Yoshi's footsteps at 40%.
+- **Quieter background sounds.** Lakitu's camera clicks play at 25% and Yoshi's footsteps at 40%;
+  the style meter's and the charges' chimes play softly.
+- **Fewer hitches in fights.** The game's raycast check of each collision triangle is remembered,
+  so fast combat moves no longer re-check hundreds of triangles every few frames.
 
 All gameplay changes live in `src/combat.rs`, `src/lib.rs` and a few small, commented
 `er-mario:` patches inside `libsm64/src/decomp/game/` and `libsm64/src/fake_interaction.c`.
@@ -174,8 +225,8 @@ replaces this fork's DLL with the original one.
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
-| D-pad | | Caps: left Metal, up Wing, right Vanish, down take it off (and interact) |
-| LB | | Hammer mode on and off |
+| D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
+| LB | | Next weapon (fists, hammer, boomerang, Chain Chomp); hold to go back to the fists |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |

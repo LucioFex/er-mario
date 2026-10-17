@@ -1,0 +1,344 @@
+//! Mario's boomerang (weapons.rs, the Boomerang Bros.'): thrown from his hand (er_moves.c's throws
+//! say when), it flies out curving, turned to the nearest enemy in front, and comes back to him,
+//! hitting on the way out and again on the way back. Three can be out at once.
+//! - X: one, from one hand then the other (in the air too, each holding him up a moment)
+//! - Y: three in a fan; held, the big one: it flies to the enemy and hangs there spinning a while,
+//!   hitting everyone around it again and again, then comes back
+//! - X, X, Y: the launcher, thrown up in an arc: whoever it catches flies up (juggle.rs)
+//! Its blows keep enemies up in the air up there (juggle::shot): launch one, then keep it floating
+//! from afar. Walls send it back early. Drawn by hud.rs (a spinning sprite with a trail).
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
+
+use eldenring::cs::ChrIns;
+use eldenring::position::HavokPosition;
+use glam::Vec3;
+
+use crate::collision::er_to_sm;
+use crate::combat::{self, Attack, Combat};
+use crate::{log, moves, sm64, worker};
+
+/// at most this many out at once
+pub const MAX_OUT: u32 = 3;
+/// how far one flies (m), the launcher's and the big one's at most, how long the way out takes
+/// (s), how far it curves to the side (m), how high the launcher's arc goes (m)
+const RANGE: f32 = 12.0;
+const UPPER_RANGE: f32 = 7.0;
+const BIG_RANGE: f32 = 16.0;
+const OUT_TIME: f32 = 0.5;
+const BIG_OUT_TIME: f32 = 0.6;
+const CURVE: f32 = 1.3;
+const UPPER_ARC: f32 = 2.6;
+/// it flies a little past the enemy it was turned to (m)
+const PAST: f32 = 2.5;
+/// the big one hangs there this long (s), hitting within this reach (m)
+const HOVER: f32 = 1.4;
+const BIG_REACH: f32 = 1.7;
+/// coming back: from this speed up to that one (m/s), caught this close to his chest (m), and gone
+/// for good this long after the throw (s)
+const BACK_FROM: f32 = 6.0;
+const BACK_TO: f32 = 32.0;
+const CATCH: f32 = 0.8;
+const LIFE: f32 = 5.0;
+/// the size of its hits (SM64 units) and of the sprite (m), and the big one's
+const RADIUS: f32 = 40.0;
+const SIZE: f32 = 0.55;
+const BIG_SIZE: f32 = 1.5;
+/// turned to the nearest enemy within this range (m) and cone (cos 50°) in front
+const AIM_RANGE: f32 = 25.0;
+const AIM_CONE_COS: f32 = 0.64;
+/// the fan's three: this far apart (radians)
+const FAN: f32 = 0.38;
+
+// SM64 sounds: its whir, the catch, a wall
+const SOUND_WHIR: i32 = 0x315C_0081;
+const SOUND_CATCH: i32 = 0x0436_8081;
+const SOUND_WALL: i32 = 0x0444_A081;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Normal,
+    Upper,
+    Big,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Phase {
+    Out,
+    Hover(f32),
+    Back,
+}
+
+struct Rang {
+    kind: Kind,
+    phase: Phase,
+    start: Vec3,
+    dir: Vec3,
+    side: Vec3,
+    range: f32,
+    out_time: f32,
+    pos: Vec3,
+    vel: Vec3,
+    /// since the throw (s)
+    age: f32,
+    /// enemies hit on this pass (out, or back), the big one's by when
+    hit: Vec<(u64, f32)>,
+    spin: f32,
+    /// a few points back, for its trail
+    trail: std::collections::VecDeque<Vec3>,
+}
+
+/// A boomerang to draw (hud.rs): Elden Ring position, velocity (m/s), size (m), its turn (radians),
+/// the trail behind it (oldest first).
+#[derive(Clone)]
+pub struct Sprite {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub size: f32,
+    pub spin: f32,
+    pub spin_rate: f32,
+    pub trail: Vec<Vec3>,
+}
+
+pub struct Boomerang {
+    out: Vec<Rang>,
+}
+
+static READY: AtomicU32 = AtomicU32::new(MAX_OUT);
+static SPRITES: Mutex<(Vec<Sprite>, Option<Vec3>, Option<Instant>)> = Mutex::new((Vec::new(), None, None));
+
+/// Boomerangs in hand (not out flying).
+pub fn ready() -> u32 {
+    READY.load(Ordering::Relaxed)
+}
+
+/// The boomerangs to draw now (moved on since the last tick), and the one in his hand, if any.
+pub fn sprites() -> (Vec<Sprite>, Option<Vec3>) {
+    let guard = SPRITES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(at) = guard.2 else { return (Vec::new(), None) };
+    let dt = at.elapsed().as_secs_f32();
+    if dt > 0.25 {
+        return (Vec::new(), None);
+    }
+    let dt = dt.min(1.0 / 30.0);
+    (guard.0.iter().map(|s| Sprite { pos: s.pos + s.vel * dt, spin: s.spin + s.spin_rate * dt, ..s.clone() }).collect(), guard.1)
+}
+
+pub fn clear() {
+    *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (Vec::new(), None, None);
+    READY.store(MAX_OUT, Ordering::Relaxed);
+}
+
+fn sound(id: i32, volume: f32) {
+    worker::call("boomerang sound", move |_| unsafe { sm64::sm64_play_sound_volume(id, volume) });
+}
+
+impl Boomerang {
+    pub fn new() -> Self {
+        Boomerang { out: Vec::new() }
+    }
+
+    /// Game thread, after every SM64 tick: what the throws did (`mv`), Mario's state, feet and hand
+    /// (Elden Ring), whether the boomerang is in hand. Throws, flies them, lands their hits.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tick(
+        &mut self,
+        mv: &sm64::SM64ErMove,
+        state: &sm64::SM64MarioState,
+        feet: Vec3,
+        hand: Vec3,
+        held: bool,
+        origin: [f32; 3],
+        tick: u32,
+        player: &ChrIns,
+        combat: &mut Combat,
+        ray: impl Fn(Vec3, Vec3) -> Option<Vec3>,
+    ) {
+        const DT: f32 = 1.0 / 30.0;
+        if held && mv.throw_kind > 0 && (mv.throw_kind as u32 - 1) <= moves::THROW_BIG {
+            self.throw(mv.throw_kind as u32 - 1, mv.throw_charge, state, feet, hand, origin);
+        }
+        let chest = feet + Vec3::Y * 0.8;
+        let mut caught = 0;
+        let mut out = std::mem::take(&mut self.out);
+        out.retain_mut(|r| {
+            r.age += DT;
+            r.spin += DT * if r.kind == Kind::Big { 18.0 } else { 26.0 };
+            let prev = r.pos;
+            match r.phase {
+                Phase::Out => {
+                    let p = (r.age / r.out_time).min(1.0);
+                    let along = r.range * (1.0 - (1.0 - p) * (1.0 - p));
+                    let (sideways, up) = match r.kind {
+                        Kind::Upper => (0.0, (p * std::f32::consts::PI).sin() * UPPER_ARC),
+                        _ => ((p * std::f32::consts::PI).sin() * CURVE, 0.0),
+                    };
+                    r.pos = r.start + r.dir * along + r.side * sideways + Vec3::Y * up;
+                    if p >= 1.0 {
+                        r.hit.clear();
+                        r.phase = if r.kind == Kind::Big { Phase::Hover(0.0) } else { Phase::Back };
+                    }
+                    // a wall: back early, with a clink
+                    if ray(prev, r.pos).is_some() {
+                        r.pos = prev;
+                        r.hit.clear();
+                        r.phase = Phase::Back;
+                        r.vel = Vec3::ZERO;
+                        sound(SOUND_WALL, 0.5);
+                    }
+                }
+                Phase::Hover(t) => {
+                    r.phase = if t + DT >= HOVER { Phase::Back } else { Phase::Hover(t + DT) };
+                    // (bobbing a little where it hangs)
+                    r.pos += Vec3::Y * ((t * 7.0).cos() * 0.4 * DT);
+                    if matches!(r.phase, Phase::Back) {
+                        r.hit.clear();
+                    }
+                }
+                Phase::Back => {
+                    let to = chest - r.pos;
+                    let k = ((r.age - r.out_time) / 0.6).clamp(0.0, 1.0);
+                    let speed = BACK_FROM + (BACK_TO - BACK_FROM) * k;
+                    let want = to.normalize_or_zero() * speed;
+                    r.vel = r.vel.lerp(want, 0.35);
+                    r.pos += r.vel * DT;
+                    if to.length() < CATCH.max(speed * DT) {
+                        caught += 1;
+                        return false;
+                    }
+                }
+            }
+            r.vel = if matches!(r.phase, Phase::Back) { r.vel } else { (r.pos - prev) / DT };
+            if (tick + (r.spin * 10.0) as u32) % 7 == 0 {
+                sound(SOUND_WHIR, if r.kind == Kind::Big { 0.45 } else { 0.25 });
+            }
+            hits(r, prev, origin, tick, player, combat);
+            r.age < LIFE
+        });
+        self.out = out;
+        if caught > 0 {
+            sound(SOUND_CATCH, 0.6);
+        }
+        READY.store(MAX_OUT.saturating_sub(self.out.len() as u32), Ordering::Relaxed);
+        self.publish(held.then_some(hand));
+    }
+
+    fn throw(&mut self, kind: u32, charge: i32, state: &sm64::SM64MarioState, feet: Vec3, hand: Vec3, origin: [f32; 3]) {
+        let free = MAX_OUT.saturating_sub(self.out.len() as u32) as usize;
+        if free == 0 {
+            return;
+        }
+        let face = Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
+        // the nearest enemy in front, at its chest
+        let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
+        let aim = combat::nearby(&here, AIM_RANGE, origin)
+            .iter()
+            .filter(|t| t.shootable().is_some())
+            .filter_map(|t| {
+                let at = crate::collision::sm_to_er(origin, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.5, t.sm[2]]);
+                let at = Vec3::new(at.0, at.1, at.2);
+                let d = at - hand;
+                let flat = d.with_y(0.0);
+                (flat.length() > 0.5 && flat.normalize().dot(face) >= AIM_CONE_COS).then_some((flat.length(), at))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, p)| p);
+        let toward = aim.map_or(face, |p| (p - hand).normalize_or(face));
+        let reach = aim.map(|p| (p - hand).length());
+        let (kind, n, range, out_time) = match kind {
+            moves::THROW_STORM => (Kind::Normal, 3, RANGE, OUT_TIME),
+            moves::THROW_UPPER => (Kind::Upper, 1, reach.map_or(UPPER_RANGE, |r| (r + 1.0).min(UPPER_RANGE)), OUT_TIME * 0.9),
+            moves::THROW_BIG => (Kind::Big, 1, reach.map_or(RANGE, |r| r.min(BIG_RANGE)), BIG_OUT_TIME),
+            _ => (Kind::Normal, 1, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
+        };
+        static FLIP: AtomicU32 = AtomicU32::new(0);
+        let flip = FLIP.fetch_add(1, Ordering::Relaxed) % 2 == 0;
+        for k in 0..n.min(free) {
+            // the fan: one ahead, one to each side, curving outwards
+            let turn = if n == 3 { (k as f32 - 1.0) * FAN } else { 0.0 };
+            let dir = glam::Quat::from_rotation_y(turn) * toward;
+            let side = Vec3::Y.cross(dir).normalize_or(Vec3::X) * if n == 3 { if k == 0 { -1.0 } else { 1.0 } } else if flip { 1.0 } else { -1.0 };
+            self.out.push(Rang {
+                kind,
+                phase: Phase::Out,
+                start: hand,
+                dir,
+                side,
+                range,
+                out_time,
+                pos: hand,
+                vel: dir * (range * 2.0 / out_time),
+                age: 0.0,
+                hit: Vec::new(),
+                spin: k as f32,
+                trail: Default::default(),
+            });
+        }
+        log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
+    }
+
+    fn publish(&mut self, hand: Option<Vec3>) {
+        let mut sprites = Vec::with_capacity(self.out.len());
+        for r in self.out.iter_mut() {
+            r.trail.push_back(r.pos);
+            while r.trail.len() > 6 {
+                r.trail.pop_front();
+            }
+            let trail = &r.trail;
+            let size = if r.kind == Kind::Big { BIG_SIZE } else { SIZE };
+            sprites.push(Sprite { pos: r.pos, vel: r.vel, size, spin: r.spin, spin_rate: if r.kind == Kind::Big { 18.0 } else { 26.0 }, trail: trail.iter().copied().collect() });
+        }
+        // (in his hand while he has one)
+        let held = hand.filter(|_| self.out.len() < MAX_OUT as usize);
+        *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (sprites, held, Some(Instant::now()));
+    }
+}
+
+fn kind_index(kind: Kind, n: usize) -> usize {
+    match kind {
+        Kind::Normal if n == 3 => 1,
+        Kind::Normal => 0,
+        Kind::Upper => 2,
+        Kind::Big => 3,
+    }
+}
+
+/// Who `r` hits on its way from `prev` this tick.
+fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat) {
+    let center = HavokPosition(r.pos.x, r.pos.y, r.pos.z, 0.0);
+    let reach = if r.kind == Kind::Big && matches!(r.phase, Phase::Hover(_)) { BIG_REACH } else { 0.0 };
+    let near = combat::nearby(&center, 3.0 + reach, origin);
+    let (a, b) = (er_to_sm(origin, &HavokPosition(prev.x, prev.y, prev.z, 0.0)), er_to_sm(origin, &center));
+    let (a, b) = (Vec3::from(a), Vec3::from(b));
+    let radius = RADIUS + reach / crate::scale();
+    let attack = match (r.kind, r.phase) {
+        (Kind::Big, _) => Attack::RangBig,
+        (Kind::Upper, Phase::Out) => Attack::RangUpper,
+        _ => Attack::Rang,
+    };
+    // the big one hangs there hitting again and again (every few ticks, combat.rs), the others
+    // each enemy once a pass
+    let again = if r.kind == Kind::Big { 0.2 } else { f32::MAX };
+    let age = r.age;
+    for (i, t) in near.iter().enumerate() {
+        if t.shootable().is_none() {
+            continue;
+        }
+        if r.hit.iter().any(|(k, when)| *k == t.key() && age - *when < again) {
+            continue;
+        }
+        let foot = Vec3::from(t.sm);
+        let ab = (b - a).with_y(0.0);
+        let k = if ab.length_squared() > 1.0 { ((foot - a).with_y(0.0).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
+        let at = a.lerp(b, k);
+        let near_axis = (foot - at).with_y(0.0).length() <= t.radius + radius;
+        let level = at.y + radius >= foot.y && at.y - radius <= foot.y + t.height;
+        if near_axis && level {
+            r.hit.retain(|(key, _)| *key != t.key());
+            r.hit.push((t.key(), age));
+            combat.deal(player, &near, &[(i, attack, false)], tick);
+        }
+    }
+}

@@ -2,8 +2,8 @@
 //! music and timer), each with a recharge after it comes off:
 //! - D-pad left: Metal (no hit hurts or knocks him back, his blows hit harder; SM64's heavy steps)
 //! - D-pad up: Wing (triple jump to fly, like in SM64)
-//! - D-pad right: Vanish (see-through, enemy hits go through him)
 //! - D-pad down: off
+//! (D-pad right was the Vanish cap: it's the Mega Mushroom now, mega.rs)
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -108,13 +108,11 @@ pub fn tick(id: i32, flags: u32, dpad: [bool; 4], allowed: bool, boss: bool) -> 
         worker::call("cap off", move |_| unsafe { sm64::sm64_er_end_cap(id, 0) });
         return changed;
     }
-    // D-pad: left Metal, up Wing, right Vanish
+    // D-pad: left Metal, up Wing
     let kind = if pressed[2] {
         METAL
     } else if pressed[0] {
         WING
-    } else if pressed[3] {
-        VANISH
     } else {
         return changed;
     };

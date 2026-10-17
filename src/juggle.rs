@@ -46,6 +46,8 @@ const CATCH_AFTER: f32 = 0.25;
 const BOUNCE_UP: f32 = 4.5;
 const BOUNCE_KEEP: f32 = 0.3;
 const RELAUNCH_HEIGHT: f32 = 2.6;
+/// a shot from afar lifts one hanging up there this much (m)
+const SHOT_POP: f32 = 0.18;
 
 enum Phase {
     /// up with Mario: where it is, its direction and distance from him, when it was last hit
@@ -161,6 +163,30 @@ pub fn hit(h: &FieldInsHandle, mario: Vec3) {
     }
 }
 
+/// A shot from afar (a boomerang, a fireball) hit `h`: if it's up in the air it stays up where it is,
+/// a little higher (Devil May Cry's guns keep them floating); falling, it's caught up there again.
+pub fn shot(h: &FieldInsHandle) {
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) else { return };
+    match &mut j.phase {
+        Phase::Up { last_hit, .. } => *last_hit = Instant::now(),
+        Phase::Hover { since } => {
+            *since = Instant::now();
+            j.pos += Vec3::Y * SHOT_POP;
+        }
+        Phase::Falling { .. } => {
+            j.phase = Phase::Hover { since: Instant::now() };
+            j.pos += Vec3::Y * SHOT_POP;
+        }
+        Phase::Bounce { .. } => {
+            log("juggle: shot off the bounce, up again");
+            crate::impact::launched(j.pos);
+            j.phase = launched(j.pos, j.pos, RELAUNCH_HEIGHT * 0.7);
+        }
+        Phase::Flying { .. } => {}
+    }
+}
+
 pub fn clear() {
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     if let Ok(wcm) = unsafe { WorldChrMan::instance_mut() } {
@@ -252,6 +278,15 @@ pub fn update(dt: f32, mario: Vec3, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
                 }
             }
         };
+        // flying fast (sent up, falling, bouncing): a streak behind it (impact.rs)
+        let speed = (next - j.pos).length() / dt.max(1e-3);
+        if speed > 3.0 && !matches!(j.phase, Phase::Up { .. } | Phase::Hover { .. }) {
+            crate::impact::enemy_streak(key(&j.mob), next + Vec3::Y * 0.8);
+        }
+        // back on the ground after a fall: a thud and its dust
+        if !keep && speed > 2.0 {
+            crate::impact::thud(next);
+        }
         j.pos = next;
         let ph = &mut chr.modules.physics;
         ph.position = HavokPosition(next.x, next.y, next.z, 0.0);

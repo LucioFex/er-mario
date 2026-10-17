@@ -1314,6 +1314,13 @@ void update_mario_joystick_inputs(struct MarioState *m) {
     } else {
         m->intendedMag = mag / 8.0f;
     }
+    // er-mario: Mega Mario (mega.rs) is slow for his size: the stick asks for less
+    {
+        extern int er_mega;
+        if (er_mega) {
+            m->intendedMag *= 0.42f;
+        }
+    }
 
     if (m->intendedMag > 0.0f) {
         m->intendedYaw = atan2s(-controller->stickY, controller->stickX) + m->area->camera->yaw;

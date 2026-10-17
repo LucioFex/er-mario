@@ -95,6 +95,11 @@ fn sound(id: i32) {
 }
 
 /// The camera sounds to play now.
+/// Where Lakitu's camera was last put (Elden Ring), if lately.
+pub fn position() -> Option<Vec3> {
+    LAST.lock().unwrap_or_else(|e| e.into_inner()).filter(|(_, t)| t.elapsed().as_secs_f32() < 0.5).map(|(m, _)| Vec3::new(m[9], m[10], m[11]))
+}
+
 pub fn take_sounds() -> Vec<i32> {
     std::mem::take(&mut *SOUNDS.lock().unwrap_or_else(|e| e.into_inner()))
 }
@@ -171,6 +176,8 @@ struct Cam {
     push: Vec3,
     /// where the view looks, off Mario's head: up and over to a big body close by (eased)
     frame: Vec3,
+    /// how much farther and higher it all is for Mega Mario (eased)
+    size: f32,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -254,6 +261,7 @@ pub fn update(
             climb_hold: 0.0,
             push: Vec3::ZERO,
             frame: Vec3::ZERO,
+            size: 1.0,
         }
     });
 
@@ -333,7 +341,11 @@ pub fn update(
 
     // the focus: Mario's head; in the air the height follows slowly (no bobbing on jumps), unless
     // he falls below it
-    let want = mario + Vec3::Y * FOCUS_HEIGHT;
+    // Mega Mario: farther back and higher, his head the focus (eased as he grows and shrinks)
+    let size_want = 1.0 + (crate::size_factor() * crate::mega::visual() - 1.0) * 0.8;
+    cam.size += (size_want - cam.size) * (1.0 - (-2.5 * dt).exp());
+    let ks = cam.size;
+    let want = mario + Vec3::Y * FOCUS_HEIGHT * ks;
     // Mario leapt metres in one frame: the game re-based its coordinates (floating origin) or
     // teleported him; the camera moves along instead of swinging round
     let jump = mario - cam.mario;
@@ -351,7 +363,7 @@ pub fn update(
     cam.focus.y += (want.y - cam.focus.y) * rate(vy);
     // the lag must never put the focus into the ground (running uphill): at least half a metre
     // above the ground under Mario (not his feet: in a jump the focus should stay low)
-    let head = mario + Vec3::Y * FOCUS_HEIGHT;
+    let head = mario + Vec3::Y * FOCUS_HEIGHT * ks;
     let ground = hit(head, mario - Vec3::Y * 30.0).map(|g| g.y).unwrap_or(mario.y);
     cam.focus.y = cam.focus.y.max(ground + 0.5);
 
@@ -384,6 +396,7 @@ pub fn update(
         ));
     }
     let (dist, height) = ZOOM[cam.zoom];
+    let (dist, height) = (dist * ks, height * ks);
     // a big body close to Mario (a giant beast, a dragon): the camera backs off and rises to fit
     // it in (close up it ended up inside the body)
     let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -425,8 +438,8 @@ pub fn update(
     // (the ground ahead, measured from a point in the open near head height: from high up it
     // would find ceilings and roofs indoors)
     let ahead = mario - flat.normalize_or_zero() * 5.0;
-    let probe = Vec3::new(ahead.x, mario.y + FOCUS_HEIGHT + 1.5, ahead.z);
-    let open = hit(mario + Vec3::Y * FOCUS_HEIGHT, probe).is_none();
+    let probe = Vec3::new(ahead.x, mario.y + FOCUS_HEIGHT * ks + 1.5, ahead.z);
+    let open = hit(mario + Vec3::Y * FOCUS_HEIGHT * ks, probe).is_none();
     let rise = if open { hit(probe, ahead - Vec3::Y * 8.0).map(|g| g.y - ground).unwrap_or(0.0) } else { 0.0 };
     let want_up = (rise * 0.6).clamp(0.0, 3.0);
     cam.look_up += (want_up - cam.look_up) * rate(3.0);

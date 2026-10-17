@@ -143,9 +143,9 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     with(|s| s.dir = dir);
     let scale = size * if scripted { mv.hammer_scale.max(0.1) } else { 1.0 };
     // the head faces where it moves (its flat ends strike), kept across the handle
-    let head_now = Vec3::from(state.position) + mirror(grip + dir * HEAD_AT * scale) / crate::SCALE;
+    let head_now = Vec3::from(state.position) + mirror(grip + dir * HEAD_AT * scale) / crate::scale();
     let across = with(|s| {
-        let moved = s.head.map_or(Vec3::ZERO, |h| mirror(head_now - h) * crate::SCALE);
+        let moved = s.head.map_or(Vec3::ZERO, |h| mirror(head_now - h) * crate::scale());
         let want = s.across + moved * 6.0;
         (want - dir * want.dot(dir)).try_normalize().unwrap_or_else(|| {
             let fallback = fwd.cross(up).cross(dir);
@@ -171,7 +171,7 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let scale = size + (scale - size) * t;
     let dir = rot * Vec3::Y;
     with(|s| s.across = rot * Vec3::Z);
-    let to_sm64 = |rel: Vec3| Vec3::from(state.position) + mirror(rel) / crate::SCALE;
+    let to_sm64 = |rel: Vec3| Vec3::from(state.position) + mirror(rel) / crate::scale();
     let head = to_sm64(grip + dir * HEAD_AT * scale);
     parts[HAMMER] = PartPose { rot, pos: grip, scale };
     let prev = with(|s| s.head.replace(head)).unwrap_or(head);

@@ -79,6 +79,13 @@ struct SM64ErMove
     float hammerScale;
     uint32_t actionArg;
     int32_t actionTimer;
+    int32_t throwKind;
+    int32_t throwCharge;
+    int32_t chompScripted;
+    float chompYaw;
+    float chompReach;
+    float chompHeight;
+    float chompBite;
 };
 
 struct SM64MarioGeometryBuffers
@@ -219,6 +226,9 @@ extern SM64_LIB_FN void sm64_fadeout_background_music(uint16_t arg0, uint16_t fa
 extern SM64_LIB_FN uint16_t sm64_get_current_background_music();
 extern SM64_LIB_FN void sm64_play_sound(int32_t soundBits, float *pos);
 extern SM64_LIB_FN void sm64_play_sound_global(int32_t soundBits);
+extern SM64_LIB_FN void sm64_play_sound_volume(int32_t soundBits, float volume);
+extern SM64_LIB_FN void sm64_er_set_weapon(int weapon, int rangs_ready);
+extern SM64_LIB_FN void sm64_er_set_mega(int on);
 extern SM64_LIB_FN void sm64_set_sound_volume(float vol);
 
 #ifdef __cplusplus

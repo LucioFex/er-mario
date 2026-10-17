@@ -125,6 +125,13 @@ const IMG_SPARK: usize = 65; // 3
 /// the fireball's glow, then the giant shot's ball (4 frames), fireball.rs FRAME_GLOW / FRAME_ORB
 const IMG_GLOW: usize = 68;
 const IMG_ORB: usize = 69; // 4
+/// the weapons (weapons.rs): the boomerang, the Chain Chomp (mouth shut, open), a link of its chain,
+/// the hammer's icon; the Mega Mushroom (mega.rs)
+const IMG_RANG: usize = 73;
+const IMG_CHOMP: usize = 74; // 2
+const IMG_LINK: usize = 76;
+const IMG_HAMMER_ICON: usize = 77;
+const IMG_MUSHROOM: usize = 78;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -218,6 +225,13 @@ pub fn load(rom: &[u8]) {
         for frame in 0..4 {
             out.push(Image::new(48, 48, |x, y| orb_pixel(x, y, frame)));
         }
+        out.push(Image::new(32, 32, rang_pixel));
+        for open in [false, true] {
+            out.push(Image::new(48, 48, |x, y| chomp_pixel(x, y, open)));
+        }
+        out.push(Image::new(16, 16, link_pixel));
+        out.push(Image::new(32, 32, hammer_icon_pixel));
+        out.push(Image::new(32, 32, mushroom_pixel));
         Some(out)
     };
     match load() {
@@ -594,6 +608,83 @@ impl ImguiRenderLoop for Overlay {
             dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(f.tint).build();
         }
 
+        // enemies flying through the air (juggle.rs): a white streak behind each, fading
+        for streak in crate::impact::enemy_streaks() {
+            for pair in streak.windows(2) {
+                let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+                let (Some((pa, za)), Some((pb, _))) = (project(a, size), project(b, size)) else { continue };
+                if za > 50.0 {
+                    continue;
+                }
+                let fade = 1.0 - ta.max(tb);
+                let width = (size[1] / za.max(1.0) * 0.05).clamp(1.0, 10.0) * fade;
+                dl.add_line(pa, pb, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.45 * fade)).thickness(width).build();
+            }
+        }
+        // the boomerangs: spinning, a fading trail of ghosts behind each, and the one in his hand
+        {
+            let (rangs, held) = crate::boomerang::sprites();
+            let quad = |c: [f32; 2], h: f32, angle: f32, alpha: f32| {
+                let (s, co) = (angle.sin() * h * 0.5, angle.cos() * h * 0.5);
+                let corner = |x: f32, y: f32| [c[0] + x * co - y * s, c[1] + x * s + y * co];
+                dl.add_image_quad(textures[IMG_RANG], corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0))
+                    .col([1.0, 1.0, 1.0, alpha])
+                    .build();
+            };
+            for r in &rangs {
+                let n = r.trail.len();
+                for (k, p) in r.trail.iter().enumerate().take(n.saturating_sub(1)) {
+                    let (Some((c, z)), Some((top, _))) = (project(*p, size), project(*p + Vec3::Y * r.size * 0.5, size)) else { continue };
+                    let h = (c[1] - top[1]) * 2.0;
+                    if z > 60.0 || h < 1.0 {
+                        continue;
+                    }
+                    quad(c, h, r.spin - (n - k) as f32 * 0.9, 0.12 + 0.3 * k as f32 / n as f32);
+                }
+                let (Some((c, z)), Some((top, _))) = (project(r.pos, size), project(r.pos + Vec3::Y * r.size * 0.5, size)) else { continue };
+                let h = (c[1] - top[1]) * 2.0;
+                if z > 60.0 || h < 1.0 {
+                    continue;
+                }
+                quad(c, h, r.spin, 1.0);
+            }
+            if let Some(p) = held {
+                if let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * 0.18, size)) {
+                    let h = (c[1] - top[1]) * 2.0;
+                    if z < 40.0 && h > 1.0 {
+                        quad(c, h, 0.6, 1.0);
+                    }
+                }
+            }
+        }
+        // the Chain Chomp: its chain from his hand (sagging when slack), then the ball facing the
+        // way it's going on screen, its mouth open in a lunge
+        if let Some(ch) = crate::chomp::sprite() {
+            let span = ch.chomp - ch.hand;
+            let sag = 0.35 * (1.0 - (span.length() / 4.5).min(1.0));
+            const LINKS: usize = 9;
+            for k in 1..LINKS {
+                let t = k as f32 / LINKS as f32;
+                let p = ch.hand + span * t - Vec3::Y * (sag * 4.0 * t * (1.0 - t));
+                let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * 0.07, size)) else { continue };
+                let h = (c[1] - top[1]) * 2.0;
+                if z > 50.0 || h < 0.5 {
+                    continue;
+                }
+                dl.add_image(textures[IMG_LINK], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
+            }
+            if let (Some((c, z)), Some((top, _)), Some((hand, _))) = (project(ch.chomp, size), project(ch.chomp + Vec3::Y * 0.45, size), project(ch.hand, size)) {
+                let h = (c[1] - top[1]) * 2.0;
+                if z < 60.0 && h > 1.0 {
+                    // (facing away from Mario on screen)
+                    let right = c[0] >= hand[0];
+                    let (u0, u1) = if right { (0.0, 1.0) } else { (1.0, 0.0) };
+                    let img = IMG_CHOMP + (ch.bite > 0.5) as usize;
+                    dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).uv_min([u0, 0.0]).uv_max([u1, 1.0]).build();
+                }
+            }
+        }
+
         // the blows that landed: a star burst each, growing a little as it goes
         for (spark, t) in crate::impact::sparks() {
             let s = spark.size * (0.7 + 0.5 * t);
@@ -688,14 +779,31 @@ impl ImguiRenderLoop for Overlay {
             dl.add_rect_filled_multicolor([w - edge, 0.0], [w, h], off, on, on, off);
         }
 
+        // a star finish: the screen flashes gold, brightest at the edges
+        let (tint, gold) = crate::impact::screen_flash();
+        if gold > 0.0 {
+            let [w, h] = size;
+            let col = |a: f32| imgui::ImColor32::from_rgba_f32s(tint[0], tint[1], tint[2], a);
+            dl.add_rect([0.0, 0.0], [w, h], col(gold * 0.35)).filled(true).build();
+            let edge = h * 0.22;
+            let (on, off) = (col(gold * 0.8), col(0.0));
+            dl.add_rect_filled_multicolor([0.0, 0.0], [w, edge], on, on, off, off);
+            dl.add_rect_filled_multicolor([0.0, h - edge], [w, h], off, off, on, on);
+            dl.add_rect_filled_multicolor([0.0, 0.0], [edge, h], on, off, off, on);
+            dl.add_rect_filled_multicolor([w - edge, 0.0], [w, h], off, on, on, off);
+        }
+
         // one of SM64's pixels (its screen is 240 lines high), at HUD size
         let px = size[1] / 240.0 * SIZE;
 
-        // the caps (top left, in D-pad order: left Metal, up Wing, right Vanish): bright when
-        // ready, pulsing while worn, dim and filling up while recharging
-        let caps = crate::caps::hud();
+        // the caps (top left, in D-pad order: left Metal, up Wing, then right the Mega Mushroom):
+        // bright when ready, pulsing while worn, dim and filling up while recharging (the mushroom
+        // draining while he's big)
+        let mut caps = crate::caps::hud();
+        let (mega_ready, mega_on) = crate::mega::hud();
+        caps[2] = mega_ready;
         {
-            let worn = crate::caps::active();
+            let worn = if mega_on { Some(2) } else { crate::caps::active() };
             let s = 20.0 * px;
             let (x0, y0) = (size[1] * 0.04, size[1] * 0.05);
             static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -705,9 +813,15 @@ impl ImguiRenderLoop for Overlay {
                 let on = worn == Some(i as u8);
                 let grow = if on { s * 0.12 * (1.0 + (t * 8.0).sin()) } else { 0.0 };
                 let alpha = if on || ready >= 1.0 { 1.0 } else { 0.35 };
-                dl.add_image(textures[IMG_CAP_BOX + i], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow])
+                let img = if i == 2 { IMG_MUSHROOM } else { IMG_CAP_BOX + i };
+                dl.add_image(textures[img], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow])
                     .col([1.0, 1.0, 1.0, alpha])
                     .build();
+                if let (2, Some(left)) = (i, crate::mega::left()) {
+                    let bar = [x, y0 + s + px * 2.0];
+                    dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
+                    dl.add_rect(bar, [x + s * left, bar[1] + px * 2.0], [1.0, 0.3, 0.25, 0.9]).filled(true).build();
+                }
                 if !on && ready < 1.0 {
                     let bar = [x, y0 + s + px * 2.0];
                     dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
@@ -816,9 +930,12 @@ impl ImguiRenderLoop for Overlay {
         }
 
         // the style meter (style.rs), right of the screen: the rank big, in its colour (SSS
-        // flashing), the count and HITS under it; both grow for a moment on a blow and a new rank
-        if let Some(st) = crate::style::show() {
+        // flashing), slamming in when it goes up, its word sliding in under it, the count and HITS,
+        // and a bar for the time the string has left; a star finish's banner in the middle of the
+        // screen; a lost string's "MAMMA MIA" falling off where the meter was
+        {
             static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+            let clock = now.duration_since(*START).as_secs_f32();
             const TINTS: [[f32; 3]; 7] = [
                 [0.75, 0.75, 0.8],
                 [0.45, 0.7, 1.0],
@@ -831,30 +948,104 @@ impl ImguiRenderLoop for Overlay {
             let glyph = |id: usize, cx: f32, cy: f32, g: f32, tint: [f32; 4]| {
                 dl.add_image(textures[id], [cx - g * 0.5, cy - g * 0.5], [cx + g * 0.5, cy + g * 0.5]).col(tint).build();
             };
-            // right-aligned at `right`, letters `gap` of their size apart
-            let line = |text: &str, right: f32, cy: f32, g: f32, gap: f32, tint: [f32; 4]| {
+            // right-aligned at `right`, letters `gap` of their size apart, each raised by `wave(k)`
+            let line_wave = |text: &str, right: f32, cy: f32, g: f32, gap: f32, tint: [f32; 4], wave: &dyn Fn(usize) -> f32| {
                 let n = text.chars().count() as f32;
                 for (k, c) in text.chars().enumerate() {
                     if let Some(id) = glyph_for(c) {
-                        glyph(id, right - (n - k as f32 - 0.5) * g * gap, cy, g, tint);
+                        glyph(id, right - (n - k as f32 - 0.5) * g * gap, cy - wave(k), g, tint);
                     }
                 }
             };
+            let line = |text: &str, right: f32, cy: f32, g: f32, gap: f32, tint: [f32; 4]| line_wave(text, right, cy, g, gap, tint, &|_| 0.0);
             let right = size[0] - 24.0 * px;
-            let top = size[1] * 0.32;
-            if let Some(r) = st.rank {
-                let mut t = TINTS[r];
-                if r == crate::style::RANKS.len() - 1 {
-                    let f = (now.duration_since(*START).as_secs_f32() * 9.0).sin() * 0.5 + 0.5;
-                    t = t.map(|c| c + (1.0 - c) * f * 0.7);
+            let top = size[1] * 0.30;
+            if let Some(st) = crate::style::show() {
+                if let Some(r) = st.rank {
+                    let mut t = TINTS[r];
+                    if r == crate::style::RANKS.len() - 1 {
+                        let f = (clock * 9.0).sin() * 0.5 + 0.5;
+                        t = t.map(|c| c + (1.0 - c) * f * 0.7);
+                    }
+                    // the slam: in from twice its size over a fifth of a second, a shake as it lands
+                    let a = st.rank_age;
+                    let slam = (1.0 - a / 0.2).max(0.0);
+                    let shake = if a < 0.45 { (a * 70.0).sin() * 3.0 * px * (1.0 - a / 0.45) } else { 0.0 };
+                    let g = 30.0 * px * (1.0 + 1.2 * slam * slam + 0.15 * st.pop);
+                    let alpha = st.alpha * (1.0 - slam * 0.6);
+                    // (a glow behind it as it lands)
+                    if a < 0.5 {
+                        let w = 34.0 * px * (1.0 + a * 2.0);
+                        let glow = (1.0 - a / 0.5) * 0.8 * st.alpha;
+                        dl.add_image(textures[IMG_GLOW], [right - w * 1.3, top - w * 0.6], [right + w * 0.3, top + w * 0.6]).col([t[0], t[1], t[2], glow]).build();
+                    }
+                    line(crate::style::RANKS[r].1, right + shake, top, g, 0.78, [t[0], t[1], t[2], alpha]);
+                    // its word: in from the right, the top rank's letters riding a wave
+                    let p = (a / 0.22).min(1.0);
+                    let slide = (1.0 - p) * (1.0 - p) * 70.0 * px;
+                    let word = crate::style::RANKS[r].2;
+                    let wave = |k: usize| if r >= 5 { (clock * 8.0 - k as f32 * 0.7).sin() * 2.0 * px } else { 0.0 };
+                    line_wave(word, right + slide, top + 24.0 * px, 11.0 * px, 0.78, [t[0], t[1], t[2], st.alpha * p], &wave);
                 }
-                let g = 30.0 * px * (1.0 + 0.6 * st.rank_pop);
-                line(crate::style::RANKS[r].1, right, top, g, 0.78, [t[0], t[1], t[2], st.alpha]);
+                let g = 14.0 * px * (1.0 + 0.4 * st.pop);
+                let white = [1.0, 1.0, 1.0, st.alpha];
+                let y = top + 42.0 * px;
+                line("HITS", right, y, 9.0 * px, 0.8, white);
+                line(&st.count.to_string(), right - 4.0 * 9.0 * px * 0.8 - 4.0 * px, y - 1.0 * px, g, 0.75, white);
+                // the time left: a bar under it, in the rank's colour
+                let t = st.rank.map_or([0.85, 0.85, 0.9], |r| TINTS[r]);
+                let (w, h) = (70.0 * px, 2.5 * px);
+                let (x0, y0) = (right - w, y + 9.0 * px);
+                dl.add_rect([x0, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * st.alpha)).filled(true).build();
+                dl.add_rect([right - w * st.left, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(t[0], t[1], t[2], 0.9 * st.alpha)).filled(true).build();
+                // the star finish: its banner over the middle of the screen
+                if let Some(a) = st.star_age {
+                    let pop = (1.0 - a / 0.15).max(0.0);
+                    let fade = 1.0 - ((a - crate::style::STAR_TIME * 0.6) / (crate::style::STAR_TIME * 0.4)).clamp(0.0, 1.0);
+                    let g = 20.0 * px * (1.0 + 0.8 * pop * pop);
+                    let text = "STAR FINISH";
+                    let half = text.chars().count() as f32 * g * 0.78 * 0.5;
+                    let shine = (clock * 10.0).sin() * 0.5 + 0.5;
+                    let gold = [1.0, 0.82 + 0.15 * shine, 0.3 + 0.4 * shine, fade];
+                    let wave = |k: usize| (clock * 9.0 - k as f32 * 0.6).sin() * 2.5 * px;
+                    line_wave(text, size[0] * 0.5 + half, size[1] * 0.27, g, 0.78, gold, &wave);
+                    image(IMG_STAR, size[0] * 0.5 - half - g * 1.1, size[1] * 0.27 - g * 0.5, g, g);
+                    image(IMG_STAR, size[0] * 0.5 + half + g * 0.1, size[1] * 0.27 - g * 0.5, g, g);
+                }
+            } else if let Some((a, _)) = crate::style::lost() {
+                // shaken loose, then falling off and fading
+                let p = a / crate::style::LOST_TIME;
+                let shake = (a * 60.0).sin() * 3.0 * px * (1.0 - p);
+                let fall = (p * p) * 40.0 * px;
+                line("MAMMA MIA", right + shake, top + 10.0 * px + fall, 14.0 * px, 0.78, [1.0, 0.3, 0.25, 1.0 - p * p]);
             }
-            let g = 14.0 * px * (1.0 + 0.4 * st.pop);
-            let white = [1.0, 1.0, 1.0, st.alpha];
-            line("HITS", right, top + 34.0 * px, 9.0 * px, 0.8, white);
-            line(&st.count.to_string(), right - 4.0 * 9.0 * px * 0.8 - 4.0 * px, top + 33.0 * px, g, 0.75, white);
+        }
+
+        // the weapon just taken (L1, weapons.rs): its icon and name, low in the middle of the screen,
+        // popping in and fading
+        if let Some((w, age)) = crate::weapons::banner() {
+            let pop = (1.0 - age / 0.15).max(0.0);
+            let fade = 1.0 - ((age - crate::weapons::BANNER_TIME * 0.7) / (crate::weapons::BANNER_TIME * 0.3)).clamp(0.0, 1.0);
+            let name = crate::weapons::NAMES[w as usize];
+            let g = 12.0 * px * (1.0 + 0.5 * pop);
+            let n = name.chars().count() as f32;
+            let width = n * g * 0.78 + g * 1.6;
+            let (cx, cy) = (size[0] * 0.5, size[1] * 0.78);
+            let icon = match w {
+                crate::weapons::HAMMER => IMG_HAMMER_ICON,
+                crate::weapons::RANG => IMG_RANG,
+                crate::weapons::CHOMP => IMG_CHOMP,
+                _ => IMG_HEAD,
+            };
+            let x0 = cx - width * 0.5;
+            dl.add_rect([x0 - g * 0.4, cy - g * 0.9], [x0 + width + g * 0.4, cy + g * 0.9], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * fade)).filled(true).rounding(g * 0.4).build();
+            dl.add_image(textures[icon], [x0, cy - g * 0.7], [x0 + g * 1.4, cy + g * 0.7]).col([1.0, 1.0, 1.0, fade]).build();
+            for (k, c) in name.chars().enumerate() {
+                if let Some(id) = glyph_for(c) {
+                    let x = x0 + g * 1.6 + (k as f32 + 0.5) * g * 0.78;
+                    dl.add_image(textures[id], [x - g * 0.5, cy - g * 0.5], [x + g * 0.5, cy + g * 0.5]).col([1.0, 0.95, 0.7, fade]).build();
+                }
+            }
         }
 
         // the camera status, bottom right like SM64's (x 54 from the right, line 205): camera,
@@ -882,6 +1073,134 @@ impl ImguiRenderLoop for Overlay {
 }
 
 /// The giant fireball's ball (48 x 48, one of 4 frames): a sphere lit from the upper left, hot
+/// Distance from (x, y) to the segment a-b.
+fn seg_dist(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+    let t = (((x - a.0) * abx + (y - a.1) * aby) / (abx * abx + aby * aby)).clamp(0.0, 1.0);
+    let (px, py) = (a.0 + abx * t, a.1 + aby * t);
+    ((x - px).powi(2) + (y - py).powi(2)).sqrt()
+}
+
+/// The Boomerang Bros.' boomerang: a fat white chevron with red tips and a dark outline.
+fn rang_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let (c, l, r) = ((16.0, 21.0), (4.5, 8.0), (27.5, 8.0));
+    let d = seg_dist(x, y, c, l).min(seg_dist(x, y, c, r));
+    if d > 4.6 {
+        return [0; 4];
+    }
+    if d > 3.4 {
+        return [40, 30, 50, 255];
+    }
+    // (the tips red, a shine along the top edge)
+    let tip = (x - 16.0).abs() > 8.5;
+    if tip {
+        [230, 40, 40, 255]
+    } else if y < 15.0 - (x - 16.0).abs() * 0.95 {
+        [255, 255, 255, 255]
+    } else {
+        [225, 228, 240, 255]
+    }
+}
+
+/// The Chain Chomp, facing right: a black ball with a shine, its big eye, its teeth (open: a red
+/// mouth full of them).
+fn chomp_pixel(x: usize, y: usize, open: bool) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let (dx, dy) = (x - 24.0, y - 24.0);
+    let r = (dx * dx + dy * dy).sqrt();
+    if r > 21.5 {
+        return [0; 4];
+    }
+    // the mouth: a wedge to the right, open wide or a line of teeth
+    let ang = dy.atan2(dx);
+    let half = if open { 0.55 } else { 0.0 };
+    let mouth_c = 0.18;
+    if open && r > 6.0 && (ang - mouth_c).abs() < half {
+        let edge = half - (ang - mouth_c).abs();
+        // (teeth along the lips)
+        let k = ((r - 6.0) / 3.2).floor() as i32;
+        let tooth = edge < 0.22 && (k % 2 == 0 || edge < 0.1);
+        return if tooth { [250, 250, 245, 255] } else { [150, 20, 25, 255] };
+    }
+    if !open && r > 9.0 && (ang - mouth_c).abs() < 0.13 {
+        let k = ((r - 9.0) / 2.6).floor() as i32;
+        return if (ang - mouth_c).abs() < 0.04 { [40, 0, 0, 255] } else if k % 2 == 0 { [250, 250, 245, 255] } else { [20, 20, 22, 255] };
+    }
+    // the eye: white with a black pupil looking ahead
+    let (ex, ey) = (x - 28.0, y - 13.5);
+    let er = (ex * ex + ey * ey).sqrt();
+    if er < 6.5 {
+        let (px, py) = (x - 30.0, y - 13.5);
+        return if (px * px + py * py).sqrt() < 2.6 { [10, 10, 10, 255] } else if er > 5.6 { [30, 30, 30, 255] } else { [250, 250, 250, 255] };
+    }
+    // the ball, lit from the top left
+    let light = (1.0 - ((x - 15.0).powi(2) + (y - 13.0).powi(2)).sqrt() / 30.0).max(0.0);
+    let shine = if ((x - 14.0).powi(2) + (y - 12.0).powi(2)).sqrt() < 3.5 { 120.0 } else { 0.0 };
+    let v = (18.0 + 70.0 * light * light + shine).min(255.0) as u8;
+    let rim = if r > 20.0 { 0.5 } else { 1.0 };
+    [(v as f32 * rim) as u8, (v as f32 * rim) as u8, ((v as f32 + 8.0) * rim) as u8, 255]
+}
+
+/// A link of the Chomp's chain: a grey ring.
+fn link_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (dx, dy) = (x as f32 - 7.5, (y as f32 - 7.5) * 1.3);
+    let r = (dx * dx + dy * dy).sqrt();
+    if !(3.0..=6.8).contains(&r) {
+        return [0; 4];
+    }
+    let v = if dy < 0.0 { 190 } else { 120 };
+    [v, v, (v as u32 + 10).min(255) as u8, 255]
+}
+
+/// The hammer's icon: a wooden handle and a dark head with a band.
+fn hammer_icon_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let head = (6.0..26.0).contains(&x) && (5.0..15.0).contains(&y);
+    let band = head && (13.0..19.0).contains(&x);
+    let handle = (14.0..18.0).contains(&x) && (14.0..29.0).contains(&y);
+    let edge = |inside: bool, xi: f32, yi: f32| inside && !(xi < 7.0 || xi > 25.0 || yi < 6.0 || yi > 14.0);
+    if head {
+        if !edge(true, x, y) {
+            return [20, 20, 24, 255];
+        }
+        return if band { [200, 160, 60, 255] } else if y < 8.0 { [110, 110, 120, 255] } else { [70, 70, 80, 255] };
+    }
+    if handle {
+        return if x < 15.0 || x > 17.0 { [70, 40, 20, 255] } else { [170, 110, 55, 255] };
+    }
+    [0; 4]
+}
+
+/// SM64's mushroom, a Mega one: a red cap with white spots over a cream stem with eyes.
+fn mushroom_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let (cx, cy) = (16.0, 17.0);
+    let cap = y <= cy && ((x - cx) / 14.5).powi(2) + ((y - cy) / 13.5).powi(2) <= 1.0;
+    let stem = y > cy - 1.0 && y < 30.0 && (x - cx).abs() < 8.5 - (y - cy) * 0.15;
+    let outline = |on: bool, grow: f32| {
+        on && !(y <= cy && ((x - cx) / (14.5 - grow)).powi(2) + ((y - cy) / (13.5 - grow)).powi(2) <= 1.0)
+    };
+    if cap {
+        if outline(true, 1.2) {
+            return [40, 10, 10, 255];
+        }
+        let spot = |sx: f32, sy: f32, r: f32| ((x - sx).powi(2) + (y - sy).powi(2)).sqrt() < r;
+        if spot(16.0, 8.5, 4.2) || spot(6.5, 13.5, 3.0) || spot(25.5, 13.5, 3.0) {
+            return [255, 255, 255, 255];
+        }
+        return if y < 9.0 && x < 13.0 { [255, 90, 80, 255] } else { [220, 30, 30, 255] };
+    }
+    if stem {
+        if (x - cx).abs() > 7.3 - (y - cy) * 0.15 || y > 28.8 {
+            return [60, 40, 20, 255];
+        }
+        let eye = (x - 12.5).abs() < 1.3 && (20.0..25.0).contains(&y) || (x - 19.5).abs() < 1.3 && (20.0..25.0).contains(&y);
+        return if eye { [20, 20, 20, 255] } else { [250, 225, 180, 255] };
+    }
+    [0; 4]
+}
+
 /// white in the middle through yellow and orange to a deep red rim, its surface churning (value
 /// noise, shifted with each frame).
 fn orb_pixel(x: usize, y: usize, frame: usize) -> [u8; 4] {

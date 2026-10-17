@@ -63,6 +63,18 @@ pub enum Attack {
     AirHit,
     /// the hammer's launcher (X, Y): whoever it catches flies high up (juggle.rs)
     Launch,
+    /// the boomerang (boomerang.rs): a pass of one (out or back), the big one's blows as it hovers,
+    /// the launcher's (it lifts them)
+    Rang,
+    RangBig,
+    RangUpper,
+    /// the Chain Chomp (chomp.rs, er_moves.c): a lash or sweep, the cyclone's blows, a crash's
+    /// shockwave, a swing in the air, the bite that tosses them up
+    Chomp,
+    ChompSpin,
+    ChompEnd,
+    ChompAir,
+    ChompLaunch,
 }
 
 impl Attack {
@@ -92,6 +104,10 @@ impl Attack {
             Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
                 Attack::GroundPound.spec()
             }
+            Attack::Rang | Attack::RangBig | Attack::ChompSpin => Attack::Punch.spec(),
+            Attack::Chomp | Attack::ChompAir => Attack::Kick.spec(),
+            Attack::RangUpper | Attack::ChompLaunch => Attack::Stomp.spec(),
+            Attack::ChompEnd => Attack::GroundPound.spec(),
         }
     }
 
@@ -145,6 +161,16 @@ impl Attack {
             Attack::AirHit => (9.0, "damage_air"),
             // (it sets up the air string: the blows up there are the damage)
             Attack::Launch => (10.0, "damage_hammer_launch"),
+            // the boomerang: from afar and safe, a little each pass (it hits going and coming back)
+            Attack::Rang => (3.0, "damage_boomerang"),
+            Attack::RangBig => (3.0, "damage_boomerang_big"),
+            Attack::RangUpper => (5.0, "damage_boomerang_launcher"),
+            // the Chain Chomp: wide, many at once, a little each (the cyclone least of all)
+            Attack::Chomp => (7.0, "damage_chomp"),
+            Attack::ChompSpin => (3.0, "damage_chomp_cyclone"),
+            Attack::ChompEnd => (14.0, "damage_chomp_crash"),
+            Attack::ChompAir => (6.0, "damage_chomp_air"),
+            Attack::ChompLaunch => (6.0, "damage_chomp_bite"),
         }
     }
 
@@ -173,6 +199,9 @@ impl Attack {
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
             Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
+            Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin => 1.0,
+            Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
+            Attack::ChompEnd => 1.5,
         }
     }
 
@@ -192,7 +221,11 @@ impl Attack {
             Attack::Hammer | Attack::HammerAir | Attack::Meteor => 6,
             Attack::HammerSmash => 4,
             // the finishers always land, right after the blows before them
-            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd => 1,
+            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd | Attack::ChompEnd => 1,
+            // (each boomerang hits an enemy once a pass: boomerang.rs)
+            Attack::Rang => 2,
+            Attack::RangBig => 5,
+            Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
         }
     }
@@ -210,6 +243,9 @@ impl Attack {
                 | Attack::FlurryEnd
                 | Attack::GiroEnd
                 | Attack::ChainEnd
+                | Attack::ChompEnd
+                | Attack::ChompLaunch
+                | Attack::RangUpper
         )
     }
 
@@ -380,6 +416,9 @@ pub struct Combat {
     stomps: HashMap<u64, u32>,
     /// stomps per enemy in a row since Mario last stood on the ground (their damage fades)
     stomp_run: HashMap<u64, u32>,
+    /// blows on each enemy in the current string, and the tick of the last one (their damage fades
+    /// in a long string: a showy combo isn't over in a second)
+    string: HashMap<u64, (u32, u32)>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -392,7 +431,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), stomp_run: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
     }
 }
 
@@ -536,8 +575,8 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
             let r = ph.hit_radius.max(ph.chr_hit_radius);
             let h = ph.hit_height.max(ph.chr_hit_height);
             // (up to giant size: capped at 3 m the Fire Giant's ankles were outside his own body)
-            let radius = if r.is_finite() && r > 0.1 { (r * 100.0).clamp(40.0, 1500.0) } else { TARGET_RADIUS };
-            let height = if h.is_finite() && h > 0.3 { (h * 100.0).clamp(80.0, 4000.0) } else { TARGET_HEIGHT };
+            let radius = if r.is_finite() && r > 0.1 { (r / crate::scale()).clamp(40.0, 1500.0) } else { TARGET_RADIUS };
+            let height = if h.is_finite() && h > 0.3 { (h / crate::scale()).clamp(80.0, 4000.0) } else { TARGET_HEIGHT };
             {
                 static SEEN: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
                 let key = handle_key(&chr.field_ins_handle);
@@ -864,6 +903,10 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
+    // Mega Mario's blows are a giant's
+    if crate::mega::active() {
+        pct *= crate::mega::DAMAGE;
+    }
     // Metal Mario hits harder (his fireballs too)
     if crate::caps::active() == Some(crate::caps::METAL) {
         pct *= crate::caps::METAL_DAMAGE;
@@ -892,6 +935,14 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
 /// Stomps in a row on the same body without touching the ground (bouncing up a big one is many):
 /// each takes half of the one before (100%, 50%, 25%...), down to STOMP_FLOOR.
 const STOMP_FADE: f32 = 0.5;
+/// A string of blows on one enemy (no more than STRING_GAP ticks apart): the first STRING_FULL
+/// count in full, then each a share of the one before, down to STRING_FLOOR (a finisher's never
+/// below STRING_FINISHER_FLOOR)
+const STRING_GAP: u32 = 75;
+const STRING_FULL: u32 = 10;
+const STRING_FADE: f32 = 0.95;
+const STRING_FLOOR: f32 = 0.4;
+const STRING_FINISHER_FLOOR: f32 = 0.7;
 const STOMP_FLOOR: f32 = 0.1;
 
 /// Target body in SM64 units: horizontal radius and height (a human-sized capsule).
@@ -960,9 +1011,61 @@ pub fn big_bodies(targets: &[Target]) -> Vec<(glam::Vec3, f32, f32)> {
     targets
         .iter()
         .filter(|t| !t.is_prop() && (t.height > STOMP_HEIGHT || t.radius > 120.0))
-        .map(|t| (glam::Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2), t.radius / 100.0, t.height / 100.0))
+        .map(|t| (glam::Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2), t.radius * crate::scale(), t.height * crate::scale()))
         .collect()
 }
+/// the enemies faded by `fade_occluders`, how see-through each is now, and its last frame
+static FADED_STATE: std::sync::Mutex<Option<(HashMap<u64, (FieldInsHandle, f32)>, std::time::Instant)>> = std::sync::Mutex::new(None);
+
+/// Every faded enemy back to full (Mario gone, Lakitu's camera off).
+pub fn restore_faded() {
+    let Some((faded, _)) = FADED_STATE.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
+    for (h, _) in faded.values() {
+        if let Some(chr) = wcm.chr_ins_by_handle_mut(h) {
+            chr.opacity_keyframes_multiplier = 1.0;
+            chr.opacity_keyframes_multiplier_previous = 1.0;
+        }
+    }
+}
+
+/// Big enemies the camera is inside of, or that stand between it and Mario (`chest`, Elden Ring),
+/// fade out until they're out of the way (a beast sunk into the ground swallowed the view whole when
+/// Mario walked into it). Every frame; each faded one comes back on its own.
+pub fn fade_occluders(targets: &[Target], cam: glam::Vec3, chest: glam::Vec3) {
+    use glam::Vec3;
+    /// how see-through, and how fast it gets there and back (per second)
+    const FADED: f32 = 0.22;
+    const RATE: f32 = 7.0;
+    let mut guard = FADED_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let (faded, last) = guard.get_or_insert_with(|| (HashMap::new(), std::time::Instant::now()));
+    let dt = last.elapsed().as_secs_f32().min(0.1);
+    *last = std::time::Instant::now();
+    let mut want: HashMap<u64, FieldInsHandle> = HashMap::new();
+    for t in targets.iter().filter(|t| t.hostile && (t.height > 220.0 || t.radius > 90.0)) {
+        let Some(h) = &t.handle else { continue };
+        let (foot, r, top) = (Vec3::new(t.er.0, t.er.1, t.er.2), t.radius * crate::scale() + 0.35, t.er.1 + t.height * crate::scale() + 0.3);
+        let inside = |p: Vec3, r: f32| p.y > foot.y - 0.5 && p.y < top && (p - foot).with_y(0.0).length() < r;
+        // the camera in it, or the line to Mario through it (not its last bit: Mario next to it)
+        let blocks = inside(cam, r) || (1..9).any(|k| inside(cam.lerp(chest, k as f32 / 10.0), r * 0.85));
+        if blocks {
+            want.insert(t.key, *h);
+        }
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
+    for (k, h) in &want {
+        faded.entry(*k).or_insert((*h, 1.0));
+    }
+    faded.retain(|k, (h, alpha)| {
+        let goal = if want.contains_key(k) { FADED } else { 1.0 };
+        *alpha += (goal - *alpha).clamp(-RATE * dt, RATE * dt);
+        let Some(chr) = wcm.chr_ins_by_handle_mut(h) else { return false };
+        chr.opacity_keyframes_multiplier = *alpha;
+        chr.opacity_keyframes_multiplier_previous = *alpha;
+        !(goal >= 1.0 && *alpha >= 1.0)
+    });
+}
+
 /// Picking an enemy up (the dive) only this close: farther hits just hurt.
 const DIVE_GRAB_RADIUS: f32 = 45.0;
 
@@ -1004,6 +1107,9 @@ const SHELL_RADIUS: f32 = 140.0;
 /// the launcher catches whoever is around a point this far in front of Mario
 const LAUNCH_AHEAD: f32 = 110.0;
 const LAUNCH_RADIUS: f32 = 150.0;
+/// the Chain Chomp's cyclone reaches all around Mario out to its chain, and its crash's shockwave
+const CHOMP_SPIN_RADIUS: f32 = 440.0;
+const CHOMP_CRASH_RADIUS: f32 = 300.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
@@ -1017,6 +1123,8 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
     enum Reach {
         Sweep,
         Around(Vec3, f32),
+        /// around a point, out to the radius and the swept body's reach beyond it
+        Ring(Vec3, f32),
         Front(f32),
     }
     let (attack, reach) = match hit {
@@ -1040,6 +1148,12 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::Shell => (Attack::Shell, Reach::Around(me, SHELL_RADIUS)),
         Hit::Air => (Attack::AirHit, Reach::Front(STRING_REACH)),
         Hit::Launch => (Attack::Launch, Reach::Around(me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * LAUNCH_AHEAD, LAUNCH_RADIUS)),
+        // the Chain Chomp: along its path (swing = its body), all around Mario in the cyclone, a
+        // shockwave where it crashes
+        Hit::Chomp | Hit::ChompAir => (if hit == Hit::Chomp { Attack::Chomp } else { Attack::ChompAir }, Reach::Sweep),
+        Hit::ChompLaunch => (Attack::ChompLaunch, Reach::Sweep),
+        Hit::ChompSpin => (Attack::ChompSpin, Reach::Ring(me, CHOMP_SPIN_RADIUS)),
+        Hit::ChompEnd => (Attack::ChompEnd, Reach::Around(head, CHOMP_CRASH_RADIUS)),
     };
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
     let mut out = Vec::new();
@@ -1050,6 +1164,10 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
             Reach::Around(c, r) => {
                 // (the super jump punch rises above them: anyone up to 1.5 m under his feet)
                 flat(foot - c).length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
+            }
+            Reach::Ring(c, r) => {
+                let reach = swing.map_or(0.0, |s| HAMMER_HEAD_REACH * s.scale);
+                flat(foot - c).length() <= r + reach + radius && c.y - 150.0 <= top && c.y + 250.0 >= foot.y
             }
             Reach::Front(r) => {
                 let d = flat(foot - me);
@@ -1300,7 +1418,7 @@ impl Combat {
                 // Bob-omb (carry.rs)
                 if grab && liftable(handle) {
                     let me = player.modules.physics.position;
-                    if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius / 100.0, target.height / 100.0) {
+                    if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius * crate::scale(), target.height * crate::scale()) {
                         self.victims.insert(target.key, (*handle, tick));
                         continue;
                     }
@@ -1310,17 +1428,20 @@ impl Combat {
                 // (the hammer's launcher sends them flying high up instead, for Mario to jump after)
                 let me = player.modules.physics.position;
                 let me = glam::Vec3::new(me.0, me.1, me.2);
-                if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch) && !hands_off(handle) {
+                if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
-                    let high = matches!(attack, Attack::Launch);
-                    crate::juggle::try_launch(handle, me, target.radius / 100.0, target.height / 100.0, regular, stunned, high);
+                    let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
+                    crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_)) {
+                    // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
+                    crate::juggle::shot(handle);
                 } else {
                     crate::juggle::hit(handle, me);
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_)) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius / 100.0) {
+                if !matches!(attack, Attack::Fire(_)) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
@@ -1344,7 +1465,23 @@ impl Combat {
                 } else {
                     1.0
                 };
-                if take_share(handle, attack, scale) {
+                // a long string on the same enemy: past STRING_FULL blows each is worth a little
+                // less (a finisher less so), so long and showy combos don't melt it in a second
+                if self.string.len() > 64 {
+                    self.string.retain(|_, r| tick.wrapping_sub(r.1) <= STRING_GAP);
+                }
+                let run = self.string.entry(target.key).or_insert((0, tick));
+                if tick.wrapping_sub(run.1) > STRING_GAP {
+                    run.0 = 0;
+                }
+                run.0 += 1;
+                run.1 = tick;
+                let fade = STRING_FADE.powi(run.0.saturating_sub(STRING_FULL) as i32).max(STRING_FLOOR);
+                let fade = if attack.finisher() { fade.max(STRING_FINISHER_FLOOR) } else { fade };
+                if fade < 1.0 && run.0 % 5 == 0 {
+                    log(format!("combat: string of {} on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
+                }
+                if take_share(handle, attack, scale * fade) {
                     if !self.finishing.contains_key(&target.key) {
                         crate::style::kill(attack.finisher());
                     }
@@ -1353,13 +1490,16 @@ impl Combat {
             }
             let (bullet, ..) = attack.spec();
             if !target.is_prop() {
-                crate::style::hit();
+                crate::style::hit(attack);
             }
             // (breaking a jar or a crate is no blow to stop for)
             if !matches!(attack, Attack::Fire(_)) && !target.is_prop() {
                 let me = player.modules.physics.position;
-                let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height / 100.0).min(3.0) * 0.5, target.er.2);
+                let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
+                if attack.finisher() && target.handle.is_some() {
+                    crate::style::finisher(at);
+                }
             }
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
@@ -1433,7 +1573,8 @@ impl Combat {
         if lost <= 0 {
             return None;
         }
-        let frac = lost as f32 / max.max(1) as f32 * scale;
+        // (Mega Mario shrugs off half of it)
+        let frac = lost as f32 / max.max(1) as f32 * scale * if crate::mega::active() { crate::mega::HURT } else { 1.0 };
         if frac >= 0.04 {
             return Some(Hurt::Hit(if frac < 0.25 { 1 } else { 2 }));
         }

@@ -1029,7 +1029,7 @@ impl HavokCollision {
             }
             // query boxes (world AABBs): the main box around Mario and a narrow deep column under him
             let boxes = [
-                (center - Vec3::new(RADIUS, BOX_DOWN, RADIUS), center + Vec3::new(RADIUS, ABOVE, RADIUS)),
+                (center - Vec3::new(RADIUS, BOX_DOWN, RADIUS), center + Vec3::new(RADIUS, ABOVE * crate::size_factor(), RADIUS)),
                 (center - Vec3::new(COLUMN, BELOW, COLUMN), center + Vec3::new(COLUMN, 0.0, COLUMN)),
             ];
             let inv = q.inverse();
@@ -1067,7 +1067,7 @@ impl HavokCollision {
                     lo.x < center.x + r && hi.x > center.x - r && lo.z < center.z + r && hi.z > center.z - r
                         && hi.y > center.y - down && lo.y < center.y + up
                 };
-                if hits(RADIUS, BOX_DOWN, ABOVE) || hits(COLUMN, BELOW, 0.0) {
+                if hits(RADIUS, BOX_DOWN, ABOVE * crate::size_factor()) || hits(COLUMN, BELOW, 0.0) {
                     out.push((w, layer & 0xff, i as u32));
                 }
             }

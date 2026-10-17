@@ -10,7 +10,7 @@ use eldenring::{
 use fromsoftware_shared::FromStatic;
 
 use crate::sm64::SM64Surface;
-use crate::{SCALE, log};
+use crate::{log, scale};
 
 thread_local! {
     static STATS: std::cell::RefCell<(u32,)> = const { std::cell::RefCell::new((0,)) };
@@ -28,15 +28,15 @@ const BACKOFF: f32 = 50.0;
 
 pub fn sm_to_er(origin: [f32; 3], p: [f32; 3]) -> HavokPosition {
     // SM64 and Havok are mirrored on X
-    HavokPosition(origin[0] - p[0] * SCALE, origin[1] + p[1] * SCALE, origin[2] + p[2] * SCALE, 0.0)
+    HavokPosition(origin[0] - p[0] * scale(), origin[1] + p[1] * scale(), origin[2] + p[2] * scale(), 0.0)
 }
 
 pub fn er_to_sm(origin: [f32; 3], p: &HavokPosition) -> [f32; 3] {
-    [-(p.0 - origin[0]) / SCALE, (p.1 - origin[1]) / SCALE, (p.2 - origin[2]) / SCALE]
+    [-(p.0 - origin[0]) / scale(), (p.1 - origin[1]) / scale(), (p.2 - origin[2]) / scale()]
 }
 
 fn sm_delta(d: [f32; 3]) -> PositionDelta {
-    PositionDelta(-d[0] * SCALE, d[1] * SCALE, d[2] * SCALE)
+    PositionDelta(-d[0] * scale(), d[1] * scale(), d[2] * scale())
 }
 
 pub struct Caster<'a> {

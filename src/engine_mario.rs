@@ -71,8 +71,15 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
         let q = Quat::from_mat3(&(a * (1.0 / p.scale))).normalize();
         // SM64 is mirrored on X: S R S
         p.rot = Quat::from_xyzw(q.x, -q.y, -q.z, q.w);
-        let t = Vec3::new(m[12] - mario[0], m[13] - mario[1], m[14] - mario[2]) * crate::SCALE;
+        let t = Vec3::new(m[12] - mario[0], m[13] - mario[1], m[14] - mario[2]) * crate::scale();
         p.pos = Vec3::new(-t.x, t.y, t.z);
+    }
+    // Mega Mario (mega.rs): his parts are already where his bigger world puts them; their meshes
+    // grow with him (and while he grows, all of him: the steps up and down of the mushroom)
+    let (visual, size) = (crate::mega::visual(), crate::size_factor());
+    for p in out.iter_mut().take(SM64_PARTS).skip(1) {
+        p.pos *= visual;
+        p.scale *= size * visual;
     }
     // right hand: fist or peace sign (the hidden one shrinks; it only swaps twice per star dance)
     out[PEACE] = PartPose { scale: if peace { out[RIGHT_HAND].scale } else { 0.01 }, ..out[RIGHT_HAND] };
@@ -86,7 +93,7 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
         // hidden variants stay full size, tucked 6 mm into the head behind the visible one (scaling
         // them away made the game's motion blur smear every blink; zero scale also darkened the model)
         let head = out[HEAD];
-        let pos = if cell == eye_cell { head.pos } else { head.pos + head.rot * EYE_TUCK };
+        let pos = if cell == eye_cell { head.pos } else { head.pos + head.rot * EYE_TUCK * size * visual };
         out[SM64_PARTS + k] = PartPose { pos, ..head };
     }
     Some(out)

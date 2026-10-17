@@ -149,7 +149,7 @@ impl Moving {
             let center = sm(origin, p);
             // outside the body's whole bounding sphere (+40 m)? Lifts are e.g. 258 m tall cylinders whose
             // top is the platform, so neither the origin nor the vertices say where Mario can touch it
-            let dist = (center.distance(Vec3::from(mario)) - t.mesh.radius() / crate::SCALE).max(0.0);
+            let dist = (center.distance(Vec3::from(mario)) - t.mesh.radius() / crate::scale()).max(0.0);
             if dist > FORGET {
                 log(format!("moving: body #{i} {dist:.0} units away, dropping"));
                 forget.push(*i);

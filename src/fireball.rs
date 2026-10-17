@@ -7,6 +7,9 @@
 //! - held on for 10 s it keeps growing into a giant one, lifted over his head: it hits twice as
 //!   hard as the full one and blows regular enemies away (knock.rs), in a shower of flames
 //! - after a shot, a short cooldown (released too early: Lakitu's buzz)
+//! - thrown with a move of its own (er_moves.c's throws): a palm thrust standing, pushing him back
+//!   the harder the shot, the giant one from over his head; in the air it holds him up a moment;
+//!   running he shoots on the move. The flame leaves his hand when the throw lets go.
 //! Shots fly straight, turned to the nearest enemy in front, and burst on walls and bodies. The
 //! damage goes through combat.rs like Mario's other hits.
 
@@ -20,7 +23,7 @@ use glam::Vec3;
 
 use crate::combat::{self, Attack, Combat};
 use crate::collision::sm_to_er;
-use crate::{SCALE, log, sm64, worker};
+use crate::{log, scale, sm64, worker};
 
 /// held this many SM64 ticks (30 a second): charge levels 1, 2, 3 and the giant one
 const CHARGE_TICKS: [u32; 4] = [30, 60, 120, 300];
@@ -56,12 +59,10 @@ const SOUND_BOMB: i32 = 0x802E_2081_u32 as i32;
 const SOUND_CHARGE: [i32; 4] = [0x7000_F881_u32 as i32, 0x3016_0091, 0x7030_2081, SOUND_VOLCANO];
 const SOUND_BUZZ: i32 = 0x700E_0081;
 
-const ACT_THROWING: u32 = 0x8000_0588;
 /// running, he throws it with a punch on the move
 const ACT_MOVE_PUNCHING: u32 = 0x0080_0457;
 /// how long that punch is only a throw (hits no one, combat.rs), ticks
 const THROW_TICKS: u32 = 12;
-const ACT_AIR_THROW: u32 = 0x8300_08AB;
 const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 const ACT_FLAG_STATIONARY: u32 = 0x200;
 const ACT_FLAG_MOVING: u32 = 0x400;
@@ -118,6 +119,8 @@ pub struct Fire {
     ready_at: u32,
     /// tick of the last shot thrown with a running punch
     run_throw: Option<u32>,
+    /// a shot waiting for its throw to let go (its level, when it was asked for)
+    pending: Option<(u8, u32)>,
     level: u8,
     shots: Vec<Shot>,
     bursts: Vec<Burst>,
@@ -170,12 +173,12 @@ fn er(origin: [f32; 3], p: [f32; 3]) -> Vec3 {
 
 /// SM64 velocity (units per tick) as Elden Ring's (m/s): mirrored on X
 fn er_vel(v: [f32; 3]) -> Vec3 {
-    Vec3::new(-v[0], v[1], v[2]) * SCALE * 30.0
+    Vec3::new(-v[0], v[1], v[2]) * scale() * 30.0
 }
 
 impl Fire {
     pub fn new() -> Self {
-        Fire { held_since: None, ready_at: 0, run_throw: None, level: 0, shots: Vec::new(), bursts: Vec::new(), pushes: Vec::new() }
+        Fire { held_since: None, ready_at: 0, run_throw: None, pending: None, level: 0, shots: Vec::new(), bursts: Vec::new(), pushes: Vec::new() }
     }
 
     /// Game thread, every SM64 tick: RB held now (`b`, and whether Mario may shoot at all: not on
@@ -187,6 +190,7 @@ impl Fire {
         id: i32,
         b: bool,
         allowed: bool,
+        mv: &sm64::SM64ErMove,
         state: &sm64::SM64MarioState,
         origin: [f32; 3],
         tick: u32,
@@ -218,6 +222,14 @@ impl Fire {
                 self.shoot(id, level, state, origin, tick);
             }
         }
+        // the throw let go (or never came, cut short): the flame leaves his hand
+        if let Some((level, asked)) = self.pending {
+            let thrown = mv.throw_kind > 0 && mv.throw_kind as u32 - 1 >= crate::moves::THROW_FIRE;
+            if thrown || tick.wrapping_sub(asked) > 9 {
+                self.pending = None;
+                self.spawn(level, state, origin, tick);
+            }
+        }
 
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);
@@ -225,16 +237,62 @@ impl Fire {
         self.publish(state, origin, tick);
     }
 
+    /// Mario's world was re-scaled (mega.rs): shots in flight, kept in its old units, go.
+    pub fn drop_shots(&mut self) {
+        self.shots.clear();
+        self.pending = None;
+    }
+
     /// Mario's punch is only throwing a shot (combat.rs: it hits no one).
     pub fn throwing(&self, tick: u32) -> bool {
         self.run_throw.is_some_and(|t| tick.wrapping_sub(t) < THROW_TICKS)
     }
 
+    /// Starts a shot: its throw (the flame comes out when it lets go: `spawn`), or straight away
+    /// running or dashing.
     fn shoot(&mut self, id: i32, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
+        self.ready_at = tick + COOLDOWN[level as usize];
+        let (dir, _) = self.aim(state, origin);
+        let on_ground = state.action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0 && state.action & ACT_NO_THROW == 0;
+        // the throw's kind: by charge level (er_moves.c ER_THROW_FIRE*)
+        let kind = crate::moves::THROW_FIRE + match level {
+            0 => 0,
+            1 | 2 => 1,
+            3 => 2,
+            _ => 3,
+        };
+        let throw = if action_air(state.action) {
+            Some((crate::moves::ACT_ER_AIR_THROW, kind))
+        } else if on_ground && (state.forward_velocity.abs() < RUN_SHOT_SPEED || level >= GIANT) && !crate::moves::dodging(state.action) {
+            Some((crate::moves::ACT_ER_THROW, kind))
+        } else {
+            None
+        };
+        let face = (dir.x.abs() + dir.z.abs() > 0.01).then(|| dir.x.atan2(dir.z));
+        if let Some((action, kind)) = throw {
+            worker::call("fireball throw", move |_| unsafe {
+                if let Some(f) = face {
+                    sm64::sm64_set_mario_faceangle(id, f);
+                }
+                sm64::sm64_set_mario_action_arg(id, action, kind);
+            });
+            self.pending = Some((level, tick));
+            return;
+        }
+        // running: a punch on the move throws it, now
+        if on_ground && !crate::moves::dodging(state.action) {
+            self.run_throw = Some(tick);
+            worker::call("fireball run throw", move |_| unsafe { sm64::sm64_set_mario_action(id, ACT_MOVE_PUNCHING) });
+        }
+        self.spawn(level, state, origin, tick);
+    }
+
+    /// Where a shot from his hand goes: the nearest enemy in front (its chest), else straight ahead;
+    /// and whether one was found.
+    fn aim(&self, state: &sm64::SM64MarioState, origin: [f32; 3]) -> (Vec3, bool) {
         let m = state.position;
         let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
         let hand = [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0];
-        // the nearest enemy in front (aimed at its chest), else straight ahead
         let here = sm_to_er(origin, m);
         let aim = combat::nearby(&here, AIM_RANGE, origin)
             .iter()
@@ -246,36 +304,24 @@ impl Fire {
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, p)| p);
-        let dir = match aim {
-            Some(p) => Vec3::new(p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]).normalize_or(Vec3::new(fx, 0.0, fz)),
-            None => Vec3::new(fx, 0.0, fz),
-        };
+        match aim {
+            Some(p) => (Vec3::new(p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]).normalize_or(Vec3::new(fx, 0.0, fz)), true),
+            None => (Vec3::new(fx, 0.0, fz), false),
+        }
+    }
+
+    /// The flame leaves his hand.
+    fn spawn(&mut self, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
+        let m = state.position;
+        let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+        let hand = [m[0] + fx * 45.0, m[1] + if level >= GIANT { 150.0 } else { 75.0 }, m[2] + fz * 45.0];
+        let (dir, aimed) = self.aim(state, origin);
         let vel = dir * SPEED[level as usize];
         self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new() });
-        self.ready_at = tick + COOLDOWN[level as usize];
-        log(format!("fireball: level {level} shot{}", if aim.is_some() { ", aimed" } else { "" }));
-
-        // SM64's throw (it plays Mario's "wah" and the swish), turned to where the shot goes;
-        // running, a punch on the move throws it
-        let on_ground = state.action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0 && state.action & ACT_NO_THROW == 0;
-        let throw = if action_air(state.action) {
-            Some(ACT_AIR_THROW)
-        } else if on_ground && state.forward_velocity.abs() < RUN_SHOT_SPEED {
-            Some(ACT_THROWING)
-        } else if on_ground && !crate::moves::dodging(state.action) {
-            self.run_throw = Some(tick);
-            Some(ACT_MOVE_PUNCHING)
-        } else {
-            None
-        };
-        let face = (dir.x.abs() + dir.z.abs() > 0.01).then(|| dir.x.atan2(dir.z));
+        log(format!("fireball: level {level} shot{}", if aimed { ", aimed" } else { "" }));
+        // a puff of flame at his hand as it leaves
+        self.bursts.push(Burst { pos: er(origin, hand), level: 0, born: tick });
         worker::call("fireball shot", move |_| unsafe {
-            if let Some(a) = throw {
-                if let Some(f) = face {
-                    sm64::sm64_set_mario_faceangle(id, f);
-                }
-                sm64::sm64_set_mario_action(id, a);
-            }
             sm64::sm64_play_sound_global(SOUND_FLAME_BLOWN);
             if level >= 3 {
                 sm64::sm64_play_sound_global(SOUND_VOLCANO);
@@ -300,7 +346,7 @@ impl Fire {
             let r = RADIUS[shot.level as usize];
             // enemies first (one standing against a wall still takes the hit)
             let center = sm_to_er(origin, next);
-            let near = combat::nearby(&center, 3.0 + r * SCALE, origin);
+            let near = combat::nearby(&center, 3.0 + r * scale(), origin);
             let mut hits: Vec<(usize, f32)> = near
                 .iter()
                 .enumerate()

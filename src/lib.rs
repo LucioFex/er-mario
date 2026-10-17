@@ -5,8 +5,10 @@
 
 mod assets;
 mod audio;
+mod boomerang;
 mod caps;
 mod carry;
+mod chomp;
 mod collision;
 mod coins;
 mod combat;
@@ -16,6 +18,7 @@ mod equip;
 mod kbd;
 mod knock;
 mod lakitu;
+mod mega;
 mod menu_mario;
 mod havok_col;
 mod explore;
@@ -43,6 +46,7 @@ mod style;
 mod update;
 mod version;
 mod voice;
+mod weapons;
 mod worker;
 mod yoshi;
 
@@ -71,7 +75,23 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::core::{PCSTR, w};
 
 /// Metres per SM64 unit (Mario is ~160 units tall, so ~1.6 m).
-pub(crate) const SCALE: f32 = 0.01;
+/// SM64 units to metres: 0.01, more for Mega Mario (mega.rs: his whole world is scaled, so he's
+/// bigger in it, collisions and reach and all)
+static SCALE_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3C23_D70A);
+pub(crate) const BASE_SCALE: f32 = 0.01;
+
+pub(crate) fn scale() -> f32 {
+    f32::from_bits(SCALE_BITS.load(Ordering::Relaxed))
+}
+
+pub(crate) fn set_scale(s: f32) {
+    SCALE_BITS.store(s.to_bits(), Ordering::Relaxed);
+}
+
+/// How many times his normal size Mario is (Mega Mario).
+pub(crate) fn size_factor() -> f32 {
+    scale() / BASE_SCALE
+}
 /// The game's floor materials that are lava (ChrPhysicsMaterialInfo::hit_material): the
 /// HitMtrlParam rows that put the lava burn (SpEffect 4101) on whoever stands on them. 7 is the
 /// lava of Mt. Gelmir, the others are other places' (Rykard's arena among them).
@@ -372,6 +392,7 @@ struct MarioState {
     combat: combat::Combat,
     /// Mario's fireball (RB)
     fire: fireball::Fire,
+    rang: boomerang::Boomerang,
     /// the dash (B) and the special moves (Y)
     moves: moves::Moves,
     /// what the combos' moves did on the last tick
@@ -695,7 +716,7 @@ static SM64_READY: AtomicBool = AtomicBool::new(false);
 
 fn to_er(origin: [f32; 3], p: [f32; 3]) -> HavokPosition {
     // SM64 and Havok are mirrored on X
-    HavokPosition(origin[0] - p[0] * SCALE, origin[1] + p[1] * SCALE, origin[2] + p[2] * SCALE, 0.0)
+    HavokPosition(origin[0] - p[0] * scale(), origin[1] + p[1] * scale(), origin[2] + p[2] * scale(), 0.0)
 }
 
 /// Starts libsm64 with the player's ROM (once). With `export`, also takes Mario's model from it
@@ -840,7 +861,27 @@ const PLAYER_MOVE_FILTER: u32 = 0x1704;
 /// Asks the game itself whether a triangle is collision the player really collides with:
 /// a 20 cm ray through its centre with the player's movement filter must hit it.
 fn game_confirms(player: &PlayerIns, t: &havok_col::Tri) -> bool {
-    game_confirms_with(player, t, PLAYER_MOVE_FILTER)
+    // Two rays per triangle, hundreds of triangles a query: the same static triangles came back
+    // query after query and fast combat moves (a refresh every 3 ticks) made 30-60 ms hitches.
+    // Answers are kept by the triangle's exact place; a "no" is asked again after a few seconds
+    // (collision streaming in late), a "yes" for two minutes.
+    type Answers = std::collections::HashMap<[u32; 9], (bool, std::time::Instant)>;
+    static ANSWERS: Mutex<Option<(Answers, std::time::Instant)>> = Mutex::new(None);
+    let key = [t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z].map(f32::to_bits);
+    let mut guard = ANSWERS.lock().unwrap_or_else(|e| e.into_inner());
+    let (answers, swept) = guard.get_or_insert_with(|| (Answers::new(), std::time::Instant::now()));
+    if answers.len() > 200_000 || swept.elapsed().as_secs_f32() > 30.0 {
+        answers.retain(|_, (ok, at)| *ok && at.elapsed().as_secs_f32() < 120.0);
+        *swept = std::time::Instant::now();
+    }
+    if let Some((ok, at)) = answers.get(&key) {
+        if *ok || at.elapsed().as_secs_f32() < 3.0 {
+            return *ok;
+        }
+    }
+    let ok = game_confirms_with(player, t, PLAYER_MOVE_FILTER);
+    answers.insert(key, (ok, std::time::Instant::now()));
+    ok
 }
 
 fn game_confirms_with(player: &PlayerIns, t: &havok_col::Tri, filter: u32) -> bool {
@@ -1441,7 +1482,7 @@ fn input_task() {
         if rb && !HELD.swap(rb, Ordering::Relaxed) && !busy && equip::select_whistle() {
             log("input: whistle (use item) requested");
             FRAMES.store(8, Ordering::Relaxed);
-            if !mounted {
+            if !mounted && !mega::active() && !mega::changing() {
                 yoshi::call();
             }
         } else if !rb {
@@ -1890,6 +1931,9 @@ fn frame(data: &FD4TaskData) {
             }
             let id = m.id;
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
+            mega::clear();
+            set_scale(BASE_SCALE);
+            combat::restore_faded();
             physics.gravity_disabled = false;
             set_opacity(1.0);
             *engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -1925,6 +1969,9 @@ fn frame(data: &FD4TaskData) {
         }
     }
     let m = guard.get_or_insert_with(|| {
+        // (a new Mario is his own size)
+        mega::clear();
+        set_scale(BASE_SCALE);
         let p = physics.position;
         let feet = [p.0, p.1, p.2];
         log("probing raycast filters:");
@@ -1960,7 +2007,7 @@ fn frame(data: &FD4TaskData) {
         if lift > 0.05 {
             log(format!("spawn: the ground is {lift:.2} m above the player's feet, Mario goes on top"));
         }
-        let start_y = lift / SCALE;
+        let start_y = lift / scale();
         let mut surfaces = surfaces;
         surfaces.extend(flat_floor([0.0, start_y, 0.0]));
         load_surfaces(&surfaces);
@@ -2032,6 +2079,14 @@ fn frame(data: &FD4TaskData) {
             parts: None,
             combat: combat::Combat::new(),
             fire: fireball::Fire::new(),
+            rang: {
+                // (a new Mario starts bare-handed)
+                weapons::clear();
+                hammer::set_out(false);
+                chomp::set_out(false);
+                boomerang::clear();
+                boomerang::Boomerang::new()
+            },
             moves: moves::Moves::new(),
             combo: sm64::SM64ErMove::default(),
             dead: false,
@@ -2331,11 +2386,14 @@ fn frame(data: &FD4TaskData) {
         stats::update(|s| s.deaths += 1);
         coins::clear();
         fireball::clear();
+        boomerang::clear();
+        chomp::clear();
         impact::clear();
         knock::clear();
         juggle::clear();
         style::clear();
         caps::clear();
+        mega::clear();
         swing::reset();
         carry::reset();
     } else if m.dead && hp > 0 {
@@ -2546,7 +2604,7 @@ fn frame(data: &FD4TaskData) {
         let here = to_er(m.origin, m.state.position);
         let targets = {
             let _span = perf::span(perf::TARGETS);
-            combat::nearby(&here, 8.0, m.origin)
+            combat::nearby(&here, 8.0 * size_factor(), m.origin)
         };
         let no_stomp = m.combat.stomp_limits(&targets, m.state.action & 0x800 == 0);
         // breakable props (crates, jars, clutter, many tiny or invisible) never bounce Mario like a
@@ -2561,6 +2619,13 @@ fn frame(data: &FD4TaskData) {
         // the enemy a falling Mario drifts onto, and the big bodies the camera keeps out of
         let home = combat::home(&m.state, &targets);
         lakitu::set_big(combat::big_bodies(&targets));
+        match lakitu::position() {
+            Some(cam) => {
+                let feet = to_er(m.origin, m.state.position);
+                combat::fade_occluders(&targets, cam, glam::Vec3::new(feet.0, feet.1 + 0.7, feet.2));
+            }
+            None => combat::restore_faded(),
+        }
         lakitu::set_climb(m.combat.climb(&targets));
         // SM64's health is Mario's: Elden Ring hits cost wedges, and the Tarnished's HP is kept full
         // (a hit bigger than his whole HP would still kill him outright, a low-level character
@@ -2641,7 +2706,7 @@ fn frame(data: &FD4TaskData) {
                 let mut bodies = vec![(glam::Vec3::new(me.0, me.1, me.2), 0.4, 1.2)];
                 bodies.extend(targets.iter().filter(|t| !t.is_prop()).map(|t| {
                     let p = to_er(m.origin, t.sm);
-                    (glam::Vec3::new(p.0, p.1, p.2), t.radius / 100.0, t.height / 100.0)
+                    (glam::Vec3::new(p.0, p.1, p.2), t.radius * scale(), t.height * scale())
                 }));
                 coins::update_visibility(glam::Vec3::new(c.0, c.1, c.2), &bodies, |from, to| {
                     let d = to - from;
@@ -2711,15 +2776,24 @@ fn frame(data: &FD4TaskData) {
         // no Y moves while the Tarnished is in an event animation (picking up, a grace, a door...)
         // or a menu is up
         let interacting = FOLLOWING.load(Ordering::Relaxed) || MENU_OPEN.load(Ordering::Relaxed) || game_driven(current_anim(&player_ref.chr_ins));
-        // L1: the hammer out or away (not while holding anyone or riding: his hands are busy)
+        // L1: the next weapon (held: the fists; not while holding anyone or riding: his hands are
+        // busy, nor in the middle of one of the weapons' moves)
         let hands_free = fire_allowed && !carry::holding();
-        // (not in the middle of one of the combos' moves)
-        if let Some(out) = m.moves.toggle_hammer(l_hammer, hands_free && !m.dead && !moves::hammer_busy(m.state.action)) {
-            hammer::set_out(out);
-            let hand = to_er(m.origin, m.state.position);
-            impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), out);
+        let big = mega::active() || mega::changing();
+        if big && m.moves.weapon != weapons::FISTS {
+            m.moves.weapon = weapons::FISTS;
+            weapons::set(weapons::FISTS);
+            hammer::set_out(false);
+            chomp::set_out(false);
         }
-        let hammer_on = m.moves.hammer && hands_free;
+        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !moves::hammer_busy(m.state.action), m.ticks) {
+            hammer::set_out(w == weapons::HAMMER);
+            chomp::set_out(w == weapons::CHOMP);
+            let hand = to_er(m.origin, m.state.position);
+            impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), w != weapons::FISTS);
+        }
+        let weapon_on = if hands_free { m.moves.weapon } else { weapons::FISTS };
+        let rangs_ready = boomerang::ready() as i32;
         let juggling = juggle::active();
         let hold_y = y_move;
         let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
@@ -2802,7 +2876,7 @@ fn frame(data: &FD4TaskData) {
                 unsafe { sm64::sm64_set_mario_health(id, 0x880) };
                 unsafe { sm64::sm64_play_sound_global(SOUND_HEART) };
             }
-            unsafe { sm64::sm64_er_set_hammer(hammer_on as i32) };
+            unsafe { sm64::sm64_er_set_weapon(weapon_on as i32, rangs_ready) };
             unsafe { sm64::sm64_er_set_juggle(juggling as i32) };
             unsafe { sm64::sm64_er_set_hold_y(hold_y as i32) };
             if let Some(r) = request {
@@ -2833,7 +2907,10 @@ fn frame(data: &FD4TaskData) {
             // the hammer in his hand (out, and not swimming or in a cutscene)
             const ACT_GROUP_MASK: u32 = 0x1C0;
             let busy_hands = matches!(state.action & ACT_GROUP_MASK, 0x0C0 | 0x100) || peace;
-            let swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
+            let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
+            // (the Chain Chomp's body hits like the hammer's head)
+            let chomp_swing = parts.as_ref().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
+            let swing = chomp_swing.or(hammer_swing);
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing) } else { Vec::new() };
             (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
         });
@@ -2869,9 +2946,16 @@ fn frame(data: &FD4TaskData) {
                     if combo.fx != 0 {
                         impact::combo(combo.fx, feet, head);
                     }
-                    if let (Some(s), true) = (swing, moves::Hit::from(combo.hit).is_some()) {
+                    if let (Some(s), true, true) = (swing, moves::Hit::from(combo.hit).is_some(), weapon_on == weapons::HAMMER) {
                         impact::swing_point(er(s.head), er(s.grip.lerp(s.head, 0.45)));
                     }
+                    // the Chain Chomp to draw: its body, the hand holding its chain
+                    chomp::publish(swing.filter(|_| weapon_on == weapons::CHOMP).map(|s| chomp::Sprite {
+                        chomp: er(s.head),
+                        hand: er(s.grip),
+                        bite: if combo.chomp_scripted != 0 { combo.chomp_bite } else { ((m.ticks / 9) % 4 == 0) as u8 as f32 },
+                        vel: glam::Vec3::ZERO,
+                    }));
                 }
                 m.combo = combo;
                 {
@@ -2883,7 +2967,12 @@ fn frame(data: &FD4TaskData) {
                             .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                             .map(|h| glam::Vec3::new(h.0, h.1, h.2))
                     };
-                    m.fire.tick(id, b_fire, fire_allowed, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                    m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                    // the boomerangs: thrown when a throw lets go, from his right hand
+                    let feet = to_er(m.origin, state.position);
+                    let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+                    let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
+                    m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
@@ -2891,6 +2980,24 @@ fn frame(data: &FD4TaskData) {
                     let p = to_er(m.origin, state.position);
                     impact::cap_change(glam::Vec3::new(p.0, p.1, p.2), cap);
                 }
+                // D-pad right: the Mega Mushroom (he grows on the ground, with room for a giant)
+                let mega_change = {
+                    let feet = to_er(m.origin, state.position);
+                    let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+                    let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed);
+                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed);
+                    const GROUNDED: u32 = 0x200 | 0x400;
+                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !carry::holding() && !swing::holding();
+                    let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+                    let ray = |from: glam::Vec3, to: glam::Vec3| {
+                        let d = to - from;
+                        havok?
+                            .phys_world
+                            .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                            .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+                    };
+                    mega::tick(dpad[3], can_start, can_stay, || mega::room(feet, ray), id, state.action, feet, m.ticks)
+                };
                 m.prev_parts = m.parts.take();
                 m.parts = parts;
                 static PARTS_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -2908,6 +3015,29 @@ fn frame(data: &FD4TaskData) {
                 }
                 m.state = state;
                 m.mesh = mesh;
+                // Mega Mario grew or shrank: his world is scaled around where he stands (re-centred
+                // on him, its collision read again at the new scale)
+                if let Some(mega::Change::Scale(k)) = mega_change {
+                    let here = collision::sm_to_er(m.origin, m.state.position);
+                    set_scale(BASE_SCALE * k);
+                    log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
+                    m.moving.clear(&mut m.havok);
+                    m.origin = [here.0, here.1, here.2];
+                    set_mario_position(m.id, [0.0, 0.0, 0.0]);
+                    let id = m.id;
+                    worker::call("mega still", move |_| unsafe { sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0) });
+                    m.state.position = [0.0, 0.0, 0.0];
+                    m.prev_pos = [0.0, 0.0, 0.0];
+                    m.fire.drop_shots();
+                    m.last_query = None;
+                    m.wall_memory.clear();
+                    let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
+                    let surfaces = havok_surfaces(&mut m.havok, m.origin, [0.0, 0.0, 0.0], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0, 0.0, 0.0]));
+                    if !surfaces.is_empty() {
+                        load_surfaces(&surfaces);
+                        m.surfaces = surfaces;
+                    }
+                }
                 // out of health: the Tarnished dies too (the game's death, Bowser and respawn follow)
                 if !m.dead && state.health < 0x100 {
                     log("Mario is out of health");

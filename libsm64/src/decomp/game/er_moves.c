@@ -48,6 +48,11 @@ enum ErHit {
     ER_HIT_SHELL,
     ER_HIT_AIR,
     ER_HIT_LAUNCH,
+    ER_HIT_CHOMP,
+    ER_HIT_CHOMP_SPIN,
+    ER_HIT_CHOMP_END,
+    ER_HIT_CHOMP_AIR,
+    ER_HIT_CHOMP_LAUNCH,
 };
 
 /* (same bits as moves.rs FX_*) */
@@ -59,8 +64,28 @@ enum ErHit {
 #define ER_FX_LAUNCH  0x20 /* a jump off the ground: puffs at his feet */
 #define ER_FX_BANG    0x40 /* a flurry blow: a puff at the hammer's head */
 #define ER_FX_GROW    0x80 /* the hammer grows giant: sparkles on it */
+#define ER_FX_CHARGE  0x100 /* charging: a glow at the hammer's head, dust at his feet */
+#define ER_FX_THROW   0x200 /* a throw lets go (er_move_throw says what) */
 
 int er_hammer_mode = 0;
+/** the weapon in hand (weapons.rs): 0 fists, 1 hammer, 2 boomerang, 3 Chain Chomp */
+#define ER_WEAPON_RANG 2
+#define ER_WEAPON_CHOMP 3
+int er_weapon = 0;
+/** Mega Mario (mega.rs): giant, slow, heavy */
+int er_mega = 0;
+/** boomerangs in hand (not out flying): a throw needs one */
+int er_rang_ready = 0;
+/** a throw let go this tick: its kind + 1 (ER_THROW_*), and how long it was charged */
+int er_move_throw = 0;
+int er_move_charge = 0;
+/** where the Chain Chomp is (chomp.rs): degrees around Mario's facing (positive to his left), how
+ * far out and how high over his feet (SM64 units), its mouth open (0-1) */
+int er_chomp_scripted = 0;
+f32 er_chomp_yaw = 0.0f;
+f32 er_chomp_reach = 0.0f;
+f32 er_chomp_height = 0.0f;
+f32 er_chomp_bite = 0.0f;
 /** an enemy is up in the air with Mario (juggle.rs): his air blows keep him up */
 int er_juggle = 0;
 int er_move_hit = 0;
@@ -71,6 +96,26 @@ f32 er_hammer_pitch = 0.0f;
 f32 er_hammer_scale = 1.0f;
 
 s32 lava_boost_on_wall(struct MarioState *m);
+
+/* the throws (actionArg): the boomerang's (one, three in a fan, the launcher, the big one, charged
+ * with Y held) and the fireball's (its charge levels) */
+#define ER_THROW_RANG 0
+#define ER_THROW_STORM 1
+#define ER_THROW_UPPER 2
+#define ER_THROW_BIG 3
+#define ER_THROW_FIRE 4
+#define ER_THROW_FIRE_MID 5
+#define ER_THROW_FIRE_BIG 6
+#define ER_THROW_FIRE_GIANT 7
+/** throws in the air since he last stood on the ground (the first few hold him up, DMC's guns) */
+static s32 sErAirThrows = 0;
+/** enemy steps since he last stood on the ground (A off an enemy up there, Devil May Cry's) */
+static s32 sErSteps = 0;
+#define ER_ENEMY_STEPS 3
+#define ER_AIR_THROW_HANG 6
+#define ER_AIR_THROWS 10
+
+static u32 er_air_attack(void);
 
 /** the spin of the spinning moves (only one Mario) */
 static s16 sErSpin = 0;
@@ -105,6 +150,28 @@ static void er_twist(struct MarioState *m, f32 deg) {
 
 static void er_sound(struct MarioState *m, u32 sound) {
     play_sound(sound, m->marioObj->header.gfx.cameraToObject);
+}
+
+void er_play_sound_volume(int32_t soundBits, float volume);
+
+/** A soft sound (the slam's charge chime was too loud at full volume). */
+static void er_sound_soft(u32 sound, f32 volume) {
+    er_play_sound_volume((int32_t) sound, volume);
+}
+
+/**
+ * A in an air blow with an enemy up there: Mario kicks off it, a jump in mid-air (Devil May Cry's
+ * enemy step), a few to an air combo. TRUE if he jumped.
+ */
+static s32 er_enemy_step(struct MarioState *m) {
+    if (!(m->input & INPUT_A_PRESSED) || !er_juggle || sErSteps >= ER_ENEMY_STEPS) {
+        return FALSE;
+    }
+    sErSteps++;
+    er_move_fx |= ER_FX_LAUNCH;
+    play_sound(SOUND_ACTION_HIT, m->marioObj->header.gfx.cameraToObject);
+    set_mario_action(m, ACT_DOUBLE_JUMP, 0);
+    return TRUE;
 }
 
 /** A finisher's cheer: yahoo, waha, yippee... a different one each time (SM64's triple jump's). */
@@ -295,7 +362,7 @@ s32 act_er_hammer_slam(struct MarioState *m) {
     if (charging) {
         m->actionState = ++charge;
         if (charge % ER_SLAM_CHARGE_LEVEL == 0) {
-            er_sound(m, SOUND_MENU_COLLECT_RED_COIN + ((charge / ER_SLAM_CHARGE_LEVEL - 1) << 16));
+            er_sound_soft(SOUND_MENU_COLLECT_RED_COIN + ((charge / ER_SLAM_CHARGE_LEVEL - 1) << 16), 0.25f);
             er_move_fx |= ER_FX_GROW;
         }
     }
@@ -329,10 +396,27 @@ s32 act_er_hammer_slam(struct MarioState *m) {
         play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
     }
 
+    if (charging) {
+        // (not a statue while it charges: he turns where the stick points, trembles harder as it
+        // grows, the hammer shakes up there and gathers light, dust rises at his feet)
+        f32 k = (f32) charge / ER_SLAM_CHARGE_MAX;
+        f32 wob = sinf((f32) charge * 2.3f);
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x280, 0x280);
+        }
+        er_hammer(wob * (2.0f + 5.0f * k), 170.0f + sinf((f32) charge * 3.1f) * (2.0f + 4.0f * k), size);
+        if (charge % 4 == 0) {
+            er_move_fx |= ER_FX_CHARGE;
+        }
+    }
     if (!er_ground(m, t >= 8 && t < ER_SLAM_IMPACT ? 12.0f : 0.0f)) {
         return TRUE;
     }
     if (charging) {
+        f32 k = (f32) charge / ER_SLAM_CHARGE_MAX;
+        er_twist(m, sinf((f32) charge * 2.9f) * (1.5f + 4.0f * k));
+        // a squat that deepens, bouncing a little with the effort
+        m->marioObj->header.gfx.pos[1] = m->pos[1] - (4.0f + 8.0f * k) * (0.7f + 0.3f * sinf((f32) charge * 1.7f));
         return FALSE;
     }
     if (++m->actionTimer >= ER_SLAM_END) {
@@ -573,6 +657,9 @@ s32 act_er_hammer_air(struct MarioState *m) {
         if (t >= 4 && (m->input & INPUT_B_PRESSED)) {
             m->actionState = 1;
         }
+        if (t >= 4 && er_enemy_step(m)) {
+            return TRUE;
+        }
         p = (f32)(t + 1) / 8;
         er_hammer(er_lerp(-160.0f, 200.0f, p), 0.0f, 1.1f);
         if (t < 8) {
@@ -626,7 +713,7 @@ s32 act_er_hammer_air(struct MarioState *m) {
         // X during it: the next swing (or with the hammer put away, the fists' air string)
         if (m->actionArg == 0 && m->actionState == 1) {
             m->faceAngle[1] += (s16)(er_hammer_yaw * 0.8f * 65536.0f / 360.0f);
-            return set_mario_action(m, er_hammer_mode ? ACT_ER_HAMMER_AIR : ACT_ER_AIR_COMBO, 0);
+            return set_mario_action(m, er_air_attack(), 0);
         }
         return set_mario_action(m, ACT_FREEFALL, 0);
     }
@@ -665,6 +752,9 @@ s32 act_er_air_combo(struct MarioState *m) {
     if (t >= 2 && (m->input & INPUT_B_PRESSED)) {
         m->actionState = 1;
     }
+    if (t >= 2 && er_enemy_step(m)) {
+        return TRUE;
+    }
     if (t >= 1 && t <= 3) {
         er_move_hit = ER_HIT_AIR;
         m->flags |= blow == 2 ? MARIO_KICKING : MARIO_PUNCHING;
@@ -685,8 +775,8 @@ s32 act_er_air_combo(struct MarioState *m) {
 
     if (++m->actionTimer >= ER_AIR_HIT_TICKS) {
         if (m->actionState == 1) {
-            if (er_hammer_mode) {
-                return set_mario_action(m, ACT_ER_HAMMER_AIR, 0);
+            if (er_weapon != 0) {
+                return set_mario_action(m, er_air_attack(), 0);
             }
             if (m->actionArg + 1 < ER_AIR_HITS) {
                 return set_mario_action(m, ACT_ER_AIR_COMBO, m->actionArg + 1);
@@ -724,7 +814,7 @@ s32 act_er_uppercut(struct MarioState *m) {
     if (t >= 3 && (m->input & INPUT_B_PRESSED)) {
         m->faceAngle[1] += sErSpin;
         sErSpin = 0;
-        return set_mario_action(m, er_hammer_mode ? ACT_ER_HAMMER_AIR : ACT_ER_AIR_COMBO, 0);
+        return set_mario_action(m, er_air_attack(), 0);
     }
     if (t >= 1 && t < ER_UPPERCUT_TOP) {
         er_move_hit = ER_HIT_UPPERCUT;
@@ -1030,6 +1120,586 @@ s32 act_er_shell(struct MarioState *m) {
     return FALSE;
 }
 
+/* ---- the boomerang and the fireball: throws ------------------------------------------------- */
+
+#define ER_BIG_CHARGE_MIN 6
+#define ER_BIG_CHARGE_MAX 40
+
+static void er_chomp(f32 yaw, f32 reach, f32 height, f32 bite) {
+    er_chomp_scripted = 1;
+    er_chomp_yaw = yaw;
+    er_chomp_reach = reach;
+    er_chomp_height = height;
+    er_chomp_bite = bite;
+}
+
+/** The weapon's blow in the air: the fists' air string, the hammer's swing, a throw, the Chomp. */
+static u32 er_air_attack(void) {
+    switch (er_weapon) {
+        case 1: return ACT_ER_HAMMER_AIR;
+        case ER_WEAPON_RANG: return er_rang_ready ? ACT_ER_AIR_THROW : ACT_FREEFALL;
+        case ER_WEAPON_CHOMP: return ACT_ER_CHOMP_AIR;
+        default: return ACT_ER_AIR_COMBO;
+    }
+}
+
+/** A throw lets go now: the mod spawns what it throws (boomerang.rs, fireball.rs). */
+static void er_release(struct MarioState *m, u32 kind) {
+    er_move_throw = (s32) kind + 1;
+    er_move_charge = m->actionState;
+    er_move_fx |= ER_FX_THROW;
+    er_sound(m, kind >= ER_THROW_FIRE ? SOUND_ACTION_THROW : SOUND_GENERAL_SWISH_AIR);
+}
+
+/**
+ * A throw on the ground (actionArg ER_THROW_*): the boomerang from one hand then the other, three at
+ * once out of a spin (Y), up in an arc (X, X, Y: it lifts them), the big one raised overhead and
+ * charged while Y is held (let go early, it's the spin's three); the fireball as a palm thrust that
+ * pushes him back the harder it is, the giant one from over his head. X again after the boomerang
+ * leaves his hand: the next one.
+ */
+s32 act_er_throw(struct MarioState *m) {
+    static s32 sHand = 0;
+    u32 kind = m->actionArg;
+    s32 t = m->actionTimer;
+    s32 release;
+    s32 end;
+    f32 speed = m->forwardVel * 0.7f;
+    f32 twist = 0.0f;
+
+    switch (kind) {
+        case ER_THROW_STORM: release = 6; end = 15; break;
+        case ER_THROW_UPPER: release = 4; end = 15; break;
+        case ER_THROW_BIG: release = 5; end = 20; break;
+        case ER_THROW_FIRE_MID: release = 2; end = 12; break;
+        case ER_THROW_FIRE_BIG: release = 3; end = 15; break;
+        case ER_THROW_FIRE_GIANT: release = 7; end = 24; break;
+        case ER_THROW_FIRE: release = 2; end = 10; break;
+        default: release = 2; end = 9; break;
+    }
+
+    if (t == 0) {
+        er_aim_turn(m);
+        sHand ^= 1;
+        switch (kind) {
+            case ER_THROW_STORM:
+                set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH_FAST);
+                er_shout(m);
+                er_sound(m, SOUND_ACTION_SPIN);
+                break;
+            case ER_THROW_UPPER:
+                set_mario_animation(m, MARIO_ANIM_GROUND_THROW);
+                er_sound(m, SOUND_MARIO_PUNCH_HOO);
+                break;
+            case ER_THROW_BIG:
+            case ER_THROW_FIRE_GIANT:
+                set_mario_animation(m, MARIO_ANIM_HEAVY_THROW);
+                er_sound(m, SOUND_MARIO_HOOHOO);
+                break;
+            case ER_THROW_FIRE:
+                set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
+                er_sound(m, SOUND_MARIO_PUNCH_YAH);
+                break;
+            case ER_THROW_FIRE_MID:
+            case ER_THROW_FIRE_BIG:
+                set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH);
+                er_sound(m, SOUND_MARIO_PUNCH_WAH);
+                break;
+            default:
+                set_mario_animation(m, sHand ? MARIO_ANIM_FIRST_PUNCH_FAST : MARIO_ANIM_SECOND_PUNCH_FAST);
+                er_sound(m, sHand ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
+                break;
+        }
+        set_anim_to_frame(m, 0);
+    }
+
+    // the big boomerang: raised and charged while Y is held; let go before it took, the spin's three
+    if (kind == ER_THROW_BIG && t == 2) {
+        s32 charge = m->actionState;
+        if (er_hold_y && charge < ER_BIG_CHARGE_MAX) {
+            f32 k = (f32) charge / ER_BIG_CHARGE_MAX;
+            m->actionState = ++charge;
+            if (charge % 4 == 0) {
+                er_move_fx |= ER_FX_CHARGE;
+            }
+            if (charge == ER_BIG_CHARGE_MAX) {
+                er_sound_soft(SOUND_MENU_COLLECT_RED_COIN + (3 << 16), 0.3f);
+            }
+            if (m->input & INPUT_NONZERO_ANALOG) {
+                m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x300, 0x300);
+            }
+            set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0);
+            if (!er_ground(m, 0.0f)) {
+                return TRUE;
+            }
+            er_twist(m, sinf((f32) charge * 2.9f) * (1.5f + 3.0f * k));
+            m->marioObj->header.gfx.pos[1] = m->pos[1] - (3.0f + 6.0f * k);
+            return FALSE;
+        }
+        if (charge < ER_BIG_CHARGE_MIN) {
+            // (the charge counter isn't the next-throw flag)
+            m->actionState = 0;
+            kind = m->actionArg = ER_THROW_STORM;
+            release = 6;
+            end = 15;
+            set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH_FAST);
+            er_sound(m, SOUND_ACTION_SPIN);
+        }
+    }
+
+    if (kind == ER_THROW_STORM && t < release) {
+        twist = er_lerp(0.0f, 360.0f, er_ease_out((f32)(t + 1) / release));
+        if (t == release - 2) {
+            set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH_FAST);
+            set_anim_to_frame(m, 0);
+        }
+    }
+    if (t == release) {
+        er_release(m, kind);
+        if (kind == ER_THROW_FIRE_GIANT || kind == ER_THROW_BIG) {
+            er_cheer(m);
+        }
+    }
+    // the recoil of a strong shot: pushed back a little
+    if (t >= release && t < release + 3) {
+        switch (kind) {
+            case ER_THROW_FIRE_MID: speed = -8.0f; break;
+            case ER_THROW_FIRE_BIG: speed = -14.0f; break;
+            case ER_THROW_FIRE_GIANT: speed = -20.0f; break;
+            case ER_THROW_BIG: speed = -6.0f; break;
+        }
+    }
+    if (t > release) {
+        if ((kind == ER_THROW_RANG || kind == ER_THROW_STORM) && (m->input & INPUT_B_PRESSED) && er_rang_ready) {
+            m->actionState = 1;
+        }
+        // (after a shot of fire, X goes straight on with the weapon's blows)
+        if (kind >= ER_THROW_FIRE && t >= release + 2 && (m->input & INPUT_B_PRESSED)) {
+            return set_mario_action(m, ACT_PUNCHING, 0);
+        }
+        if (t >= release + 1 && (m->input & INPUT_A_PRESSED)) {
+            return set_jumping_action(m, ACT_JUMP, 0);
+        }
+        if (t >= release + 4 && kind != ER_THROW_FIRE_GIANT && (m->input & INPUT_NONZERO_ANALOG) && m->actionState != 1) {
+            return set_mario_action(m, ACT_WALKING, 0);
+        }
+    }
+
+    if (!er_ground(m, speed)) {
+        return TRUE;
+    }
+    er_twist(m, twist);
+    m->actionTimer++;
+    if (m->actionState == 1 && kind <= ER_THROW_STORM && m->actionTimer >= release + 3) {
+        return set_mario_action(m, ACT_ER_THROW, ER_THROW_RANG);
+    }
+    if (m->actionTimer >= end) {
+        return set_mario_action(m, ACT_IDLE, 0);
+    }
+    return FALSE;
+}
+
+/**
+ * A throw in the air (actionArg ER_THROW_*): one boomerang after the other, three out of a spin, the
+ * fireball. Each holds him up a moment (Devil May Cry's guns), a few to a jump.
+ */
+s32 act_er_air_throw(struct MarioState *m) {
+    static s32 sHand = 0;
+    u32 kind = m->actionArg;
+    s32 t = m->actionTimer;
+    s32 release = kind == ER_THROW_STORM ? 5 : kind == ER_THROW_FIRE_GIANT ? 6 : 2;
+    s32 end = kind == ER_THROW_STORM ? 12 : kind >= ER_THROW_FIRE_BIG ? 14 : 9;
+    f32 twist = 0.0f;
+
+    if (t == 0) {
+        er_aim_turn(m);
+        sHand ^= 1;
+        sErAirThrows++;
+        if (kind == ER_THROW_STORM) {
+            set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+            er_shout(m);
+            er_sound(m, SOUND_ACTION_SPIN);
+        } else {
+            set_mario_animation(m, sHand ? MARIO_ANIM_FIRST_PUNCH : MARIO_ANIM_SECOND_PUNCH);
+            er_sound(m, sHand ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
+        }
+        set_anim_to_frame(m, 0);
+        if (sErAirThrows <= ER_AIR_THROW_HANG) {
+            if (m->vel[1] < (er_juggle ? 10.0f : 6.0f)) {
+                m->vel[1] = er_juggle ? 10.0f : 6.0f;
+            }
+        }
+        mario_set_forward_vel(m, m->forwardVel * 0.5f);
+    }
+    // (hanging there while it throws)
+    if (sErAirThrows <= ER_AIR_THROW_HANG && m->vel[1] < -4.0f) {
+        m->vel[1] = -4.0f;
+    }
+    if (kind == ER_THROW_STORM && t < release) {
+        twist = er_lerp(0.0f, 360.0f, er_ease_out((f32)(t + 1) / release));
+    }
+    if (t == release) {
+        er_release(m, kind);
+    }
+    if (t > release && (m->input & INPUT_B_PRESSED) && er_rang_ready && kind <= ER_THROW_STORM) {
+        m->actionState = 1;
+    }
+    if (t > release && er_enemy_step(m)) {
+        return TRUE;
+    }
+
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            if (t > release) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            break;
+
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    er_twist(m, twist);
+    if (++m->actionTimer >= (m->actionState == 1 ? release + 3 : end)) {
+        if (m->actionState == 1 && sErAirThrows < ER_AIR_THROWS) {
+            return set_mario_action(m, ACT_ER_AIR_THROW, ER_THROW_RANG);
+        }
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
+/* ---- the Chain Chomp ------------------------------------------------------------------------- */
+
+#define ER_CHOMP_LASH 0
+#define ER_CHOMP_SWEEP 1
+#define ER_CHOMP_SLAM 2
+#define ER_CHOMP_LAUNCH 3
+static const s8 sChompEnd[4] = { 15, 17, 25, 20 };
+/* how far the Chomp lunges, and where it sits by him between blows (SM64 units) */
+#define ER_CHOMP_FAR 540.0f
+#define ER_CHOMP_HOME 110.0f
+
+static void er_chomp_bark(struct MarioState *m) {
+    er_sound(m, (gAudioRandom & 1) ? SOUND_GENERAL_CHAIN_CHOMP1 : SOUND_GENERAL_CHAIN_CHOMP2);
+}
+
+/**
+ * X with the Chain Chomp, a string (actionArg): it lunges out on its chain straight ahead and is
+ * pulled back, then swung in a wide arc in front, then raised high and crashed down far ahead (a
+ * shockwave there). X, Y (moves.rs): the bite, it lunges, bites and tosses them up (they stay up for
+ * the air string). X during a blow queues the next.
+ */
+s32 act_er_chomp(struct MarioState *m) {
+    u32 step = m->actionArg < 4 ? m->actionArg : 0;
+    s32 t = m->actionTimer;
+    s32 end = sChompEnd[step];
+    f32 speed = 0.0f;
+    f32 twist = 0.0f;
+    f32 p;
+
+    if (t == 0) {
+        er_aim_turn(m);
+        switch (step) {
+            case ER_CHOMP_LASH: er_sound(m, SOUND_MARIO_PUNCH_YAH); break;
+            case ER_CHOMP_SWEEP: er_sound(m, SOUND_MARIO_PUNCH_WAH); break;
+            case ER_CHOMP_SLAM: er_sound(m, SOUND_MARIO_HOOHOO); break;
+            default: er_sound(m, SOUND_MARIO_PUNCH_HOO); break;
+        }
+    }
+    if (t >= 3 && step < ER_CHOMP_SLAM && (m->input & INPUT_B_PRESSED)) {
+        m->actionState = 1;
+    }
+    if (t >= end - 6 && (m->input & INPUT_A_PRESSED)) {
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+
+    switch (step) {
+        case ER_CHOMP_LASH:
+            set_mario_anim_with_accel(m, MARIO_ANIM_FIRST_PUNCH, 0xC000);
+            if (t < 3) {
+                er_chomp(-25.0f, er_lerp(ER_CHOMP_HOME, 60.0f, (f32) t / 3), 80.0f, 0.3f);
+            } else if (t < 7) {
+                p = (f32)(t - 2) / 4;
+                er_chomp(er_lerp(-25.0f, 0.0f, p), er_lerp(60.0f, ER_CHOMP_FAR, er_ease_out(p)), 80.0f, 1.0f);
+                er_move_hit = ER_HIT_CHOMP;
+                speed = 8.0f;
+                if (t == 3) {
+                    er_sound(m, SOUND_GENERAL_SWISH_AIR);
+                }
+                if (t == 6) {
+                    er_chomp_bark(m);
+                }
+            } else {
+                p = (f32)(t - 7) / (end - 7);
+                er_chomp(0.0f, er_lerp(ER_CHOMP_FAR, ER_CHOMP_HOME, er_ease_out(p)), 80.0f, 0.0f);
+            }
+            break;
+
+        case ER_CHOMP_SWEEP:
+            // a wide arc in front, from his right to his left, his body turning with it
+            set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0xA000);
+            if (t < 3) {
+                er_chomp(er_lerp(-40.0f, -125.0f, (f32)(t + 1) / 3), er_lerp(ER_CHOMP_HOME, 300.0f, (f32)(t + 1) / 3), 70.0f, 0.4f);
+            } else if (t < 10) {
+                p = (f32)(t - 2) / 7;
+                er_chomp(er_lerp(-125.0f, 130.0f, er_ease_out(p)), 420.0f, 70.0f, 1.0f);
+                er_move_hit = ER_HIT_CHOMP;
+                if (t == 3) {
+                    er_sound(m, SOUND_ACTION_SPIN);
+                }
+                if (t == 6) {
+                    er_move_fx |= ER_FX_SPIN;
+                    er_chomp_bark(m);
+                }
+                speed = 6.0f;
+            } else {
+                p = (f32)(t - 10) / (end - 10);
+                er_chomp(er_lerp(130.0f, 30.0f, p), er_lerp(420.0f, ER_CHOMP_HOME, er_ease_out(p)), 70.0f, 0.0f);
+            }
+            twist = er_chomp_yaw * 0.35f;
+            break;
+
+        case ER_CHOMP_SLAM:
+            // raised high over him, then crashed down far ahead
+            set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, t < 7 ? 0xA000 : 0x14000);
+            if (t < 7) {
+                p = (f32)(t + 1) / 7;
+                er_chomp(0.0f, er_lerp(ER_CHOMP_HOME, 140.0f, p), er_lerp(80.0f, 460.0f, er_ease_out(p)), 0.6f);
+            } else if (t <= 9) {
+                p = (f32)(t - 6) / 3;
+                er_chomp(0.0f, er_lerp(140.0f, 470.0f, p), er_lerp(460.0f, 0.0f, p * p), 1.0f);
+                speed = 12.0f;
+                if (t == 9) {
+                    er_move_hit = ER_HIT_CHOMP_END;
+                    er_move_fx |= ER_FX_QUAKE;
+                    er_chomp_bark(m);
+                    er_sound(m, SOUND_OBJ_THWOMP);
+                    play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
+                } else {
+                    er_move_hit = ER_HIT_CHOMP;
+                }
+            } else {
+                p = t < 16 ? 0.0f : (f32)(t - 16) / (end - 16);
+                er_chomp(0.0f, er_lerp(470.0f, ER_CHOMP_HOME, er_ease_out(p)), t < 16 ? 0.0f : er_lerp(0.0f, 80.0f, p), 0.0f);
+            }
+            break;
+
+        default:
+            // the bite: a lunge low, jaws shut on them, a toss straight up
+            set_mario_anim_with_accel(m, t < 7 ? MARIO_ANIM_FIRST_PUNCH : MARIO_ANIM_GROUND_THROW, 0xC000);
+            if (t < 3) {
+                er_chomp(0.0f, er_lerp(ER_CHOMP_HOME, 60.0f, (f32) t / 3), 50.0f, 0.5f);
+            } else if (t < 7) {
+                p = (f32)(t - 2) / 4;
+                er_chomp(0.0f, er_lerp(60.0f, 330.0f, er_ease_out(p)), 40.0f, t == 6 ? 0.0f : 1.0f);
+                speed = 10.0f;
+                if (t == 6) {
+                    er_move_hit = ER_HIT_CHOMP_LAUNCH;
+                    er_move_fx |= ER_FX_LAUNCH;
+                    er_chomp_bark(m);
+                    er_cheer(m);
+                }
+            } else if (t < 11) {
+                p = (f32)(t - 6) / 4;
+                er_chomp(0.0f, er_lerp(330.0f, 200.0f, p), er_lerp(40.0f, 380.0f, er_ease_out(p)), 0.0f);
+            } else {
+                p = (f32)(t - 11) / (end - 11);
+                er_chomp(0.0f, er_lerp(200.0f, ER_CHOMP_HOME, p), er_lerp(380.0f, 80.0f, er_ease_out(p)), 0.0f);
+            }
+            break;
+    }
+
+    if (!er_ground(m, speed)) {
+        return TRUE;
+    }
+    er_twist(m, twist);
+    m->actionTimer++;
+    if (m->actionState == 1 && step < ER_CHOMP_SLAM && m->actionTimer >= end - 5) {
+        return set_mario_action(m, ACT_ER_CHOMP, step + 1);
+    }
+    if (m->actionTimer >= end) {
+        return set_mario_action(m, ACT_IDLE, 0);
+    }
+    return FALSE;
+}
+
+#define ER_CYCLONE_RELEASE 48
+#define ER_CYCLONE_END 60
+
+/**
+ * Y with the Chain Chomp: the cyclone, Mario swings it round and round him on its full chain (SM64's
+ * Bowser swing), steered with the stick, hitting everyone around a little; at the end he lets it fly
+ * ahead, a shockwave where it lands.
+ */
+s32 act_er_chomp_spin(struct MarioState *m) {
+    s32 t = m->actionTimer;
+    s16 before = sErSpin;
+    f32 speed = 0.0f;
+    f32 p;
+
+    if (t == 0) {
+        sErSpin = 0;
+        before = 0;
+        er_sound(m, SOUND_MARIO_HOOHOO);
+        er_chomp_bark(m);
+    }
+    if (t < ER_CYCLONE_RELEASE) {
+        p = (f32) t / ER_CYCLONE_RELEASE;
+        set_mario_animation(m, t < 3 ? MARIO_ANIM_GRAB_BOWSER : MARIO_ANIM_SWINGING_BOWSER);
+        sErSpin += (s16) er_lerp(0x1000, 0x2600, p * 2.0f);
+        if ((u16) sErSpin < (u16) before) {
+            er_sound(m, SOUND_ACTION_SPIN);
+            if (t % 3 == 0) {
+                er_chomp_bark(m);
+            }
+        }
+        if (t % 8 == 4) {
+            er_move_fx |= ER_FX_SPIN;
+        }
+        er_chomp(sErSpin * 360.0f / 65536.0f, er_lerp(ER_CHOMP_HOME, 440.0f, (f32) t / 8), 70.0f + sinf((f32) t * 0.6f) * 25.0f, (f32)((t / 3) % 2));
+        if (t >= 4) {
+            er_move_hit = ER_HIT_CHOMP_SPIN;
+        }
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x400, 0x400);
+            speed = 10.0f;
+        }
+        if (!er_ground(m, speed)) {
+            return TRUE;
+        }
+        er_twist(m, sErSpin * 360.0f / 65536.0f);
+    } else {
+        if (t == ER_CYCLONE_RELEASE) {
+            // let go ahead (where the stick points)
+            if (m->input & INPUT_NONZERO_ANALOG) {
+                m->faceAngle[1] = m->intendedYaw;
+            }
+            sErSpin = 0;
+            set_mario_animation(m, MARIO_ANIM_RELEASE_BOWSER);
+            er_cheer(m);
+            er_sound(m, SOUND_GENERAL_SWISH_AIR);
+        }
+        p = (f32)(t - ER_CYCLONE_RELEASE) / (ER_CYCLONE_END - ER_CYCLONE_RELEASE);
+        if (t < ER_CYCLONE_RELEASE + 4) {
+            f32 q = (f32)(t - ER_CYCLONE_RELEASE + 1) / 4;
+            er_chomp(0.0f, er_lerp(440.0f, ER_CHOMP_FAR, q), er_lerp(120.0f, 0.0f, q), 1.0f);
+            er_move_hit = ER_HIT_CHOMP;
+            if (t == ER_CYCLONE_RELEASE + 3) {
+                er_move_hit = ER_HIT_CHOMP_END;
+                er_move_fx |= ER_FX_QUAKE;
+                er_sound(m, SOUND_OBJ_THWOMP);
+                er_chomp_bark(m);
+            }
+        } else {
+            er_chomp(0.0f, er_lerp(ER_CHOMP_FAR, ER_CHOMP_HOME, er_ease_out(p)), er_lerp(0.0f, 80.0f, p), 0.0f);
+        }
+        if (!er_ground(m, 0.0f)) {
+            return TRUE;
+        }
+        if (t >= ER_CYCLONE_RELEASE + 6 && (m->input & INPUT_A_PRESSED)) {
+            return set_jumping_action(m, ACT_JUMP, 0);
+        }
+    }
+    if (++m->actionTimer >= ER_CYCLONE_END) {
+        return set_mario_action(m, ACT_IDLE, 0);
+    }
+    return FALSE;
+}
+
+/**
+ * The Chain Chomp in the air (actionArg): 0, X, it swings once all the way round him (with an enemy
+ * up there each one lifts him a little); 1, Y, the crash: held up over him a moment, then he drops
+ * with it under him, a shockwave where they land.
+ */
+s32 act_er_chomp_air(struct MarioState *m) {
+    s32 t = m->actionTimer;
+
+    if (m->actionArg == 0) {
+        if (t == 0) {
+            er_shout(m);
+            er_sound(m, SOUND_ACTION_SPIN);
+            set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+            if (er_juggle) {
+                m->vel[1] = 16.0f;
+                mario_set_forward_vel(m, 4.0f);
+            }
+        }
+        if (t >= 5 && (m->input & INPUT_B_PRESSED)) {
+            m->actionState = 1;
+        }
+        if (t >= 5 && er_enemy_step(m)) {
+            return TRUE;
+        }
+        er_chomp(er_lerp(-170.0f, 190.0f, (f32)(t + 1) / 10), 330.0f, 30.0f, 1.0f);
+        if (t < 10) {
+            er_move_hit = ER_HIT_CHOMP_AIR;
+        }
+        if (t == 5) {
+            er_chomp_bark(m);
+        }
+        if (m->vel[1] < -10.0f) {
+            m->vel[1] = -10.0f;
+        }
+    } else {
+        if (t == 0) {
+            er_aim_turn(m);
+            er_sound(m, SOUND_MARIO_PUNCH_HOO);
+            set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);
+        }
+        mario_set_forward_vel(m, 0.0f);
+        if (t < 6) {
+            m->vel[1] = 0.0f;
+            er_chomp(0.0f, er_lerp(ER_CHOMP_HOME, 40.0f, (f32)(t + 1) / 6), er_lerp(80.0f, 300.0f, er_ease_out((f32)(t + 1) / 6)), 0.5f);
+        } else {
+            if (t == 6) {
+                er_sound(m, SOUND_MARIO_GROUND_POUND_WAH);
+                set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
+                er_chomp_bark(m);
+            }
+            m->vel[1] = -75.0f;
+            er_chomp(0.0f, 60.0f, -40.0f, 1.0f);
+            er_move_hit = ER_HIT_CHOMP_AIR;
+        }
+    }
+
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            if (m->actionArg == 1) {
+                er_move_hit = ER_HIT_CHOMP_END;
+                er_move_fx |= ER_FX_QUAKE;
+                er_sound(m, SOUND_OBJ_THWOMP);
+                er_sound(m, SOUND_GENERAL_BOWSER_BOMB_EXPLOSION);
+                play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
+                er_chomp(0.0f, 90.0f, 0.0f, 0.0f);
+            }
+            return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    if (m->actionArg == 0) {
+        er_twist(m, er_chomp_yaw * 0.7f);
+    }
+    if (++m->actionTimer >= (m->actionArg == 0 ? 12 : 90)) {
+        if (m->actionArg == 0 && m->actionState == 1) {
+            m->faceAngle[1] += (s16)(er_chomp_yaw * 0.7f * 65536.0f / 360.0f);
+            return set_mario_action(m, ACT_ER_CHOMP_AIR, 0);
+        }
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
 /**
  * With the hammer out, B's punches and kicks (pad X) become its swings: called by
  * set_mario_action with the action SM64 picked. Only for B pressed this frame, empty-handed.
@@ -1040,12 +1710,39 @@ u32 er_hammer_redirect(struct MarioState *m, u32 action, u32 *actionArg) {
 
     if (!(m->action & ACT_FLAG_AIR)) {
         sAirSwings = 0;
+        sErAirThrows = 0;
+        sErSteps = 0;
     }
     if (!(m->input & INPUT_B_PRESSED) || m->heldObj != NULL) {
         return action;
     }
+    // the boomerang: every punch and kick is a throw (none in hand: SM64's own)
+    if (er_weapon == ER_WEAPON_RANG && er_rang_ready) {
+        if (action == ACT_PUNCHING || (action == ACT_MOVE_PUNCHING && *actionArg == 0)
+            || ((action == ACT_JUMP_KICK || action == ACT_DIVE) && !(m->action & ACT_FLAG_AIR))) {
+            *actionArg = ER_THROW_RANG;
+            return ACT_ER_THROW;
+        }
+        if ((action == ACT_JUMP_KICK || action == ACT_DIVE) && sErAirThrows < ER_AIR_THROWS) {
+            *actionArg = ER_THROW_RANG;
+            return ACT_ER_AIR_THROW;
+        }
+    }
+    // the Chain Chomp: its lashes, and its swing in the air (two a jump, more with an enemy up there)
+    if (er_weapon == ER_WEAPON_CHOMP) {
+        if (action == ACT_PUNCHING || (action == ACT_MOVE_PUNCHING && *actionArg == 0)
+            || ((action == ACT_JUMP_KICK || action == ACT_DIVE) && !(m->action & ACT_FLAG_AIR))) {
+            *actionArg = 0;
+            return ACT_ER_CHOMP;
+        }
+        if ((action == ACT_JUMP_KICK || action == ACT_DIVE) && (sAirSwings < 2 || er_juggle)) {
+            sAirSwings++;
+            *actionArg = 0;
+            return ACT_ER_CHOMP_AIR;
+        }
+    }
     // an enemy up in the air with him: X goes on with the air string
-    if (er_juggle && !er_hammer_mode && (m->action & ACT_FLAG_AIR) && (action == ACT_JUMP_KICK || action == ACT_DIVE)) {
+    if (er_juggle && er_weapon == 0 && (m->action & ACT_FLAG_AIR) && (action == ACT_JUMP_KICK || action == ACT_DIVE)) {
         *actionArg = 0;
         return ACT_ER_AIR_COMBO;
     }
@@ -1077,7 +1774,9 @@ u32 er_hammer_redirect(struct MarioState *m, u32 action, u32 *actionArg) {
 void er_moves_begin_tick(int frozen) {
     er_move_hit = ER_HIT_NONE;
     er_move_fx = 0;
+    er_move_throw = 0;
     if (!frozen) {
         er_hammer_scripted = 0;
+        er_chomp_scripted = 0;
     }
 }

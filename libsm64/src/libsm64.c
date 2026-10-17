@@ -222,6 +222,8 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
 
 /** er-mario: the combos' moves (decomp/game/er_moves.c) */
 extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted, er_hold_y;
+extern int er_weapon, er_rang_ready, er_move_throw, er_move_charge, er_chomp_scripted;
+extern f32 er_chomp_yaw, er_chomp_reach, er_chomp_height, er_chomp_bite;
 extern u32 er_move_fx;
 extern f32 er_hammer_yaw, er_hammer_pitch, er_hammer_scale;
 void er_moves_begin_tick(int frozen);
@@ -764,6 +766,30 @@ SM64_LIB_FN void sm64_play_sound_global(int32_t soundBits)
     play_sound(soundBits,gGlobalSoundSource);
 }
 
+/* er-mario: a sound at a share of its volume (0-1): played from far enough in front of the camera
+ * that SM64's own distance fall-off brings it down that much (VOLUME_RANGE_UNK1, a level's reach
+ * of 20000, a third of it for banks 3 up) */
+void er_play_sound_volume(int32_t soundBits, float volume)
+{
+    static float spots[8][3];
+    static int next = 0;
+    u8 bank = (soundBits >> 28) & 0xF;
+    float reach = 20000.0f / (bank < 3 ? 2.0f : 3.0f);
+    float *pos = spots[next];
+    if (volume > 1.0f) volume = 1.0f;
+    if (volume < 0.05f) volume = 0.05f;
+    next = (next + 1) % 8;
+    pos[0] = 0.0f;
+    pos[1] = 0.0f;
+    pos[2] = -(1.0f - volume) / 0.9f * reach;
+    play_sound(soundBits, pos);
+}
+
+SM64_LIB_FN void sm64_play_sound_volume(int32_t soundBits, float volume)
+{
+    er_play_sound_volume(soundBits, volume);
+}
+
 SM64_LIB_FN void sm64_set_sound_volume(float vol)
 {
     gAudioVolume = vol;
@@ -968,6 +994,26 @@ SM64_LIB_FN void sm64_er_set_hammer(int on)
     er_hammer_mode = on;
 }
 
+/** er-mario: Mega Mario (mega.rs): slow for his size, the power-up music while he lasts */
+SM64_LIB_FN void sm64_er_set_mega(int on)
+{
+    extern int er_mega;
+    if (on && !er_mega)
+        play_cap_music(SEQUENCE_ARGS(4, SEQ_EVENT_POWERUP));
+    if (!on && er_mega)
+        stop_cap_music();
+    er_mega = on;
+}
+
+/** er-mario: the weapon in hand (0 fists, 1 hammer, 2 boomerang, 3 Chain Chomp) and the boomerangs
+ * ready to throw */
+SM64_LIB_FN void sm64_er_set_weapon(int weapon, int rangs_ready)
+{
+    er_weapon = weapon;
+    er_hammer_mode = weapon == 1;
+    er_rang_ready = rangs_ready;
+}
+
 /** er-mario: what the combos' moves did on the last tick (sm64.rs SM64ErMove) */
 SM64_LIB_FN void sm64_er_get_move(int32_t marioId, struct SM64ErMove *out)
 {
@@ -977,6 +1023,13 @@ SM64_LIB_FN void sm64_er_get_move(int32_t marioId, struct SM64ErMove *out)
     out->hammerYaw = er_hammer_yaw;
     out->hammerPitch = er_hammer_pitch;
     out->hammerScale = er_hammer_scale;
+    out->throwKind = er_move_throw;
+    out->throwCharge = er_move_charge;
+    out->chompScripted = er_chomp_scripted;
+    out->chompYaw = er_chomp_yaw;
+    out->chompReach = er_chomp_reach;
+    out->chompHeight = er_chomp_height;
+    out->chompBite = er_chomp_bite;
     out->actionArg = 0;
     out->actionTimer = 0;
     if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )

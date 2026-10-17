@@ -156,6 +156,8 @@ unsafe extern "C" {
     /// heals 1/4 wedge per count over the next ticks (SM64 coins give 4)
     pub fn sm64_mario_heal(id: i32, heal_counter: u8);
     pub fn sm64_play_sound_global(sound_bits: i32);
+    /// a sound at a share of its volume (0-1)
+    pub fn sm64_play_sound_volume(sound_bits: i32, volume: f32);
     pub fn sm64_set_mario_action(id: i32, action: u32);
     pub fn sm64_set_mario_action_arg(id: i32, action: u32, action_arg: u32);
     pub fn sm64_set_mario_velocity(id: i32, x: f32, y: f32, z: f32);
@@ -192,6 +194,10 @@ unsafe extern "C" {
     pub fn sm64_er_set_juggle(on: i32);
     /// Y held (the hammer's slam charges while it is)
     pub fn sm64_er_set_hold_y(held: i32);
+    /// the weapon in hand (weapons.rs) and the boomerangs ready to throw
+    pub fn sm64_er_set_weapon(weapon: i32, rangs_ready: i32);
+    /// Mega Mario: slow for his size, the power-up music
+    pub fn sm64_er_set_mega(on: i32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
 }
@@ -210,4 +216,14 @@ pub struct SM64ErMove {
     pub hammer_scale: f32,
     pub action_arg: u32,
     pub action_timer: i32,
+    /// a throw let go this tick (its kind + 1: moves::THROW_*), and how long it was charged (ticks)
+    pub throw_kind: i32,
+    pub throw_charge: i32,
+    /// the Chain Chomp's place (chomp.rs): degrees around Mario's facing, SM64 units out and up,
+    /// its mouth open (0-1)
+    pub chomp_scripted: i32,
+    pub chomp_yaw: f32,
+    pub chomp_reach: f32,
+    pub chomp_height: f32,
+    pub chomp_bite: f32,
 }

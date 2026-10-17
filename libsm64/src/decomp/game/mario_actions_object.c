@@ -211,6 +211,9 @@ s32 act_er_meteor_land(struct MarioState *m);
 s32 act_er_chain(struct MarioState *m);
 s32 act_er_shell(struct MarioState *m);
 s32 act_er_hammer_launch(struct MarioState *m);
+s32 act_er_throw(struct MarioState *m);
+s32 act_er_chomp(struct MarioState *m);
+s32 act_er_chomp_spin(struct MarioState *m);
 
 s32 act_er_rush(struct MarioState *m) {
     u32 blow = m->actionArg;
@@ -578,6 +581,9 @@ s32 mario_execute_object_action(struct MarioState *m) {
         case ACT_ER_CHAIN:           cancel = act_er_chain(m);           break;
         case ACT_ER_SHELL:           cancel = act_er_shell(m);           break;
         case ACT_ER_HAMMER_LAUNCH:   cancel = act_er_hammer_launch(m);   break;
+        case ACT_ER_THROW:           cancel = act_er_throw(m);           break;
+        case ACT_ER_CHOMP:           cancel = act_er_chomp(m);           break;
+        case ACT_ER_CHOMP_SPIN:      cancel = act_er_chomp_spin(m);      break;
         case ACT_PICKING_UP:         cancel = act_picking_up(m);         break;
         case ACT_DIVE_PICKING_UP:    cancel = act_dive_picking_up(m);    break;
         case ACT_STOMACH_SLIDE_STOP: cancel = act_stomach_slide_stop(m); break;

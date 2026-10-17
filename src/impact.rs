@@ -92,12 +92,23 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Punch | Attack::Kick => (2, 0.8, false),
         Attack::Rush => (2, 0.9, false),
         Attack::RushKick => (5, 1.4, true),
+        // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
+        Attack::Rang | Attack::RangBig => (0, 0.7, false),
+        Attack::RangUpper => (2, 1.1, true),
+        // the Chain Chomp: light blows on many, a heavy crash
+        Attack::Chomp | Attack::ChompAir => (2, 1.0, false),
+        Attack::ChompSpin => (1, 0.8, false),
+        Attack::ChompLaunch => (4, 1.3, true),
+        Attack::ChompEnd => (5, 1.5, true),
         Attack::Fire(_) => return,
     };
+    // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
+    let mega = crate::mega::active();
+    let (stop, size, heavy) = if mega { (stop + stop / 2 + 1, size * 1.6, true) } else { (stop, size, heavy) };
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
     if heavy {
-        crate::lakitu::shake(size - 0.4);
+        crate::lakitu::shake(if mega { size * 0.6 } else { size - 0.4 });
     }
     worker::call("impact", move |_| unsafe {
         sm64::sm64_er_hitstop(stop);
@@ -231,6 +242,14 @@ pub fn combo(fx: u32, feet: Vec3, head: Option<Vec3>) {
         puffs(ground, 1, 0.0);
         ring(ground + Vec3::Y * 0.05, 1.0, 0.2, DUST);
     }
+    if fx & FX_CHARGE != 0 {
+        // charging the slam: light gathering at the head, dust at his feet
+        if let Some(h) = head {
+            ring(h, 0.9, 0.22, GOLD);
+            burst(h, 1, Bit::Star);
+        }
+        puffs(feet, 2, 0.45);
+    }
     if fx & FX_GROW != 0 {
         if let Some(h) = head {
             burst(h, 4, Bit::Star);
@@ -281,6 +300,31 @@ pub fn cap_change(feet: Vec3, cap: Option<u8>) {
     }
 }
 
+/// The Mega Mushroom (mega.rs): a burst of puffs all over him, golden rings, stars, as he grows
+/// (`grow`) or shrinks back. `feet`: Elden Ring.
+pub fn mega_change(feet: Vec3, grow: bool) {
+    let k = if grow { crate::mega::SIZE } else { 1.5 };
+    for up in [0.0, 0.8, 1.6, 2.6] {
+        puffs(feet + Vec3::Y * up * k * 0.5, 5, 0.5 * k);
+    }
+    ring(feet + Vec3::Y * 0.05, 2.5 * k, 0.55, GOLD);
+    ring(feet + Vec3::Y * 1.0 * k, 1.6 * k, 0.4, WHITE);
+    burst(feet + Vec3::Y * 1.2 * k, 8, Bit::Star);
+    flash([1.0, 0.95, 0.8], if grow { 0.22 } else { 0.12 }, 0.35);
+}
+
+/// Mega Mario's step (or landing, `heavy`): dust around his feet, a ring of it.
+pub fn mega_step(feet: Vec3, heavy: bool) {
+    let k = crate::mega::SIZE;
+    if heavy {
+        ring(feet + Vec3::Y * 0.05, 3.0 * k, 0.5, DUST);
+        puffs(feet, 8, 0.9 * k);
+    } else {
+        ring(feet + Vec3::Y * 0.05, 1.2 * k, 0.3, DUST);
+        puffs(feet, 3, 0.45 * k);
+    }
+}
+
 /// L1: the hammer pops out (or away) in Mario's hand: a puff, sparkles, SM64's sparkle and whoosh.
 pub fn summon(hand: Vec3, out: bool) {
     puffs(hand - Vec3::Y * 0.15, 3, 0.2);
@@ -315,6 +359,80 @@ pub fn bits() -> Vec<(Bit, Vec3, f32, f32, f32)> {
 pub fn swing_trail() -> Vec<(Vec3, Vec3, f32)> {
     let swing = SWING.lock().unwrap_or_else(|e| e.into_inner());
     swing.iter().map(|(h, m, t)| (*h, *m, t.elapsed().as_secs_f32() / SWING_TIME)).filter(|(.., t)| *t < 1.0).collect()
+}
+
+/// Enemies flying through the air (juggle.rs): their streaks, by enemy (points and when).
+static STREAKS: Mutex<Vec<(u64, Vec3, Instant)>> = Mutex::new(Vec::new());
+const STREAK_TIME: f32 = 0.25;
+
+/// Game thread: an enemy `key` flying fast is at `at` (its chest).
+pub fn enemy_streak(key: u64, at: Vec3) {
+    let mut s = STREAKS.lock().unwrap_or_else(|e| e.into_inner());
+    s.retain(|(_, _, t)| t.elapsed().as_secs_f32() < STREAK_TIME);
+    if s.len() < 120 {
+        s.push((key, at, Instant::now()));
+    }
+}
+
+/// The streaks to draw, each enemy's points oldest first, with how faded (0-1).
+pub fn enemy_streaks() -> Vec<Vec<(Vec3, f32)>> {
+    let s = STREAKS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut by: Vec<(u64, Vec<(Vec3, f32)>)> = Vec::new();
+    for (k, p, t) in s.iter() {
+        let f = t.elapsed().as_secs_f32() / STREAK_TIME;
+        if f >= 1.0 {
+            continue;
+        }
+        match by.iter_mut().find(|(key, _)| key == k) {
+            Some((_, v)) => v.push((*p, f)),
+            None => by.push((*k, vec![(*p, f)])),
+        }
+    }
+    by.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Game thread: an enemy came down hard after a juggle, at its feet `at`: dust, a ring, a thud.
+pub fn thud(at: Vec3) {
+    ring(at + Vec3::Y * 0.05, 2.2, 0.4, DUST);
+    puffs(at, 5, 0.6);
+    crate::lakitu::shake(0.5);
+    worker::call("thud", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_HEAVY_LANDING, 0.6) });
+}
+
+/// The screen's flash: when, its colour, how strong at first (0-1), how long (s).
+static FLASH: Mutex<Option<(Instant, [f32; 3], f32, f32)>> = Mutex::new(None);
+
+/// A flash over the screen (a star finish's gold), fading.
+pub fn flash(tint: [f32; 3], strength: f32, life: f32) {
+    *FLASH.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), tint, strength, life));
+}
+
+/// The screen's flash now: its colour and strength (0 when there's none).
+pub fn screen_flash() -> ([f32; 3], f32) {
+    let f = *FLASH.lock().unwrap_or_else(|e| e.into_inner());
+    f.map_or(([1.0; 3], 0.0), |(t, tint, s, life)| {
+        let p = t.elapsed().as_secs_f32() / life;
+        (tint, if p >= 1.0 { 0.0 } else { s * (1.0 - p) * (1.0 - p) })
+    })
+}
+
+/// Game thread: a star finish (style.rs, a finisher from the S rank up) at `at`: a golden flash,
+/// rings, stars and coins everywhere, more from each rank up.
+pub fn star_finish(at: Vec3, rank: usize) {
+    let more = rank.saturating_sub(4);
+    flash([1.0, 0.85, 0.4], 0.28 + 0.06 * more as f32, 0.45);
+    crate::lakitu::shake(1.4);
+    let ground = at - Vec3::Y * 0.8;
+    ring(ground, 5.0 + more as f32, 0.6, GOLD);
+    ring(at, 2.6, 0.4, WHITE);
+    ring(at, 1.6 + more as f32 * 0.5, 0.3, GOLD);
+    burst(at, 6 + 2 * more, Bit::Star);
+    burst(at, 4 + 2 * more, Bit::Coin);
+    puffs(ground, 6, 1.0);
+    worker::call("star finish", |_| unsafe {
+        sm64::sm64_er_hitstop(4);
+        sm64::sm64_play_sound_global(SOUND_GENERAL_COIN);
+    });
 }
 
 /// Game thread: an enemy's blow hurt Mario, his chest at `at`.
@@ -379,4 +497,6 @@ pub fn clear() {
     BITS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     SWING.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *HURT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *FLASH.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    STREAKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
