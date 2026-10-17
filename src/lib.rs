@@ -2277,7 +2277,9 @@ fn frame(data: &FD4TaskData) {
             let body_fwd = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(glam::vec3(0.0, 0.0, -1.0));
             // (lifted by an enemy's grab, Mario is where its animation carries the Tarnished's body)
             let lifted = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(engine_mario::root_offset());
-            lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2) + lifted, airborne, c, look, body_fwd, idle, exit, |from, to| {
+            // the right stick (or the arrow keys) turns the camera smoothly
+            let orbit = if key(0x25) { -1.0 } else if key(0x27) { 1.0 } else if stick.0.abs() > 4000 { (stick.0 as f32 / 32767.0).clamp(-1.0, 1.0) } else { 0.0 };
+            lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2) + lifted, airborne, c, orbit, look, body_fwd, idle, exit, |from, to| {
                 let h = havok?;
                 let d = to - from;
                 h.phys_world

@@ -197,7 +197,14 @@ it makes it slide round to where it can see instead of zooming into Mario's back
 walls by the lens. Out in the open it looks a little ahead of where Mario runs and backs off a bit
 at full speed, and on a steady run it swings round behind him on its own (God of War style, never
 when he runs towards it or right after you turn it yourself). It keeps real time in slow motion, so
-it never lags behind Mario. Next to a big enemy Lakitu's camera backs off and looks up at it,
+it never lags behind Mario. Something in the way (a column, a doorframe) makes it turn a little to
+see past it before it dives in close, and it never comes closer than a metre to Mario.
+
+**Smart camera.** One more push down on the right stick past the farthest zoom switches Lakitu to a
+camera that places itself (the HUD shows Mario's head instead of Lakitu): it swings behind a run
+sooner, and in a fight it looks over Mario's shoulder at the enemy, backing off to keep both in the
+picture; with a group, or a boss with his adds, it frames them all, the bigger ones counting more.
+Up on the right stick goes back to the normal zooms. Next to a big enemy Lakitu's camera backs off and looks up at it,
 more the bigger and closer it is; if one is close but out of view, the camera drifts round to
 show it (not right after you turn the camera yourself). In a fight the camera works like God of
 War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen (with a group around Mario,
@@ -335,7 +342,7 @@ replaces this fork's DLL with the original one.
 | RT | Middle mouse button | The hook (see above) |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |
-| Right stick | Arrow keys | Lakitu's camera |
+| Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). One more down past the farthest zoom: the **smart camera** (Mario's head on the HUD) |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
 | L3 (left stick click) | R | Whistle for Yoshi |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |

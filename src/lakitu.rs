@@ -2,9 +2,13 @@
 //! built around SM64's levels), but its free-roam behaviour:
 //! - the camera stays where it is and only follows to keep its distance (a leash), so Mario runs
 //!   around it the way he does in SM64
-//! - C-left / C-right (right stick left / right, or the arrow keys) swing it 45 degrees around Mario
+//! - the right stick left / right (or the arrow keys) turns it round Mario, smoothly, faster the
+//!   further it's pushed
 //! - C-down (right stick down, or down arrow) zooms out in three steps, C-up back in, and from the
-//!   nearest into the C-up view (Mario stands, his head turning where you look)
+//!   nearest into the C-up view (Mario stands, his head turning where you look); one more C-down
+//!   past the farthest is the smart camera (AUTO): it places itself, God of War style (behind a
+//!   steady run, over Mario's shoulder at the enemy he fights, framing the group), the HUD showing
+//!   Mario's head instead of Lakitu
 //! - it doesn't bob with Mario's jumps (the height follows slowly in the air)
 //! - walls in the way pull it in
 //! It writes the game's render camera each frame; Elden Ring's own camera takes over for cutscenes,
@@ -22,8 +26,6 @@ const FOCUS_HEIGHT: f32 = 1.0;
 /// distance (m) and height above the focus for the zoom steps (C-down steps out, C-up in)
 const ZOOM: [(f32, f32); 3] = [(5.0, 1.6), (7.0, 2.2), (9.5, 3.0)];
 const NEAR: (f32, f32) = ZOOM[0];
-/// one C-button press
-const STEP: f32 = std::f32::consts::FRAC_PI_4;
 
 /// On by default; `camera = elden` in er_mario.ini starts with Elden Ring's camera (F9 switches).
 pub static ON: AtomicBool = AtomicBool::new(true);
@@ -84,7 +86,6 @@ struct FirstPerson {
 }
 
 /// SM64's camera sounds (SOUND_MENU_CAMERA_*), queued for the libsm64 thread
-const SOUND_TURN: i32 = 0x700F_0081;
 const SOUND_ZOOM_IN: i32 = 0x7006_0081;
 const SOUND_ZOOM_OUT: i32 = 0x7007_0081;
 const SOUND_BUZZ: i32 = 0x700E_0081;
@@ -106,12 +107,15 @@ pub fn take_sounds() -> Vec<i32> {
 
 static FIRST_PERSON: AtomicBool = AtomicBool::new(false);
 static FAR_VIEW: AtomicBool = AtomicBool::new(false);
+/// The smart camera (one C-down past the farthest zoom); kept through doors and cutscenes.
+static AUTO: AtomicBool = AtomicBool::new(false);
 
 /// The camera status for the HUD's icons.
 pub enum HudState {
     Near,
     Far,
     FirstPerson,
+    Auto,
 }
 
 /// None when the SM64 camera isn't running.
@@ -123,6 +127,8 @@ pub fn hud_state() -> Option<HudState> {
     }
     Some(if FIRST_PERSON.load(Relaxed) {
         HudState::FirstPerson
+    } else if AUTO.load(Relaxed) {
+        HudState::Auto
     } else if FAR_VIEW.load(Relaxed) {
         HudState::Far
     } else {
@@ -281,6 +287,7 @@ pub fn update(
     mario: Vec3,
     airborne: bool,
     c: [bool; 4],
+    orbit: f32,
     look: (f32, f32),
     body_fwd: Vec3,
     idle: bool,
@@ -315,7 +322,7 @@ pub fn update(
             focus: mario + Vec3::Y * FOCUS_HEIGHT,
             yaw: d.z.atan2(d.x),
             target_yaw: None,
-            zoom: 0,
+            zoom: if AUTO.load(std::sync::atomic::Ordering::Relaxed) { ZOOM.len() - 1 } else { 0 },
             held: c,
             big: 0.0,
             climb: 0.0,
@@ -344,21 +351,19 @@ pub fn update(
     // C-buttons (edges)
     let pressed: Vec<bool> = (0..4).map(|i| c[i] && !cam.held[i]).collect();
     cam.held = c;
-    // (a swing of his own: the camera leaves the big body's framing to him a while)
+    // (a turn of his own: the camera leaves its framing and chasing to him a while)
     static MANUAL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-    if pressed[0] || pressed[1] {
+    let turning = orbit.abs() > ORBIT_DEAD && cam.fp.is_none();
+    if turning {
         *MANUAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        // the stick turns it smoothly round him, faster the further it's pushed (eased in: a
+        // light touch nudges it)
+        let k = (orbit.abs() - ORBIT_DEAD) / (1.0 - ORBIT_DEAD);
+        cam.target_yaw = None;
+        cam.yaw += orbit.signum() * k * k * ORBIT_SPEED * dt;
+        cam.leash = cam.focus + Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin()) * (cam.leash - cam.focus).with_y(0.0).length().max(1.0) + Vec3::Y * (cam.leash.y - cam.focus.y);
     }
     let manual = MANUAL.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < ASSIST_HOLD);
-    let base = cam.target_yaw.unwrap_or(cam.yaw);
-    if cam.fp.is_none() && pressed[0] {
-        cam.target_yaw = Some(base - STEP);
-        sound(SOUND_TURN);
-    }
-    if cam.fp.is_none() && pressed[1] {
-        cam.target_yaw = Some(base + STEP);
-        sound(SOUND_TURN);
-    }
     // first person: C-up while standing still in the near view; C-up / C-down / A / B leave it
     if let Some(fp) = cam.fp {
         if pressed[2] || pressed[3] || exit {
@@ -370,6 +375,11 @@ pub fn update(
             cam.leash = cam.focus + Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin()) * NEAR.0;
             cam.pos = cam.leash + Vec3::Y * NEAR.1;
         }
+    } else if pressed[2] && AUTO.load(std::sync::atomic::Ordering::Relaxed) {
+        // out of the smart camera, back to the farthest zoom
+        AUTO.store(false, std::sync::atomic::Ordering::Relaxed);
+        crate::log("lakitu: smart camera off");
+        sound(SOUND_ZOOM_IN);
     } else if pressed[2] {
         if cam.zoom > 0 {
             cam.zoom -= 1;
@@ -385,6 +395,11 @@ pub fn update(
     } else if pressed[3] {
         if cam.zoom + 1 < ZOOM.len() {
             cam.zoom += 1;
+            sound(SOUND_ZOOM_OUT);
+        } else if !AUTO.load(std::sync::atomic::Ordering::Relaxed) {
+            // past the farthest: the smart camera
+            AUTO.store(true, std::sync::atomic::Ordering::Relaxed);
+            crate::log("lakitu: smart camera on");
             sound(SOUND_ZOOM_OUT);
         } else {
             // as far out as Lakitu goes
@@ -536,19 +551,49 @@ pub fn update(
     // a steady run (not towards the camera, not in a fight, not right after a swing of his own):
     // Lakitu drifts round behind Mario, like God of War's camera, faster the faster he runs; the
     // stick never has to steer it
-    if cam.target_yaw.is_none() && !manual && cam.slide.is_none() && !fighting_now && cam.run_time > CHASE_AFTER && !airborne {
+    // (the smart camera sooner, wider and faster)
+    let auto = AUTO.load(std::sync::atomic::Ordering::Relaxed);
+    let (chase_after, chase_cos, chase_rate) = if auto { (AUTO_CHASE_AFTER, AUTO_CHASE_COS, AUTO_CHASE_RATE) } else { (CHASE_AFTER, CHASE_COS, CHASE_RATE) };
+    // the smart camera in a fight: over Mario's shoulder at the enemy (the group's middle), the
+    // side it's already on, both in the picture; a C-button swing leaves it to him a while
+    let engaged = auto && !manual && cam.target_yaw.is_none() && fight.is_some_and(|(c, _)| (c - mario).with_y(0.0).length() < ENGAGE_FAR) && (fighting_now || fight.is_some_and(|(c, _)| (c - mario).with_y(0.0).length() < ENGAGE_NEAR));
+    if engaged {
+        // (the group and the big bodies near, each weighted by its size: a boss with his adds is
+        // framed nearer him)
+        let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut sum = Vec3::ZERO;
+        let mut weight = 0.0;
+        for g in &group {
+            sum += *g;
+            weight += 1.0;
+        }
+        for (p, r, h) in bodies.iter().filter(|(p, r, _)| ((*p - mario).with_y(0.0).length() - r) < ENGAGE_FAR) {
+            let w = 1.0 + r + h * 0.3;
+            sum += (*p + Vec3::Y * (h * 0.5)) * w;
+            weight += w;
+        }
+        let c = if weight > 0.0 { sum / weight } else { fight.map_or(mario, |f| f.0) };
+        let to = (c - mario).with_y(0.0);
+        if to.length() > 0.8 {
+            let behind = (-to.z).atan2(-to.x);
+            let (a, b) = (behind + SHOULDER, behind - SHOULDER);
+            let pick = if angle_diff(a, cam.yaw).abs() < angle_diff(b, cam.yaw).abs() { a } else { b };
+            cam.yaw += angle_diff(pick, cam.yaw) * rate(if airborne { FIGHT_YAW_RATE * 0.5 } else { FIGHT_YAW_RATE });
+        }
+    }
+    if cam.target_yaw.is_none() && !manual && cam.slide.is_none() && !fighting_now && !engaged && cam.run_time > chase_after && !airborne {
         let view = -Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin());
         let along = cam.run_dir.dot(view);
-        if along > CHASE_COS {
+        if along > chase_cos {
             let want = (-cam.run_dir.z).atan2(-cam.run_dir.x);
-            let k = ((along - CHASE_COS) / (1.0 - CHASE_COS)).clamp(0.0, 1.0) * speed_k * (1.0 - 0.5 * enc);
-            cam.yaw += angle_diff(want, cam.yaw) * rate(CHASE_RATE * k);
+            let k = ((along - chase_cos) / (1.0 - chase_cos)).clamp(0.0, 1.0) * speed_k * (1.0 - 0.5 * enc);
+            cam.yaw += angle_diff(want, cam.yaw) * rate(chase_rate * k);
         }
     }
     // a big body close by but out of the view (behind or beside the camera): Lakitu drifts round,
     // slowly, until it and Mario are both in sight (Mario in front of it), unless he swung the
     // camera himself just now
-    if cam.target_yaw.is_none() && !manual && cam.fp.is_none() {
+    if cam.target_yaw.is_none() && !manual && cam.fp.is_none() && !engaged {
         let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let view = -Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin());
         let close: Vec<(f32, Vec3)> =
@@ -597,8 +642,11 @@ pub fn update(
             cam.pos
         ));
     }
-    let (dist, height) = ZOOM[cam.zoom];
+    let (dist, height) = if auto { AUTO_ZOOM } else { ZOOM[cam.zoom] };
     let (dist, height) = (dist * ks, height * ks);
+    // (the smart camera in a fight: back far enough for Mario and the enemy both)
+    let fit = if engaged { fight.map_or(0.0, |(c, _)| (((c - mario).with_y(0.0).length() - ENGAGE_FIT) * 0.6).clamp(0.0, 4.0)) } else { 0.0 };
+    let (dist, height) = (dist + fit * (1.0 - 0.5 * enc), height + fit * 0.25);
     // shut in: closer and lower (a room's walls would pull it in anyway, jerkily); running in the
     // open, a little farther back
     let (dist, height) = (dist * (1.0 - INDOOR_CLOSER * enc) + RUN_BACK * ks * speed_k * (1.0 - enc), height * (1.0 - INDOOR_LOWER * enc));
@@ -654,7 +702,8 @@ pub fn update(
     };
     let want_fight = fight.map_or(Vec3::ZERO, |(c, _)| {
         let to = c - head;
-        let lean = FIGHT_LEAN + (AIR_LEAN - FIGHT_LEAN) * cam.air;
+        let ground_lean = if auto { AUTO_FIGHT_LEAN } else { FIGHT_LEAN };
+        let lean = ground_lean + (AIR_LEAN - ground_lean) * cam.air;
         let v = Vec3::new(to.x * lean, to.y * (lean + 0.15 * cam.air), to.z * lean);
         v.clamp_length_max(FIGHT_FRAME_MAX)
     });
@@ -698,8 +747,23 @@ pub fn update(
     let want = if clear.is_some() {
         full
     } else {
-        hit(head, ideal).map(|h| ((h - cam.focus).length() - 0.3).max(0.6)).unwrap_or(full)
+        hit(head, ideal).map(|h| ((h - cam.focus).length() - WALL_GAP).max(MIN_DIST * ks)).unwrap_or(full)
     };
+    // something in the way (a column, a corner, a doorframe): a small turn either way that sees all
+    // the way is better than diving in close; it eases round to the nearest one (in a fight too)
+    if want < full * WHISKER_BLOCKED && cam.target_yaw.is_none() && !manual {
+        let flat_len = offset.with_y(0.0).length();
+        let free = WHISKERS.iter().copied().find(|&turn| {
+            let y = cam.yaw + turn;
+            let o = Vec3::new(y.cos() * flat_len, offset.y, y.sin() * flat_len);
+            hit(head, cam.focus + o).is_none()
+        });
+        if let Some(turn) = free {
+            cam.yaw += turn * rate(WHISKER_RATE);
+        }
+    }
+    // pulled in close: up and looking down a little, not into the back of his head
+    let close_lift = ((CLOSE_LIFT_FROM * ks - want) * 0.6).max(0.0).min((cam.ceiling_y - CEILING_GAP - cam.focus.y - height - cam.lift).max(0.0));
     // a wall close behind (the view pulled in to under SLIDE_BLOCKED of its length): look a few
     // turns either way for one that sees farther, and slide round to it
     // (not in a fight: the fight's framing turns it; not right after a slide)
@@ -725,7 +789,7 @@ pub fn update(
         }
     }
     cam.dist += (want - cam.dist) * if want < cam.dist { rate(15.0) } else { rate(2.0) };
-    let base = cam.focus + dir * cam.dist;
+    let base = cam.focus + dir * cam.dist + Vec3::Y * close_lift;
     // never inside a big body: out to its side (or the top, close above it), eased
     let mut pos = base;
     for (p, r, h) in &bodies {
@@ -792,7 +856,36 @@ const SLIDE_DWELL: f32 = 1.5;
 /// the second look for walls, this much higher (m)
 const WALL_HIGH: f32 = 1.3;
 /// nothing within this (m) of the lens
-const LENS_PAD: f32 = 0.45;
+const LENS_PAD: f32 = 0.6;
+/// a wall in the way: the camera stops this far (m) in front of it, never closer than this to
+/// Mario's head (m); closer than this (m) it rises a little to look down at him
+const WALL_GAP: f32 = 0.5;
+const MIN_DIST: f32 = 1.0;
+const CLOSE_LIFT_FROM: f32 = 2.2;
+/// the view blocked to under this share of its length: these small turns (radians, nearest first)
+/// are tried for a clear one, eased to at this rate
+const WHISKER_BLOCKED: f32 = 0.85;
+const WHISKERS: [f32; 6] = [0.22, -0.22, 0.45, -0.45, 0.7, -0.7];
+const WHISKER_RATE: f32 = 3.0;
+/// the right stick: a push under this share does nothing, a full one turns the camera this fast
+/// (radians a second)
+const ORBIT_DEAD: f32 = 0.18;
+const ORBIT_SPEED: f32 = 2.6;
+/// the smart camera (AUTO): its distance and height (m); it starts chasing a run sooner (s), from
+/// wider (cos, ~127 degrees) and faster; in a fight with an enemy this close (m, or one he hit
+/// just now within ENGAGE_FAR) it looks over Mario's shoulder at it (this far round off the line,
+/// radians, turning at this rate), leaning this share of the way to it, backing off for an enemy
+/// farther than ENGAGE_FIT (m)
+const AUTO_ZOOM: (f32, f32) = (6.0, 1.9);
+const AUTO_CHASE_AFTER: f32 = 0.3;
+const AUTO_CHASE_COS: f32 = -0.6;
+const AUTO_CHASE_RATE: f32 = 1.8;
+const ENGAGE_FAR: f32 = 8.0;
+const ENGAGE_NEAR: f32 = 4.0;
+const SHOULDER: f32 = 0.42;
+const FIGHT_YAW_RATE: f32 = 2.2;
+const AUTO_FIGHT_LEAN: f32 = 0.38;
+const ENGAGE_FIT: f32 = 3.0;
 /// the view leads where he runs by this long (s), at most this far (m); running flat out in the
 /// open, the camera this much farther back (m)
 const LEAD_TIME: f32 = 0.18;
