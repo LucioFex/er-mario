@@ -81,10 +81,10 @@ close and risky hits.
 
 | Attack | Original | This fork |
 |---|---|---|
-| Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **5-30%** per hit. A regular enemy takes about 8 punches; finishers hit hardest |
-| Stomp | 50% of enemy HP | **27%**, weaker when you keep bouncing on the same enemy |
-| Ground pound | 67%, no boss bonus | **42%**, boss bonus **×2**, shockwave hits enemies around |
-| Fireball | — | **12-33%** by charge; the giant one kills a regular enemy |
+| Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch |
+| Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
+| Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
+| Fireball | — | **9-25%** by charge; the giant one blows a regular enemy away |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -161,11 +161,11 @@ replaces this fork's DLL with the original one.
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
-| D-pad | | Caps: left Metal, up Wing, right Vanish, down take it off |
+| D-pad | | Caps: left Metal, up Wing, right Vanish, down take it off (and interact) |
 | LB | | Hammer mode on and off |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
-| Y | E | Interact (also does Y's special move) |
+| D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
 | RT | R | Whistle for Yoshi |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
 | | F1 (hold 3 s) | Give up and respawn at the last grace |

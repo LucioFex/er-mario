@@ -69,11 +69,8 @@ const ANIM_GROUND_KICK: i32 = 0x66;
 /// press (it used to count from the second punch's end, a timing hard to find)
 const PAUSE_MIN: u32 = 10;
 const PAUSE_MAX: u32 = 36;
-/// Y is also the game's "interact": its move waits this many ticks, and is dropped if the game
-/// started something meanwhile (picking up an item, a grace, a door, a menu). The game can take
-/// longer than that to start one: out of a fight (`fight`) Y on the ground waits longer.
-const Y_DELAY: u32 = 4;
-const Y_DELAY_CALM: u32 = 12;
+/// a string's X presses keep counting this long after it ended (beyond the combo window)
+const CHAIN_GRACE: u32 = 4;
 
 const ACT_FLAG_STATIONARY: u32 = 0x200;
 const ACT_FLAG_MOVING: u32 = 0x400;
@@ -187,9 +184,6 @@ pub struct Moves {
     x2_at: Option<u32>,
     dash_seen: Option<u32>,
     air_seen: Option<u32>,
-    /// Y pressed on this tick, its move still waiting (Y_DELAY), and for how long
-    y_pending: Option<u32>,
-    y_wait: u32,
     dash_ready: u32,
     /// used up in this jump (back once he's on the ground)
     air_dashed: bool,
@@ -205,10 +199,8 @@ pub struct Moves {
     /// X presses in the current string of punches or swings, and when it was last going
     x_chain: u32,
     chain_seen: Option<u32>,
-    /// an X pressed after Y, kept for Y, X; and X kept from SM64 until it's let go (pressed while
-    /// Y waited, it punched before the sweep)
+    /// an X pressed after Y, kept for Y, X
     x_buffer: Option<u32>,
-    swallow_x: bool,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -227,8 +219,6 @@ impl Moves {
             x2_at: None,
             dash_seen: None,
             air_seen: None,
-            y_pending: None,
-            y_wait: Y_DELAY,
             dash_ready: 0,
             air_dashed: false,
             air_spun: false,
@@ -241,13 +231,7 @@ impl Moves {
             x_chain: 0,
             chain_seen: None,
             x_buffer: None,
-            swallow_x: false,
         }
-    }
-
-    /// X stays away from SM64 (lib.rs): pressed while Y's move waited, it belongs to Y, X.
-    pub fn swallows_x(&self) -> bool {
-        self.swallow_x
     }
 
     /// Game thread, every SM64 tick: L1 held now, whether Mario may change hands (no menu, not
@@ -263,10 +247,8 @@ impl Moves {
     }
 
     /// Game thread, every SM64 tick: B, Y and X held now, whether Mario may use them (not holding
-    /// an enemy, not on Yoshi, no menu), whether the game is busy with an interaction or an NPC
-    /// is close (Y only talks then), whether an enemy is close (out of a fight Y on the ground
-    /// waits longer for the game's doors, items, graces), his last state. The move to start, if
-    /// any.
+    /// an enemy, not on Yoshi, no menu), whether the game is busy with an interaction (a door, a
+    /// grace, a menu: no Y move then), his last state. The move to start, if any.
     #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
@@ -275,8 +257,6 @@ impl Moves {
         x: bool,
         allowed: bool,
         interacting: bool,
-        npc_near: bool,
-        fight: bool,
         state: &sm64::SM64MarioState,
         move_timer: i32,
         tick: u32,
@@ -287,26 +267,14 @@ impl Moves {
         let b_pressed = !std::mem::replace(&mut self.b_held, b) && b;
         let y_pressed = !std::mem::replace(&mut self.y_held, y) && y;
         let x_pressed = !std::mem::replace(&mut self.x_held, x) && x;
-        if y_pressed && !npc_near {
-            // (on the ground out of a fight the game gets longer to start an interaction first;
-            // not after a dash: B, Y asks for the shell)
-            let dashed = self.dash_seen.is_some_and(|t| tick.wrapping_sub(t) <= 6);
-            self.y_wait = if fight || a & ACT_FLAG_AIR != 0 || dashed { Y_DELAY } else { Y_DELAY_CALM };
-            self.y_pending = Some(tick);
+        // (Y is Mario's alone: the game's interact moved to D-pad down, lib.rs; no waiting for it)
+        let y_pressed = y_pressed && !interacting;
+        if y_pressed {
             self.x_buffer = None;
         }
         // X after Y: kept for Y, X (and away from SM64 while Y still waits)
-        if x_pressed && allowed && (self.y_pending.is_some() || self.in_sweep || a == ACT_ER_HAMMER_SLAM) {
+        if x_pressed && allowed && (self.in_sweep || a == ACT_ER_HAMMER_SLAM) {
             self.x_buffer = Some(tick);
-            self.swallow_x |= self.y_pending.is_some();
-        }
-        self.swallow_x &= x;
-        if interacting || npc_near {
-            self.y_pending = None;
-        }
-        let y_pressed = self.y_pending.is_some_and(|t| tick.wrapping_sub(t) >= self.y_wait);
-        if y_pressed {
-            self.y_pending = None;
         }
         let punching = a == ACT_PUNCHING || a == ACT_MOVE_PUNCHING;
         // the sweep and the hammer's slam: when they end, the beat for the next button of a combo
@@ -332,11 +300,11 @@ impl Moves {
         }
         let recent = |end: Option<u32>| end.is_some_and(|t| tick.wrapping_sub(t) <= COMBO_WINDOW);
         // the string of punches or swings: its X presses, counted until it has been over a while
-        let chain_window = |end: Option<u32>| end.is_some_and(|t| tick.wrapping_sub(t) <= COMBO_WINDOW + Y_DELAY);
+        let chain_window = |end: Option<u32>| end.is_some_and(|t| tick.wrapping_sub(t) <= COMBO_WINDOW + CHAIN_GRACE);
         let in_chain = a == ACT_ER_HAMMER || a == ACT_ER_CHAIN || a == ACT_ER_RUSH || (punching && state.anim_id != ANIM_BREAKDANCE);
         // the pause combo: punch, punch, a beat, X
         let mut pause = false;
-        if x_pressed && !self.swallow_x {
+        if x_pressed {
             pause = self.x_chain == 2 && self.x2_at.is_some_and(|t| (PAUSE_MIN..=PAUSE_MAX).contains(&tick.wrapping_sub(t)));
             self.x_chain = if in_chain || chain_window(self.chain_seen) || pause { self.x_chain + 1 } else { 1 };
             if self.x_chain == 2 {

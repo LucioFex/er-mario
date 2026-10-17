@@ -227,6 +227,14 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         g.bRightTrigger = 0;
         // L1 brings out Mario's hammer (moves.rs), not the game's guard
         g.wButtons &= !XINPUT_GAMEPAD_LEFT_SHOULDER;
+        // Y is Mario's special moves; the game's interact (Y: doors, items, graces, NPCs) is on
+        // D-pad down instead, which only takes his cap off (Y's moves waited for the game to start
+        // an interaction, slow, and hit anyway)
+        let interact = g.wButtons.contains(XINPUT_GAMEPAD_DPAD_DOWN);
+        g.wButtons &= !XINPUT_GAMEPAD_Y;
+        if interact {
+            g.wButtons |= XINPUT_GAMEPAD_Y;
+        }
         // the D-pad changes Mario's caps (caps.rs), not the game's items and spells
         g.wButtons &= !(XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT);
         // X is Mario's punch and the game's "use item": the game only gets it for the whistle
@@ -1315,7 +1323,7 @@ fn input_task() {
         pressed |= b.contains(XINPUT_GAMEPAD_A)
             || b.contains(XINPUT_GAMEPAD_B)
             || b.contains(XINPUT_GAMEPAD_X)
-            || b.contains(XINPUT_GAMEPAD_Y)
+            || b.contains(XINPUT_GAMEPAD_DPAD_DOWN)
             || b.contains(XINPUT_GAMEPAD_LEFT_SHOULDER)
             || g.bLeftTrigger > 100
             || g.bRightTrigger > 100
@@ -2693,10 +2701,9 @@ fn frame(data: &FD4TaskData) {
             m.stuck_ticks = 0;
         }
         let stuck_at = m.state.position;
-        // Y's moves give way to the game's interact (Y): an NPC close by, or the Tarnished in an
-        // event animation (picking up, a grace, a door...) or a menu up
+        // no Y moves while the Tarnished is in an event animation (picking up, a grace, a door...)
+        // or a menu is up
         let interacting = FOLLOWING.load(Ordering::Relaxed) || MENU_OPEN.load(Ordering::Relaxed) || game_driven(current_anim(&player_ref.chr_ins));
-        let npc_near = targets.iter().any(|t| t.friendly() && glam::Vec3::from(t.sm).distance(glam::Vec3::from(m.state.position)) < 350.0);
         // L1: the hammer out or away (not while holding anyone or riding: his hands are busy)
         let hands_free = fire_allowed && !carry::holding();
         // (not in the middle of one of the combos' moves)
@@ -2707,13 +2714,7 @@ fn frame(data: &FD4TaskData) {
         }
         let hammer_on = m.moves.hammer && hands_free;
         let juggling = juggle::active();
-        // an enemy close by: a fight, Y's moves are on (otherwise Y only interacts)
-        let fight = targets.iter().any(|t| t.hostile() && glam::Vec3::from(t.sm).distance(glam::Vec3::from(m.state.position)) < 800.0);
-        let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, npc_near, fight, &m.state, m.combo.action_timer, m.ticks);
-        // (an X pressed for Y, X while Y's move waits: no punch first)
-        if m.moves.swallows_x() {
-            inputs.button_b = 0;
-        }
+        let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
         let no_punch = m.fire.throwing(m.ticks);
         let tt = std::time::Instant::now();
         let tick_span = perf::span(perf::TICK);
@@ -3084,7 +3085,7 @@ fn frame(data: &FD4TaskData) {
                     *last = Some(std::time::Instant::now());
                     let st = INTERACT_STATE.load(Ordering::Relaxed);
                     log(format!(
-                        "input: interact (Y) pressed, no event animation after 1 s (allowed {}, blocked {}, queued {}; tarnished anim {before} -> {cur}, Mario action {:#x})",
+                        "input: interact (D-pad down) pressed, no event animation after 1 s (allowed {}, blocked {}, queued {}; tarnished anim {before} -> {cur}, Mario action {:#x})",
                         st & 1 != 0,
                         st & 2 != 0,
                         st & 4 != 0,

@@ -119,9 +119,11 @@ impl Attack {
             // the reward for the beat: harder blows than the plain combo's
             Attack::Rush => (13.5, "damage_rush"),
             Attack::RushKick => (22.5, "damage_rush_kick"),
-            // the combos: their finishers hit hardest, worth the longer string of buttons
-            Attack::Uppercut => (6.5, "damage_uppercut"),
-            Attack::UppercutTop => (18.0, "damage_uppercut_top"),
+            // the combos: their finishers hit hardest, worth the longer string of buttons (the
+            // super jump punch's many blows on the way up are mostly for show: it set up an air
+            // combo and took a regular enemy's whole bar on its own)
+            Attack::Uppercut => (1.5, "damage_uppercut"),
+            Attack::UppercutTop => (8.0, "damage_uppercut_top"),
             Attack::Meteor => (10.5, "damage_meteor"),
             Attack::MeteorLand => (25.5, "damage_meteor_land"),
             Attack::Tornado => (5.5, "damage_tornado"),
@@ -173,9 +175,13 @@ impl Attack {
     /// Ticks before the same enemy can take another of these (the rush's blows come 4 ticks apart).
     fn cooldown(self) -> u32 {
         match self {
-            Attack::Rush | Attack::RushKick => 3,
+            Attack::Rush => 3,
+            // one hit per blow: the flying kick and the string's blows land over up to 5 ticks (at
+            // 3 the backfist, the whirlwind kick and the flying kick each hit twice, a flurry of
+            // stagger the enemy couldn't get out of)
+            Attack::RushKick | Attack::Chain => 6,
             // the flurry's blows come 3 ticks apart, the spins' every few
-            Attack::Uppercut | Attack::Flurry | Attack::Chain | Attack::AirHit => 3,
+            Attack::Uppercut | Attack::Flurry | Attack::AirHit => 3,
             Attack::Shell => 5,
             Attack::Tornado | Attack::Giro => 5,
             // a swing hits over 3 ticks, once; the next one comes 8 ticks later at the soonest
@@ -272,6 +278,8 @@ const FIST_SHARE: u16 = 100;
 /// Share of the normal damage bosses (anything with a boss health bar) take.
 /// (raised with the lower shares above, so bosses lose only a little)
 const BOSS_FACTOR: f32 = 0.065;
+/// On top of every share above: Mario still took too much (after the halving of X and Y)
+const DAMAGE_FACTOR: f32 = 0.75;
 const INVADER_FACTOR: f32 = 0.25;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
@@ -365,8 +373,8 @@ pub struct Combat {
     drain: f32,
     /// stomps per enemy since Mario last stood on the ground
     stomps: HashMap<u64, u32>,
-    /// stomps per enemy in a row, and the tick of the last one (their damage fades)
-    stomp_run: HashMap<u64, (u32, u32)>,
+    /// stomps per enemy in a row since Mario last stood on the ground (their damage fades)
+    stomp_run: HashMap<u64, u32>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -401,11 +409,6 @@ impl Target {
     /// A breakable prop (crate, barrel, clutter), not a character.
     pub fn is_prop(&self) -> bool {
         self.handle.is_none()
-    }
-
-    /// An enemy (not a friendly NPC, an ally or a prop).
-    pub fn hostile(&self) -> bool {
-        self.hostile
     }
 
     /// A character that isn't an enemy (an NPC, an ally): Mario's blows leave it alone.
@@ -852,7 +855,7 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
-    let mut pct = config_f32(key, default) * scale;
+    let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", DAMAGE_FACTOR);
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
@@ -881,11 +884,10 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     last
 }
 
-/// Stomps in a row on the same body (bouncing up a big one is many): each takes this much of the
-/// one before, down to STOMP_FLOOR, back to full after STOMP_RESET ticks without one.
-const STOMP_FADE: f32 = 0.65;
+/// Stomps in a row on the same body without touching the ground (bouncing up a big one is many):
+/// each takes half of the one before (100%, 50%, 25%...), down to STOMP_FLOOR.
+const STOMP_FADE: f32 = 0.5;
 const STOMP_FLOOR: f32 = 0.1;
-const STOMP_RESET: u32 = 75;
 
 /// Target body in SM64 units: horizontal radius and height (a human-sized capsule).
 const TARGET_RADIUS: f32 = 55.0;
@@ -1174,7 +1176,6 @@ impl Combat {
             }
         }
         self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < 12);
-        self.stomp_run.retain(|_, (_, t)| tick.wrapping_sub(*t) <= STOMP_RESET);
         {
             let mut until = FINISHER_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
             if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
@@ -1321,16 +1322,12 @@ impl Combat {
                     let me = player.modules.physics.position;
                     crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
                 }
-                // stomps in a row on the same body: each worth less (bouncing up a big one was a
-                // lot of free damage)
-                let scale = if matches!(attack, Attack::Stomp) {
-                    let run = self.stomp_run.entry(target.key).or_insert((0, tick));
-                    if tick.wrapping_sub(run.1) > STOMP_RESET {
-                        run.0 = 0;
-                    }
-                    run.0 += 1;
-                    run.1 = tick;
-                    STOMP_FADE.powi(run.0 as i32 - 1).max(STOMP_FLOOR)
+                // stomps in a row on the same body (the head stomp's ground pound too): each worth
+                // less until he's back on the ground (bouncing up a big one was a lot of free damage)
+                let scale = if matches!(attack, Attack::Stomp | Attack::GroundPound) {
+                    let run = self.stomp_run.entry(target.key).or_insert(0);
+                    *run += 1;
+                    STOMP_FADE.powi(*run as i32 - 1).max(STOMP_FLOOR)
                 } else {
                     1.0
                 };
@@ -1397,6 +1394,7 @@ impl Combat {
     pub fn stomp_limits(&mut self, targets: &[Target], grounded: bool) -> Vec<usize> {
         if grounded {
             self.stomps.clear();
+            self.stomp_run.clear();
         }
         targets
             .iter()
