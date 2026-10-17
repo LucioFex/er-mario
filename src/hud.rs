@@ -779,8 +779,8 @@ impl ImguiRenderLoop for Overlay {
         let chomp = crate::impact::chomp_trail();
         for (k, pair) in chomp.windows(2).enumerate() {
             let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
-            // (two swings: no ribbon across the gap between them)
-            if (t0 - t1).abs() * crate::impact::CHOMP_TRAIL_TIME > 0.07 {
+            // (two swings: no ribbon across the gap between them; a hit-stop's pause is no gap)
+            if (t0 - t1).abs() * crate::impact::CHOMP_TRAIL_TIME > 0.2 {
                 continue;
             }
             let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();

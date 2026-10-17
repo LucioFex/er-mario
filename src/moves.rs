@@ -78,12 +78,15 @@ const AIR_SWAPS_JUGGLE: u32 = 4;
 /// over after this many ticks without a blow
 const STRING_SWAPS: u32 = 2;
 const STRING_OVER: u32 = 30;
-/// the weapons' own moves: in the middle of one, L1 switches only with a swap strike (the move
-/// would go on with the wrong weapon in hand)
-const WEAPON_ACTIONS: [u32; 12] = [
+/// the weapons' own moves: in the middle of one, L1 switches with a swap strike, or waits for it to
+/// end (the move would go on with the wrong weapon in hand); the air string isn't one: it goes on
+/// with whatever is in hand (er_moves.c er_air_attack)
+const WEAPON_ACTIONS: [u32; 11] = [
     ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO, ACT_ER_HAMMER_LAUNCH, ACT_ER_HAMMER_AIR, ACT_ER_THROW, ACT_ER_AIR_THROW,
-    ACT_ER_CHOMP, ACT_ER_CHOMP_SPIN, ACT_ER_CHOMP_AIR, ACT_ER_AIR_COMBO,
+    ACT_ER_CHOMP, ACT_ER_CHOMP_SPIN, ACT_ER_CHOMP_AIR,
 ];
+/// a switch that waited for a weapon's move to end is dropped after this many ticks
+const PENDING_TICKS: u32 = 45;
 const ACT_IDLE: u32 = 0x0C40_0201;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
@@ -261,6 +264,8 @@ pub struct Moves {
     swap_ready: u32,
     air_swaps: u32,
     string_swaps: u32,
+    /// a switch waiting for a weapon's move to end (the weapon, since when)
+    pending: Option<(u8, u32)>,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -299,6 +304,7 @@ impl Moves {
             swap_ready: 0,
             air_swaps: 0,
             string_swaps: 0,
+            pending: None,
         }
     }
 
@@ -333,14 +339,32 @@ impl Moves {
             }
             _ => None,
         };
+        let busy = WEAPON_ACTIONS.contains(&action);
+        // (one that waited: now that the move is over)
+        let next = match next {
+            Some(w) => Some(w),
+            None => match self.pending {
+                Some((_, at)) if tick.wrapping_sub(at) > PENDING_TICKS => {
+                    self.pending = None;
+                    None
+                }
+                Some((w, _)) if !busy => {
+                    self.pending = None;
+                    Some(w)
+                }
+                _ => None,
+            },
+        };
         let next = next.filter(|_| allowed)?;
         // in the middle of a fight: the new weapon comes in swinging; in the middle of one of the
-        // weapons' moves, only that way (L1 waits otherwise)
-        let fighting = self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER);
+        // weapons' moves, only that way, or it waits for the move to end
+        let fighting = combo(action) || self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER);
         let swap = fighting && self.can_swap(next, action, tick);
-        if WEAPON_ACTIONS.contains(&action) && !swap {
+        if busy && !swap {
+            self.pending = Some((next, tick));
             return None;
         }
+        self.pending = None;
         self.weapon = next;
         crate::weapons::set(next);
         if swap {
@@ -354,8 +378,10 @@ impl Moves {
         use crate::weapons::{FISTS, RANG};
         let air = action & ACT_FLAG_AIR != 0;
         let air_left = self.air_swaps < if crate::juggle::active() { AIR_SWAPS_JUGGLE } else { AIR_SWAPS };
+        // (juggling up there, the air's allowance is the string's too)
+        let string_cap = if air && crate::juggle::active() { AIR_SWAPS_JUGGLE } else { STRING_SWAPS };
         tick >= self.swap_ready
-            && self.string_swaps < STRING_SWAPS
+            && self.string_swaps < string_cap
             && action & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0
             && (!air || air_left)
             && (w != RANG || crate::boomerang::ready() > 0)

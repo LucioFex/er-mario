@@ -190,7 +190,7 @@ impl Attack {
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
-        matches!(self, Attack::Fire(_) | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg)
+        matches!(self, Attack::Fire(_) | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
     }
 
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
@@ -1196,7 +1196,7 @@ const LAUNCH_RADIUS: f32 = 150.0;
 /// the Chain Chomp's cyclone reaches all around Mario out to its chain, and its crash's shockwave
 // (x1.25 past its place by him, as its chain in er_moves.c ER_CHOMP_LONGER)
 const CHOMP_SPIN_RADIUS: f32 = 522.0;
-const CHOMP_CRASH_RADIUS: f32 = 340.0;
+const CHOMP_CRASH_RADIUS: f32 = 347.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.

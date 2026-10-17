@@ -23,9 +23,9 @@ pub const COUNTER_DAMAGE: f32 = 1.6;
 const COOLDOWN: f32 = 2.5;
 /// enemies' attacks: their animations (a000_003000 on, Elden Ring's enemy attacks)
 const ATTACKS: std::ops::Range<i32> = 3000..4000;
-/// ...started at most this long ago (s: its wind-up, not its recovery), by an enemy facing Mario
-/// (cos 60°)
-const FRESH: f32 = 0.5;
+/// ...started at most this long ago (s: a slow wind-up's blow comes late, its recovery later), by
+/// an enemy facing Mario (cos 60°)
+const FRESH: f32 = 1.1;
 const FACING_COS: f32 = 0.5;
 
 const SOUND_WAHA: i32 = 0x242B_8081 + (1 << 16);
@@ -68,7 +68,8 @@ pub fn tick(action: u32, feet: Vec3, tick: u32) -> bool {
         let to = (feet - Vec3::new(p.0, p.1, p.2)).with_y(0.0).normalize_or_zero();
         let facing = ahead.dot(to) >= FACING_COS;
         let attacking = ATTACKS.contains(&anim) && a.play_time <= FRESH;
-        if attacking && !facing {
+        static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+        if attacking && !facing && SAID.swap(since, std::sync::atomic::Ordering::Relaxed) != since {
             // (which way an enemy's forward is was a guess: logged to check)
             log(format!("dodge: c{:04} attacks ({anim}) but faces away from Mario ({:.2})", chr.character_id, ahead.dot(to)));
         }

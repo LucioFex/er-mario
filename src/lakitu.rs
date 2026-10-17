@@ -463,6 +463,10 @@ pub fn update(
         // (the nearest half: a corridor is shut in even though its two ends are open)
         let walls = (w[0] + w[1] + w[2] + w[3]) / 4.0 / ks;
         let wall_k = 1.0 - ((walls - ROOM_TIGHT) / (ROOM_OPEN - ROOM_TIGHT)).clamp(0.0, 1.0);
+        // (a ceiling found below his head is stale: he rose through an opening or was moved)
+        if cam.ceiling_y <= head.y {
+            cam.ceiling_y = head.y + CEILING_PROBE * ks;
+        }
         let ceil_k = 1.0 - (((cam.ceiling_y - head.y) / ks - CEILING_LOW) / (CEILING_HIGH - CEILING_LOW)).clamp(0.0, 1.0);
         let want = (wall_k * 0.7).max(ceil_k * 0.7).max((wall_k + ceil_k) * 0.6).min(1.0);
         // (more than half shut in only under a roof: a cliff or a canyon's walls alone aren't a room)
@@ -538,8 +542,8 @@ pub fn update(
             cam.slide = None;
             cam.slid_ago = 0.0;
         }
-    } else {
-        cam.slide = None;
+    } else if cam.slide.take().is_some() {
+        cam.slid_ago = 0.0;
     }
     if angle_diff(cam.yaw, yaw_before).abs() > 0.5 {
         crate::log(format!(

@@ -43,8 +43,8 @@ const HOVER_CHASE: f32 = 9.0;
 const RETARGET: f32 = 8.0;
 /// the big one hits an enemy at most this often while it hovers (s) and this many times a throw;
 /// it stops following one after this many (it hits again and again: it mustn't stunlock)
-const HOVER_AGAIN: f32 = 0.4;
-const BIG_HITS: u32 = 7;
+const HOVER_AGAIN: f32 = 0.5;
+const BIG_HITS: u32 = 4;
 const CHASE_HITS: u32 = 4;
 const BIG_REACH: f32 = 1.7;
 /// coming back: from this speed up to that one (m/s), caught this close to his chest (m), and gone
