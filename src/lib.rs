@@ -18,6 +18,7 @@ mod combat;
 mod dodge;
 mod engine_mario;
 mod fireball;
+mod grab;
 mod equip;
 mod kbd;
 mod knock;
@@ -2477,6 +2478,7 @@ fn frame(data: &FD4TaskData) {
         juggle::clear();
         style::clear();
         dodge::clear();
+        grab::clear();
         caps::clear();
         mega::clear();
         swing::reset();
@@ -3270,7 +3272,9 @@ fn frame(data: &FD4TaskData) {
     // (see-through with the Vanish cap)
     static SHIMMER: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let vanish = caps::VANISH_OPACITY * (1.0 + 0.3 * (SHIMMER.get_or_init(std::time::Instant::now).elapsed().as_secs_f32() * 6.0).sin());
-    set_opacity(if cutscene { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
+    // an enemy's grab (grab.rs): the game holds him, Mario follows; swallowed, he's hidden
+    let (grabbed, released) = grab::update(&player_ref.chr_ins);
+    set_opacity(if cutscene || grab::swallowed() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
 
     // event animations (fog walls, doors, ladders...): after an interact, if the Tarnished starts a
     // new animation, the game drives him and Mario follows until he's back to what he was doing
@@ -3399,6 +3403,14 @@ fn frame(data: &FD4TaskData) {
         if INTERACT_PRESSED.swap(false, Ordering::Relaxed) && follow.is_none() {
             *armed = Some((std::time::Instant::now(), cur));
         }
+        // an enemy grabbed him: the game holds and moves him, Mario follows at once
+        if follow.is_none() && grabbed {
+            log(format!("follow: grabbed (anim {cur})"));
+            FOLLOW_STARTED.store(true, Ordering::Relaxed);
+            m.moving.clear(&mut m.havok);
+            *follow = Some((std::time::Instant::now(), LAST_FREE_ANIM.load(Ordering::Relaxed), cur));
+            *armed = None;
+        }
         // any event animation (6xxxx: fog walls, doors, levers...) is game-driven
         if follow.is_none() && armed.is_none() && (game_driven(cur) || riding) {
             *armed = Some((std::time::Instant::now(), LAST_FREE_ANIM.load(Ordering::Relaxed)));
@@ -3449,8 +3461,15 @@ fn frame(data: &FD4TaskData) {
             let _ = before;
             // (a long ladder takes a while)
             let limit = if ladder_anim(last) { 60.0 } else { 15.0 };
-            if !(game_driven(cur) || riding) || (!riding && t.elapsed().as_secs_f32() > limit) {
+            if !(game_driven(cur) || riding || grabbed) || (!riding && t.elapsed().as_secs_f32() > limit) {
                 log("follow: done");
+                // let go by an enemy: thrown off it
+                if m.state.action == grab::ACT_ER_GRABBED {
+                    let id = m.id;
+                    let release = released.unwrap_or(grab::Release { swallowed: false });
+                    worker::call("grab release", move |_| grab::throw_off(id, &release));
+                    m.state.action = 0x010208BE;
+                }
                 // off the ladder or off Torrent: SM64 takes over, dropping him onto the floor he's on
                 if m.state.action == ACT_ER_LADDER || m.state.action == ACT_ER_RIDE {
                     let id = m.id;
@@ -3528,7 +3547,7 @@ fn frame(data: &FD4TaskData) {
                 FOLLOW_TICKS.fetch_add(1, Ordering::Relaxed);
                 let mut inputs = sm64::SM64MarioInputs::default();
                 // walking pace (SM64's full stick runs at ~9 m/s); teleport-sized jumps don't count
-                if walking && dir != glam::Vec3::ZERO && !on_ladder && !riding {
+                if walking && dir != glam::Vec3::ZERO && !on_ladder && !riding && !grabbed {
                     inputs.cam_look_x = -dir.x;
                     inputs.cam_look_z = dir.z;
                     // a clear walking pace: at the Tarnished's slow speed SM64 would sit on the edge
@@ -3557,6 +3576,7 @@ fn frame(data: &FD4TaskData) {
                 });
                 drop(loaded_at);
                 let ladder_was = m.state.action == ACT_ER_LADDER;
+                let grabbed_was = m.state.action == grab::ACT_ER_GRABBED;
                 let sitting = m.state.action == ACT_ER_RIDE;
                 let parts = worker::call("follow tick", move |ctx| {
                     if let Some(floors) = &floors {
@@ -3568,6 +3588,10 @@ fn frame(data: &FD4TaskData) {
                         unsafe { sm64::sm64_set_mario_faceangle(id, face) };
                     }
                     unsafe { sm64::sm64_set_mario_position(id, sm[0], sm[1], sm[2]) };
+                    // held by an enemy: he dangles in its grip
+                    if grabbed && !grabbed_was {
+                        unsafe { sm64::sm64_set_mario_action(id, grab::ACT_ER_GRABBED) };
+                    }
                     // on Torrent: he sits (SM64's slide pose)
                     if riding && !sitting {
                         unsafe { sm64::sm64_set_mario_action(id, ACT_ER_RIDE) };

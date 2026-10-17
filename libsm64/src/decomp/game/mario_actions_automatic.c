@@ -878,6 +878,21 @@ s32 act_er_ladder(struct MarioState *m) {
     return FALSE;
 }
 
+// er-mario: an Elden Ring enemy grabbed him (grab.rs): the game holds and moves him through its
+// throw, SM64 only plays the dangle in Chuckya's arms, kicking his legs, with a groan now and then
+s32 act_er_grabbed(struct MarioState *m) {
+    mario_set_forward_vel(m, 0.0f);
+    vec3f_set(m->vel, 0.0f, 0.0f, 0.0f);
+    set_mario_animation(m, MARIO_ANIM_BEING_GRABBED);
+    if (m->actionTimer % 36 == 0) {
+        play_sound((m->actionTimer / 36) % 2 ? SOUND_MARIO_UH2 : SOUND_MARIO_EEUH, m->marioObj->header.gfx.cameraToObject);
+    }
+    m->actionTimer++;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    return FALSE;
+}
+
 // er-mario: Elden Ring rides the mount and Mario with it; SM64 only sits him down (the pose of
 // his slide)
 /** er-mario: ticks left of Mario's fireball thrust from the saddle (ride.rs) */
@@ -934,6 +949,7 @@ s32 mario_execute_automatic_action(struct MarioState *m) {
         case ACT_TORNADO_TWIRLING:       cancel = act_tornado_twirling(m);       break;
         case ACT_ER_LADDER:              cancel = act_er_ladder(m);              break;
         case ACT_ER_RIDE:                cancel = act_er_ride(m);                break;
+        case ACT_ER_GRABBED:             cancel = act_er_grabbed(m);             break;
     }
     /* clang-format on */
 
