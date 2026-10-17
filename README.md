@@ -97,6 +97,11 @@ still turn), it grows with a soft chime per level, and fully charged it comes do
 hammer. Enemies that fall out of an air combo bounce off the ground once, and a hit on the bounce
 sends them back up. Launched enemies leave a streak and land with a thud of dust.
 
+**Squash and stretch.** The weapons move like a cartoon's: the hammer stretches out and smears
+along its swing and squashes flat on a heavy blow, the Chain Chomp stretches long as it flies and
+squashes when it slams into something, its chain's links pull long and thin when taut, and the
+boomerangs pop out of Mario's hand.
+
 **Real 3D weapons.** The hammer, the boomerangs and the Chain Chomp are 3D models built into
 Mario's own mesh, each on a bone of its own (`src/assets/gear.rs`): the boomerangs spin flat and
 bank into their curve, the Chomp is a dark iron ball with eyes and teeth whose jaw opens to bite,
@@ -195,6 +200,12 @@ War's or Devil May Cry's: it leans towards the enemy you're fighting so both sha
 turns gently to keep it in view, and in an air combo it rises with Mario, backs off a little and
 levels out to look up at the fight. A big enemy that gets between the camera
 and Mario (or around the camera) turns see-through until it's out of the way.
+
+**Enemy grabs.** Elden Ring's grabs work on Mario: a troll's fist, a beast's jaws, a boss lifting
+him up. The game holds him and carries him through its throw while Mario dangles in its grip,
+kicking and groaning (SM64's Chuckya grab); one that holds him inside its body swallows him whole,
+Bubba style, and he's gone until it spits him out. Let go, he's thrown off with a cry. The throw's
+damage counts in wedges (`src/grab.rs`).
 
 **Big blows hurt more than wedges.** A heavy hit from a boss or a big brute sometimes (a roll of
 the dice, never twice in a row) sends Mario flying far off, screaming; if a wall is in the way he
