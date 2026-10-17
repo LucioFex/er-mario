@@ -357,9 +357,12 @@ impl Boomerang {
                 _ => Quat::from_axis_angle(r.dir.normalize_or(Vec3::Z), 0.3 * r.side.dot(Vec3::Y.cross(r.dir).normalize_or(Vec3::X)).signum()),
             };
             let rot = (bank * Quat::from_rotation_y(-r.spin)).normalize();
-            // (popping to full size as it leaves his hand)
-            let grow = (r.age / 0.08).min(1.0);
-            parts[RANG + r.slot] = PartPose { rot, pos: r.pos - feet, scale: size * (0.6 + 0.4 * grow) };
+            // (popping out of his hand: past full size, then settling; flat as it flies, a little
+            // wider along its flight, a cartoon's smear)
+            let pop = if r.age < 0.08 { 0.6 + 0.65 * (r.age / 0.08) } else { 1.0 + 0.25 * (1.0 - ((r.age - 0.08) / 0.12).min(1.0)) };
+            let speed = (r.vel.length() / 30.0).clamp(0.0, 1.0);
+            let stretch = Vec3::new(1.0 + 0.12 * speed, 1.0 - 0.15 * speed, 1.0 + 0.12 * speed);
+            parts[RANG + r.slot] = PartPose { rot, pos: r.pos - feet, scale: size * pop, stretch };
         }
         if !held {
             return;
@@ -372,7 +375,7 @@ impl Boomerang {
         let face = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, ahead));
         let rot = (face * Quat::from_rotation_x(-1.25) * Quat::from_rotation_y(0.4)).normalize();
         let tip = Vec3::new(crate::assets::gear::RANG_SPAN * 0.5, 0.0, -0.12);
-        parts[RANG + slot] = PartPose { rot, pos: hand - rot * tip * 0.85, scale: 0.85 };
+        parts[RANG + slot] = PartPose { rot, pos: hand - rot * tip * 0.85, scale: 0.85, stretch: Vec3::ONE };
     }
 
     fn publish(&mut self, hand: Option<Vec3>) {

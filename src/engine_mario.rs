@@ -68,6 +68,9 @@ pub struct PartPose {
     pub pos: Vec3,
     /// ~0 hides the part (unused eye variants)
     pub scale: f32,
+    /// on top of `scale`, along the part's own axes: the weapons' squash and stretch (1 1 1 for
+    /// the rest)
+    pub stretch: Vec3,
 }
 
 /// Part poses relative to Mario from one SM64 tick's matrices; None if the layout is unexpected.
@@ -75,7 +78,7 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
     if (count as usize) < SM64_PARTS || mats.len() < SM64_PARTS * 16 {
         return None;
     }
-    let mut out = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0 }; PARTS];
+    let mut out = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
     for (i, p) in out.iter_mut().enumerate().take(SM64_PARTS).skip(1) {
         let m = &mats[i * 16..i * 16 + 16];
         // row-vector storage: rows of M are the columns of the column-vector matrix
@@ -124,6 +127,7 @@ pub fn blend(a: &[PartPose; PARTS], b: &[PartPose; PARTS], t: f32) -> [PartPose;
         if a[i].pos.distance(b[i].pos) < 2.0 {
             out[i].pos = a[i].pos.lerp(b[i].pos, t);
             out[i].rot = a[i].rot.slerp(b[i].rot, t);
+            out[i].stretch = a[i].stretch.lerp(b[i].stretch, t);
         }
     }
     out
@@ -135,7 +139,7 @@ pub static POSE: Mutex<Option<[PartPose; PARTS]>> = Mutex::new(None);
 /// Converts world-relative part poses to the character space of a character facing `char_rot`.
 pub fn to_character(parts: &[PartPose; PARTS], char_rot: Quat) -> [PartPose; PARTS] {
     let inv = char_rot.inverse();
-    parts.map(|p| PartPose { rot: (inv * p.rot).normalize(), pos: inv * p.pos, scale: p.scale })
+    parts.map(|p| PartPose { rot: (inv * p.rot).normalize(), pos: inv * p.pos, ..p })
 }
 
 struct BoneMap {
@@ -637,12 +641,12 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
         let v = unsafe { *((base + b * 0x30) as *const [f32; 12]) };
         (Vec3::new(v[0], v[1], v[2]), Quat::from_xyzw(v[4], v[5], v[6], v[7]).normalize())
     };
-    let write = |base: usize, b: usize, t: Qs, s: f32| unsafe {
-        *((base + b * 0x30) as *mut [f32; 12]) = [t.0.x, t.0.y, t.0.z, 0.0, t.1.x, t.1.y, t.1.z, t.1.w, s, s, s, 0.0];
+    let write = |base: usize, b: usize, t: Qs, s: Vec3| unsafe {
+        *((base + b * 0x30) as *mut [f32; 12]) = [t.0.x, t.0.y, t.0.z, 0.0, t.1.x, t.1.y, t.1.z, t.1.w, s.x, s.y, s.z, 0.0];
     };
     let n = count.min(512);
     let parent_of = |b: usize| unsafe { *((parents + b * 2) as *const i16) };
-    let mut pinned: [Option<(Qs, f32)>; 512] = [None; 512];
+    let mut pinned: [Option<(Qs, Vec3)>; 512] = [None; 512];
     // bones that must keep scale 1: Mario's bones and their ancestors (the rest is scaled to 0,
     // which hides everything else on the Tarnished: weapons, face, fingers...)
     let mut keep = [false; 512];
@@ -651,7 +655,7 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
         if b >= n {
             continue;
         }
-        pinned[b] = Some(((pose[i].pos, pose[i].rot), pose[i].scale));
+        pinned[b] = Some(((pose[i].pos, pose[i].rot), pose[i].stretch * pose[i].scale));
         while b < n && !keep[b] {
             keep[b] = true;
             let p = parent_of(b);
@@ -667,8 +671,8 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
         let parent: Qs = if p >= 0 && (p as usize) < b { world[p as usize] } else { (Vec3::ZERO, Quat::IDENTITY) };
         let scale = match pinned[b] {
             Some((_, s)) => s,
-            None if keep[b] => 1.0,
-            None => 0.0,
+            None if keep[b] => Vec3::ONE,
+            None => Vec3::ZERO,
         };
         let m = match pinned[b] {
             Some((want, s)) => {
@@ -687,7 +691,7 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
                 if away && (p < 0 || keep[p as usize]) {
                     l.0.y -= 1000.0;
                 }
-                write(local, b, l, 0.0);
+                write(local, b, l, Vec3::ZERO);
                 (parent.0 + parent.1 * l.0, (parent.1 * l.1).normalize())
             }
         };

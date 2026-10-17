@@ -37,6 +37,13 @@ const TO_BACK: f32 = 0.22;
 const HOLD: u32 = 8;
 /// held between swings: the handle up and a little forward and out, settling there
 const READY_SETTLE: f32 = 0.3;
+/// its squash and stretch (a cartoon's): swung fast it stretches out along the handle and smears
+/// along the way its head moves (at this head speed, m per tick, all the way), and a heavy blow
+/// squashes it flat for a few ticks
+const STRETCH_SPEED: f32 = 0.45;
+const STRETCH_HANDLE: f32 = 0.2;
+const STRETCH_SMEAR: f32 = 0.4;
+const SQUASH_TICKS: u32 = 5;
 /// it pops out, and shrinks away (s)
 const POP_TIME: f32 = 0.22;
 const AWAY_TIME: f32 = 0.12;
@@ -53,6 +60,9 @@ struct State {
     /// 0 on his back .. 1 in his hand, and the ticks since the last swing
     in_hand: f32,
     idle: u32,
+    /// ticks of squash left (a heavy blow), and the stretch now (eased)
+    squash: u32,
+    stretch: Vec3,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -61,7 +71,7 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     // (put away long ago: it doesn't shrink away on the first tick)
     let since = Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap_or_else(Instant::now);
-    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y, in_hand: 0.0, idle: HOLD }))
+    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y, in_hand: 0.0, idle: HOLD, squash: 0, stretch: Vec3::ONE }))
 }
 
 /// L1: the hammer comes out or goes away.
@@ -173,7 +183,28 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     with(|s| s.across = rot * Vec3::Z);
     let to_sm64 = |rel: Vec3| Vec3::from(state.position) + mirror(rel) / crate::scale();
     let head = to_sm64(grip + dir * HEAD_AT * scale);
-    parts[HAMMER] = PartPose { rot, pos: grip, scale };
     let prev = with(|s| s.head.replace(head)).unwrap_or(head);
+    // squash and stretch (its own axes: X across the head's face, Y along the handle, Z the way the
+    // head strikes)
+    let speed = (head - prev).length() * crate::scale() / scale.max(0.1);
+    let heavy = scripted && mv.fx & (crate::moves::FX_GROUND | crate::moves::FX_QUAKE | crate::moves::FX_GIANT | crate::moves::FX_BANG) != 0;
+    let stretch = with(|s| {
+        if heavy {
+            s.squash = SQUASH_TICKS;
+        }
+        let want = if s.squash > 0 {
+            s.squash -= 1;
+            let p = s.squash as f32 / SQUASH_TICKS as f32;
+            Vec3::new(1.0 + 0.25 * p, 1.0 - 0.22 * p, 1.0 + 0.25 * p)
+        } else {
+            let k = if scripted { (speed / STRETCH_SPEED).clamp(0.0, 1.0) } else { 0.0 };
+            let (y, z) = (1.0 + STRETCH_HANDLE * k, 1.0 + STRETCH_SMEAR * k);
+            Vec3::new(1.0 / (y * z).sqrt(), y, z)
+        };
+        // (a squash snaps in, a stretch eases)
+        s.stretch = if heavy { want } else { s.stretch.lerp(want, 0.6) };
+        s.stretch
+    });
+    parts[HAMMER] = PartPose { rot, pos: grip, scale, stretch };
     Some(Swing { grip: to_sm64(grip), head, prev, scale })
 }

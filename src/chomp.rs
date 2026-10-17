@@ -42,6 +42,14 @@ const SAG: f32 = 0.35;
 const TAUT: f32 = 5.6;
 /// it pops out (s)
 const POP_TIME: f32 = 0.25;
+/// its squash and stretch: flying fast it stretches out the way it looks (at this speed, m per
+/// tick, all the way, this much longer, thinner to keep its size), and when it stops dead after
+/// flying (a crash, a bite landing) it squashes flat for a few ticks; its links stretch when the
+/// chain is taut
+const STRETCH_SPEED: f32 = 0.35;
+const STRETCH: f32 = 0.55;
+const SQUASH_TICKS: u32 = 5;
+const LINK_STRETCH: f32 = 0.3;
 
 struct State {
     out: bool,
@@ -52,9 +60,13 @@ struct State {
     /// where it looks (part axes), how open its jaw is
     look: Vec3,
     jaw: f32,
+    /// its last centre (part axes), how far it moved last tick (m), the ticks of squash left
+    last_centre: Option<Vec3>,
+    step: f32,
+    squash: u32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0 });
+static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0, last_centre: None, step: 0.0, squash: 0 });
 /// the Chomp is out and drawn, so it's the hook's head (hud.rs draws its chain, not the cap)
 static HOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -147,11 +159,28 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let right = Vec3::Y.cross(look).normalize_or(Vec3::X);
     let up = look.cross(right);
     let body = Quat::from_mat3(&Mat3::from_cols(right, up, look)).normalize();
+    // squash and stretch (its own axes: Z the way it looks)
+    let step = s.last_centre.map_or(0.0, |c| (centre - c).length());
+    s.last_centre = Some(centre);
+    if s.step > STRETCH_SPEED * 0.6 && step < s.step * 0.3 && step < 2.0 {
+        s.squash = SQUASH_TICKS;
+    }
+    // (a jump of metres is the hook letting go, not flight)
+    s.step = if step < 2.0 { step } else { 0.0 };
+    let stretch = if s.squash > 0 {
+        s.squash -= 1;
+        let p = s.squash as f32 / SQUASH_TICKS as f32;
+        Vec3::new(1.0 + 0.24 * p, 1.0 + 0.24 * p, 1.0 - 0.35 * p)
+    } else {
+        let z = 1.0 + STRETCH * (s.step / STRETCH_SPEED).clamp(0.0, 1.0);
+        Vec3::new(1.0 / z.sqrt(), 1.0 / z.sqrt(), z)
+    };
     // (a little wobble as it hops)
     let body = if scripted { body } else { body * Quat::from_rotation_z((t * 7.0).sin() * 0.12) };
-    parts[CHOMP] = PartPose { rot: body, pos: centre, scale: size };
+    parts[CHOMP] = PartPose { rot: body, pos: centre, scale: size, stretch };
     let open = Quat::from_rotation_x(jaw);
-    parts[JAW] = PartPose { rot: (body * open).normalize(), pos: centre + body * (HINGE - open * HINGE) * size, scale: size };
+    let hinge = HINGE * stretch;
+    parts[JAW] = PartPose { rot: (body * open).normalize(), pos: centre + body * (hinge - open * hinge) * size, scale: size, stretch };
     // the chain: from his hand to the back of the ball, its pairs of links spread along it (a
     // little bigger when it's long, so it reads as a chain), sagging when slack (and swaying a
     // little); a pair's second link is turned a quarter, so the next pair's first hooks into it
@@ -172,7 +201,9 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let rot = Quat::from_mat3(&Mat3::from_cols(x, along, x.cross(along))).normalize();
         // (on a long hook the chain is drawn as a line, hud.rs: four pairs of links can't span it)
         let links = if hooked.is_some() && span.length() > CHAIN_LINKS as f32 * PAIR_LEN * 2.1 { 0.0001 } else { links };
-        parts[CHAIN + k] = PartPose { rot, pos: p, scale: links };
+        // (taut: each link pulled long and thin)
+        let pull = (1.0 - slack) * LINK_STRETCH;
+        parts[CHAIN + k] = PartPose { rot, pos: p, scale: links, stretch: Vec3::new(1.0 - pull * 0.4, 1.0 + pull, 1.0 - pull * 0.4) };
     }
     // (on the hook the hook's own catch hits, not its body)
     if hooked.is_some() {
