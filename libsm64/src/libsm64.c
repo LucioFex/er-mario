@@ -221,7 +221,7 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
 }
 
 /** er-mario: the combos' moves (decomp/game/er_moves.c) */
-extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted;
+extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted, er_hold_y;
 extern u32 er_move_fx;
 extern f32 er_hammer_yaw, er_hammer_pitch, er_hammer_scale;
 void er_moves_begin_tick(int frozen);
@@ -948,6 +948,12 @@ SM64_LIB_FN void sm64_er_set_stomp(float vel, float velA)
 {
     er_stomp_vel = vel;
     er_stomp_vel_a = velA;
+}
+
+/** er-mario: Y is held (the hammer's slam charges while it is) */
+SM64_LIB_FN void sm64_er_set_hold_y(int held)
+{
+    er_hold_y = held;
 }
 
 /** er-mario: an enemy is up in the air with Mario (juggle.rs) */

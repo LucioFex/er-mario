@@ -107,6 +107,16 @@ static void er_sound(struct MarioState *m, u32 sound) {
     play_sound(sound, m->marioObj->header.gfx.cameraToObject);
 }
 
+/** A finisher's cheer: yahoo, waha, yippee... a different one each time (SM64's triple jump's). */
+static void er_cheer(struct MarioState *m) {
+    er_sound(m, SOUND_MARIO_YAHOO_WAHA_YIPPEE + ((gAudioRandom % 5) << 16));
+}
+
+/** A blow's shout: yah, wah or hoo, at random (SM64's jumps'). */
+static void er_shout(struct MarioState *m) {
+    er_sound(m, SOUND_MARIO_YAH_WAH_HOO + ((gAudioRandom % 3) << 16));
+}
+
 /** A grounded step at `speed`; FALSE once he's off the floor (falling). */
 static s32 er_ground(struct MarioState *m, f32 speed) {
     mario_set_forward_vel(m, speed);
@@ -245,6 +255,15 @@ s32 act_er_hammer(struct MarioState *m) {
 
 #define ER_SLAM_IMPACT 11
 #define ER_SLAM_END 26
+/* Y held through the slam's wind-up charges it (ticks): the hammer grows, a chime per level; full,
+ * it comes down as the giant hammer's blow */
+#define ER_SLAM_CHARGE_AT 7
+#define ER_SLAM_CHARGE_LEVEL 12
+#define ER_SLAM_CHARGE_MAX 36
+#define ER_SLAM_CHARGE_SCALE 0.8f
+
+/* Y is held (lib.rs, sm64_er_set_hold_y) */
+int er_hold_y = 0;
 
 /**
  * Y with the hammer: raised high over his head and brought down, the ground shakes all around.
@@ -253,6 +272,10 @@ s32 act_er_hammer(struct MarioState *m) {
 s32 act_er_hammer_slam(struct MarioState *m) {
     s32 t;
     f32 p;
+    s32 charge;
+    s32 charging;
+    s32 full;
+    f32 size;
 
     if (m->actionTimer == 0) {
         if (m->actionArg == 1) {
@@ -266,19 +289,39 @@ s32 act_er_hammer_slam(struct MarioState *m) {
     if (t >= ER_SLAM_IMPACT + 5 && (m->input & INPUT_A_PRESSED)) {
         return set_jumping_action(m, ACT_JUMP, 0);
     }
+    // the charge (actionState: ticks of it): held up high while Y is
+    charge = m->actionState;
+    charging = m->actionArg == 0 && t == ER_SLAM_CHARGE_AT && er_hold_y && charge < ER_SLAM_CHARGE_MAX;
+    if (charging) {
+        m->actionState = ++charge;
+        if (charge % ER_SLAM_CHARGE_LEVEL == 0) {
+            er_sound(m, SOUND_MENU_COLLECT_RED_COIN + ((charge / ER_SLAM_CHARGE_LEVEL - 1) << 16));
+            er_move_fx |= ER_FX_GROW;
+        }
+    }
+    size = 1.1f + ER_SLAM_CHARGE_SCALE * (f32) charge / ER_SLAM_CHARGE_MAX;
+    full = charge >= ER_SLAM_CHARGE_MAX;
 
-    set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, t < ER_SLAM_IMPACT ? 0x9000 : 0x10000);
+    set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, charging ? 0 : t < ER_SLAM_IMPACT ? 0x9000 : 0x10000);
     if (t < 8) {
         p = (f32) t / 8;
-        er_hammer(0.0f, er_lerp(30.0f, 170.0f, er_ease_out(p)), 1.1f);
+        er_hammer(0.0f, er_lerp(30.0f, 170.0f, er_ease_out(p)), size);
     } else if (t < ER_SLAM_IMPACT) {
         p = (f32)(t - 7) / 4;
-        er_hammer(0.0f, er_lerp(170.0f, -45.0f, p * p), 1.1f);
+        er_hammer(0.0f, er_lerp(170.0f, -45.0f, p * p), size);
     } else {
         p = (f32)(t - ER_SLAM_IMPACT) / (ER_SLAM_END - ER_SLAM_IMPACT);
-        er_hammer(0.0f, p < 0.6f ? -45.0f : er_lerp(-45.0f, 10.0f, (p - 0.6f) / 0.4f), 1.1f);
+        er_hammer(0.0f, p < 0.6f ? -45.0f : er_lerp(-45.0f, 10.0f, (p - 0.6f) / 0.4f), p < 0.6f ? size : er_lerp(size, 1.1f, (p - 0.6f) / 0.4f));
     }
-    if (t == ER_SLAM_IMPACT) {
+    if (t == ER_SLAM_IMPACT && full) {
+        // fully charged: the giant hammer's blow
+        er_move_hit = ER_HIT_FLURRY_END;
+        er_move_fx |= ER_FX_GIANT;
+        er_cheer(m);
+        er_sound(m, SOUND_OBJ_THWOMP);
+        er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
+        play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
+    } else if (t == ER_SLAM_IMPACT) {
         er_move_hit = ER_HIT_QUAKE;
         er_move_fx |= ER_FX_QUAKE;
         er_sound(m, SOUND_OBJ_THWOMP);
@@ -288,6 +331,9 @@ s32 act_er_hammer_slam(struct MarioState *m) {
 
     if (!er_ground(m, t >= 8 && t < ER_SLAM_IMPACT ? 12.0f : 0.0f)) {
         return TRUE;
+    }
+    if (charging) {
+        return FALSE;
     }
     if (++m->actionTimer >= ER_SLAM_END) {
         return set_mario_action(m, ACT_IDLE, 0);
@@ -343,7 +389,7 @@ s32 act_er_hammer_launch(struct MarioState *m) {
         er_move_hit = ER_HIT_LAUNCH;
         if (t == lift) {
             er_move_fx |= ER_FX_LAUNCH | ER_FX_GROUND;
-            er_sound(m, SOUND_MARIO_YAHOO);
+            er_cheer(m);
             er_sound(m, SOUND_ACTION_SPIN);
         }
     } else {
@@ -404,7 +450,7 @@ s32 act_er_hammer_flurry(struct MarioState *m) {
         p = (f32)(t - ER_GIANT_START) / (ER_GIANT_IMPACT - 2 - ER_GIANT_START);
         if (t == ER_GIANT_START) {
             er_aim_turn(m);
-            er_sound(m, SOUND_MARIO_YAHOO);
+            er_cheer(m);
             er_sound(m, SOUND_GENERAL_SHORT_STAR);
             er_move_fx |= ER_FX_GROW;
         }
@@ -487,7 +533,7 @@ s32 act_er_hammer_giro(struct MarioState *m) {
             set_mario_animation(m, MARIO_ANIM_RELEASE_BOWSER);
             er_move_hit = ER_HIT_GIRO_END;
             er_move_fx |= ER_FX_QUAKE;
-            er_sound(m, SOUND_MARIO_YAHOO_WAHA_YIPPEE);
+            er_cheer(m);
             er_sound(m, SOUND_OBJ_THWOMP);
         }
         p = (f32)(t - ER_GIRO_RELEASE) / (ER_GIRO_END - ER_GIRO_RELEASE);
@@ -589,7 +635,7 @@ s32 act_er_hammer_air(struct MarioState *m) {
 
 /* the air string: punch, punch, kick, again and again while X keeps coming */
 #define ER_AIR_HIT_TICKS 7
-#define ER_AIR_HITS 9
+#define ER_AIR_HITS 15
 
 /**
  * X in the air after the super jump punch (or while an enemy is up there with him): DMC's air
@@ -605,7 +651,14 @@ s32 act_er_air_combo(struct MarioState *m) {
         er_aim_turn(m);
         set_mario_animation(m, anims[blow]);
         set_anim_to_frame(m, 0);
-        er_sound(m, blow == 2 ? SOUND_MARIO_PUNCH_HOO : blow == 0 ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
+        // (a long string gets louder: shouts at random past the first round, a cheer every two)
+        if (m->actionArg > 0 && m->actionArg % 6 == 5) {
+            er_cheer(m);
+        } else if (m->actionArg >= 3) {
+            er_shout(m);
+        } else {
+            er_sound(m, blow == 2 ? SOUND_MARIO_PUNCH_HOO : blow == 0 ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
+        }
         m->vel[1] = er_juggle ? 14.0f : 6.0f;
         mario_set_forward_vel(m, 6.0f);
     }
@@ -815,7 +868,7 @@ s32 act_er_tornado(struct MarioState *m) {
         sErSpin += 0x3000;
         er_move_hit = ER_HIT_TORNADO_END;
         er_move_fx |= ER_FX_SPIN | ER_FX_LAUNCH;
-        er_sound(m, SOUND_MARIO_YAHOO);
+        er_cheer(m);
         er_sound(m, SOUND_ACTION_SPIN);
     } else {
         set_mario_animation(m, MARIO_ANIM_GENERAL_LAND);
@@ -901,7 +954,7 @@ s32 act_er_chain(struct MarioState *m) {
         } else if (t == 7) {
             er_move_hit = ER_HIT_CHAIN_END;
             er_move_fx |= ER_FX_SPIN | ER_FX_LAUNCH;
-            er_sound(m, SOUND_MARIO_YAHOO);
+            er_cheer(m);
         }
         speed = t < 4 ? 14.0f : 0.0f;
     }
@@ -937,7 +990,7 @@ s32 act_er_shell(struct MarioState *m) {
         if (m->input & INPUT_NONZERO_ANALOG) {
             m->faceAngle[1] = m->intendedYaw;
         }
-        er_sound(m, SOUND_MARIO_YAHOO_WAHA_YIPPEE);
+        er_cheer(m);
     }
     if (t % 6 == 0) {
         er_sound(m, SOUND_ACTION_SPIN);

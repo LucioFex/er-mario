@@ -74,7 +74,18 @@ launcher (X, Y): a golf swing that sends enemies flying high, where they hang fo
 Mario can jump after them and keep the combo going in the air. When he's
 not swinging it, the hammer hangs across his back and he grabs it for each attack.
 
-Hits come with hit-stop, star bursts, shockwave rings and a swing trail (`src/impact.rs`).
+Holding Y with the hammer charges the slam: it grows with a chime per level, and fully charged it
+comes down as the giant hammer. Enemies that fall out of an air combo bounce off the ground once,
+and a hit on the bounce sends them back up.
+
+**Style meter.** Devil May Cry's: every hit in a row counts, and the string earns a rank (D, C, B,
+A, S, SS, SSS) with SM64's red coin chime a note higher each time and Mario cheering from S up.
+Getting hurt or stopping for a few seconds ends it. A finisher that takes an enemy out, or any
+kill from rank B up, slows the world down for a moment (`src/style.rs`).
+
+Hits come with hit-stop, star bursts, shockwave rings, a swing trail and a camera shake on the
+heavy ones (`src/impact.rs`). Next to a big enemy Lakitu's camera backs off and looks up at it,
+more the bigger and closer it is.
 
 ### Damage balance
 

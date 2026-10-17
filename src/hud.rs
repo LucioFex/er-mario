@@ -815,6 +815,48 @@ impl ImguiRenderLoop for Overlay {
             counter(IMG_STAR, size[0] - 78.0 * px, STARS.load(Ordering::Relaxed));
         }
 
+        // the style meter (style.rs), right of the screen: the rank big, in its colour (SSS
+        // flashing), the count and HITS under it; both grow for a moment on a blow and a new rank
+        if let Some(st) = crate::style::show() {
+            static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+            const TINTS: [[f32; 3]; 7] = [
+                [0.75, 0.75, 0.8],
+                [0.45, 0.7, 1.0],
+                [0.4, 0.95, 0.5],
+                [1.0, 0.9, 0.3],
+                [1.0, 0.6, 0.2],
+                [1.0, 0.3, 0.25],
+                [1.0, 0.85, 0.35],
+            ];
+            let glyph = |id: usize, cx: f32, cy: f32, g: f32, tint: [f32; 4]| {
+                dl.add_image(textures[id], [cx - g * 0.5, cy - g * 0.5], [cx + g * 0.5, cy + g * 0.5]).col(tint).build();
+            };
+            // right-aligned at `right`, letters `gap` of their size apart
+            let line = |text: &str, right: f32, cy: f32, g: f32, gap: f32, tint: [f32; 4]| {
+                let n = text.chars().count() as f32;
+                for (k, c) in text.chars().enumerate() {
+                    if let Some(id) = glyph_for(c) {
+                        glyph(id, right - (n - k as f32 - 0.5) * g * gap, cy, g, tint);
+                    }
+                }
+            };
+            let right = size[0] - 24.0 * px;
+            let top = size[1] * 0.32;
+            if let Some(r) = st.rank {
+                let mut t = TINTS[r];
+                if r == crate::style::RANKS.len() - 1 {
+                    let f = (now.duration_since(*START).as_secs_f32() * 9.0).sin() * 0.5 + 0.5;
+                    t = t.map(|c| c + (1.0 - c) * f * 0.7);
+                }
+                let g = 30.0 * px * (1.0 + 0.6 * st.rank_pop);
+                line(crate::style::RANKS[r].1, right, top, g, 0.78, [t[0], t[1], t[2], st.alpha]);
+            }
+            let g = 14.0 * px * (1.0 + 0.4 * st.pop);
+            let white = [1.0, 1.0, 1.0, st.alpha];
+            line("HITS", right, top + 34.0 * px, 9.0 * px, 0.8, white);
+            line(&st.count.to_string(), right - 4.0 * 9.0 * px * 0.8 - 4.0 * px, top + 33.0 * px, g, 0.75, white);
+        }
+
         // the camera status, bottom right like SM64's (x 54 from the right, line 205): camera,
         // Lakitu, and the zoom arrow (down: zoomed out, up: the C-up view)
         if let Some(state) = crate::lakitu::hud_state() {

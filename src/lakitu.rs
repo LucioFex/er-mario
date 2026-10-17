@@ -169,6 +169,8 @@ struct Cam {
     climb_hold: f32,
     /// the eased push out of a big body (snapped there and back, it popped as enemies walked by)
     push: Vec3,
+    /// where the view looks, off Mario's head: up and over to a big body close by (eased)
+    frame: Vec3,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -251,6 +253,7 @@ pub fn update(
             climb: 0.0,
             climb_hold: 0.0,
             push: Vec3::ZERO,
+            frame: Vec3::ZERO,
         }
     });
 
@@ -384,12 +387,27 @@ pub fn update(
     // a big body close to Mario (a giant beast, a dragon): the camera backs off and rises to fit
     // it in (close up it ended up inside the body)
     let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let want_big = bodies
+    // (by its size and how close it is: from BIG_FAR metres off its side it starts, from BIG_NEAR
+    // it's all the way; the view also looks up and over to its chest, so its head and its blows
+    // stay on screen, not only once Mario is up on it)
+    let (want_big, want_frame) = bodies
         .iter()
-        .filter(|(p, r, _)| (*p - mario).with_y(0.0).length() < r + 12.0)
-        .map(|(_, r, h)| ((h - 2.0) * 0.6 + r * 0.8).clamp(0.0, 7.0))
-        .fold(0.0, f32::max);
-    cam.big += (want_big - cam.big) * rate(1.0);
+        .map(|(p, r, h)| {
+            let gap = ((*p - mario).with_y(0.0).length() - r).max(0.0);
+            let near = 1.0 - ((gap - BIG_NEAR) / (BIG_FAR - BIG_NEAR)).clamp(0.0, 1.0);
+            let near = near * near * (3.0 - 2.0 * near);
+            let back = ((h - 1.5) * 0.9 + r * 1.0).clamp(0.0, BIG_MAX) * near;
+            let chest = *p + Vec3::Y * (h * 0.5);
+            let to = chest - head;
+            let side = to.with_y(0.0) * 0.3;
+            let side = side.clamp_length_max(BIG_FRAME_SIDE);
+            let up = (to.y * 0.35).clamp(0.0, BIG_FRAME_UP);
+            (back, (side + Vec3::Y * up) * near)
+        })
+        .fold((0.0f32, Vec3::ZERO), |a, b| if b.0 > a.0 { b } else { a });
+    // (out quickly enough to see the beast coming, back in slowly: no pumping as it steps about)
+    cam.big += (want_big - cam.big) * if want_big > cam.big { rate(1.6) } else { rate(0.5) };
+    cam.frame += (want_frame - cam.frame) * rate(1.2);
     // bounces in a row up a big body: farther out with each (fast, a swoop), slowly back in
     let bounces = CLIMB.load(std::sync::atomic::Ordering::Relaxed);
     let want_climb = (bounces as f32 * CLIMB_STEP).min(CLIMB_MAX);
@@ -401,7 +419,7 @@ pub fn update(
     } else {
         cam.climb += (want_climb - cam.climb) * rate(0.6);
     }
-    let (dist, height) = (dist + cam.big + cam.climb, height + cam.big * 0.45 + cam.climb * CLIMB_RISE);
+    let (dist, height) = (dist + cam.big + cam.climb, height + cam.big * 0.4 + cam.climb * CLIMB_RISE);
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
     // uphill ahead (in the view direction): look up the slope, the camera a bit lower
     // (the ground ahead, measured from a point in the open near head height: from high up it
@@ -463,9 +481,17 @@ pub fn update(
     }
     cam.pos = pos;
 
-    let fwd = (cam.focus + Vec3::Y * cam.look_up - cam.pos).normalize_or(Vec3::Z);
+    let fwd = (cam.focus + cam.frame + Vec3::Y * cam.look_up - cam.pos).normalize_or(Vec3::Z);
     write(render, fwd, cam.pos);
 }
+
+/// A big body's pull on the camera: how close (m, off its side) it starts and is full, the most it
+/// backs off (m), and how far the view turns to it (m sideways, m up, at most)
+const BIG_FAR: f32 = 14.0;
+const BIG_NEAR: f32 = 3.0;
+const BIG_MAX: f32 = 9.0;
+const BIG_FRAME_SIDE: f32 = 2.0;
+const BIG_FRAME_UP: f32 = 2.2;
 
 /// A heavy blow shakes Lakitu's camera: when, and how hard (~1 a big hit, 2 the giant hammer).
 static SHAKE: Mutex<Option<(std::time::Instant, f32)>> = Mutex::new(None);

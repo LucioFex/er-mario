@@ -4,7 +4,8 @@
 //! blows keep landing it hangs in front of him; left alone a moment it falls back down (no fall
 //! damage: the blows did the work). A few at most at a time. The hammer's launcher (X, Y) sends
 //! them flying high up instead, where they hang a moment for Mario to jump after them: his first
-//! blow up there catches them and the air string goes on.
+//! blow up there catches them and the air string goes on. Falling back down they bounce off the
+//! ground once, and a blow then sends them up again.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -40,6 +41,11 @@ const LAUNCH_AWAY: f32 = 2.0;
 const HOVER: f32 = 2.0;
 const SINK: f32 = 0.8;
 const CATCH_AFTER: f32 = 0.25;
+/// the bounce off the ground (m/s up, and the share of the fall's sideways speed kept), and how
+/// high a blow on the bounce sends it again (m)
+const BOUNCE_UP: f32 = 4.5;
+const BOUNCE_KEEP: f32 = 0.3;
+const RELAUNCH_HEIGHT: f32 = 2.6;
 
 enum Phase {
     /// up with Mario: where it is, its direction and distance from him, when it was last hit
@@ -48,6 +54,8 @@ enum Phase {
     /// sent up by the launcher, and hanging at the top of it
     Flying { vel: Vec3, since: Instant },
     Hover { since: Instant },
+    /// off the ground after a fall, once
+    Bounce { vel: Vec3 },
 }
 
 struct Juggled {
@@ -69,7 +77,7 @@ pub fn is_juggled(h: &FieldInsHandle) -> bool {
 /// Some enemy hangs in the air with Mario, or was launched up there for him (his air blows lift
 /// him to stay up, and X goes on with the air string: libsm64's er_juggle).
 pub fn active() -> bool {
-    UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| !matches!(j.phase, Phase::Falling { .. }))
+    UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| !matches!(j.phase, Phase::Falling { .. } | Phase::Bounce { .. }))
 }
 
 /// Mario `mario` caught `j` up there: it hangs in front of him from now on.
@@ -78,9 +86,9 @@ fn catch(j: &mut Juggled, mario: Vec3) {
     j.phase = Phase::Up { dir: d.normalize_or(Vec3::Z), dist: d.length().clamp(NEAR, FAR), last_hit: Instant::now() };
 }
 
-/// The launcher's start: straight up to LAUNCH_HEIGHT, drifting LAUNCH_AWAY from Mario.
-fn launched(pos: Vec3, mario: Vec3) -> Phase {
-    let up = (2.0 * GRAVITY * LAUNCH_HEIGHT).sqrt();
+/// The launcher's start: straight up to `height`, drifting LAUNCH_AWAY from Mario.
+fn launched(pos: Vec3, mario: Vec3, height: f32) -> Phase {
+    let up = (2.0 * GRAVITY * height).sqrt();
     let away = Vec3::new(pos.x - mario.x, 0.0, pos.z - mario.z).normalize_or(Vec3::Z) * LAUNCH_AWAY / (up / GRAVITY);
     Phase::Flying { vel: away + Vec3::Y * up, since: Instant::now() }
 }
@@ -97,10 +105,10 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
         // (falling already: back up; up with him: a while longer)
         if high {
-            j.phase = launched(j.pos, mario);
+            j.phase = launched(j.pos, mario, LAUNCH_HEIGHT);
         } else if let Phase::Up { last_hit, .. } = &mut j.phase {
             *last_hit = Instant::now();
-        } else if let Phase::Falling { .. } = j.phase {
+        } else if let Phase::Falling { .. } | Phase::Bounce { .. } = j.phase {
             catch(j, mario);
         }
         return true;
@@ -120,7 +128,7 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if high {
         crate::impact::launched(pos);
     }
-    let phase = if high { launched(pos, mario) } else { Phase::Up { dir: d.normalize_or(Vec3::Z), dist: d.length().clamp(NEAR, FAR), last_hit: Instant::now() } };
+    let phase = if high { launched(pos, mario, LAUNCH_HEIGHT) } else { Phase::Up { dir: d.normalize_or(Vec3::Z), dist: d.length().clamp(NEAR, FAR), last_hit: Instant::now() } };
     up.push(Juggled { mob: *h, pos, phase });
     true
 }
@@ -138,6 +146,13 @@ pub fn hit(h: &FieldInsHandle, mario: Vec3) {
         Phase::Flying { since, .. } => since.elapsed().as_secs_f32() >= CATCH_AFTER,
         Phase::Hover { .. } => true,
         Phase::Falling { .. } => false,
+        // on the bounce: up again
+        Phase::Bounce { .. } => {
+            log("juggle: off the bounce, up again");
+            crate::impact::launched(j.pos);
+            j.phase = launched(j.pos, mario, RELAUNCH_HEIGHT);
+            false
+        }
     };
     if caught {
         log("juggle: caught up there");
@@ -205,11 +220,30 @@ pub fn update(dt: f32, mario: Vec3, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
                 }
                 (j.pos - Vec3::Y * SINK * dt, true)
             }
+            Phase::Bounce { vel } => {
+                let vel = vel - Vec3::Y * GRAVITY * dt;
+                let next = j.pos + vel * dt;
+                match hit(j.pos + Vec3::Y * 0.5, next - Vec3::Y * 0.05).filter(|_| vel.y < 0.0) {
+                    Some(ground) => (Vec3::new(next.x, ground.y, next.z), false),
+                    None => {
+                        j.phase = Phase::Bounce { vel };
+                        (next, true)
+                    }
+                }
+            }
             Phase::Falling { vel, since } => {
                 let vel = vel - Vec3::Y * GRAVITY * dt;
                 let next = j.pos + vel * dt;
                 if let Some(ground) = hit(j.pos + Vec3::Y * 0.5, next - Vec3::Y * 0.05) {
-                    (Vec3::new(next.x, ground.y, next.z), false)
+                    // (a real fall bounces once: a blow then sends it back up)
+                    let landed = Vec3::new(next.x, ground.y, next.z);
+                    if vel.y < -3.0 {
+                        crate::impact::launched(landed);
+                        j.phase = Phase::Bounce { vel: Vec3::new(vel.x * BOUNCE_KEEP, BOUNCE_UP, vel.z * BOUNCE_KEEP) };
+                        (landed, true)
+                    } else {
+                        (landed, false)
+                    }
                 } else if since.elapsed().as_secs_f32() > MAX_FALL {
                     (j.pos, false)
                 } else {

@@ -39,6 +39,7 @@ mod sm64;
 mod squish;
 mod swing;
 mod stats;
+mod style;
 mod update;
 mod version;
 mod voice;
@@ -1618,6 +1619,8 @@ fn frame(data: &FD4TaskData) {
         perf::frame_start();
     }
     let _span = perf::span(perf::FRAME);
+    // the style meter's slow motion (the game's speed back to normal after it, in or out of Mario mode)
+    style::update();
     // outside Mario mode the Tarnished dies like anyone (the flag is set further down, while
     // Mario is alive)
     if !ENABLED.load(Ordering::Relaxed) {
@@ -2331,6 +2334,7 @@ fn frame(data: &FD4TaskData) {
         impact::clear();
         knock::clear();
         juggle::clear();
+        style::clear();
         caps::clear();
         swing::reset();
         carry::reset();
@@ -2391,7 +2395,9 @@ fn frame(data: &FD4TaskData) {
             });
         }
     }
-    m.acc += if paused { 0.0 } else { data.delta_time.time.min(0.25) };
+    // (in the style meter's slow motion Mario keeps his pace)
+    let dt = style::mario_dt(data.delta_time.time);
+    m.acc += if paused { 0.0 } else { dt.min(0.25) };
     while m.acc >= 1.0 / 30.0 {
         m.acc -= 1.0 / 30.0;
         SM64_TICKS.fetch_add(1, Ordering::Relaxed);
@@ -2616,6 +2622,7 @@ fn frame(data: &FD4TaskData) {
         if matches!(hurt, Some(combat::Hurt::Hit(_))) {
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
+            style::hurt();
         }
         // healing: enemies Mario defeated drop coins (a wedge each when he touches one); a grace
         // or a boss's star refills him
@@ -2714,6 +2721,7 @@ fn frame(data: &FD4TaskData) {
         }
         let hammer_on = m.moves.hammer && hands_free;
         let juggling = juggle::active();
+        let hold_y = y_move;
         let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
         let no_punch = m.fire.throwing(m.ticks);
         let tt = std::time::Instant::now();
@@ -2796,6 +2804,7 @@ fn frame(data: &FD4TaskData) {
             }
             unsafe { sm64::sm64_er_set_hammer(hammer_on as i32) };
             unsafe { sm64::sm64_er_set_juggle(juggling as i32) };
+            unsafe { sm64::sm64_er_set_hold_y(hold_y as i32) };
             if let Some(r) = request {
                 r.apply(id);
             }

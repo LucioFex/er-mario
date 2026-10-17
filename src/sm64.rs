@@ -190,6 +190,8 @@ unsafe extern "C" {
     pub fn sm64_er_set_hammer(on: i32);
     /// er-mario patch: an enemy is up in the air with Mario (juggle.rs): his air blows keep him up
     pub fn sm64_er_set_juggle(on: i32);
+    /// Y held (the hammer's slam charges while it is)
+    pub fn sm64_er_set_hold_y(held: i32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
 }

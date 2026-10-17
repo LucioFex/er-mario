@@ -1345,10 +1345,16 @@ impl Combat {
                     1.0
                 };
                 if take_share(handle, attack, scale) {
+                    if !self.finishing.contains_key(&target.key) {
+                        crate::style::kill(attack.finisher());
+                    }
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
             }
             let (bullet, ..) = attack.spec();
+            if !target.is_prop() {
+                crate::style::hit();
+            }
             // (breaking a jar or a crate is no blow to stop for)
             if !matches!(attack, Attack::Fire(_)) && !target.is_prop() {
                 let me = player.modules.physics.position;
