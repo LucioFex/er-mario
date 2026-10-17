@@ -234,7 +234,7 @@ impl Fire {
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);
         self.bursts.retain(|b| tick.wrapping_sub(b.born) < burst_ticks(b.level));
-        self.publish(state, origin, tick);
+        self.publish(state, origin, tick, &ray);
     }
 
     /// Mario's world was re-scaled (mega.rs): shots in flight, kept in its old units, go.
@@ -426,8 +426,12 @@ impl Fire {
         });
     }
 
-    fn publish(&self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
+    fn publish(&self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         let mut out = Vec::new();
+        // (the camera: a shot behind a wall isn't drawn over it, and the flames are drawn back to
+        // front)
+        let eye = camera();
+        let seen = |p: Vec3, size: f32| eye.is_none_or(|e| ray(e, p).is_none_or(|h| (h - p).length() < size * 0.5 + 0.2));
         // the charge: sparks of flame gathering at Mario's hand, the flame there growing
         if let Some(since) = self.held_since {
             let held = tick.saturating_sub(since.max(self.ready_at));
@@ -452,9 +456,10 @@ impl Fire {
                 let hand = hand + Vec3::Y * (size * 0.5 - 0.3).max(0.0);
                 if self.level >= GIANT {
                     giant(&mut out, hand, vel, size, tick, tick);
+                } else {
+                    // (held still in his hand, its flames rise)
+                    ball(&mut out, hand, vel, size, self.level, tick, tick, Vec3::Y);
                 }
-                out.push(Sprite { pos: hand, vel, size, frame: (tick / 2) as usize % 8, tint: tint(self.level, tick) });
-                out.push(Sprite { pos: hand, vel, size: size * 0.5, frame: (tick / 2 + 4) as usize % 8, tint: [1.0, 0.95, 0.75, 0.9] });
                 // (more, faster sparks with each level)
                 let (count, period) = [(4, 10), (6, 8), (8, 7), (10, 6), (18, 5)][level];
                 for i in 0..count {
@@ -477,21 +482,19 @@ impl Fire {
             let vel = er_vel(shot.vel);
             let level = shot.level as usize;
             let size = SIZE[level] * (1.0 + 0.08 * (tick as f32 * 1.3 + shot.age as f32).sin());
+            if !seen(pos, size) {
+                continue;
+            }
             if shot.level >= GIANT {
                 giant(&mut out, pos, vel, size, shot.age, tick);
                 continue;
             }
-            // the trail: fading afterimages behind it
-            for k in (1..=4).rev() {
-                let back = vel / 30.0 * (k as f32 * 0.45);
-                let mut c = tint(shot.level, tick + k);
-                c[3] = 0.55 - 0.12 * k as f32;
-                out.push(Sprite { pos: pos - back, vel, size: size * (1.0 - 0.15 * k as f32), frame: (shot.age as usize + k as usize * 3) % 8, tint: c });
-            }
-            out.push(Sprite { pos, vel, size, frame: (shot.age / 2) as usize % 8, tint: tint(shot.level, tick) });
-            out.push(Sprite { pos, vel, size: size * 0.5, frame: (shot.age / 2 + 4) as usize % 8, tint: [1.0, 0.97, 0.8, 0.95] });
+            ball(&mut out, pos, vel, size, shot.level, shot.age, tick, (-vel).normalize_or(Vec3::Y));
         }
         for b in &self.bursts {
+            if !seen(b.pos, SIZE[b.level as usize]) {
+                continue;
+            }
             let age = tick.wrapping_sub(b.born) as f32 / burst_ticks(b.level) as f32;
             let level = b.level as usize;
             let spread = SIZE[level] * (0.4 + 1.2 * age);
@@ -525,7 +528,80 @@ impl Fire {
                 s.size *= k;
             }
         }
+        // back to front (a halo a little behind its fire), so the flames licking round a ball's far
+        // side go behind it and the near ones over it: it reads as a ball, not a flat picture
+        if let Some(e) = eye {
+            let depth = |s: &Sprite| (s.pos - e).length() + if s.frame == FRAME_GLOW && s.tint[3] < 0.6 { s.size * 0.5 } else { 0.0 };
+            out.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+        }
         *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (out, Some(Instant::now()));
+    }
+}
+
+/// Where the game's render camera is (Lakitu's, when on).
+fn camera() -> Option<Vec3> {
+    let cam = unsafe { eldenring::cs::CSCamera::instance() }.ok()?;
+    let m = &cam.pers_cam_1.matrix;
+    Some(Vec3::new(m.3.0, m.3.1, m.3.2))
+}
+
+/// A shot (or the charge in his hand): a lit ball of fire in its glow with a white-hot heart,
+/// flames licking all round it on a sphere turning about its flight (some pass in front of it,
+/// some behind: publish draws them back to front), a tail of flames shed behind it (`tail`: the way
+/// back), cooling as they go (yellow, orange, red, a wisp of smoke), and embers flying off.
+#[allow(clippy::too_many_arguments)]
+fn ball(out: &mut Vec<Sprite>, pos: Vec3, vel: Vec3, size: f32, level: u8, age: u32, tick: u32, tail: Vec3) {
+    let l = level.min(3) as usize;
+    let flicker = 1.0 + 0.07 * (tick as f32 * 2.3).sin();
+    let hot = tint(level, tick);
+    out.push(Sprite { pos, vel, size: size * 2.3 * flicker, frame: FRAME_GLOW, tint: [hot[0], hot[1] * 0.75, hot[2] * 0.6, 0.28] });
+    out.push(Sprite { pos, vel, size: size * 1.45 * flicker, frame: FRAME_GLOW, tint: [1.0, 0.68, 0.28, 0.5] });
+    out.push(Sprite { pos, vel, size: size * 0.8, frame: FRAME_ORB + (age / 2) as usize % 4, tint: [1.0, 1.0, 1.0, 1.0] });
+    out.push(Sprite { pos, vel, size: size * 0.5, frame: (age / 2 + 4) as usize % 8, tint: [1.0, 0.97, 0.82, 0.9] });
+    // (a frame about the way back: the licks turn round it)
+    let axis = tail.normalize_or(Vec3::Y);
+    let u = axis.any_orthonormal_vector();
+    let w = axis.cross(u);
+    let licks = [6, 7, 8, 10][l];
+    for i in 0..licks {
+        let a = i as f32 * std::f32::consts::TAU / licks as f32 + age as f32 * 0.5;
+        let lat = (i as f32 * 2.399).sin() * 0.7;
+        let dir = (u * a.cos() + w * a.sin()) * lat.cos() + axis * (lat.sin() * 0.6);
+        let reach = size * (0.36 + 0.06 * ((age + i) as f32 * 1.7).sin());
+        out.push(Sprite {
+            pos: pos + dir * reach + axis * size * 0.18,
+            vel,
+            size: size * (0.38 + 0.08 * (i % 3) as f32),
+            frame: (i as usize + age as usize / 2) % 8,
+            tint: [1.0, 0.72 + 0.1 * (i % 2) as f32, 0.32, 0.88],
+        });
+    }
+    // the tail: older flames farther back, smaller, cooler, rising a little and swaying
+    let step = (vel.length() / 30.0).max(size * 0.3);
+    let tail_n = [5, 6, 7, 8][l];
+    for k in 1..=tail_n {
+        let t = k as f32 / tail_n as f32;
+        let sway = (u * ((age + k) as f32 * 0.9).sin() + w * ((age + k) as f32 * 1.3).cos()) * size * 0.12 * t;
+        let p = pos + axis * step * k as f32 * 0.8 + Vec3::Y * t * t * size * 0.5 + sway;
+        let c = [1.0, 0.85 - 0.55 * t, 0.45 - 0.37 * t, 0.85 * (1.0 - t) + 0.1];
+        out.push(Sprite { pos: p, vel, size: size * (0.85 - 0.5 * t), frame: (age as usize + k as usize * 3) % 8, tint: c });
+    }
+    if l >= 2 {
+        let p = pos + axis * step * (tail_n as f32 + 1.5) * 0.8 + Vec3::Y * size * 0.5;
+        out.push(Sprite { pos: p, vel: vel * 0.5, size: size * 0.9, frame: FRAME_GLOW, tint: [0.12, 0.08, 0.06, 0.25] });
+    }
+    // embers
+    for i in 0..(3 + 2 * l as u32) {
+        let t = ((age + i * 7) % 18) as f32 / 18.0;
+        let a = i as f32 * 2.399;
+        let side = (u * a.cos() + w * a.sin()) * size * 0.6 * (0.4 + t);
+        out.push(Sprite {
+            pos: pos + axis * step * t * 4.0 + side + Vec3::Y * t * size * 0.7,
+            vel: vel * 0.4,
+            size: 0.05 + 0.04 * (1.0 - t) * (1.0 + l as f32 * 0.5),
+            frame: FRAME_GLOW,
+            tint: [1.0, 0.85 - 0.35 * t, 0.4 - 0.25 * t, 1.0 - t],
+        });
     }
 }
 
