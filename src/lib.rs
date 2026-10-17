@@ -6,6 +6,7 @@
 mod assets;
 mod audio;
 mod boomerang;
+mod hook;
 mod caps;
 mod carry;
 mod chomp;
@@ -66,7 +67,7 @@ use eldenring::{
 use fromsoftware_shared::{F32Vector4, FromStatic, SharedTaskImpExt};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::Input::XboxController::{
-    XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
+    XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_LEFT_THUMB, XINPUT_GAMEPAD_RIGHT_SHOULDER,
     XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
     XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
     XINPUT_STATE,
@@ -242,9 +243,10 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         g.sThumbRY = 0;
     }
     if ENABLED.load(Ordering::Relaxed) && IN_WORLD.load(Ordering::Relaxed) && !MENU_OPEN.load(Ordering::Relaxed) {
-        // RB is the fireball and RT whistles for Torrent (input_task); as the game's attack
-        // buttons, pressed in the same frame, they kept the whistle from being used
-        g.wButtons &= !XINPUT_GAMEPAD_RIGHT_SHOULDER;
+        // RB is the fireball, RT the hook and L3 whistles for Torrent (input_task); as the game's
+        // attack buttons, pressed in the same frame, they kept the whistle from being used (and L3
+        // is the game's crouch)
+        g.wButtons &= !(XINPUT_GAMEPAD_RIGHT_SHOULDER | XINPUT_GAMEPAD_LEFT_THUMB);
         g.bRightTrigger = 0;
         // L1 brings out Mario's hammer (moves.rs), not the game's guard
         g.wButtons &= !XINPUT_GAMEPAD_LEFT_SHOULDER;
@@ -393,6 +395,7 @@ struct MarioState {
     /// Mario's fireball (RB)
     fire: fireball::Fire,
     rang: boomerang::Boomerang,
+    hook: hook::Hook,
     /// the dash (B) and the special moves (Y)
     moves: moves::Moves,
     /// what the combos' moves did on the last tick
@@ -1132,6 +1135,44 @@ fn crossed_wall(surfaces: &[sm64::SM64Surface], a: [f32; 3], b: [f32; 3]) -> Opt
     None
 }
 
+/// Mario's world scaled `k` times his own size (mega.rs), around where he stands: re-centred on him,
+/// what lives in its old units dropped, its collision read again at the new scale.
+fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
+    let here = collision::sm_to_er(m.origin, m.state.position);
+    set_scale(BASE_SCALE * k);
+    log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
+    m.moving.clear(&mut m.havok);
+    m.origin = [here.0, here.1, here.2];
+    set_mario_position(m.id, [0.0, 0.0, 0.0]);
+    let id = m.id;
+    worker::call("mega still", move |_| unsafe { sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0) });
+    m.state.position = [0.0, 0.0, 0.0];
+    m.prev_pos = [0.0, 0.0, 0.0];
+    m.fire.drop_shots();
+    m.hook.drop();
+    m.last_query = None;
+    m.wall_memory.clear();
+    *FOLLOW_ENDED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
+    let surfaces = havok_surfaces(&mut m.havok, m.origin, [0.0, 0.0, 0.0], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0, 0.0, 0.0]));
+    if !surfaces.is_empty() {
+        load_surfaces(&surfaces);
+        m.surfaces = surfaces;
+    }
+}
+
+/// Whether SM64 lets Mario stand where he is (at the world's centre, just re-centred): its floor
+/// and ceiling at least his height apart.
+fn giant_fits() -> bool {
+    worker::call("mega fits", |_| unsafe {
+        let floor = sm64::sm64_surface_find_floor_height(0.0, 100.0, 0.0);
+        let mut hit: *mut std::ffi::c_void = std::ptr::null_mut();
+        let ceil = sm64::sm64_surface_find_ceil(0.0, floor + 1.0, 0.0, &mut hit);
+        ceil - floor >= 170.0
+    })
+    .unwrap_or(true)
+}
+
 fn load_surfaces(surfaces: &[sm64::SM64Surface]) {
     let s = surfaces.to_vec();
     worker::call("load surfaces", move |_| unsafe { sm64::sm64_static_surfaces_load(s.as_ptr(), s.len() as u32) });
@@ -1467,22 +1508,26 @@ fn input_task() {
     ] {
         *bits(a) &= keep;
     }
-    // RT (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
-    // (RB is the fireball)
+    // L3 (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
+    // (RB is the fireball, RT the hook)
     {
         static HELD: AtomicBool = AtomicBool::new(false);
         let rb = kbd::focused()
             && !MENU_OPEN.load(Ordering::Relaxed)
-            && (pad.is_some_and(|p| p.Gamepad.bRightTrigger > 100)
+            && (pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_LEFT_THUMB))
                 || unsafe { GetAsyncKeyState(0x52) } as u16 & 0x8000 != 0);
         // The key is held for a few frames. Not while he's getting on or off (a second whistle
         // then breaks it off half way).
         static FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let busy = ride_busy;
-        if rb && !HELD.swap(rb, Ordering::Relaxed) && !busy && equip::select_whistle() {
+        let giant = mega::active() || mega::changing();
+        if rb && giant && !HELD.swap(rb, Ordering::Relaxed) {
+            // (Yoshi can't carry a giant: Lakitu's buzz)
+            worker::call("whistle buzz", |_| unsafe { sm64::sm64_play_sound_global(0x700E_0081) });
+        } else if rb && !giant && !HELD.swap(rb, Ordering::Relaxed) && !busy && equip::select_whistle() {
             log("input: whistle (use item) requested");
             FRAMES.store(8, Ordering::Relaxed);
-            if !mounted && !mega::active() && !mega::changing() {
+            if !mounted {
                 yoshi::call();
             }
         } else if !rb {
@@ -2087,6 +2132,10 @@ fn frame(data: &FD4TaskData) {
                 boomerang::clear();
                 boomerang::Boomerang::new()
             },
+            hook: {
+                hook::clear();
+                hook::Hook::new()
+            },
             moves: moves::Moves::new(),
             combo: sm64::SM64ErMove::default(),
             dead: false,
@@ -2375,6 +2424,16 @@ fn frame(data: &FD4TaskData) {
         }
     }
 
+    // Mega Mario can't stay big on Torrent, through a door or a fog wall, up a ladder (the game moves
+    // him: follow mode), or dead; his world goes back to his size once he isn't big
+    if (mega::active() || mega::changing()) && (m.dead || FOLLOWING.load(Ordering::Relaxed) || RIDING.load(Ordering::Relaxed)) {
+        log("mega: over (riding, following the game, or dead)");
+        mega::clear();
+    }
+    if scale() != BASE_SCALE && !mega::active() {
+        rescale(m, 1.0, player_ref);
+    }
+
     // death: the Tarnished's HP is the truth. At 0, Mario dies SM64-style; when the game respawns
     // the player (HP back), Mario is recreated fresh where the player now is.
     let hp = player_ref.chr_ins.modules.data.hp;
@@ -2387,6 +2446,7 @@ fn frame(data: &FD4TaskData) {
         coins::clear();
         fireball::clear();
         boomerang::clear();
+        hook::clear();
         chomp::clear();
         impact::clear();
         knock::clear();
@@ -2412,6 +2472,11 @@ fn frame(data: &FD4TaskData) {
         let d = [p.0 - last[0], p.1 - last[1], p.2 - last[2]];
         if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() > 2.0 {
             log(format!("world origin shifted by {d:?}"));
+            // (a load or a warp: Mega Mario wouldn't know whether he fits where he lands)
+            if mega::active() || mega::changing() {
+                log("mega: over (the world moved)");
+                mega::clear();
+            }
             coins::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
             m.moving.rewatch(&m.havok);
@@ -2465,6 +2530,8 @@ fn frame(data: &FD4TaskData) {
         let fire_ok = !carry::holding() && !RIDING.load(Ordering::Relaxed);
         let (mut b_fire, mut b_dash, mut y_move, mut x_move, mut l_hammer) = (false, false, false, false, false);
         let mut dpad = [false; 4];
+        // R2 (Q): the hook (hook.rs)
+        let mut b_hook = kbd::focused() && unsafe { GetAsyncKeyState(0x51) } as u16 & 0x8000 != 0;
         if let Some(p) = pad.filter(|_| !m.dead) {
             let g = p.Gamepad;
             let axis = |v: i16| {
@@ -2483,6 +2550,7 @@ fn frame(data: &FD4TaskData) {
             // (L1 is the hammer, L2 SM64's Z)
             l_hammer = g.wButtons.contains(XINPUT_GAMEPAD_LEFT_SHOULDER);
             inputs.button_z = (g.bLeftTrigger > 100) as u8;
+            b_hook |= g.bRightTrigger > 100;
         }
         // SM64's first-person view: Mario stands still, the stick looks around
         if lakitu::first_person() {
@@ -2529,7 +2597,8 @@ fn frame(data: &FD4TaskData) {
             m.last_query = None;
         }
         let mut continue_tick = false;
-        if moving_changed || m.ticks % 3 == 0 {
+        // (Mega Mario every tick: a giant crosses the read area faster)
+        if moving_changed || m.ticks % 3 == 0 || mega::active() {
             let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
             let t0 = std::time::Instant::now();
             // real collision only needs refreshing when Mario has moved a bit (or every 0.5 s);
@@ -2803,6 +2872,7 @@ fn frame(data: &FD4TaskData) {
         let tick_span = perf::span(perf::TICK);
         // lava under the Tarnished (he stands where Mario does): SM64's lava boost
         let lava = !safe_lava(combat::lava_fight()) && LAVA_MATERIALS.contains(&player_ref.chr_ins.modules.physics.material_info.hit_material);
+        let lift_k = size_factor();
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -2822,7 +2892,7 @@ fn frame(data: &FD4TaskData) {
             }
             if lift {
                 let [x, y, z] = stuck_at;
-                unsafe { sm64::sm64_set_mario_position(id, x, y + 100.0, z) };
+                unsafe { sm64::sm64_set_mario_position(id, x, y + 100.0 / lift_k, z) };
                 log(if f7 { "unstuck: F7, lifted 1 m" } else { "unstuck: Mario stuck for 3 s, lifted 1 m" });
             }
             match hurt {
@@ -2973,7 +3043,9 @@ fn frame(data: &FD4TaskData) {
                     let feet = to_er(m.origin, state.position);
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
                     let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
-                    m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                    m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    // the hook: out of the same hand
+                    m.hook.tick(id, b_hook, fire_allowed, &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
@@ -2986,7 +3058,7 @@ fn frame(data: &FD4TaskData) {
                     let feet = to_er(m.origin, state.position);
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed);
-                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed);
+                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person();
                     const GROUNDED: u32 = 0x200 | 0x400;
                     let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !carry::holding() && !swing::holding();
                     let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
@@ -2997,7 +3069,7 @@ fn frame(data: &FD4TaskData) {
                             .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                             .map(|h| glam::Vec3::new(h.0, h.1, h.2))
                     };
-                    mega::tick(dpad[3], can_start, can_stay, || mega::room(feet, ray), id, state.action, feet, m.ticks)
+                    mega::tick(dpad[3] && !MENU_OPEN.load(Ordering::Relaxed), can_start, can_stay, || mega::room(feet, ray), id, state.action, feet, m.ticks)
                 };
                 m.prev_parts = m.parts.take();
                 m.parts = parts;
@@ -3019,24 +3091,13 @@ fn frame(data: &FD4TaskData) {
                 // Mega Mario grew or shrank: his world is scaled around where he stands (re-centred
                 // on him, its collision read again at the new scale)
                 if let Some(mega::Change::Scale(k)) = mega_change {
-                    let here = collision::sm_to_er(m.origin, m.state.position);
-                    set_scale(BASE_SCALE * k);
-                    log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
-                    m.moving.clear(&mut m.havok);
-                    m.origin = [here.0, here.1, here.2];
-                    set_mario_position(m.id, [0.0, 0.0, 0.0]);
-                    let id = m.id;
-                    worker::call("mega still", move |_| unsafe { sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0) });
-                    m.state.position = [0.0, 0.0, 0.0];
-                    m.prev_pos = [0.0, 0.0, 0.0];
-                    m.fire.drop_shots();
-                    m.last_query = None;
-                    m.wall_memory.clear();
-                    let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
-                    let surfaces = havok_surfaces(&mut m.havok, m.origin, [0.0, 0.0, 0.0], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0, 0.0, 0.0]));
-                    if !surfaces.is_empty() {
-                        load_surfaces(&surfaces);
-                        m.surfaces = surfaces;
+                    rescale(m, k, player_ref);
+                    // (a ceiling only SM64's collision has, which the room check's rays can't see:
+                    // no room for a giant after all)
+                    if k > 1.0 && !giant_fits() {
+                        log("mega: no room under the ceiling at his new size, back to his own");
+                        mega::refuse();
+                        rescale(m, 1.0, player_ref);
                     }
                 }
                 // out of health: the Tarnished dies too (the game's death, Bowser and respawn follow)

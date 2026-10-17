@@ -224,7 +224,7 @@ impl Fire {
         }
         // the throw let go (or never came, cut short): the flame leaves his hand
         if let Some((level, asked)) = self.pending {
-            let thrown = mv.throw_kind > 0 && mv.throw_kind as u32 - 1 >= crate::moves::THROW_FIRE;
+            let thrown = mv.throw_kind > 0 && (crate::moves::THROW_FIRE..crate::moves::THROW_HOOK).contains(&(mv.throw_kind as u32 - 1));
             if thrown || tick.wrapping_sub(asked) > 9 {
                 self.pending = None;
                 self.spawn(level, state, origin, tick);

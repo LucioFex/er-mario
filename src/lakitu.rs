@@ -292,8 +292,8 @@ pub fn update(
         if cam.zoom > 0 {
             cam.zoom -= 1;
             sound(SOUND_ZOOM_IN);
-        } else if idle && !airborne {
-            // looking where Mario faces, like SM64
+        } else if idle && !airborne && !crate::mega::active() && !crate::mega::changing() {
+            // looking where Mario faces, like SM64 (not as a giant: the eye would be in his legs)
             cam.fp = Some(FirstPerson { yaw: body_fwd.z.atan2(body_fwd.x), pitch: 0.0 });
             sound(SOUND_ZOOM_IN);
         } else {

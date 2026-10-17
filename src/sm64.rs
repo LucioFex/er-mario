@@ -198,6 +198,9 @@ unsafe extern "C" {
     pub fn sm64_er_set_weapon(weapon: i32, rangs_ready: i32);
     /// Mega Mario: slow for his size, the power-up music
     pub fn sm64_er_set_mega(on: i32);
+    /// the hook (hook.rs): pulls Mario to (x, y, z) (SM64 units), an enemy (0) or the map (1);
+    /// `start` 0 only moves the pull's end
+    pub fn sm64_er_zip(id: i32, x: f32, y: f32, z: f32, kind: i32, start: i32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
 }

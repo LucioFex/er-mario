@@ -94,6 +94,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::RushKick => (5, 1.4, true),
         // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
         Attack::Rang | Attack::RangBig => (0, 0.7, false),
+        Attack::Hook => (1, 0.6, false),
         Attack::RangUpper => (2, 1.1, true),
         // the Chain Chomp: light blows on many, a heavy crash
         Attack::Chomp | Attack::ChompAir => (2, 1.0, false),
@@ -298,6 +299,12 @@ pub fn cap_change(feet: Vec3, cap: Option<u8>) {
     if cap.is_none() {
         worker::call("cap off", |_| unsafe { sm64::sm64_play_sound_global(SOUND_GENERAL_SWISH_AIR) });
     }
+}
+
+/// The hook caught something (hook.rs): a little gold ring and a twinkle where it bit.
+pub fn hook_latch(at: Vec3) {
+    ring(at, 0.9, 0.25, GOLD);
+    burst(at, 3, Bit::Star);
 }
 
 /// The Mega Mushroom (mega.rs): a burst of puffs all over him, golden rings, stars, as he grows

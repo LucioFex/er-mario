@@ -221,7 +221,19 @@ pub fn room(feet: Vec3, ray: impl Fn(Vec3, Vec3) -> Option<Vec3>) -> bool {
     true
 }
 
-/// Back to his size at once (Mario mode off, his death): lib.rs resets the scale.
+/// No room for him after all (lib.rs found SM64's own ceiling too low once he'd grown): back to
+/// Small at once, no recharge, Lakitu's buzz.
+pub fn refuse() {
+    let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    s.phase = Phase::Small;
+    VISUAL.store(1.0f32.to_bits(), Ordering::Relaxed);
+    worker::call("mega refused", |_| unsafe {
+        sm64::sm64_er_set_mega(0);
+        sm64::sm64_play_sound_global(SOUND_BUZZ);
+    });
+}
+
+/// Back to his size at once (Mario mode off, his death, riding, a load): lib.rs resets the scale.
 pub fn clear() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if s.phase != Phase::Small {

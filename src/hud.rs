@@ -132,6 +132,8 @@ const IMG_CHOMP: usize = 74; // 2
 const IMG_LINK: usize = 76;
 const IMG_HAMMER_ICON: usize = 77;
 const IMG_MUSHROOM: usize = 78;
+/// the hook's head (hook.rs): Mario's cap, with eyes
+const IMG_CAPPY: usize = 79;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -232,6 +234,7 @@ pub fn load(rom: &[u8]) {
         out.push(Image::new(16, 16, link_pixel));
         out.push(Image::new(32, 32, hammer_icon_pixel));
         out.push(Image::new(32, 32, mushroom_pixel));
+        out.push(Image::new(32, 32, cappy_pixel));
         Some(out)
     };
     match load() {
@@ -654,6 +657,32 @@ impl ImguiRenderLoop for Overlay {
                     if z < 40.0 && h > 1.0 {
                         quad(c, h, 0.6, 1.0);
                     }
+                }
+            }
+        }
+        // the hook: a line of light from his hand with twinkles running along it, his cap spinning
+        // at its end
+        if let Some(hk) = crate::hook::sprite() {
+            if let (Some((a, za)), Some((b, zb))) = (project(hk.hand, size), project(hk.head, size)) {
+                if za < 60.0 && zb < 60.0 {
+                    let width = (size[1] / za.min(zb).max(1.0) * 0.025).clamp(1.0, 5.0);
+                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.85, 0.3, 0.85)).thickness(width).build();
+                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.9, 0.9)).thickness((width * 0.4).max(1.0)).build();
+                    for k in 0..4 {
+                        let t = ((hk.spin * 0.25 + k as f32 * 0.25) % 1.0).abs();
+                        let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                        dl.add_circle(p, width * 1.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.8, 0.9)).filled(true).build();
+                    }
+                }
+            }
+            if let (Some((c, z)), Some((top, _))) = (project(hk.head, size), project(hk.head + Vec3::Y * 0.22, size)) {
+                let h = (c[1] - top[1]) * 2.0;
+                if z < 60.0 && h > 1.0 {
+                    // (spinning about its crown: narrower and wider, flipped half the turn)
+                    let w = h * hk.spin.cos();
+                    let (u0, u1) = if w >= 0.0 { (0.0, 1.0) } else { (1.0, 0.0) };
+                    let w = w.abs().max(h * 0.25);
+                    dl.add_image(textures[IMG_CAPPY], [c[0] - w * 0.5, c[1] - h * 0.5], [c[0] + w * 0.5, c[1] + h * 0.5]).uv_min([u0, 0.0]).uv_max([u1, 1.0]).build();
                 }
             }
         }
@@ -1187,6 +1216,38 @@ fn hammer_icon_pixel(x: usize, y: usize) -> [u8; 4] {
     }
     if handle {
         return if x < 15.0 || x > 17.0 { [70, 40, 20, 255] } else { [170, 110, 55, 255] };
+    }
+    [0; 4]
+}
+
+/// Mario's cap thrown as the hook: red, the white badge with its M, a dark brim, two big eyes.
+fn cappy_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let (cx, cy) = (16.0, 20.0);
+    let dome = y <= cy && ((x - cx) / 14.0).powi(2) + ((y - cy) / 15.0).powi(2) <= 1.0;
+    let brim = (cy..cy + 6.0).contains(&y) && ((x - cx) / 15.5).powi(2) + ((y - cy - 1.5) / 4.5).powi(2) <= 1.0;
+    if dome {
+        if ((x - cx) / 12.8).powi(2) + ((y - cy) / 13.8).powi(2) > 1.0 {
+            return [50, 10, 10, 255];
+        }
+        // the eyes, low on the dome
+        for ex in [11.0, 21.0] {
+            let (dx, dy) = ((x - ex) / 3.0, (y - 14.5) / 4.2);
+            if dx * dx + dy * dy <= 1.0 {
+                let pupil = ((x - ex - 0.6) / 1.4).powi(2) + ((y - 15.2) / 2.2).powi(2) <= 1.0;
+                return if pupil { [20, 20, 30, 255] } else { [255, 255, 255, 255] };
+            }
+        }
+        // the badge
+        let (bx, by) = (x - cx, y - 6.5);
+        if bx * bx + by * by <= 16.0 {
+            let m = (by > -2.2 && by < 2.6) && (bx.abs() > 1.6 && bx.abs() < 2.8 || (bx.abs() <= 1.6 && (by + 1.5 - bx.abs()).abs() < 0.9));
+            return if m { [220, 30, 30, 255] } else { [255, 255, 255, 255] };
+        }
+        return if y < 8.0 && x < 12.0 { [255, 90, 80, 255] } else { [215, 25, 25, 255] };
+    }
+    if brim {
+        return if y < cy + 2.0 { [170, 15, 15, 255] } else { [120, 10, 10, 255] };
     }
     [0; 4]
 }

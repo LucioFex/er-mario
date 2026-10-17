@@ -53,6 +53,9 @@ pub const THROW_STORM: u32 = 1;
 pub const THROW_UPPER: u32 = 2;
 pub const THROW_BIG: u32 = 3;
 pub const THROW_FIRE: u32 = 4;
+/// the hook's (hook.rs), and the pull along its line to what it caught
+pub const THROW_HOOK: u32 = 8;
+pub const ACT_ER_ZIP: u32 = 0x0080_0892;
 /// the combos' moves
 const COMBO_ACTIONS: [u32; 18] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
@@ -197,7 +200,7 @@ impl Request {
                 Request::Action(action, arg) => sm64::sm64_set_mario_action_arg(id, action, arg),
                 Request::Twirl(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TWIRLING);
-                    sm64::sm64_set_mario_velocity(id, v[0], TWIRL_POP, v[2]);
+                    sm64::sm64_set_mario_velocity(id, v[0], if crate::mega::active() { TWIRL_POP * 0.62 } else { TWIRL_POP }, v[2]);
                 }
             }
         }
@@ -405,7 +408,8 @@ impl Moves {
         let free = allowed && a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 && a & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE;
         let ground = free && a & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0;
         let in_air = free && air && a != ACT_GROUND_POUND;
-        if b_pressed && tick >= self.dash_ready {
+        // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
+        if b_pressed && tick >= self.dash_ready && !crate::mega::active() {
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 crate::log("moves: dash");
@@ -446,7 +450,7 @@ impl Moves {
         }
         // B, Y: the Koopa shell out of the dash (invulnerable then: not `ground`)
         let dashing = self.dash_seen.is_some_and(|t| tick.wrapping_sub(t) <= 6);
-        if y_pressed && allowed && !air && dashing {
+        if y_pressed && allowed && !air && dashing && !crate::mega::active() {
             self.dash_seen = None;
             crate::log("moves: Koopa shell (B, Y)");
             return Some(Request::Action(ACT_ER_SHELL, 0));
@@ -512,7 +516,7 @@ impl Moves {
         }
         if y_pressed {
             // X, X, Y: the super jump punch out of the second punch
-            if ground && x_twice {
+            if ground && x_twice && !crate::mega::active() {
                 self.x_chain = 0;
                 crate::log("moves: super jump punch (X, X, Y)");
                 return Some(Request::Action(ACT_ER_UPPERCUT, 0));
@@ -546,7 +550,7 @@ impl Moves {
             // the air string's end (or the super jump punch's): the meteor dive, bringing the
             // enemies up there down with him
             let air_string = a == ACT_ER_UPPERCUT || a == ACT_ER_AIR_COMBO || self.air_seen.is_some_and(|t| tick.wrapping_sub(t) <= COMBO_WINDOW);
-            if in_air && (air_string || crate::juggle::active()) && a != ACT_ER_METEOR {
+            if in_air && (air_string || crate::juggle::active()) && a != ACT_ER_METEOR && !crate::mega::active() {
                 self.air_seen = None;
                 crate::log("moves: meteor dive (air string, Y)");
                 return Some(Request::Action(ACT_ER_METEOR, 0));

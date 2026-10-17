@@ -48,6 +48,11 @@ const BOUNCE_KEEP: f32 = 0.3;
 const RELAUNCH_HEIGHT: f32 = 2.6;
 /// a shot from afar lifts one hanging up there this much (m)
 const SHOT_POP: f32 = 0.18;
+/// the hook (hook.rs) drags it in this fast (m/s), to this far in front of Mario (m), for this long
+/// at most (s)
+const PULL_SPEED: f32 = 24.0;
+const PULL_NEAR: f32 = 1.0;
+const PULL_MAX: f32 = 1.5;
 
 enum Phase {
     /// up with Mario: where it is, its direction and distance from him, when it was last hit
@@ -58,6 +63,9 @@ enum Phase {
     Hover { since: Instant },
     /// off the ground after a fall, once
     Bounce { vel: Vec3 },
+    /// dragged in by the hook: hung in front of him once there if he's in the air (`air`), set down
+    /// otherwise
+    Pulled { since: Instant, air: bool },
 }
 
 struct Juggled {
@@ -135,6 +143,37 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     true
 }
 
+/// An enemy the hook may drag in (m): a regular one not too big (the others: Mario goes to them).
+pub fn draggable(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> bool {
+    radius_m <= MAX_RADIUS && height_m <= MAX_HEIGHT && crate::combat::liftable(h) && !crate::combat::hands_off(h)
+}
+
+/// The hook caught `h` (hook.rs): dragged in to Mario, `air`: he's in the air.
+/// True if it's coming.
+pub fn pull(h: &FieldInsHandle, air: bool) -> bool {
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    let phase = Phase::Pulled { since: Instant::now(), air };
+    if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
+        j.phase = phase;
+        return true;
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return false };
+    let Some(chr) = wcm.chr_ins_by_handle(h) else { return false };
+    if chr.modules.data.hp <= 0 || crate::carry::is_carried(h) || crate::knock::is_flying(h) {
+        return false;
+    }
+    let p = chr.modules.physics.position;
+    let pos = Vec3::new(p.0, p.1, p.2);
+    log(format!("juggle: c{:04} pulled in{}", chr.character_id, if air { " (up there)" } else { "" }));
+    up.push(Juggled { mob: *h, pos, phase });
+    true
+}
+
+/// `h` is being dragged in by the hook.
+pub fn is_pulled(h: &FieldInsHandle) -> bool {
+    UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| key(&j.mob) == key(h) && matches!(j.phase, Phase::Pulled { .. }))
+}
+
 /// A blow of Mario's (at `mario`) landed on `h`: if it's up, it stays up a while longer; launched
 /// up there, he caught it.
 pub fn hit(h: &FieldInsHandle, mario: Vec3) {
@@ -147,7 +186,7 @@ pub fn hit(h: &FieldInsHandle, mario: Vec3) {
         }
         Phase::Flying { since, .. } => since.elapsed().as_secs_f32() >= CATCH_AFTER,
         Phase::Hover { .. } => true,
-        Phase::Falling { .. } => false,
+        Phase::Falling { .. } | Phase::Pulled { .. } => false,
         // on the bounce: up again
         Phase::Bounce { .. } => {
             log("juggle: off the bounce, up again");
@@ -183,7 +222,7 @@ pub fn shot(h: &FieldInsHandle) {
             crate::impact::launched(j.pos);
             j.phase = launched(j.pos, j.pos, RELAUNCH_HEIGHT * 0.7);
         }
-        Phase::Flying { .. } => {}
+        Phase::Flying { .. } | Phase::Pulled { .. } => {}
     }
 }
 
@@ -222,6 +261,22 @@ pub fn update(dt: f32, mario: Vec3, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
                 // in front of Mario, its feet a little above his
                 let want = mario + dir * dist + Vec3::Y * 0.15;
                 (j.pos.lerp(want, 1.0 - (-FOLLOW * dt).exp()), true)
+            }
+            Phase::Pulled { since, air } => {
+                // straight to just in front of him, stopped by the map on the way
+                let dir = Vec3::new(j.pos.x - mario.x, 0.0, j.pos.z - mario.z).normalize_or(Vec3::Z);
+                let want = mario + dir * PULL_NEAR + Vec3::Y * if air { 0.15 } else { 0.0 };
+                let to = want - j.pos;
+                let step = PULL_SPEED * dt;
+                let next = if to.length() <= step { want } else { j.pos + to / to.length() * step };
+                let blocked = hit(j.pos + Vec3::Y * 0.5, next + Vec3::Y * 0.5).is_some();
+                if to.length() <= step || blocked || since.elapsed().as_secs_f32() > PULL_MAX {
+                    let now = Instant::now();
+                    j.phase = if air && !blocked { Phase::Up { dir, dist: PULL_NEAR, last_hit: now } } else { Phase::Falling { vel: Vec3::ZERO, since: now } };
+                    (if blocked { j.pos } else { next }, true)
+                } else {
+                    (next, true)
+                }
             }
             Phase::Flying { vel, since } => {
                 let vel = vel - Vec3::Y * GRAVITY * dt;

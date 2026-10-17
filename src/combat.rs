@@ -75,6 +75,8 @@ pub enum Attack {
     ChompEnd,
     ChompAir,
     ChompLaunch,
+    /// the hook (hook.rs): a tug, barely a scratch
+    Hook,
 }
 
 impl Attack {
@@ -104,7 +106,7 @@ impl Attack {
             Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
                 Attack::GroundPound.spec()
             }
-            Attack::Rang | Attack::RangBig | Attack::ChompSpin => Attack::Punch.spec(),
+            Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook => Attack::Punch.spec(),
             Attack::Chomp | Attack::ChompAir => Attack::Kick.spec(),
             Attack::RangUpper | Attack::ChompLaunch => Attack::Stomp.spec(),
             Attack::ChompEnd => Attack::GroundPound.spec(),
@@ -171,6 +173,8 @@ impl Attack {
             Attack::ChompEnd => (14.0, "damage_chomp_crash"),
             Attack::ChompAir => (6.0, "damage_chomp_air"),
             Attack::ChompLaunch => (6.0, "damage_chomp_bite"),
+            // the hook: it brings them in (or Mario to them), it doesn't hurt
+            Attack::Hook => (0.5, "damage_hook"),
         }
     }
 
@@ -199,7 +203,7 @@ impl Attack {
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
             Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
-            Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin => 1.0,
+            Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin | Attack::Hook => 1.0,
             Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
             Attack::ChompEnd => 1.5,
         }
@@ -575,8 +579,9 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
             let r = ph.hit_radius.max(ph.chr_hit_radius);
             let h = ph.hit_height.max(ph.chr_hit_height);
             // (up to giant size: capped at 3 m the Fire Giant's ankles were outside his own body)
-            let radius = if r.is_finite() && r > 0.1 { (r / crate::scale()).clamp(40.0, 1500.0) } else { TARGET_RADIUS };
-            let height = if h.is_finite() && h > 0.3 { (h / crate::scale()).clamp(80.0, 4000.0) } else { TARGET_HEIGHT };
+            // (clamped in metres: Mega Mario's units are bigger)
+            let radius = if r.is_finite() && r > 0.1 { r.clamp(0.4, 15.0) / crate::scale() } else { TARGET_RADIUS / crate::size_factor() };
+            let height = if h.is_finite() && h > 0.3 { h.clamp(0.8, 40.0) / crate::scale() } else { TARGET_HEIGHT / crate::size_factor() };
             {
                 static SEEN: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
                 let key = handle_key(&chr.field_ins_handle);
@@ -633,7 +638,7 @@ pub fn blowable(handle: &FieldInsHandle) -> bool {
     wcm.chr_ins_by_handle(handle).is_some_and(|c| !own_side(c.team_type) && !boss_class(handle, c))
 }
 
-fn liftable(handle: &FieldInsHandle) -> bool {
+pub(crate) fn liftable(handle: &FieldInsHandle) -> bool {
     if is_boss(handle) {
         return false;
     }
@@ -1433,6 +1438,8 @@ impl Combat {
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
                     crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
+                } else if matches!(attack, Attack::Hook) {
+                    // (the hook drags it in itself: hook.rs, juggle::pull)
                 } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_)) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
@@ -1441,7 +1448,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_)) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !matches!(attack, Attack::Fire(_) | Attack::Hook) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }

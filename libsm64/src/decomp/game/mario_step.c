@@ -323,10 +323,31 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
     return GROUND_STEP_NONE;
 }
 
+/**
+ * er-mario: Mega Mario (mega.rs) is 4 times his size in his world's units: a dash, a knockback or a
+ * pull at full SM64 speed went metres a tick, past the collision read around him (lib.rs). Capped
+ * sideways to what the collision keeps up with.
+ */
+#define ER_MEGA_MAX_SPEED 24.0f
+static void er_mega_cap(struct MarioState *m) {
+    extern int er_mega;
+    f32 speed;
+    if (!er_mega) {
+        return;
+    }
+    speed = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
+    if (speed > ER_MEGA_MAX_SPEED) {
+        m->vel[0] *= ER_MEGA_MAX_SPEED / speed;
+        m->vel[2] *= ER_MEGA_MAX_SPEED / speed;
+    }
+}
+
 s32 perform_ground_step(struct MarioState *m) {
     s32 i;
     u32 stepResult;
     Vec3f intendedPos;
+
+    er_mega_cap(m);
 
     for (i = 0; i < 4; i++) {
         intendedPos[0] = m->pos[0] + m->floor->normal.y * (m->vel[0] / 4.0f);
@@ -625,6 +646,8 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
     s32 quarterStepResult;
     s32 stepResult = AIR_STEP_NONE;
     f32 pullX = 0.0f, pullZ = 0.0f;
+
+    er_mega_cap(m);
 
     m->wall = NULL;
 

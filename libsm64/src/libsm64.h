@@ -229,6 +229,7 @@ extern SM64_LIB_FN void sm64_play_sound_global(int32_t soundBits);
 extern SM64_LIB_FN void sm64_play_sound_volume(int32_t soundBits, float volume);
 extern SM64_LIB_FN void sm64_er_set_weapon(int weapon, int rangs_ready);
 extern SM64_LIB_FN void sm64_er_set_mega(int on);
+extern SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kind, int start);
 extern SM64_LIB_FN void sm64_set_sound_volume(float vol);
 
 #ifdef __cplusplus

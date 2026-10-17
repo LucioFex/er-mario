@@ -994,6 +994,23 @@ SM64_LIB_FN void sm64_er_set_hammer(int on)
     er_hammer_mode = on;
 }
 
+/** er-mario: the hook (hook.rs) pulls Mario to (x, y, z) (SM64 units): `kind` 0 an enemy, 1 the
+ * map. `start`: the pull starts now (else only its end moves, an enemy on the move). */
+SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kind, int start)
+{
+    extern f32 er_zip_target[3];
+    extern s32 er_zip_kind;
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
+    er_zip_target[0] = x;
+    er_zip_target[1] = y;
+    er_zip_target[2] = z;
+    er_zip_kind = kind;
+    if (start)
+        set_mario_action(gMarioState, ACT_ER_ZIP, (u32) kind);
+}
+
 /** er-mario: Mega Mario (mega.rs): slow for his size, the power-up music while he lasts */
 SM64_LIB_FN void sm64_er_set_mega(int on)
 {

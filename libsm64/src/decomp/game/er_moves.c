@@ -107,6 +107,8 @@ s32 lava_boost_on_wall(struct MarioState *m);
 #define ER_THROW_FIRE_MID 5
 #define ER_THROW_FIRE_BIG 6
 #define ER_THROW_FIRE_GIANT 7
+/* the hook (hook.rs): a quick fling of the arm, the hook out of his hand */
+#define ER_THROW_HOOK 8
 /** throws in the air since he last stood on the ground (the first few hold him up, DMC's guns) */
 static s32 sErAirThrows = 0;
 /** enemy steps since he last stood on the ground (A off an enemy up there, Devil May Cry's) */
@@ -803,7 +805,8 @@ s32 act_er_uppercut(struct MarioState *m) {
     if (t == 0) {
         er_aim_turn(m);
         sErSpin = 0;
-        m->vel[1] = 50.0f;
+        // (Mega Mario's goes up a giant's way, like his jumps: mario.c)
+        m->vel[1] = er_mega ? 31.0f : 50.0f;
         mario_set_forward_vel(m, 10.0f);
         set_mario_animation(m, MARIO_ANIM_SINGLE_JUMP);
         set_anim_to_frame(m, 0);
@@ -1148,7 +1151,7 @@ static void er_release(struct MarioState *m, u32 kind) {
     er_move_throw = (s32) kind + 1;
     er_move_charge = m->actionState;
     er_move_fx |= ER_FX_THROW;
-    er_sound(m, kind >= ER_THROW_FIRE ? SOUND_ACTION_THROW : SOUND_GENERAL_SWISH_AIR);
+    er_sound(m, kind == ER_THROW_HOOK ? SOUND_ACTION_SPIN : kind >= ER_THROW_FIRE ? SOUND_ACTION_THROW : SOUND_GENERAL_SWISH_AIR);
 }
 
 /**
@@ -1175,6 +1178,7 @@ s32 act_er_throw(struct MarioState *m) {
         case ER_THROW_FIRE_BIG: release = 3; end = 15; break;
         case ER_THROW_FIRE_GIANT: release = 7; end = 24; break;
         case ER_THROW_FIRE: release = 2; end = 10; break;
+        case ER_THROW_HOOK: release = 1; end = 9; break;
         default: release = 2; end = 9; break;
     }
 
@@ -1199,6 +1203,10 @@ s32 act_er_throw(struct MarioState *m) {
             case ER_THROW_FIRE:
                 set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
                 er_sound(m, SOUND_MARIO_PUNCH_YAH);
+                break;
+            case ER_THROW_HOOK:
+                set_mario_animation(m, MARIO_ANIM_GROUND_THROW);
+                er_sound(m, SOUND_MARIO_PUNCH_HOO);
                 break;
             case ER_THROW_FIRE_MID:
             case ER_THROW_FIRE_BIG:
@@ -1274,7 +1282,7 @@ s32 act_er_throw(struct MarioState *m) {
             m->actionState = 1;
         }
         // (after a shot of fire, X goes straight on with the weapon's blows)
-        if (kind >= ER_THROW_FIRE && t >= release + 2 && (m->input & INPUT_B_PRESSED)) {
+        if (kind >= ER_THROW_FIRE && kind <= ER_THROW_FIRE_GIANT && t >= release + 2 && (m->input & INPUT_B_PRESSED)) {
             return set_mario_action(m, ACT_PUNCHING, 0);
         }
         if (t >= release + 1 && (m->input & INPUT_A_PRESSED)) {
@@ -1307,14 +1315,17 @@ s32 act_er_air_throw(struct MarioState *m) {
     static s32 sHand = 0;
     u32 kind = m->actionArg;
     s32 t = m->actionTimer;
-    s32 release = kind == ER_THROW_STORM ? 5 : kind == ER_THROW_FIRE_GIANT ? 6 : 2;
-    s32 end = kind == ER_THROW_STORM ? 12 : kind >= ER_THROW_FIRE_BIG ? 14 : 9;
+    s32 release = kind == ER_THROW_STORM ? 5 : kind == ER_THROW_FIRE_GIANT ? 6 : kind == ER_THROW_HOOK ? 1 : 2;
+    s32 end = kind == ER_THROW_STORM ? 12 : kind == ER_THROW_HOOK ? 10 : kind >= ER_THROW_FIRE_BIG ? 14 : 9;
     f32 twist = 0.0f;
 
     if (t == 0) {
         er_aim_turn(m);
         sHand ^= 1;
-        sErAirThrows++;
+        // (the hook holds him up there without using up a throw)
+        if (kind != ER_THROW_HOOK) {
+            sErAirThrows++;
+        }
         if (kind == ER_THROW_STORM) {
             set_mario_animation(m, MARIO_ANIM_AIR_KICK);
             er_shout(m);
@@ -1324,7 +1335,7 @@ s32 act_er_air_throw(struct MarioState *m) {
             er_sound(m, sHand ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
         }
         set_anim_to_frame(m, 0);
-        if (sErAirThrows <= ER_AIR_THROW_HANG) {
+        if (sErAirThrows <= ER_AIR_THROW_HANG || kind == ER_THROW_HOOK) {
             if (m->vel[1] < (er_juggle ? 10.0f : 6.0f)) {
                 m->vel[1] = er_juggle ? 10.0f : 6.0f;
             }
@@ -1332,7 +1343,7 @@ s32 act_er_air_throw(struct MarioState *m) {
         mario_set_forward_vel(m, m->forwardVel * 0.5f);
     }
     // (hanging there while it throws)
-    if (sErAirThrows <= ER_AIR_THROW_HANG && m->vel[1] < -4.0f) {
+    if ((sErAirThrows <= ER_AIR_THROW_HANG || kind == ER_THROW_HOOK) && m->vel[1] < -4.0f) {
         m->vel[1] = -4.0f;
     }
     if (kind == ER_THROW_STORM && t < release) {
@@ -1369,6 +1380,114 @@ s32 act_er_air_throw(struct MarioState *m) {
             return set_mario_action(m, ACT_ER_AIR_THROW, ER_THROW_RANG);
         }
         return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
+/* ---- the hook: along its line to what it caught ---------------------------------------------- */
+
+/** where the hook pulls him (SM64 units, hook.rs keeps it on a moving enemy), and to what: 0 an
+ * enemy (he pops up in front of it, ready for an air string), 1 the map (a wall: he clings to it a
+ * moment, A wall kicks off it; a floor: he lands) */
+f32 er_zip_target[3] = { 0.0f, 0.0f, 0.0f };
+s32 er_zip_kind = 0;
+#define ER_ZIP_MAX 40
+#define ER_ZIP_CLING 24
+
+/**
+ * Pulled along the hook's line, faster and faster, to an enemy or a spot on the map. Into a wall
+ * on the way: he clings to it (A: a wall kick, Z: let go). At an enemy: a little pop up in front of
+ * it, his air string ready (X).
+ */
+s32 act_er_zip(struct MarioState *m) {
+    s32 t = m->actionTimer++;
+    // clinging to the wall: still, facing it; A kicks off it
+    if (m->actionState == 1) {
+        mario_set_forward_vel(m, 0.0f);
+        vec3f_set(m->vel, 0.0f, 0.0f, 0.0f);
+        set_mario_animation(m, MARIO_ANIM_START_WALLKICK);
+        if (m->input & INPUT_A_PRESSED) {
+            m->vel[1] = 52.0f;
+            m->faceAngle[1] += 0x8000;
+            return set_mario_action(m, ACT_WALL_KICK_AIR, 0);
+        }
+        if ((m->input & INPUT_Z_PRESSED) || t >= ER_ZIP_CLING) {
+            m->wallKickTimer = 5;
+            return set_mario_action(m, ACT_FREEFALL, 0);
+        }
+        vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+        vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+        return FALSE;
+    }
+
+    f32 dx = er_zip_target[0] - m->pos[0];
+    f32 dy = er_zip_target[1] - m->pos[1];
+    f32 dz = er_zip_target[2] - m->pos[2];
+    f32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    f32 speed = 40.0f + 14.0f * (f32) t;
+    if (speed > (er_mega ? 24.0f : 110.0f)) {
+        speed = er_mega ? 24.0f : 110.0f;
+    }
+    if (t == 0) {
+        set_mario_animation(m, MARIO_ANIM_DIVE);
+        er_sound(m, SOUND_MARIO_HOOHOO);
+        m->particleFlags |= PARTICLE_DUST;
+    }
+    // there: at an enemy, a pop up in front of it; on the map, falls from there (onto a ledge, a floor)
+    if (dist <= speed || t >= ER_ZIP_MAX) {
+        if (er_zip_kind == 0) {
+            m->vel[1] = 26.0f;
+            mario_set_forward_vel(m, 4.0f);
+            er_sound(m, SOUND_ACTION_TWIRL);
+        } else {
+            m->vel[1] = 10.0f;
+            mario_set_forward_vel(m, 6.0f);
+        }
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    if (dx * dx + dz * dz > 1.0f) {
+        m->faceAngle[1] = atan2s(dz, dx);
+    }
+    m->vel[0] = dx / dist * speed;
+    m->vel[1] = dy / dist * speed;
+    m->vel[2] = dz / dist * speed;
+    m->forwardVel = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
+    m->slideVelX = m->vel[0];
+    m->slideVelZ = m->vel[2];
+
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            // (a floor on the way down, or near the end: he's there)
+            if (dist < 300.0f || dy < 0.0f) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            break;
+        case AIR_STEP_HIT_WALL:
+            if (m->wall != NULL) {
+                m->faceAngle[1] = atan2s(m->wall->normal.z, m->wall->normal.x) + 0x8000;
+            }
+            if (er_zip_kind == 1 || dist < 250.0f) {
+                er_sound(m, SOUND_ACTION_HIT_2);
+                m->particleFlags |= PARTICLE_VERTICAL_STAR;
+                m->actionState = 1;
+                m->actionTimer = 0;
+                return FALSE;
+            }
+            return set_mario_action(m, ACT_FREEFALL, 0);
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    // (lying along the line, like a dive)
+    {
+        s16 pitch = atan2s(sqrtf(dx * dx + dz * dz), dy);
+        if (pitch > 0x3000) {
+            pitch = 0x3000;
+        }
+        if (pitch < -0x3000) {
+            pitch = -0x3000;
+        }
+        m->marioObj->header.gfx.angle[0] = -pitch;
     }
     return FALSE;
 }
