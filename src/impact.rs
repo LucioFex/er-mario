@@ -303,7 +303,7 @@ pub fn cap_change(feet: Vec3, cap: Option<u8>) {
 /// The Mega Mushroom (mega.rs): a burst of puffs all over him, golden rings, stars, as he grows
 /// (`grow`) or shrinks back. `feet`: Elden Ring.
 pub fn mega_change(feet: Vec3, grow: bool) {
-    let k = if grow { crate::mega::SIZE } else { 1.5 };
+    let k = if grow { crate::mega::SIZE * 0.75 } else { 1.8 };
     for up in [0.0, 0.8, 1.6, 2.6] {
         puffs(feet + Vec3::Y * up * k * 0.5, 5, 0.5 * k);
     }
@@ -315,7 +315,7 @@ pub fn mega_change(feet: Vec3, grow: bool) {
 
 /// Mega Mario's step (or landing, `heavy`): dust around his feet, a ring of it.
 pub fn mega_step(feet: Vec3, heavy: bool) {
-    let k = crate::mega::SIZE;
+    let k = crate::mega::SIZE * 0.75;
     if heavy {
         ring(feet + Vec3::Y * 0.05, 3.0 * k, 0.5, DUST);
         puffs(feet, 8, 0.9 * k);

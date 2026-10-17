@@ -109,7 +109,7 @@ hops along beside Mario between attacks.
 | X in the air | It swings once all the way around him |
 | Y in the air | Crash: Mario drops with it under him, shockwave on landing |
 
-**Mega Mushroom (D-pad right).** Mario grows to 2.5 times his height for 20 seconds (75 s
+**Mega Mushroom (D-pad right).** Mario grows to 4 times his height for 20 seconds (75 s
 recharge), in SM64 power-up steps with the power-up music. His whole SM64 world is scaled, so
 collisions grow with him: low ceilings and narrow passages stop him, and if there is no room
 where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's slow for

@@ -354,8 +354,8 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
         put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
     }
-    // (wide enough for the giant hammer, held out at arm's length)
-    put_f32s(&mut f.d, 0x28, &[-4.0, -1.0, -4.0, 4.0, 5.0, 4.0]);
+    // (wide enough for the giant hammer, held out at arm's length, and for Mega Mario)
+    put_f32s(&mut f.d, 0x28, &[-8.0, -1.0, -8.0, 8.0, 9.0, 8.0]);
     let (meshes, fsets) = (f.meshes(), f.facesets());
     let mesh = meshes.get(target).ok_or("chest piece mesh missing")?;
     for (mi, m) in meshes.iter().enumerate() {

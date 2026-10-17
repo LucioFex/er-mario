@@ -17,13 +17,13 @@ use glam::Vec3;
 use crate::{log, sm64, worker};
 
 /// how big, how long (s), how long before the next one (s, from when it ends)
-pub const SIZE: f32 = 2.5;
+pub const SIZE: f32 = 4.0;
 const LAST: f32 = 20.0;
 const RECHARGE: f32 = 75.0;
 /// growing and shrinking (s), the steps shown on the way (times his size before)
-const GROW_TIME: f32 = 1.1;
+const GROW_TIME: f32 = 1.3;
 const SHRINK_TIME: f32 = 0.8;
-const STEPS: [f32; 7] = [1.0, 1.45, 1.15, 1.9, 1.5, 2.2, SIZE];
+const STEPS: [f32; 7] = [1.0, 1.6, 1.25, 2.4, 1.8, 3.1, SIZE];
 /// his blows hit this much harder, enemies' hurt him this much
 pub const DAMAGE: f32 = 1.35;
 pub const HURT: f32 = 0.5;

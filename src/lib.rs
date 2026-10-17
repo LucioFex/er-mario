@@ -2532,9 +2532,10 @@ fn frame(data: &FD4TaskData) {
         if moving_changed || m.ticks % 3 == 0 {
             let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
             let t0 = std::time::Instant::now();
-            // real collision only needs refreshing when Mario has moved a bit (or every 0.5 s)
+            // real collision only needs refreshing when Mario has moved a bit (or every 0.5 s);
+            // the same distance in metres for Mega Mario, whose walls reach farther out
             let p = glam::Vec3::from(m.state.position);
-            let stale = m.last_query.is_none_or(|(q, tick)| p.distance(q) > 75.0 || m.ticks - tick >= 15);
+            let stale = m.last_query.is_none_or(|(q, tick)| p.distance(q) > 75.0 / size_factor() || m.ticks - tick >= 15);
             // on Torrent the game moves him and SM64's collision isn't used: no reading it at
             // riding speed, where it went stale every few frames (and straight away once he's off)
             let riding = RIDING.load(Ordering::Relaxed);
