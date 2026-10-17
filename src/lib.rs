@@ -4,6 +4,7 @@
 //! The Tarnished follows Mario, and Mario's real model is debug-drawn as a wireframe.
 
 mod assets;
+mod autopad;
 mod audio;
 mod blown;
 mod boomerang;
@@ -46,6 +47,7 @@ mod paths;
 mod perf;
 mod sm64;
 mod squish;
+mod status;
 mod swing;
 mod stats;
 mod style;
@@ -226,6 +228,7 @@ pub(crate) fn hidden_sticks() -> (bool, bool) {
 
 /// Real pad goes to Mario; the game gets an idle pad (right stick kept for the camera).
 fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
+    let rc = autopad::apply(index, state, rc);
     if rc != 0 || state.is_null() || index > 3 {
         return rc;
     }
@@ -700,14 +703,14 @@ fn set_player_hp(hp: i32) {
     }
 }
 
-/// Mario doesn't get Elden Ring's ailments. They have no place on a health meter of eight wedges,
-/// and nothing in SM64 cures them. Poison, scarlet rot, blood loss, deathblight, frostbite and
-/// madness never build up: their gauges are kept full. Sleep stays.
+/// Deathblight never builds up on Mario (its gauge is kept full): an instant death has no place on
+/// a health meter of eight wedges. The other ailments do, and Mario shows them (status.rs).
 fn no_ailments() {
     use eldenring::cs::GameDataMan;
     // the gauges in the order of the resistances: poison, rot, blood loss, deathblight, frost,
     // sleep (5, left out), madness
-    const BUILD_UPS: [usize; 6] = [0, 1, 2, 3, 4, 6];
+    // (only deathblight now: the rest build up and Mario shows them, status.rs)
+    const BUILD_UPS: [usize; 1] = [status::BLIGHT];
     // The character's resist module (module container +0x20): +0x10 the seven gauges (what's
     // left of each resistance: they run down as an ailment builds up, and it sets in at 0),
     // +0x2c their maxima. The game data has the same numbers, but only as a copy for the menus.
@@ -2272,7 +2275,9 @@ fn frame(data: &FD4TaskData) {
             let idle = m.state.action & ACT_FLAG_STATIONARY != 0 && m.state.forward_velocity.abs() < 1.0;
             let o = physics.orientation;
             let body_fwd = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(glam::vec3(0.0, 0.0, -1.0));
-            lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2), airborne, c, look, body_fwd, idle, exit, |from, to| {
+            // (lifted by an enemy's grab, Mario is where its animation carries the Tarnished's body)
+            let lifted = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(engine_mario::root_offset());
+            lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2) + lifted, airborne, c, look, body_fwd, idle, exit, |from, to| {
                 let h = havok?;
                 let d = to - from;
                 h.phys_world
@@ -2479,6 +2484,7 @@ fn frame(data: &FD4TaskData) {
         style::clear();
         dodge::clear();
         grab::clear();
+        status::clear();
         caps::clear();
         mega::clear();
         swing::reset();
@@ -2601,6 +2607,12 @@ fn frame(data: &FD4TaskData) {
                 inputs.button_b |= k.b as u8;
                 inputs.button_z |= k.z as u8;
             }
+        }
+        // frozen stiff or asleep (status.rs): no moving; asleep, presses wake him sooner
+        let pressed = inputs.button_a != 0 || inputs.button_b != 0 || inputs.button_z != 0 || b_fire || b_dash || y_move || x_move;
+        if status::holds(pressed, m.id) {
+            inputs = sm64::SM64MarioInputs::default();
+            (b_fire, b_dash, y_move, x_move, l_hammer) = (false, false, false, false, false);
         }
         if let Ok(cam) = unsafe { CSCamera::instance() } {
             // the SM64 camera's direction when it's on (the game's own camera keeps running
@@ -2737,6 +2749,13 @@ fn frame(data: &FD4TaskData) {
             // the Vanish cap: enemy hits go through Mario
             // (and while he dashes)
             flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::dodging(m.state.action));
+        }
+        // Elden Ring's ailments and burns setting in on him (before his hurt: blood loss's wedge
+        // costs no knockback)
+        {
+            let p = player_ref.chr_ins.modules.physics.position;
+            let calm = !m.dead && !mega::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
+            status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm);
         }
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
@@ -2916,7 +2935,7 @@ fn frame(data: &FD4TaskData) {
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
         let still_flying = blown::flying();
         let blown_away = match hurt {
-            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() => {
+            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() && !status::just_bled() => {
                 const ACT_FLAG_SWIMMING: u32 = 0x2000;
                 const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
@@ -2930,6 +2949,7 @@ fn frame(data: &FD4TaskData) {
             _ => false,
         };
         let mario_at = m.state.position;
+        let bled = status::just_bled();
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -2955,7 +2975,7 @@ fn frame(data: &FD4TaskData) {
             match hurt {
                 // (flying off already: the blow costs health, SM64's knockback would end the flight)
                 // (let go by an enemy: thrown off it already, the same)
-                Some(combat::Hurt::Hit(wedges)) if still_flying || grab::just_released() => unsafe {
+                Some(combat::Hurt::Hit(wedges)) if still_flying || grab::just_released() || bled => unsafe {
                     sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x100).max(0xFF) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
@@ -3131,7 +3151,7 @@ fn frame(data: &FD4TaskData) {
                     if let Some(p) = parts.as_mut() {
                         // (none in his hand while he swims or is in a cutscene)
                         let busy = matches!(state.action & 0x1C0, 0x0C0 | 0x100);
-                        m.rang.pose(p, feet, state.face_angle, weapon_on == weapons::RANG && hands_free && !busy);
+                        m.rang.pose(p, feet, state.face_angle, weapon_on == weapons::RANG && hands_free && !busy, &combo, state.action);
                     }
                     // the hook: out of the same hand
                     m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
@@ -3177,6 +3197,14 @@ fn frame(data: &FD4TaskData) {
                 }
                 m.state = state;
                 m.mesh = mesh;
+                // Mega Mario's steps crush whoever is under his feet, his landings shake them all
+                if let Some((feet, landing)) = mega::take_quake() {
+                    let (reach, attack) = if landing { (mega::LANDING_REACH, combat::Attack::Shockwave) } else { (mega::STEP_REACH, combat::Attack::Trample) };
+                    let n = m.combat.blast(&player_ref.chr_ins, feet, reach, attack, m.origin, m.ticks);
+                    if n > 0 && landing {
+                        log(format!("mega: landing quake hit {n}"));
+                    }
+                }
                 // Mega Mario grew or shrank: his world is scaled around where he stands (re-centred
                 // on him, its collision read again at the new scale)
                 if let Some(mega::Change::Scale(k)) = mega_change {
@@ -3274,7 +3302,10 @@ fn frame(data: &FD4TaskData) {
     static SHIMMER: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let vanish = caps::VANISH_OPACITY * (1.0 + 0.3 * (SHIMMER.get_or_init(std::time::Instant::now).elapsed().as_secs_f32() * 6.0).sin());
     // an enemy's grab (grab.rs): the game holds him, Mario follows; swallowed, he's hidden
+    autopad::report(&player_ref.chr_ins);
     let grabbed = grab::update(&player_ref.chr_ins);
+    // (held, his pose follows what the grab's animation does to the Tarnished's body)
+    engine_mario::ROOT_FOLLOW.store(grabbed && !m.dead && !RIDING.load(Ordering::Relaxed), Ordering::Relaxed);
     set_opacity(if cutscene || grab::swallowed() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
 
     // event animations (fog walls, doors, ladders...): after an interact, if the Tarnished starts a

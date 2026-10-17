@@ -28,7 +28,7 @@ const GROW_TIME: f32 = 1.3;
 const SHRINK_TIME: f32 = 0.8;
 const STEPS: [f32; 7] = [1.0, 1.6, 1.25, 2.4, 1.8, 3.1, SIZE];
 /// his blows hit this much harder, enemies' hurt him this much
-pub const DAMAGE: f32 = 2.3;
+pub const DAMAGE: f32 = 2.5;
 pub const HURT: f32 = 0.35;
 /// his room: his height (m) and how wide he is (m) at SIZE
 const HEIGHT: f32 = 1.6 * SIZE + 0.3;
@@ -55,6 +55,18 @@ struct State {
     /// a step of his: the tick of the last one, and whether he was in the air last tick
     last_step: u32,
     air: bool,
+}
+
+/// a step or landing of his since the game thread last looked: where (Elden Ring feet), and
+/// whether it was a landing (lib.rs hurts whoever is under him: combat::blast)
+static QUAKE: Mutex<Option<(Vec3, bool)>> = Mutex::new(None);
+/// how far a step and a landing reach (m)
+pub const STEP_REACH: f32 = 1.6;
+pub const LANDING_REACH: f32 = 5.5;
+
+/// The last step or landing, once.
+pub fn take_quake() -> Option<(Vec3, bool)> {
+    QUAKE.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 static STATE: Mutex<State> = Mutex::new(State { phase: Phase::Small, ready_at: None, held: false, last_step: 0, air: false });
@@ -175,11 +187,13 @@ pub fn tick(right: bool, can_start: bool, can_stay: bool, room: impl Fn() -> boo
                 let landed = s.air && !air;
                 s.air = air;
                 if landed {
+                    *QUAKE.lock().unwrap_or_else(|e| e.into_inner()) = Some((feet, true));
                     crate::lakitu::shake(1.3);
                     crate::impact::mega_step(feet, true);
                     sounds(vec![SOUND_HEAVY_LANDING]);
                 } else if !air && action & 0x400 != 0 && tick.wrapping_sub(s.last_step) >= 11 {
                     s.last_step = tick;
+                    QUAKE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert((feet, false));
                     crate::lakitu::shake(0.3);
                     crate::impact::mega_step(feet, false);
                 }

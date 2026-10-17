@@ -20,6 +20,7 @@
 #include "../include/mario_animation_ids.h"
 #include "../include/object_fields.h"
 #include "../include/mario_geo_switch_case_ids.h"
+extern int er_soft_burn;
 
 void play_flip_sounds(struct MarioState *m, s16 frame1, s16 frame2, s16 frame3) {
     s32 animFrame = m->marioObj->header.gfx.animInfo.animFrame;
@@ -1009,7 +1010,8 @@ s32 act_burning_jump(struct MarioState *m) {
 
     m->marioObj->oMarioBurnTimer += 3;
 
-    m->health -= 10;
+    // (Elden Ring's fire has already hurt him: no burn of SM64's own on top)
+    if (!er_soft_burn) m->health -= 10;
     if (m->health < 0x100) {
         m->health = 0xFF;
     }
@@ -1031,7 +1033,8 @@ s32 act_burning_fall(struct MarioState *m) {
     m->particleFlags |= PARTICLE_FIRE;
     m->marioObj->oMarioBurnTimer += 3;
 
-    m->health -= 10;
+    // (Elden Ring's fire has already hurt him: no burn of SM64's own on top)
+    if (!er_soft_burn) m->health -= 10;
     if (m->health < 0x100) {
         m->health = 0xFF;
     }

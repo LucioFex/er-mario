@@ -90,6 +90,9 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::FlurryEnd => (7, 1.8, true),
         Attack::GroundPound => (4, 1.3, true),
         Attack::Shockwave => (3, 1.0, true),
+        // (the giant fireball's burn and Mega's steps: no hold, they come again and again)
+        Attack::FireSweep => (0, 0.7, false),
+        Attack::Trample => (1, 0.9, false),
         // (a short one: bouncing up a boss, it held him in mid-air)
         Attack::Stomp => (1, 0.9, false),
         Attack::Sweep | Attack::Spin => (2, 0.9, false),
@@ -340,6 +343,33 @@ pub fn fire_pop(at: Vec3) {
     burst(at, 1, Bit::Star);
 }
 
+/// Mario's ailments (status.rs): a puff of the poison's colour round him; blood loss's red burst;
+/// frostbite's icy rings and a cold flash; a lick of flame off him while he burns.
+pub fn status_puff(at: Vec3, tint: [f32; 3]) {
+    let c = [tint[0], tint[1], tint[2], 0.8];
+    ring(at, 0.5, 0.35, c);
+    spark(at + Vec3::new(crate::rand01() - 0.5, crate::rand01() * 0.4, crate::rand01() - 0.5) * 0.5, 0.45, c);
+}
+
+pub fn bleed(at: Vec3) {
+    spark(at, 1.4, RED);
+    ring(at, 1.2, 0.3, RED);
+    burst(at, 3, Bit::Star);
+    flash([1.0, 0.1, 0.1], 0.3, 0.35);
+}
+
+pub fn frost(feet: Vec3) {
+    const ICE: [f32; 4] = [0.6, 0.85, 1.0, 1.0];
+    ring(feet + Vec3::Y * 0.1, 1.6, 0.6, ICE);
+    ring(feet + Vec3::Y * 0.9, 1.0, 0.5, WHITE);
+    spark(feet + Vec3::Y * 0.9, 1.2, ICE);
+    flash([0.5, 0.75, 1.0], 0.3, 0.5);
+}
+
+pub fn flame_lick(at: Vec3) {
+    spark(at, 0.5, [1.0, 0.5 + crate::rand01() * 0.3, 0.15, 0.9]);
+}
+
 /// Yoshi's stomp landing (ride.rs): a wide ring of dust, a green one, puffs all round.
 pub fn yoshi_stomp(feet: Vec3) {
     ring(feet + Vec3::Y * 0.05, 4.5, 0.45, DUST);
@@ -365,6 +395,16 @@ pub fn mega_change(feet: Vec3, grow: bool) {
     ring(feet + Vec3::Y * 1.0 * k, 1.6 * k, 0.4, WHITE);
     burst(feet + Vec3::Y * 1.2 * k, 8, Bit::Star);
     flash([1.0, 0.95, 0.8], if grow { 0.22 } else { 0.12 }, 0.35);
+}
+
+/// The giant fireball's explosion (fireball.rs), reaching `reach` m: rings of fire on the ground
+/// and in the air, smoke, a hot flash.
+pub fn fire_blast(at: Vec3, reach: f32) {
+    const FIRE: [f32; 4] = [1.0, 0.5, 0.15, 1.0];
+    ring(at + Vec3::Y * 0.1, reach, 0.6, FIRE);
+    ring(at + Vec3::Y * 1.2, reach * 0.7, 0.45, GOLD);
+    puffs(at, 10, reach * 0.4);
+    flash([1.0, 0.55, 0.2], 0.35, 0.45);
 }
 
 /// Mega Mario's step (or landing, `heavy`): dust around his feet, a ring of it.

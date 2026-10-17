@@ -136,6 +136,38 @@ pub fn blend(a: &[PartPose; PARTS], b: &[PartPose; PARTS], t: f32) -> [PartPose;
 /// The pose to show this frame, in character space (set by the Mario frame, applied by `apply`).
 pub static POSE: Mutex<Option<[PartPose; PARTS]>> = Mutex::new(None);
 
+/// An enemy's grab (grab.rs) moves the Tarnished with its animation, not only his position: a
+/// troll lifting him to its mouth raises his pelvis bone, a boss swinging him turns it. Mario's
+/// pose replaces every bone of his, so meanwhile it follows that bone (the parent of Mario's pelvis
+/// bone): how far it moved and turned from where it was just before. ROOT_FOLLOW turns it on;
+/// ROOT holds that bone's pose before the grab (rest), the blend in or out and since when, and the
+/// offset in use (character space, for the camera).
+pub static ROOT_FOLLOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct Root {
+    rest: Option<(Vec3, Quat)>,
+    on: bool,
+    since: std::time::Instant,
+    offset: Vec3,
+}
+static ROOT: Mutex<Option<Root>> = Mutex::new(None);
+/// blending into and out of following the bone (s)
+const ROOT_BLEND: f32 = 0.15;
+
+/// How far the grab's animation has moved Mario from where the game holds the Tarnished (character
+/// space, m).
+pub fn root_offset() -> Vec3 {
+    ROOT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(Vec3::ZERO, |r| r.offset)
+}
+
+/// The pose bone `pose` (character space) followed onto the root bone's move: `rest` where the
+/// root was, `now` where it is, `w` how much (0-1).
+fn follow_root(pose: (Vec3, Quat), rest: (Vec3, Quat), now: (Vec3, Quat), w: f32) -> (Vec3, Quat) {
+    let turn = (now.1 * rest.1.inverse()).normalize();
+    let pos = now.0 + turn * (pose.0 - rest.0);
+    let rot = (turn * pose.1).normalize();
+    (pose.0.lerp(pos, w), pose.1.slerp(rot, w).normalize())
+}
+
 /// Converts world-relative part poses to the character space of a character facing `char_rot`.
 pub fn to_character(parts: &[PartPose; PARTS], char_rot: Quat) -> [PartPose; PARTS] {
     let inv = char_rot.inverse();
@@ -665,10 +697,21 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
             b = p as usize;
         }
     }
+    // the root bone a grab moves (the parent of Mario's pelvis bone), followed while ROOT_FOLLOW
+    // is on (only for the live pose, not the menus'): its rest is kept up while it's off
+    let root_bone = (!away && bones[1] < n).then(|| parent_of(bones[1])).filter(|&p| p >= 0).map(|p| p as usize);
+    let follow_on = root_bone.is_some() && ROOT_FOLLOW.load(std::sync::atomic::Ordering::Relaxed);
+    let mut follow: Option<((Vec3, Quat), (Vec3, Quat), f32)> = None;
     let mut world: Vec<Qs> = Vec::with_capacity(n);
     for b in 0..n {
         let p = parent_of(b);
         let parent: Qs = if p >= 0 && (p as usize) < b { world[p as usize] } else { (Vec3::ZERO, Quat::IDENTITY) };
+        if let Some(f) = follow {
+            if let Some((want, s)) = pinned[b] {
+                let (rest, now, w) = f;
+                pinned[b] = Some((follow_root(want, rest, now, w), s));
+            }
+        }
         let scale = match pinned[b] {
             Some((_, s)) => s,
             None if keep[b] => Vec3::ONE,
@@ -697,6 +740,47 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
         };
         write(model, b, m, scale);
         world.push(m);
+        if Some(b) == root_bone {
+            let mut root = ROOT.lock().unwrap_or_else(|e| e.into_inner());
+            let r = root.get_or_insert(Root { rest: None, on: false, since: std::time::Instant::now(), offset: Vec3::ZERO });
+            if follow_on != r.on {
+                r.on = follow_on;
+                r.since = std::time::Instant::now();
+            }
+            let t = (r.since.elapsed().as_secs_f32() / ROOT_BLEND).min(1.0);
+            let w = if r.on { t } else { 1.0 - t };
+            if !r.on && w <= 0.0 {
+                r.rest = Some(m);
+            }
+            r.offset = Vec3::ZERO;
+            if let Some(rest) = r.rest.filter(|_| w > 0.0) {
+                // (a bone gone far off, a pose not of this skeleton: left alone)
+                if m.0.distance(rest.0) < 8.0 {
+                    follow = Some((rest, m, w));
+                    r.offset = (m.0 - rest.0) * w;
+                }
+            }
+        }
     }
     world.get(bones[HEAD]).map(|head| head.0.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::follow_root;
+    use glam::{Quat, Vec3};
+
+    #[test]
+    fn follows_the_root_bone() {
+        let rest = (Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY);
+        let pose = (Vec3::new(0.0, 1.5, 0.1), Quat::IDENTITY);
+        // not following: untouched
+        assert!(follow_root(pose, rest, (Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY), 0.0).0.distance(pose.0) < 1e-5);
+        // lifted 2 m: up 2 m
+        let up = follow_root(pose, rest, (Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY), 1.0);
+        assert!(up.0.distance(Vec3::new(0.0, 3.5, 0.1)) < 1e-5);
+        // turned upside down about the root: the head end goes below it
+        let flip = follow_root(pose, rest, (rest.0, Quat::from_rotation_z(std::f32::consts::PI)), 1.0);
+        assert!(flip.0.y < rest.0.y);
+    }
 }

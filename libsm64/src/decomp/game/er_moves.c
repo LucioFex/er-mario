@@ -337,6 +337,8 @@ s32 act_er_hammer(struct MarioState *m) {
 
 /* Y is held (lib.rs, sm64_er_set_hold_y) */
 int er_hold_y = 0;
+/* Mario burns without SM64's own health loss (set once an Elden Ring fire lights him: status.rs) */
+int er_soft_burn = 0;
 
 /**
  * Y with the hammer: raised high over his head and brought down, the ground shakes all around.
@@ -1144,6 +1146,12 @@ s32 act_er_shell(struct MarioState *m) {
 
 #define ER_BIG_CHARGE_MIN 6
 #define ER_BIG_CHARGE_MAX 40
+/* the big boomerang's wind-up: a whirl from this many degrees a tick to that many, fully charged;
+ * let go, the throw goes on from this frame of SM64's heavy throw (its release is at 13) */
+#define ER_WHIRL_FROM 14.0f
+#define ER_WHIRL_TO 46.0f
+#define ER_BIG_THROW_FRAME 9
+static f32 sRangWhirl = 0.0f;
 
 /* the Chomp's chain is this much longer than the moves' numbers say, past its place by him */
 #define ER_CHOMP_LONGER 1.25f
@@ -1205,6 +1213,7 @@ s32 act_er_throw(struct MarioState *m) {
     if (t == 0) {
         er_aim_turn(m);
         sHand ^= 1;
+        sRangWhirl = 0.0f;
         switch (kind) {
             case ER_THROW_STORM:
                 set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH_FAST);
@@ -1256,17 +1265,32 @@ s32 act_er_throw(struct MarioState *m) {
             if (m->input & INPUT_NONZERO_ANALOG) {
                 m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x300, 0x300);
             }
-            set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0);
+            // (not a statue: he whirls round on the spot with it held out, like Bowser by the tail,
+            // faster and faster as it charges, leaning into it, a whoosh each turn)
+            set_mario_anim_with_accel(m, MARIO_ANIM_SWINGING_BOWSER, (s32)((1.0f + 2.0f * k) * 0x10000));
+            sRangWhirl += ER_WHIRL_FROM + (ER_WHIRL_TO - ER_WHIRL_FROM) * k;
+            if (sRangWhirl >= 360.0f) {
+                sRangWhirl -= 360.0f;
+                er_sound_soft(SOUND_ACTION_SPIN, 0.2f);
+            }
             if (!er_ground(m, 0.0f)) {
                 return TRUE;
             }
-            er_twist(m, sinf((f32) charge * 2.9f) * (1.5f + 3.0f * k));
-            m->marioObj->header.gfx.pos[1] = m->pos[1] - (3.0f + 6.0f * k);
+            er_twist(m, sRangWhirl);
+            m->marioObj->header.gfx.pos[1] = m->pos[1] - (2.0f + 5.0f * k) * (0.8f + 0.2f * sinf((f32) charge * 1.3f));
             return FALSE;
+        }
+        // let go (charged): out of the whirl straight into the throw, facing where it goes
+        if (charge >= ER_BIG_CHARGE_MIN && sRangWhirl != 0.0f) {
+            sRangWhirl = 0.0f;
+            er_aim_turn(m);
+            set_mario_animation(m, MARIO_ANIM_HEAVY_THROW);
+            set_anim_to_frame(m, ER_BIG_THROW_FRAME);
         }
         if (charge < ER_BIG_CHARGE_MIN) {
             // (the charge counter isn't the next-throw flag)
             m->actionState = 0;
+            sRangWhirl = 0.0f;
             kind = m->actionArg = ER_THROW_STORM;
             release = 6;
             end = 15;
@@ -1342,6 +1366,7 @@ s32 act_er_air_throw(struct MarioState *m) {
     if (t == 0) {
         er_aim_turn(m);
         sHand ^= 1;
+        sRangWhirl = 0.0f;
         // (the hook holds him up there without using up a throw)
         if (kind != ER_THROW_HOOK) {
             sErAirThrows++;

@@ -182,6 +182,7 @@ extern SM64_LIB_FN void sm64_mario_delete( int32_t marioId );
 // er-mario: per-part matrices (row-major 4x4, SM64 row-vector convention) from the last tick,
 // per-triangle part index and untransformed (part-local) positions/normals.
 extern SM64_LIB_FN void sm64_er_lava(int32_t marioId);
+extern SM64_LIB_FN void sm64_er_status(int32_t marioId, int32_t kind, int32_t ticks);
 extern SM64_LIB_FN void sm64_er_mute(int32_t mute);
 extern SM64_LIB_FN int sm64_er_get_parts( float *matrices_out /* 64*16 */, int *tri_part_out, float *local_pos_out, float *local_normal_out );
 

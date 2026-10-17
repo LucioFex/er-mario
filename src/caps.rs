@@ -21,7 +21,7 @@ const FLAG: [u32; 3] = [0x4, 0x8, 0x2];
 /// how long each lasts (SM64 ticks, 30 a second): SM64's 20 s, the wing cap shorter than its 60
 const TICKS: [u16; 3] = [600, 1200, 600];
 /// seconds before it can be worn again, from when it comes off
-const RECHARGE: [f32; 3] = [45.0, 40.0, 45.0];
+const RECHARGE: [f32; 3] = [60.0, 55.0, 60.0];
 /// the blows of Metal Mario hit this much harder
 pub const METAL_DAMAGE: f32 = 1.6;
 /// the cap music's volume, and while a boss's health bar shows (the game's own music matters)

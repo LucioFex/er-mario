@@ -49,6 +49,11 @@ const PUSH_TICKS: u32 = 9;
 const BURST_TICKS: [u32; 2] = [10, 22];
 /// running faster than this (SM64 units per tick), Mario shoots without stopping to throw
 const RUN_SHOT_SPEED: f32 = 14.0;
+/// the giant one: it clings to a boss this long (ticks), burns whoever it carries every this many
+/// ticks, and blows up reaching this far (m)
+const STICK_TICKS: u32 = 48;
+const BURN_EVERY: u32 = 8;
+const EXPLODE_REACH: f32 = 5.0;
 
 // SM64 sounds
 const SOUND_FLAME_BLOWN: i32 = 0x5055_8081;
@@ -98,6 +103,11 @@ struct Shot {
     age: u32,
     /// enemies it went through (the full shot hits each once)
     hit: Vec<u64>,
+    /// the giant one: the enemies it sweeps along, the big one it stuck to (its key) and for how
+    /// many ticks, the tick of its last burn
+    swept: Vec<FieldInsHandle>,
+    stuck: Option<(u64, u32)>,
+    last_burn: u32,
 }
 
 struct Burst {
@@ -300,7 +310,9 @@ impl Fire {
             .filter_map(|t| {
                 let (dx, dz) = (t.sm[0] - m[0], t.sm[2] - m[2]);
                 let d = (dx * dx + dz * dz).sqrt();
-                (d > 1.0 && (dx * fx + dz * fz) / d >= AIM_CONE_COS).then(|| (d, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.45, t.sm[2]]))
+                let dy = t.sm[1] + t.height.min(300.0) * 0.45 - hand[1];
+                let pitch_ok = combat::aim_pitch_ok(Vec3::new(dx, dy, dz) * crate::scale());
+                (d > 1.0 && (dx * fx + dz * fz) / d >= AIM_CONE_COS && pitch_ok).then(|| (d, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.45, t.sm[2]]))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, p)| p);
@@ -317,7 +329,7 @@ impl Fire {
         let hand = [m[0] + fx * 45.0, m[1] + if level >= GIANT { 150.0 } else { 75.0 }, m[2] + fz * 45.0];
         let (dir, aimed) = self.aim(state, origin);
         let vel = dir * SPEED[level as usize];
-        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new() });
+        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick });
         log(format!("fireball: level {level} shot{}", if aimed { ", aimed" } else { "" }));
         // a puff of flame at his hand as it leaves
         self.bursts.push(Burst { pos: er(origin, hand), level: 0, born: tick });
@@ -340,6 +352,9 @@ impl Fire {
     fn fly(&mut self, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         let mut shots = std::mem::take(&mut self.shots);
         shots.retain_mut(|shot| {
+            if shot.level >= GIANT {
+                return self.giant(shot, origin, tick, player, combat, ray);
+            }
             let prev = shot.pos;
             let next = [prev[0] + shot.vel[0], prev[1] + shot.vel[1], prev[2] + shot.vel[2]];
             shot.age += 1;
@@ -397,6 +412,117 @@ impl Fire {
             true
         });
         self.shots = shots;
+    }
+
+    /// The giant one, like a kamehameha: whoever it runs into is swept along inside it, burning a
+    /// little at a time; a boss or a big body stops it and it clings to him, burning; it blows up at
+    /// the end (a wall, the end of its range, a while on a boss), hurting all around, and whoever
+    /// it carried flies off. False once it's gone.
+    fn giant(&mut self, shot: &mut Shot, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> bool {
+        let prev = shot.pos;
+        shot.age += 1;
+        let r = RADIUS[shot.level as usize];
+        let reach = r * scale();
+        // stuck to a boss: it follows his chest (in front of him, where it hit), burning
+        let mut blow_up = false;
+        if let Some((key, ticks)) = shot.stuck.as_mut() {
+            *ticks += 1;
+            match combat::chest_by_key(*key) {
+                Some(chest) if *ticks < STICK_TICKS => {
+                    let c = crate::collision::er_to_sm(origin, &HavokPosition(chest.x, chest.y, chest.z, 0.0));
+                    let dir = Vec3::from(shot.vel).with_y(0.0).normalize_or(Vec3::Z);
+                    shot.pos = [c[0] - dir.x * r * 0.5, c[1], c[2] - dir.z * r * 0.5];
+                }
+                _ => blow_up = true,
+            }
+        }
+        let next = if shot.stuck.is_some() { shot.pos } else { [prev[0] + shot.vel[0], prev[1] + shot.vel[1], prev[2] + shot.vel[2]] };
+        let center = er(origin, next);
+        // whoever it runs into now: swept along, or (a boss, a big body) it sticks to him
+        if shot.stuck.is_none() && !blow_up {
+            let near = combat::nearby(&HavokPosition(center.x, center.y, center.z, 0.0), 3.0 + reach, origin);
+            let fresh: Vec<&combat::Target> = near.iter().filter(|t| t.shootable().is_some() && !shot.hit.contains(&t.key())).collect();
+            for t in fresh {
+                let d = ((t.sm[0] - next[0]).powi(2) + (t.sm[2] - next[2]).powi(2)).sqrt();
+                if d > t.radius + r || next[1] + r < t.sm[1] || next[1] - r > t.sm[1] + t.height {
+                    continue;
+                }
+                let Some(h) = t.shootable().copied() else { continue };
+                shot.hit.push(t.key());
+                sound(SOUND_BOMB);
+                self.bursts.push(Burst { pos: center, level: 3, born: tick });
+                if combat::blowable(&h) {
+                    shot.swept.push(h);
+                } else {
+                    log(format!("fireball: the giant one clings to a big one ({} carried)", shot.swept.len()));
+                    shot.stuck = Some((t.key(), 0));
+                    crate::lakitu::shake(0.8);
+                    break;
+                }
+            }
+        }
+        // the ones it carries go along with it (unless a wall stops them), and they all burn
+        let step = center - er(origin, prev);
+        if let Ok(wcm) = unsafe { WorldChrMan::instance_mut() } {
+            shot.swept.retain(|h| {
+                let Some(chr) = wcm.chr_ins_by_handle_mut(h) else { return false };
+                if chr.modules.data.hp <= 0 || crate::carry::is_carried(h) || crate::knock::is_flying(h) {
+                    return false;
+                }
+                let ph = &mut chr.modules.physics;
+                let at = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
+                let flat = step.with_y(0.0);
+                let chest = at + Vec3::Y * 0.8;
+                if flat.length() > 1e-3 && ray(chest, chest + flat + flat.normalize() * 0.4).is_none() {
+                    let to = at + flat;
+                    ph.position = HavokPosition(to.x, to.y, to.z, 0.0);
+                    ph.chr_proxy_pos_update_requested = true;
+                }
+                true
+            });
+        }
+        if tick.wrapping_sub(shot.last_burn) >= BURN_EVERY && (!shot.swept.is_empty() || shot.stuck.is_some()) {
+            shot.last_burn = tick;
+            let near = combat::nearby(&HavokPosition(center.x, center.y, center.z, 0.0), 6.0 + reach, origin);
+            let burning: Vec<(usize, Attack, bool)> = near
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| shot.swept.iter().any(|h| combat::handle_key(h) == t.key()) || shot.stuck.is_some_and(|(k, _)| k == t.key()))
+                .map(|(i, _)| (i, Attack::FireSweep, false))
+                .collect();
+            if !burning.is_empty() {
+                combat.deal(player, &near, &burning, tick);
+            }
+            sound(SOUND_FLAME_BLOWN);
+        }
+        // the end: a wall, its range, long enough on a boss
+        if !blow_up && shot.stuck.is_none() {
+            if let Some(p) = ray(er(origin, prev), center) {
+                shot.pos = crate::collision::er_to_sm(origin, &HavokPosition(p.x, p.y, p.z, 0.0));
+                blow_up = true;
+            } else if shot.age as f32 * SPEED[shot.level as usize] >= RANGE {
+                blow_up = true;
+            }
+        }
+        if !blow_up {
+            shot.pos = next;
+            return true;
+        }
+        // the explosion: everyone around it, and the ones it carried fly off
+        let at = er(origin, shot.pos);
+        let ground = ray(at, at - Vec3::Y * 6.0).unwrap_or(at - Vec3::Y * reach.min(2.0));
+        let n = combat.blast(player, ground, EXPLODE_REACH, Attack::Fire(shot.level), origin, tick);
+        let away = er_vel(shot.vel).with_y(0.0).normalize_or(Vec3::Z);
+        for h in shot.swept.drain(..) {
+            crate::knock::launch(&h, away);
+        }
+        self.bursts.push(Burst { pos: at, level: shot.level, born: tick });
+        crate::impact::fire_blast(ground, EXPLODE_REACH);
+        crate::lakitu::shake(1.6);
+        sound(SOUND_BOMB);
+        sound(SOUND_VOLCANO);
+        log(format!("fireball: the giant one blows up ({n} caught in it)"));
+        false
     }
 
     /// The full shot's knockback: regular enemies slide away from Mario (bosses stand their ground)
@@ -479,9 +605,11 @@ impl Fire {
         }
         for shot in &self.shots {
             let pos = er(origin, shot.pos);
-            let vel = er_vel(shot.vel);
+            // (clinging to a boss it stands still, churning bigger)
+            let stuck = shot.stuck.is_some();
+            let vel = if stuck { Vec3::ZERO } else { er_vel(shot.vel) };
             let level = shot.level as usize;
-            let size = SIZE[level] * (1.0 + 0.08 * (tick as f32 * 1.3 + shot.age as f32).sin());
+            let size = SIZE[level] * if stuck { 1.12 + 0.12 * (tick as f32 * 2.1).sin() } else { 1.0 + 0.08 * (tick as f32 * 1.3 + shot.age as f32).sin() };
             if !seen(pos, size) {
                 continue;
             }

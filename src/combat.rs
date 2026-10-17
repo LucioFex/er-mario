@@ -30,6 +30,10 @@ pub enum Attack {
     Dash,
     /// Mario's fireball (fireball.rs), by charge level 0-3
     Fire(u8),
+    /// the giant fireball (fireball.rs) sweeping enemies along: a little at a time, then it blows
+    FireSweep,
+    /// Mega Mario's steps: whoever is under his feet
+    Trample,
     /// Y in the air: the twirl, hitting all around him (moves.rs)
     Spin,
     /// a ground pound's landing, on everyone around the one under him
@@ -98,6 +102,7 @@ impl Attack {
             Attack::Fire(0 | 1) => Attack::Kick.spec(),
             Attack::Fire(2) => Attack::Stomp.spec(),
             Attack::Fire(_) => Attack::GroundPound.spec(),
+            Attack::FireSweep | Attack::Trample => Attack::Punch.spec(),
             Attack::Spin => Attack::Sweep.spec(),
             Attack::Shockwave => Attack::Stomp.spec(),
             Attack::Rush => Attack::Punch.spec(),
@@ -139,7 +144,11 @@ impl Attack {
             Attack::Fire(2) => (22.0, "damage_fire_charged_2"),
             Attack::Fire(3) => (33.0, "damage_fire_max"),
             // the giant one (10 s): kills a regular enemy outright
-            Attack::Fire(_) => (100.0, "damage_fire_giant"),
+            Attack::Fire(_) => (85.0, "damage_fire_giant"),
+            // (the giant one's sweep: a tick every few tenths while it carries them or sticks to a
+            // boss, the explosion is the finisher)
+            Attack::FireSweep => (8.0, "damage_fire_sweep"),
+            Attack::Trample => (4.0, "damage_mega_step"),
             Attack::Spin => (7.5, "damage_spin"),
             Attack::Shockwave => (21.0, "damage_shockwave"),
             // the reward for the beat: harder blows than the plain combo's
@@ -190,7 +199,7 @@ impl Attack {
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
-        matches!(self, Attack::Fire(_) | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
+        matches!(self, Attack::Fire(_) | Attack::FireSweep | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
     }
 
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
@@ -203,6 +212,8 @@ impl Attack {
             Attack::Dash => 1.1,
             // from afar and safe: on bosses only the charged ones count for more
             Attack::Fire(level) => 1.0 + 0.15 * level as f32,
+            Attack::FireSweep => 1.6,
+            Attack::Trample => 1.2,
             Attack::Spin => 1.2,
             Attack::Shockwave => 1.4,
             Attack::Rush => 1.6,
@@ -490,6 +501,25 @@ impl Target {
         self.handle.as_ref().filter(|h| self.hostile && !crate::swing::is_down(h) && !crate::carry::is_carried(h))
     }
 }
+
+/// Whether a thrown thing (fireball, boomerang) may home in on a point `d` away (m, Elden Ring
+/// axes): at most ~30° up or down, and never far up or down. Without it shots aimed at birds on the
+/// roofs and enemies up on ledges (the aim only looked at the flat angle) and flew off into the sky.
+pub fn aim_pitch_ok(d: glam::Vec3) -> bool {
+    let flat = d.with_y(0.0).length();
+    let ok = d.y.abs() <= AIM_PITCH_SLACK + flat * AIM_PITCH && d.y.abs() <= AIM_MAX_RISE;
+    if !ok {
+        static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 20 {
+            log(format!("aim: skipped a target {:.1} m up, {flat:.1} m away", d.y));
+        }
+    }
+    ok
+}
+/// (m of height allowed whatever the distance, tan of the slope beyond it, the most up or down)
+const AIM_PITCH_SLACK: f32 = 1.5;
+const AIM_PITCH: f32 = 0.6;
+const AIM_MAX_RISE: f32 = 8.0;
 
 pub fn handle_key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
@@ -1662,6 +1692,30 @@ impl Combat {
             .filter(|(_, t)| self.stomps.get(&t.key).is_some_and(|&n| n >= if t.height > STOMP_HEIGHT { MAX_CLIMB } else { MAX_STOMPS }))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Game thread: a blast on the ground at `feet` (Elden Ring) reaching `reach` m: every enemy
+    /// standing in it (feet within 1.5 m up or down) takes `attack`. Mega Mario's steps and landings,
+    /// the giant fireball's explosion.
+    pub fn blast(&mut self, player: &ChrIns, feet: glam::Vec3, reach: f32, attack: Attack, origin: [f32; 3], tick: u32) -> usize {
+        let center = HavokPosition(feet.x, feet.y, feet.z, 0.0);
+        let near = nearby(&center, reach + 4.0, origin);
+        let hits: Vec<(usize, Attack, bool)> = near
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.shootable().is_some())
+            .filter(|(_, t)| {
+                let p = glam::Vec3::new(t.er.0, t.er.1, t.er.2);
+                let r = t.radius * crate::scale();
+                let h = t.height * crate::scale();
+                (p - feet).with_y(0.0).length() <= reach + r && feet.y + 1.5 >= p.y && feet.y - 1.5 <= p.y + h
+            })
+            .map(|(i, _)| (i, attack, false))
+            .collect();
+        if !hits.is_empty() {
+            self.deal(player, &near, &hits, tick);
+        }
+        hits.len()
     }
 
     /// Game thread: how the Tarnished's HP loss since the last check turns into Mario's health

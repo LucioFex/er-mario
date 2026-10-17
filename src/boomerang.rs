@@ -129,7 +129,27 @@ pub struct Boomerang {
     out: Vec<Rang>,
     /// the tick of the last whir
     whir: u32,
+    /// 0 on his back .. 1 in his hand, the ticks since he last threw one, the ticks the big one has
+    /// been winding up
+    in_hand: f32,
+    idle: u32,
+    winding: u32,
 }
+
+/// slung on his back while he isn't throwing (the big one, flat across his back, its bend up and
+/// to his left): up from the pelvis and out behind (m), its tilt (radians), its size; in his hand
+/// for a throw: how fast it gets there and goes back (share of the way per tick), how long it stays
+/// after one (ticks); wound up for the big throw it grows from the hand's size to this
+const BACK_RISE: f32 = 0.24;
+const BACK_OUT: f32 = 0.26;
+const BACK_TILT: f32 = 0.6;
+const BACK_SIZE: f32 = 1.4;
+const TO_HAND: f32 = 0.5;
+const TO_BACK: f32 = 0.2;
+const HOLD: u32 = 10;
+const WOUND_SIZE: f32 = 2.2;
+/// (er_moves.c ER_BIG_CHARGE_MAX: ticks to wind up fully)
+const WIND_TICKS: f32 = 40.0;
 
 static READY: AtomicU32 = AtomicU32::new(MAX_OUT);
 static SPRITES: Mutex<(Vec<Sprite>, Option<Vec3>, Option<Instant>)> = Mutex::new((Vec::new(), None, None));
@@ -164,7 +184,7 @@ fn sound(id: i32, volume: f32) {
 
 impl Boomerang {
     pub fn new() -> Self {
-        Boomerang { out: Vec::new(), whir: 0 }
+        Boomerang { out: Vec::new(), whir: 0, in_hand: 0.0, idle: HOLD + 1, winding: 0 }
     }
 
     /// Game thread, after every SM64 tick: what the throws did (`mv`), Mario's state, feet and hand
@@ -299,7 +319,7 @@ impl Boomerang {
                 let at = chest(t, origin);
                 let d = at - hand;
                 let flat = d.with_y(0.0);
-                (flat.length() > 0.5 && flat.normalize().dot(face) >= cone).then_some((flat.length(), at, t.key()))
+                (flat.length() > 0.5 && flat.normalize().dot(face) >= cone && combat::aim_pitch_ok(d)).then_some((flat.length(), at, t.key()))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let aim = found.map(|(_, p, _)| p);
@@ -345,9 +365,9 @@ impl Boomerang {
     }
 
     /// Puts the boomerangs on their models: the ones out where they fly (`feet`: Mario's, Elden
-    /// Ring), spinning flat and banking into their curve; one in his right hand while he has one
-    /// (`held`: the boomerang is his weapon now).
-    pub fn pose(&self, parts: &mut [PartPose; PARTS], feet: Vec3, face_angle: f32, held: bool) {
+    /// Ring), spinning flat and banking into their curve; one in his right hand or on his back while he has one
+    /// (`held`: the boomerang is his weapon now), slung on his back between throws.
+    pub fn pose(&mut self, parts: &mut [PartPose; PARTS], feet: Vec3, face_angle: f32, held: bool, mv: &sm64::SM64ErMove, action: u32) {
         for r in &self.out {
             let size = if r.kind == Kind::Big { BIG_SIZE / SIZE } else { 1.0 };
             // (tilted towards the side it curves to, and up a little in the launcher's arc)
@@ -365,17 +385,56 @@ impl Boomerang {
             parts[RANG + r.slot] = PartPose { rot, pos: r.pos - feet, scale: size * pop, stretch };
         }
         if !held {
+            self.in_hand = 0.0;
+            self.idle = HOLD + 1;
+            self.winding = 0;
+            return;
+        }
+        // (none while the big one is out: it's that one)
+        if self.out.iter().any(|r| r.kind == Kind::Big) {
+            self.winding = 0;
             return;
         }
         let Some(slot) = (0..RANGS).find(|s| !self.out.iter().any(|r| r.slot == *s)) else { return };
-        // in his fist by one tip, upright, its bend back over his forearm
+        // in his hand while he throws (and a moment after), on his back otherwise; the big one
+        // grows in his hand as he winds it up
+        let throwing = matches!(action, moves::ACT_ER_THROW | moves::ACT_ER_AIR_THROW) && mv.action_arg <= moves::THROW_BIG;
+        let winding = action == moves::ACT_ER_THROW && mv.action_arg == moves::THROW_BIG && mv.action_timer == 2;
+        self.winding = if winding { self.winding + 1 } else { 0 };
+        self.idle = if throwing { 0 } else { self.idle.saturating_add(1) };
+        let want = if self.idle <= HOLD { 1.0 } else { 0.0 };
+        self.in_hand += (want - self.in_hand).clamp(-TO_BACK, TO_HAND);
+        let t = self.in_hand * self.in_hand * (3.0 - 2.0 * self.in_hand);
+        // in his fist by one tip, upright, its bend back over his forearm (along his arm while he
+        // whirls: it swings round with him)
         let hand = parts[9].pos;
-        let ahead = Vec3::new(-face_angle.sin(), 0.0, face_angle.cos());
+        let arm = (hand - parts[7].pos).with_y(0.0).normalize_or_zero();
+        let ahead = if self.winding > 0 && arm != Vec3::ZERO { arm } else { Vec3::new(-face_angle.sin(), 0.0, face_angle.cos()) };
         let right = Vec3::Y.cross(ahead).normalize_or(Vec3::X);
         let face = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, ahead));
-        let rot = (face * Quat::from_rotation_x(-1.25) * Quat::from_rotation_y(0.4)).normalize();
+        // (wound up it's held out level, swung round like a hammer thrower's)
+        let lift = if self.winding > 0 { -0.35 } else { -1.25 };
+        let held_rot = (face * Quat::from_rotation_x(lift) * Quat::from_rotation_y(0.4)).normalize();
+        let wound = (self.winding as f32 / WIND_TICKS).min(1.0);
+        let full = self.winding as f32 >= WIND_TICKS;
+        let held_size = 0.85 + (WOUND_SIZE - 0.85) * wound * wound * (3.0 - 2.0 * wound) * (if full { 1.0 + 0.04 * (self.winding as f32 * 2.1).sin() } else { 1.0 });
         let tip = Vec3::new(crate::assets::gear::RANG_SPAN * 0.5, 0.0, -0.12);
-        parts[RANG + slot] = PartPose { rot, pos: hand - rot * tip * 0.85, scale: 0.85, stretch: Vec3::ONE };
+        let held_pos = hand - held_rot * tip * held_size;
+        // on his back, following his body (pelvis to head, shoulder to shoulder)
+        let spine = (parts[3].pos - parts[1].pos).normalize_or(Vec3::Y);
+        let side = (parts[7].pos - parts[4].pos).normalize_or(right);
+        let side = (side - spine * side.dot(spine)).normalize_or(right);
+        let mut back = spine.cross(side);
+        if back.dot(ahead) > 0.0 {
+            back = -back;
+        }
+        let across = back.cross(spine).normalize_or(side);
+        let back_rot = (Quat::from_mat3(&Mat3::from_cols(across, back, spine)) * Quat::from_rotation_y(BACK_TILT)).normalize();
+        let back_pos = parts[1].pos + spine * BACK_RISE + back * BACK_OUT;
+        let rot = back_rot.slerp(held_rot, t).normalize();
+        let pos = back_pos.lerp(held_pos, t);
+        let scale = BACK_SIZE + (held_size - BACK_SIZE) * t;
+        parts[RANG + slot] = PartPose { rot, pos, scale, stretch: Vec3::ONE };
     }
 
     fn publish(&mut self, hand: Option<Vec3>) {
@@ -411,7 +470,7 @@ fn nearest(at: Vec3, range: f32, origin: [f32; 3], but: Option<u64>) -> Option<u
     let here = HavokPosition(at.x, at.y, at.z, 0.0);
     combat::nearby(&here, range, origin)
         .iter()
-        .filter(|t| t.shootable().is_some() && Some(t.key()) != but)
+        .filter(|t| t.shootable().is_some() && Some(t.key()) != but && combat::aim_pitch_ok(chest(t, origin) - at))
         .min_by(|a, b| (chest(a, origin) - at).length_squared().total_cmp(&(chest(b, origin) - at).length_squared()))
         .map(|t| t.key())
 }
