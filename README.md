@@ -85,7 +85,8 @@ a second, Bayonetta's Witch Time: a blue flash, a "waha!", and for a moment Mari
 counters that hit 1.6x as hard (`src/dodge.rs`). Once every few seconds at most.
 
 **Hammer.** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
-moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air), a
+moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air: the higher
+he comes down from, the bigger the slam, and from 12 m up it lands as the giant hammer), a
 Donkey Kong flurry that ends with a giant hammer (X, X, Y), a Bowser spin (Y, X) and a
 launcher (X, Y): a golf swing that sends enemies flying high, where they hang for a moment so
 Mario can jump after them and keep the combo going in the air. When he's
