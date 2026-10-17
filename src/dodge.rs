@@ -1,7 +1,7 @@
-//! The perfect dodge (Bayonetta's Witch Time): B's dash started while an enemy close by is in the
-//! middle of one of its attacks slows the world down for a moment (Mario keeps his own speed,
-//! style.rs), with a blue flash, a ring and a "waha!"; his blows in that moment are counters and hit
-//! harder (combat.rs). Once in a while, not on every dash near an enemy.
+//! The perfect dodge (Bayonetta's Witch Time): B's dash started while an enemy close by, facing
+//! Mario, has just started one of its attacks slows the world down for a moment (Mario keeps his
+//! own speed, style.rs), with a blue flash, a ring and a "waha!"; his blows up close in that moment
+//! are counters and hit harder (combat.rs). Once in a while, not on every dash near an enemy.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -23,6 +23,10 @@ pub const COUNTER_DAMAGE: f32 = 1.6;
 const COOLDOWN: f32 = 2.5;
 /// enemies' attacks: their animations (a000_003000 on, Elden Ring's enemy attacks)
 const ATTACKS: std::ops::Range<i32> = 3000..4000;
+/// ...started at most this long ago (s: its wind-up, not its recovery), by an enemy facing Mario
+/// (cos 60°)
+const FRESH: f32 = 0.5;
+const FACING_COS: f32 = 0.5;
 
 const SOUND_WAHA: i32 = 0x242B_8081 + (1 << 16);
 const SOUND_SHORT_STAR: i32 = 0x3016_0091;
@@ -56,8 +60,19 @@ pub fn tick(action: u32, feet: Vec3, tick: u32) -> bool {
     let attacker = crate::combat::in_the_way(feet, NEAR).into_iter().find_map(|(handle, ..)| {
         let chr = wcm.chr_ins_by_handle(&handle)?;
         let t = &chr.modules.time_act;
-        let anim = t.anim_queue[(t.read_idx % 10) as usize].anim_id % 1_000_000;
-        ATTACKS.contains(&anim).then_some((chr.character_id, anim))
+        let a = &t.anim_queue[(t.read_idx % 10) as usize];
+        let anim = a.anim_id % 1_000_000;
+        let ph = &chr.modules.physics;
+        let (o, p) = (ph.orientation, ph.position);
+        let ahead = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(Vec3::new(0.0, 0.0, -1.0)).with_y(0.0).normalize_or_zero();
+        let to = (feet - Vec3::new(p.0, p.1, p.2)).with_y(0.0).normalize_or_zero();
+        let facing = ahead.dot(to) >= FACING_COS;
+        let attacking = ATTACKS.contains(&anim) && a.play_time <= FRESH;
+        if attacking && !facing {
+            // (which way an enemy's forward is was a guess: logged to check)
+            log(format!("dodge: c{:04} attacks ({anim}) but faces away from Mario ({:.2})", chr.character_id, ahead.dot(to)));
+        }
+        (attacking && facing).then_some((chr.character_id, anim))
     });
     let Some((id, anim)) = attacker else { return false };
     let now = Instant::now();
@@ -70,7 +85,7 @@ pub fn tick(action: u32, feet: Vec3, tick: u32) -> bool {
     crate::style::witch_time(SLOW_TIME);
     crate::impact::perfect_dodge(feet);
     worker::call("perfect dodge", |_| unsafe {
-        sm64::sm64_play_sound_global(SOUND_WAHA);
+        sm64::sm64_play_sound_volume(SOUND_WAHA, 0.55);
         sm64::sm64_play_sound_volume(SOUND_SHORT_STAR, 0.35);
     });
     true

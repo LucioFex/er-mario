@@ -18,9 +18,9 @@ use fromsoftware_shared::FromStatic;
 
 use crate::{log, sm64};
 
-/// dev bullets and attacks to take for the noise (the first that exists of each, from these
-/// ranges, in order), never combat.rs's 65-70 and 994-999 (in the first game tried, 71-79 and
-/// 988-993 didn't exist: the rows are looked for wider now, and the ones found logged)
+/// dev bullets and attacks to take for the noise (the first unused one of each, from these
+/// ranges, in order), never combat.rs's 65-70 and 994-999 (in the first game tried, none of 71-79
+/// and 988-993 would do: the rows are looked for wider now, and the ones there logged)
 const BULLETS: [std::ops::RangeInclusive<u32>; 3] = [71..=99, 0..=64, 100..=199];
 const ATTACKS: [std::ops::RangeInclusive<u32>; 3] = [980..=993, 900..=979, 0..=899];
 const TAKEN_BULLETS: std::ops::RangeInclusive<u32> = 65..=70;
@@ -81,12 +81,14 @@ fn known_sounds(repo: &SoloParamRepository) -> (Vec<(i32, f32)>, u8) {
 
 fn setup() -> Option<Setup> {
     let repo = unsafe { SoloParamRepository::instance_mut() }.ok()?;
-    // (any that exists: everything about it is set below; an unused one first, if there is one)
+    // (only unused ones: everything about the row is overwritten below, and a real one would be
+    // some attack of the game's broken for good; none found, Mario stays silent and the rows there
+    // are logged)
     let bullets: Vec<u32> = BULLETS.iter().cloned().flatten().filter(|b| !TAKEN_BULLETS.contains(b) && repo.get::<Bullet>(*b).is_some()).collect();
     let atks: Vec<u32> = ATTACKS.iter().cloned().flatten().filter(|a| !TAKEN_ATTACKS.contains(a) && repo.get::<AtkParam_Pc>(*a).is_some()).collect();
     log(format!("noise: bullets there {:?}, attacks there {:?}", &bullets[..bullets.len().min(12)], &atks[..atks.len().min(12)]));
-    let bullet = bullets.iter().copied().find(|&b| repo.get::<Bullet>(b).is_some_and(|r| r.atk_id_bullet() <= 0 && r.sfx_id_bullet() <= 0)).or(bullets.first().copied());
-    let atk = atks.iter().copied().find(|&a| repo.get::<AtkParam_Pc>(a).is_some_and(|r| r.atk_phys() == 0 && r.appear_ai_sound_id() <= 0)).or(atks.first().copied());
+    let bullet = bullets.iter().copied().find(|&b| repo.get::<Bullet>(b).is_some_and(|r| r.atk_id_bullet() <= 0 && r.sfx_id_bullet() <= 0));
+    let atk = atks.iter().copied().find(|&a| repo.get::<AtkParam_Pc>(a).is_some_and(|r| r.atk_phys() == 0 && r.appear_ai_sound_id() <= 0));
     let (sounds, kind) = known_sounds(repo);
     let (Some(bullet), Some(atk), false) = (bullet, atk, sounds.is_empty()) else {
         log(format!("noise: no free bullet ({bullet:?}) or attack ({atk:?}), or no AI sounds ({}): Mario makes no noise", sounds.len()));

@@ -379,7 +379,6 @@ pub fn mega_step(feet: Vec3, heavy: bool) {
     }
 }
 
-/// L1: the hammer pops out (or away) in Mario's hand: a puff, sparkles, SM64's sparkle and whoosh.
 /// A perfect dodge (dodge.rs): a cold blue flash at the screen's edges, rings round Mario and
 /// stars. `feet`: Elden Ring.
 pub fn perfect_dodge(feet: Vec3) {
@@ -397,6 +396,7 @@ pub fn swap(feet: Vec3) {
     burst(feet + Vec3::Y * 0.9, 3, Bit::Star);
 }
 
+/// L1: the hammer pops out (or away) in Mario's hand: a puff, sparkles, SM64's sparkle and whoosh.
 pub fn summon(hand: Vec3, out: bool) {
     puffs(hand - Vec3::Y * 0.15, 3, 0.2);
     if out {
@@ -430,7 +430,7 @@ pub fn bits() -> Vec<(Bit, Vec3, f32, f32, f32)> {
 /// lived than the hammer's, and sparks thrown off its chain. Game thread, every tick it hits:
 /// its body and a point on the chain near it, and the chain's ends (hand, body).
 static CHOMP_TRAIL: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
-const CHOMP_TRAIL_TIME: f32 = 0.3;
+pub const CHOMP_TRAIL_TIME: f32 = 0.3;
 /// sparks flying: from, velocity (m/s), when
 static FLYING_SPARKS: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
 const FLYING_SPARK_TIME: f32 = 0.35;

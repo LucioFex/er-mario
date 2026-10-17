@@ -187,11 +187,16 @@ struct Cam {
     /// (0 the open field .. 1 a narrow corridor, eased)
     probe: usize,
     walls: [f32; 8],
-    ceiling: f32,
+    /// the ceiling's height (Elden Ring Y, absolute: Mario's head moves between two looks at it)
+    ceiling_y: f32,
     enclosed: f32,
-    /// a wall behind the camera: the way round it Lakitu drifts to (yaw), and frames to the next look
+    /// a wall behind the camera: the way round it Lakitu drifts to (yaw), frames to the next look,
+    /// and how long since the last slide ended (s: none again right away, or it orbits)
     slide: Option<f32>,
     slide_wait: u32,
+    slid_ago: f32,
+    /// how fast Mario runs, eased (0..1)
+    speed: f32,
     /// the view's lead ahead of where Mario runs, and the eased push off walls close to the lens
     lead: Vec3,
     pad: Vec3,
@@ -309,10 +314,12 @@ pub fn update(
             fight_frame: Vec3::ZERO,
             probe: 0,
             walls: [ROOM_PROBE; 8],
-            ceiling: CEILING_PROBE,
+            ceiling_y: mario.y + FOCUS_HEIGHT + CEILING_PROBE,
             enclosed: 0.0,
             slide: None,
             slide_wait: 0,
+            slid_ago: SLIDE_DWELL,
+            speed: 0.0,
             lead: Vec3::ZERO,
             pad: Vec3::ZERO,
         }
@@ -436,11 +443,17 @@ pub fn update(
         let i = cam.probe % 9;
         cam.probe = cam.probe.wrapping_add(1);
         if i < 8 {
+            // (from his head and from higher up: a wall stops both, a hillside rising ahead only
+            // the lower one, and it's the farther that counts)
             let a = i as f32 * std::f32::consts::TAU / 8.0;
             let d = Vec3::new(a.cos(), 0.0, a.sin()) * ROOM_PROBE * ks;
-            cam.walls[i] = hit(head, head + d).map_or(ROOM_PROBE * ks, |h| (h - head).length());
+            let far = |from: Vec3| hit(from, from + d).map_or(ROOM_PROBE * ks, |h| (h - from).with_y(0.0).length());
+            let low = far(head);
+            // (under a low ceiling the higher look would start in it: the lower one alone then)
+            let up = (WALL_HIGH * ks).min(cam.ceiling_y - head.y - 0.25);
+            cam.walls[i] = if low < ROOM_PROBE * ks && up > 0.4 { low.max(far(head + Vec3::Y * up)) } else { low };
         } else {
-            cam.ceiling = hit(head, head + Vec3::Y * CEILING_PROBE * ks).map_or(CEILING_PROBE * ks, |h| h.y - head.y);
+            cam.ceiling_y = hit(head, head + Vec3::Y * CEILING_PROBE * ks).map_or(head.y + CEILING_PROBE * ks, |h| h.y);
         }
     }
     let enclosed_was = cam.enclosed;
@@ -450,12 +463,14 @@ pub fn update(
         // (the nearest half: a corridor is shut in even though its two ends are open)
         let walls = (w[0] + w[1] + w[2] + w[3]) / 4.0 / ks;
         let wall_k = 1.0 - ((walls - ROOM_TIGHT) / (ROOM_OPEN - ROOM_TIGHT)).clamp(0.0, 1.0);
-        let ceil_k = 1.0 - ((cam.ceiling / ks - CEILING_LOW) / (CEILING_HIGH - CEILING_LOW)).clamp(0.0, 1.0);
+        let ceil_k = 1.0 - (((cam.ceiling_y - head.y) / ks - CEILING_LOW) / (CEILING_HIGH - CEILING_LOW)).clamp(0.0, 1.0);
         let want = (wall_k * 0.7).max(ceil_k * 0.7).max((wall_k + ceil_k) * 0.6).min(1.0);
+        // (more than half shut in only under a roof: a cliff or a canyon's walls alone aren't a room)
+        let want = if ceil_k < 0.2 { want.min(0.6) } else { want };
         cam.enclosed += (want - cam.enclosed) * rate(if want > cam.enclosed { 2.0 } else { 1.0 });
     }
     if (cam.enclosed - 0.5).signum() != (enclosed_was - 0.5).signum() {
-        crate::dlog(format!("lakitu: {} (walls {:.1?} m, ceiling {:.1} m)", if cam.enclosed > 0.5 { "indoors" } else { "outdoors" }, cam.walls, cam.ceiling));
+        crate::dlog(format!("lakitu: {} (walls {:.1?} m, ceiling {:.1} m)", if cam.enclosed > 0.5 { "indoors" } else { "outdoors" }, cam.walls, cam.ceiling_y - head.y));
     }
     let enc = cam.enclosed;
     // where he's running: the view leads a little ahead (not in a fight: it frames the enemy)
@@ -463,7 +478,9 @@ pub fn update(
     let fighting_now = BLOW.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < FIGHT_HOT);
     let lead_want = if fighting_now { Vec3::ZERO } else { (vel * LEAD_TIME).clamp_length_max(LEAD_MAX * ks) * (1.0 - 0.6 * enc) };
     cam.lead += (lead_want - cam.lead) * rate(1.8);
-    let speed_k = (vel.length() / (8.0 * ks)).clamp(0.0, 1.0);
+    // (eased: the feet move on SM64's 30 ticks a second, the camera on every frame)
+    cam.speed += ((vel.length() / (8.0 * ks)).clamp(0.0, 1.0) - cam.speed) * rate(2.0);
+    let speed_k = cam.speed;
 
     let yaw_before = cam.yaw;
     // yaw: a C-button swing, or the leash (the camera stays put, Mario runs around it)
@@ -513,11 +530,13 @@ pub fn update(
         }
     }
     // a wall behind the camera (found below, last frame): Lakitu slides round it, to where it sees
+    cam.slid_ago += dt;
     if let Some(t) = cam.slide.filter(|_| cam.target_yaw.is_none() && !manual) {
         let d = angle_diff(t, cam.yaw);
         cam.yaw += d * rate(SLIDE_RATE);
         if d.abs() < 0.05 {
             cam.slide = None;
+            cam.slid_ago = 0.0;
         }
     } else {
         cam.slide = None;
@@ -598,7 +617,7 @@ pub fn update(
     cam.look_up += (want_up - cam.look_up) * rate(3.0);
     let height = height - (cam.look_up * 0.5).min(height * 0.7);
     // under a low ceiling: below it, never pressed up against it
-    let height = height.min((head.y + cam.ceiling - CEILING_GAP - cam.focus.y).max(0.25 * ks));
+    let height = height.min((cam.ceiling_y - CEILING_GAP - cam.focus.y).max(0.25 * ks));
     cam.leash = cam.focus + flat + Vec3::Y * height;
     // a hill or slope behind Mario: Lakitu flies up over it (the lowest height that sees him);
     // only when that doesn't help (a wall, a low ceiling) does the camera pull in
@@ -629,7 +648,8 @@ pub fn update(
     };
     // a wall close behind (the view pulled in to under SLIDE_BLOCKED of its length): look a few
     // turns either way for one that sees farther, and slide round to it
-    if cam.target_yaw.is_none() && !manual && cam.slide.is_none() {
+    // (not in a fight: the fight's framing turns it; not right after a slide)
+    if cam.target_yaw.is_none() && !manual && cam.slide.is_none() && !fighting_now && cam.slid_ago >= SLIDE_DWELL {
         if cam.slide_wait > 0 {
             cam.slide_wait -= 1;
         } else if want < full * SLIDE_BLOCKED {
@@ -714,6 +734,9 @@ const SLIDE_BLOCKED: f32 = 0.7;
 const SLIDE_TURNS: [f32; 6] = [-1.2, -0.75, -0.4, 0.4, 0.75, 1.2];
 const SLIDE_RATE: f32 = 2.2;
 const SLIDE_GAIN: f32 = 1.0;
+const SLIDE_DWELL: f32 = 1.5;
+/// the second look for walls, this much higher (m)
+const WALL_HIGH: f32 = 1.3;
 /// nothing within this (m) of the lens
 const LENS_PAD: f32 = 0.45;
 /// the view leads where he runs by this long (s), at most this far (m); running flat out in the

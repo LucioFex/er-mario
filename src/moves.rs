@@ -74,6 +74,17 @@ const SWAP_AFTER: u32 = 14;
 const SWAP_COOLDOWN: u32 = 15;
 const AIR_SWAPS: u32 = 2;
 const AIR_SWAPS_JUGGLE: u32 = 4;
+/// swap strikes in one string at most (each staggers: back to back they'd stunlock); the string is
+/// over after this many ticks without a blow
+const STRING_SWAPS: u32 = 2;
+const STRING_OVER: u32 = 30;
+/// the weapons' own moves: in the middle of one, L1 switches only with a swap strike (the move
+/// would go on with the wrong weapon in hand)
+const WEAPON_ACTIONS: [u32; 12] = [
+    ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO, ACT_ER_HAMMER_LAUNCH, ACT_ER_HAMMER_AIR, ACT_ER_THROW, ACT_ER_AIR_THROW,
+    ACT_ER_CHOMP, ACT_ER_CHOMP_SPIN, ACT_ER_CHOMP_AIR, ACT_ER_AIR_COMBO,
+];
+const ACT_IDLE: u32 = 0x0C40_0201;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
 /// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
@@ -249,6 +260,7 @@ pub struct Moves {
     swap: Option<(u8, u32)>,
     swap_ready: u32,
     air_swaps: u32,
+    string_swaps: u32,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -286,6 +298,7 @@ impl Moves {
             swap: None,
             swap_ready: 0,
             air_swaps: 0,
+            string_swaps: 0,
         }
     }
 
@@ -302,7 +315,7 @@ impl Moves {
     /// Game thread, every SM64 tick: L1 held now, whether Mario may change hands (no menu, not
     /// riding or holding anyone). A tap takes the next weapon, held a moment the fists: the new one
     /// when it changes.
-    pub fn switch_weapon(&mut self, lb: bool, allowed: bool, tick: u32) -> Option<u8> {
+    pub fn switch_weapon(&mut self, lb: bool, allowed: bool, action: u32, tick: u32) -> Option<u8> {
         use crate::weapons::FISTS;
         let next = match (lb, self.lb_since) {
             (true, None) => {
@@ -321,13 +334,32 @@ impl Moves {
             _ => None,
         };
         let next = next.filter(|_| allowed)?;
+        // in the middle of a fight: the new weapon comes in swinging; in the middle of one of the
+        // weapons' moves, only that way (L1 waits otherwise)
+        let fighting = self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER);
+        let swap = fighting && self.can_swap(next, action, tick);
+        if WEAPON_ACTIONS.contains(&action) && !swap {
+            return None;
+        }
         self.weapon = next;
         crate::weapons::set(next);
-        // in the middle of a fight: the new weapon comes in swinging
-        if self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER) && tick >= self.swap_ready {
+        if swap {
             self.swap = Some((next, tick));
         }
         Some(next)
+    }
+
+    /// A swap strike with weapon `w` can start now, out of `action`.
+    fn can_swap(&self, w: u8, action: u32, tick: u32) -> bool {
+        use crate::weapons::{FISTS, RANG};
+        let air = action & ACT_FLAG_AIR != 0;
+        let air_left = self.air_swaps < if crate::juggle::active() { AIR_SWAPS_JUGGLE } else { AIR_SWAPS };
+        tick >= self.swap_ready
+            && self.string_swaps < STRING_SWAPS
+            && action & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0
+            && (!air || air_left)
+            && (w != RANG || crate::boomerang::ready() > 0)
+            && (w != FISTS || !crate::mega::active())
     }
 
     /// Game thread, every SM64 tick: B, Y and X held now, whether Mario may use them (not holding
@@ -432,6 +464,9 @@ impl Moves {
         if !air {
             self.air_swaps = 0;
         }
+        if self.attack_seen.is_none_or(|t| tick.wrapping_sub(t) > STRING_OVER) {
+            self.string_swaps = 0;
+        }
         // a blow going on (the combos' moves, SM64's punches and kicks, the air string)
         if combo(a) || punching || a == ACT_ER_RUSH || a == ACT_GROUND_POUND || a == ACT_SLIDE_KICK || a == ACT_TWIRLING || a == 0x0180_08A9 || a == 0x0180_08AE {
             self.attack_seen = Some(tick);
@@ -461,9 +496,14 @@ impl Moves {
             } else {
                 None
             };
-            if let Some((action, arg, name)) = strike {
+            if strike.is_none() && WEAPON_ACTIONS.contains(&a) {
+                // (it couldn't start after all: the old weapon's move ends, it isn't in hand)
                 let _ = at;
+                return Some(Request::Action(if air { ACT_FREEFALL } else { ACT_IDLE }, 0));
+            }
+            if let Some((action, arg, name)) = strike {
                 self.swap_ready = tick + SWAP_COOLDOWN;
+                self.string_swaps += 1;
                 if air {
                     self.air_swaps += 1;
                 }

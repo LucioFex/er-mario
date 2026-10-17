@@ -2887,7 +2887,7 @@ fn frame(data: &FD4TaskData) {
         }
         // (in the middle of one of the weapons' moves too: the new one comes in swinging, moves.rs;
         // not while a fireball is being thrown)
-        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !m.fire.throwing(m.ticks), m.ticks) {
+        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             let hand = to_er(m.origin, m.state.position);

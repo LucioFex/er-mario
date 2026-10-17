@@ -95,6 +95,12 @@ pub fn sprite() -> Option<Sprite> {
     s.filter(|(_, at)| at.elapsed().as_secs_f32() < 0.25).map(|(s, _)| s)
 }
 
+/// The hook, only while it's out right now (the Chomp takes its place: not a moment longer).
+pub fn live() -> Option<Sprite> {
+    let s = *SPRITE.lock().unwrap_or_else(|e| e.into_inner());
+    s.filter(|(_, at)| at.elapsed().as_secs_f32() < 0.07).map(|(s, _)| s)
+}
+
 pub fn clear() {
     *SPRITE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }

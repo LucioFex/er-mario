@@ -688,7 +688,7 @@ impl ImguiRenderLoop for Overlay {
         // the hook: a line of light from his hand with twinkles running along it, his cap spinning
         // at its end
         // (the Chomp as the hook: its chain, dark iron links along the line)
-        if let Some(hk) = crate::hook::sprite().filter(|_| crate::chomp::hooking()) {
+        if let Some(hk) = crate::hook::live().filter(|_| crate::chomp::hooking()) {
             let n = ((hk.head - hk.hand).length() / 0.22).clamp(2.0, 120.0) as usize;
             for k in 0..n {
                 let p = hk.hand + (hk.head - hk.hand) * ((k as f32 + 0.5) / n as f32);
@@ -779,6 +779,10 @@ impl ImguiRenderLoop for Overlay {
         let chomp = crate::impact::chomp_trail();
         for (k, pair) in chomp.windows(2).enumerate() {
             let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+            // (two swings: no ribbon across the gap between them)
+            if (t0 - t1).abs() * crate::impact::CHOMP_TRAIL_TIME > 0.07 {
+                continue;
+            }
             let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();
             let Some(pts) = pts else { continue };
             let fade = 1.0 - t0.max(t1);

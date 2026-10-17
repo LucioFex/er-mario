@@ -188,6 +188,11 @@ impl Attack {
         }
     }
 
+    /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
+    pub fn ranged(self) -> bool {
+        matches!(self, Attack::Fire(_) | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg)
+    }
+
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
     /// one. The ground pound most of all, it leaves him open the longest.
     fn boss_bonus(self) -> f32 {
@@ -942,8 +947,8 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
-    // a counter, out of a perfect dodge (dodge.rs)
-    if crate::dodge::countering() {
+    // a counter, out of a perfect dodge (dodge.rs): blows up close, not shots from afar
+    if crate::dodge::countering() && !attack.ranged() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
     // Mega Mario's blows are a giant's
@@ -1189,8 +1194,9 @@ const SHELL_RADIUS: f32 = 140.0;
 const LAUNCH_AHEAD: f32 = 110.0;
 const LAUNCH_RADIUS: f32 = 150.0;
 /// the Chain Chomp's cyclone reaches all around Mario out to its chain, and its crash's shockwave
-const CHOMP_SPIN_RADIUS: f32 = 440.0;
-const CHOMP_CRASH_RADIUS: f32 = 300.0;
+// (x1.25 past its place by him, as its chain in er_moves.c ER_CHOMP_LONGER)
+const CHOMP_SPIN_RADIUS: f32 = 522.0;
+const CHOMP_CRASH_RADIUS: f32 = 340.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.

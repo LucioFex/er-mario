@@ -41,6 +41,11 @@ const PAST: f32 = 2.5;
 const HOVER: f32 = 3.0;
 const HOVER_CHASE: f32 = 9.0;
 const RETARGET: f32 = 8.0;
+/// the big one hits an enemy at most this often while it hovers (s) and this many times a throw;
+/// it stops following one after this many (it hits again and again: it mustn't stunlock)
+const HOVER_AGAIN: f32 = 0.4;
+const BIG_HITS: u32 = 7;
+const CHASE_HITS: u32 = 4;
 const BIG_REACH: f32 = 1.7;
 /// coming back: from this speed up to that one (m/s), caught this close to his chest (m), and gone
 /// for good this long after the throw (s)
@@ -104,6 +109,8 @@ struct Rang {
     trail: std::collections::VecDeque<Vec3>,
     /// the enemy it was turned to (its key): the big one homes in on it and follows it
     target: Option<u64>,
+    /// the big one's hits on each enemy this throw
+    counts: Vec<(u64, u32)>,
 }
 
 /// A boomerang to draw (hud.rs): Elden Ring position, velocity (m/s), size (m), its turn (radians),
@@ -190,12 +197,15 @@ impl Boomerang {
             match r.phase {
                 Phase::Out => {
                     // (the big one homes in: its way out bends to where its enemy is now)
+                    // (less and less as it gets there, and its reach at most a metre a tick: late in
+                    // the flight a big change made it jump)
                     if r.kind == Kind::Big {
+                        let left = 1.0 - (r.age / r.out_time).min(1.0);
                         if let Some(at) = r.target.and_then(|k| chest_of(k, r.pos, origin)) {
                             let d = at - r.start;
                             if d.length() > 1.0 {
-                                r.dir = r.dir.lerp(d.normalize(), 0.25).normalize_or(r.dir);
-                                r.range = r.range + (d.length().min(BIG_RANGE) - r.range) * 0.25;
+                                r.dir = r.dir.lerp(d.normalize(), 0.25 * left).normalize_or(r.dir);
+                                r.range += ((d.length().min(BIG_RANGE) - r.range) * 0.25).clamp(-1.0, 1.0) * left;
                             }
                         }
                     }
@@ -221,13 +231,20 @@ impl Boomerang {
                 }
                 Phase::Hover(t) => {
                     r.phase = if t + DT >= HOVER { Phase::Back } else { Phase::Hover(t + DT) };
-                    // following its enemy (or the nearest other one), bobbing a little
-                    if ((t / DT) as u32) % 6 == 0 && r.target.and_then(|k| chest_of(k, r.pos, origin)).is_none() {
+                    // following its enemy (or the nearest other one), bobbing a little; not through
+                    // walls, and not for good: after a few hits on it, it stays where it is (it
+                    // must not hold one enemy down)
+                    let mut at = r.target.and_then(|k| chest_of(k, r.pos, origin));
+                    if at.is_none() && ((t / DT).round() as u32) % 6 == 0 {
                         r.target = nearest(r.pos, RETARGET, origin, None);
+                        at = r.target.and_then(|k| chest_of(k, r.pos, origin));
                     }
-                    if let Some(at) = r.target.and_then(|k| chest_of(k, r.pos, origin)) {
-                        let step = at - r.pos;
-                        r.pos += step.clamp_length_max(HOVER_CHASE * DT);
+                    let tired = r.target.is_some_and(|k| r.counts.iter().any(|(c, n)| *c == k && *n >= CHASE_HITS));
+                    if let Some(at) = at.filter(|_| !tired) {
+                        let next = r.pos + (at - r.pos).clamp_length_max(HOVER_CHASE * DT);
+                        if ray(r.pos, next).is_none() {
+                            r.pos = next;
+                        }
                     }
                     r.pos += Vec3::Y * ((t * 7.0).cos() * 0.4 * DT);
                     if matches!(r.phase, Phase::Back) {
@@ -321,6 +338,7 @@ impl Boomerang {
                 spin: k as f32,
                 trail: Default::default(),
                 target,
+                counts: Vec::new(),
             });
         }
         log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
@@ -419,13 +437,16 @@ fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, 
     };
     // the big one hangs there hitting again and again (every few ticks, combat.rs), the others
     // each enemy once a pass
-    let again = if r.kind == Kind::Big { 0.2 } else { f32::MAX };
+    let again = if r.kind == Kind::Big { HOVER_AGAIN } else { f32::MAX };
     let age = r.age;
     for (i, t) in near.iter().enumerate() {
         if t.shootable().is_none() {
             continue;
         }
         if r.hit.iter().any(|(k, when)| *k == t.key() && age - *when < again) {
+            continue;
+        }
+        if r.kind == Kind::Big && r.counts.iter().any(|(k, n)| *k == t.key() && *n >= BIG_HITS) {
             continue;
         }
         let foot = Vec3::from(t.sm);
@@ -437,6 +458,12 @@ fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, 
         if near_axis && level {
             r.hit.retain(|(key, _)| *key != t.key());
             r.hit.push((t.key(), age));
+            if r.kind == Kind::Big {
+                match r.counts.iter_mut().find(|(k, _)| *k == t.key()) {
+                    Some((_, n)) => *n += 1,
+                    None => r.counts.push((t.key(), 1)),
+                }
+            }
             combat.deal(player, &near, &[(i, attack, false)], tick);
         }
     }

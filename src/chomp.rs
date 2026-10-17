@@ -55,7 +55,7 @@ struct State {
 }
 
 static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0 });
-/// the Chomp is the hook's head right now (hud.rs draws no cap and line then)
+/// the Chomp is out and drawn, so it's the hook's head (hud.rs draws its chain, not the cap)
 static HOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn hooking() -> bool {
@@ -65,6 +65,9 @@ pub fn hooking() -> bool {
 /// The Chain Chomp is in hand or not (weapons.rs).
 pub fn set_out(out: bool) {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if !out {
+        HOOKING.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if s.out != out {
         s.out = out;
         s.pos = None;
@@ -82,8 +85,8 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         HOOKING.store(false, std::sync::atomic::Ordering::Relaxed);
         return None;
     }
-    let hook = crate::hook::sprite();
-    HOOKING.store(hook.is_some(), std::sync::atomic::Ordering::Relaxed);
+    let hook = crate::hook::live();
+    HOOKING.store(true, std::sync::atomic::Ordering::Relaxed);
     let mario = Vec3::from(state.position);
     let face = state.face_angle;
     let scripted = mv.chomp_scripted != 0;
