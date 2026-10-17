@@ -159,11 +159,38 @@ pub fn wing_albedo(model: &MarioModel) -> Image {
     img
 }
 
+/// `character = luigi` in er_mario.ini: Mario's brother, in green and navy (for co-op, each player
+/// picks his own).
+pub fn luigi() -> bool {
+    crate::paths::config("character").is_some_and(|v| v.eq_ignore_ascii_case("luigi"))
+}
+
+/// Luigi's colours for Mario's: his red (cap, shirt, the cap's letter) green, his blue overalls
+/// navy; the rest (skin, hair, gloves, shoes, buttons) as they are.
+fn luigi_color(c: [f32; 3]) -> [f32; 3] {
+    let [r, g, b] = c;
+    if r > 0.4 && g < 0.35 * r && b < 0.35 * r {
+        [r * 0.12, r * 0.64, r * 0.17]
+    } else if b > 0.35 && r < 0.4 * b && g < 0.5 * b {
+        [b * 0.1, b * 0.13, b * 0.5]
+    } else {
+        c
+    }
+}
+
 pub fn mario_albedo(model: &MarioModel) -> Image {
     let mut img = Image::new(SIZE, SIZE, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
-    let cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
+    let luigi = luigi();
+    let mut cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
+    if luigi {
+        for p in cells.iter_mut().flatten() {
+            let [r, g, b] = luigi_color([p[0], p[1], p[2]]);
+            *p = [r, g, b, p[3]];
+        }
+    }
     for (k, col) in mario_colors(model).iter().enumerate() {
         let c = col.map(|v| v as f32 / 255.0);
+        let c = if luigi { luigi_color(c) } else { c };
         for (i, cell) in cells.iter().enumerate() {
             for ty in 0..TILE {
                 for tx in 0..TILE {
@@ -428,4 +455,19 @@ fn paint(t: &mut [u8], name: &str, expect: (usize, usize), (x, y): (usize, usize
         t[start..start + row].copy_from_slice(&blocks[j * row..(j + 1) * row]);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Luigi: Mario's red green, his blue navy, his skin and white untouched.
+    #[test]
+    fn luigi_colors() {
+        let g = super::luigi_color([1.0, 0.0, 0.0]);
+        assert!(g[1] > 0.5 && g[0] < 0.2 && g[2] < 0.2, "{g:?}");
+        let n = super::luigi_color([0.0, 0.0, 1.0]);
+        assert!(n[2] > 0.4 && n[2] < 0.6 && n[0] < 0.15, "{n:?}");
+        for c in [[1.0, 0.8, 0.6], [1.0, 1.0, 1.0], [0.45, 0.2, 0.1], [1.0, 1.0, 0.0]] {
+            assert_eq!(super::luigi_color(c), c);
+        }
+    }
 }

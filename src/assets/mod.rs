@@ -73,9 +73,11 @@ const PORTRAIT_FILE: &str = "portrait.png";
 
 /// What the package was built from: a new version or another portrait file builds it again.
 fn stamp() -> String {
+    // (Luigi's colours too: switching characters builds it again)
+    let luigi = if tex::luigi() { ", luigi" } else { "" };
     match std::fs::metadata(paths::file(PORTRAIT_FILE)) {
-        Ok(m) => format!("{VERSION}, portrait {}", m.len()),
-        Err(_) => VERSION.to_string(),
+        Ok(m) => format!("{VERSION}{luigi}, portrait {}", m.len()),
+        Err(_) => format!("{VERSION}{luigi}"),
     }
 }
 
