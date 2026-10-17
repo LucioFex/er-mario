@@ -7,6 +7,7 @@ mod assets;
 mod audio;
 mod boomerang;
 mod hook;
+mod ride;
 mod caps;
 mod carry;
 mod chomp;
@@ -2447,6 +2448,7 @@ fn frame(data: &FD4TaskData) {
         fireball::clear();
         boomerang::clear();
         hook::clear();
+        ride::clear();
         chomp::clear();
         impact::clear();
         knock::clear();
@@ -3196,6 +3198,36 @@ fn frame(data: &FD4TaskData) {
         torrent_cant_die();
         yoshi::tick();
         trample::update(&mut m.combat, m.ticks, data.delta_time.time, yoshi::charge());
+        // Yoshi's own moves while Mario rides him (ride.rs): X tongue, Y / RB eggs, L2 stomp, LB burst
+        {
+            let saddle = player_ref.chr_ins.modules.ride.is_mounted
+                && !mount_anim(cur)
+                && !m.dead
+                && !MENU_OPEN.load(Ordering::Relaxed)
+                && !WHISTLING.load(Ordering::Relaxed)
+                && yoshi::active();
+            let keys = kbd::read().filter(|_| saddle);
+            let g = cam_pad.map(|p| p.Gamepad);
+            let b = |bit| g.is_some_and(|g| g.wButtons.contains(bit));
+            let buttons = ride::Buttons([
+                b(XINPUT_GAMEPAD_X) || keys.as_ref().is_some_and(|k| k.b),
+                b(XINPUT_GAMEPAD_Y) || (kbd::focused() && saddle && unsafe { GetAsyncKeyState(0x46) } as u16 & 0x8000 != 0),
+                b(XINPUT_GAMEPAD_RIGHT_SHOULDER),
+                g.is_some_and(|g| g.bLeftTrigger > 100) || keys.as_ref().is_some_and(|k| k.z),
+                b(XINPUT_GAMEPAD_LEFT_SHOULDER),
+            ]);
+            let o = physics.orientation;
+            let facing = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(glam::vec3(0.0, 0.0, -1.0));
+            let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+            let ray = |from: glam::Vec3, to: glam::Vec3| {
+                let d = to - from;
+                havok?
+                    .phys_world
+                    .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                    .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+            };
+            ride::tick(data.delta_time.time, saddle, buttons, yoshi::ridden(), facing, m.origin, &mut m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+        }
         // the whistle itself isn't heard: Yoshi answers in its place (yoshi::call)
         if matches!(cur, 50190 | 50191) && yoshi::active() {
             let chr = &player_ref.chr_ins as *const eldenring::cs::ChrIns as *mut eldenring::cs::ChrIns;

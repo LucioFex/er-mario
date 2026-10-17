@@ -280,6 +280,8 @@ struct State {
     /// his speed over the ground (m/s), a little smoothed, and whether Mario's on him
     vel: Vec3,
     ridden: bool,
+    /// off the ground (jumping)
+    airborne: bool,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -388,7 +390,8 @@ pub fn tick() {
             let theirs = t.anim_queue[(t.read_idx % 10) as usize].anim_id;
             let airborne = !c.modules.physics.touching_solid_ground || JUMPS.contains(&theirs);
             if yoshi.is_some() {
-                c.modules.behavior.animation_speed = if mounted && !airborne { RIDE_SPEED } else { 1.0 };
+                // (faster still in a burst of speed: LB, ride.rs)
+                c.modules.behavior.animation_speed = if mounted && !airborne { RIDE_SPEED * crate::ride::boost() } else { 1.0 };
             }
             // no hooves or rattling tack on Yoshi: the game's switch for a character's sounds
             // (it turns them on by distance) and the mimic veil's, which mutes steps
@@ -437,7 +440,7 @@ pub fn tick() {
     };
     let pos = Vec3::new(p.0, p.1, p.2);
     let now = Instant::now();
-    let s = state.get_or_insert_with(|| State { chr, handle: handle.clone(), pose: yoshi.pose(IDLE, 0.0), anim: IDLE, at: 0.0, last: now, pos, bones: None, theirs, vel: Vec3::ZERO, ridden: false });
+    let s = state.get_or_insert_with(|| State { chr, handle: handle.clone(), pose: yoshi.pose(IDLE, 0.0), anim: IDLE, at: 0.0, last: now, pos, bones: None, theirs, vel: Vec3::ZERO, ridden: false, airborne });
     if s.chr != chr {
         (s.chr, s.handle, s.bones, s.pos) = (chr, handle, None, pos);
     }
@@ -452,6 +455,7 @@ pub fn tick() {
         s.vel = s.vel.lerp(step / dt, 0.3);
     }
     s.ridden = ridden;
+    s.airborne = airborne;
     if crate::debug() && ridden {
         static LAST: Mutex<Option<Instant>> = Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
@@ -491,6 +495,13 @@ pub fn seat_drop() -> f32 {
 /// Torrent is Yoshi: he was found in the ROM and his model was there when the game started.
 pub fn active() -> bool {
     crate::assets::yoshi_ready() && matches!(YOSHI.get(), Some(Some(_)))
+}
+
+/// Ridden by Mario now (ride.rs): his feet, his velocity, whether he's in the air.
+pub fn ridden() -> Option<(Vec3, Vec3, bool)> {
+    let state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let s = state.as_ref()?;
+    (s.ridden && s.last.elapsed().as_secs_f32() < 0.1).then_some((s.pos, s.vel, s.airborne))
 }
 
 /// At full speed with Mario on him: where he is and his velocity (trample.rs).

@@ -77,6 +77,9 @@ pub enum Attack {
     ChompLaunch,
     /// the hook (hook.rs): a tug, barely a scratch
     Hook,
+    /// on Yoshi (ride.rs): his tongue, an egg (the stomp is a Shockwave)
+    Tongue,
+    Egg,
 }
 
 impl Attack {
@@ -106,7 +109,8 @@ impl Attack {
             Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
                 Attack::GroundPound.spec()
             }
-            Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook => Attack::Punch.spec(),
+            Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook | Attack::Tongue => Attack::Punch.spec(),
+            Attack::Egg => Attack::Kick.spec(),
             Attack::Chomp | Attack::ChompAir => Attack::Kick.spec(),
             Attack::RangUpper | Attack::ChompLaunch => Attack::Stomp.spec(),
             Attack::ChompEnd => Attack::GroundPound.spec(),
@@ -175,6 +179,9 @@ impl Attack {
             Attack::ChompLaunch => (6.0, "damage_chomp_bite"),
             // the hook: it brings them in (or Mario to them), it doesn't hurt
             Attack::Hook => (0.5, "damage_hook"),
+            // Yoshi: a lick (it makes him an egg), an egg
+            Attack::Tongue => (5.0, "damage_yoshi_tongue"),
+            Attack::Egg => (8.0, "damage_yoshi_egg"),
         }
     }
 
@@ -203,7 +210,7 @@ impl Attack {
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
             Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
-            Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin | Attack::Hook => 1.0,
+            Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::Egg => 1.0,
             Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
             Attack::ChompEnd => 1.5,
         }
@@ -227,7 +234,8 @@ impl Attack {
             // the finishers always land, right after the blows before them
             Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd | Attack::ChompEnd => 1,
             // (each boomerang hits an enemy once a pass: boomerang.rs)
-            Attack::Rang => 2,
+            Attack::Rang | Attack::Egg => 2,
+            Attack::Tongue => 6,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
@@ -1440,7 +1448,7 @@ impl Combat {
                     crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_)) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::Egg | Attack::Tongue) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -1448,7 +1456,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_) | Attack::Hook) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !matches!(attack, Attack::Fire(_) | Attack::Hook | Attack::Tongue | Attack::Egg) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }

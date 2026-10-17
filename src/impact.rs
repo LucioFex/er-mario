@@ -95,6 +95,8 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
         Attack::Rang | Attack::RangBig => (0, 0.7, false),
         Attack::Hook => (1, 0.6, false),
+        Attack::Tongue => (1, 0.7, false),
+        Attack::Egg => (1, 0.9, false),
         Attack::RangUpper => (2, 1.1, true),
         // the Chain Chomp: light blows on many, a heavy crash
         Attack::Chomp | Attack::ChompAir => (2, 1.0, false),
@@ -299,6 +301,21 @@ pub fn cap_change(feet: Vec3, cap: Option<u8>) {
     if cap.is_none() {
         worker::call("cap off", |_| unsafe { sm64::sm64_play_sound_global(SOUND_GENERAL_SWISH_AIR) });
     }
+}
+
+/// A Yoshi egg bursting (ride.rs): shell bits (puffs), a green ring, a star or two.
+pub fn egg_burst(at: Vec3) {
+    puffs(at, 4, 0.35);
+    ring(at, 1.1, 0.25, [0.45, 0.95, 0.35, 0.9]);
+    burst(at, 2, Bit::Star);
+}
+
+/// Yoshi's stomp landing (ride.rs): a wide ring of dust, a green one, puffs all round.
+pub fn yoshi_stomp(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.05, 4.5, 0.45, DUST);
+    ring(feet + Vec3::Y * 0.3, 3.0, 0.35, [0.45, 0.95, 0.35, 0.9]);
+    puffs(feet, 8, 1.6);
+    burst(feet + Vec3::Y * 0.6, 4, Bit::Star);
 }
 
 /// The hook caught something (hook.rs): a little gold ring and a twinkle where it bit.

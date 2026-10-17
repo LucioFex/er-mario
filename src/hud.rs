@@ -134,6 +134,8 @@ const IMG_HAMMER_ICON: usize = 77;
 const IMG_MUSHROOM: usize = 78;
 /// the hook's head (hook.rs): Mario's cap, with eyes
 const IMG_CAPPY: usize = 79;
+/// a Yoshi egg (ride.rs)
+const IMG_EGG: usize = 80;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -235,6 +237,7 @@ pub fn load(rom: &[u8]) {
         out.push(Image::new(32, 32, hammer_icon_pixel));
         out.push(Image::new(32, 32, mushroom_pixel));
         out.push(Image::new(32, 32, cappy_pixel));
+        out.push(Image::new(24, 32, egg_pixel));
         Some(out)
     };
     match load() {
@@ -660,6 +663,30 @@ impl ImguiRenderLoop for Overlay {
                 }
             }
         }
+        // on Yoshi: his tongue (pink, a round tip) and the eggs flying, tumbling
+        {
+            let ride = crate::ride::sprites();
+            if let Some((mouth, tip)) = ride.tongue {
+                if let (Some((a, za)), Some((b, _))) = (project(mouth, size), project(tip, size)) {
+                    if za < 60.0 {
+                        let width = (size[1] / za.max(1.0) * 0.06).clamp(2.0, 14.0);
+                        dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(0.95, 0.35, 0.5, 1.0)).thickness(width).build();
+                        dl.add_circle(b, width * 0.9, imgui::ImColor32::from_rgba_f32s(1.0, 0.45, 0.6, 1.0)).filled(true).build();
+                    }
+                }
+            }
+            for (pos, age) in ride.eggs {
+                let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.2, size)) else { continue };
+                let h = (c[1] - top[1]) * 2.0;
+                if z > 60.0 || h < 1.0 {
+                    continue;
+                }
+                let angle = age * 12.0;
+                let (sn, co) = (angle.sin() * h * 0.5, angle.cos() * h * 0.5);
+                let corner = |x: f32, y: f32| [c[0] + x * co * 0.75 - y * sn, c[1] + x * sn * 0.75 + y * co];
+                dl.add_image_quad(textures[IMG_EGG], corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)).build();
+            }
+        }
         // the hook: a line of light from his hand with twinkles running along it, his cap spinning
         // at its end
         if let Some(hk) = crate::hook::sprite() {
@@ -855,6 +882,15 @@ impl ImguiRenderLoop for Overlay {
                     let bar = [x, y0 + s + px * 2.0];
                     dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
                     dl.add_rect(bar, [x + s * ready.clamp(0.0, 1.0), bar[1] + px * 2.0], [1.0, 0.85, 0.2, 0.9]).filled(true).build();
+                }
+            }
+            // on Yoshi: his eggs in stock, a row under the caps
+            let ride = crate::ride::sprites();
+            if ride.riding {
+                for k in 0..ride.stock {
+                    let x = x0 + k as f32 * s * 0.55;
+                    let y = y0 + s * 1.45;
+                    dl.add_image(textures[IMG_EGG], [x, y], [x + s * 0.5, y + s * 0.66]).build();
                 }
             }
             // the weapon in hand (L1), after a gap (nothing with the fists); the boomerang with a
@@ -1218,6 +1254,27 @@ fn hammer_icon_pixel(x: usize, y: usize) -> [u8; 4] {
         return if x < 15.0 || x > 17.0 { [70, 40, 20, 255] } else { [170, 110, 55, 255] };
     }
     [0; 4]
+}
+
+/// A Yoshi egg: white with green spots, a dark outline.
+fn egg_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+    let (cx, cy) = (12.0, 17.0);
+    // (narrower at the top)
+    let rx = if y < cy { 9.0 + (y - cy) * 0.12 } else { 10.5 };
+    let e = ((x - cx) / rx).powi(2) + ((y - cy) / 14.0).powi(2);
+    if e > 1.0 {
+        return [0; 4];
+    }
+    if e > 0.8 {
+        return [30, 60, 30, 255];
+    }
+    let spot = |sx: f32, sy: f32, r: f32| ((x - sx).powi(2) + (y - sy).powi(2)).sqrt() < r;
+    if spot(8.0, 12.0, 3.0) || spot(16.0, 20.0, 3.4) || spot(9.5, 24.5, 2.2) || spot(15.5, 8.0, 2.0) {
+        return [70, 190, 60, 255];
+    }
+    let shade = if x < 9.0 && y < 14.0 { 255 } else { 235 };
+    [shade, shade, (shade as u32 * 96 / 100) as u8, 255]
 }
 
 /// Mario's cap thrown as the hook: red, the white badge with its M, a dark brim, two big eyes.
