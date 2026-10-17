@@ -1679,7 +1679,7 @@ fn mount_anim(anim: i32) -> bool {
 }
 
 /// The Tarnished's current animation id.
-fn current_anim(chr: &eldenring::cs::ChrIns) -> i32 {
+pub(crate) fn current_anim(chr: &eldenring::cs::ChrIns) -> i32 {
     let t = &chr.modules.time_act;
     t.anim_queue[(t.read_idx % 10) as usize].anim_id
 }
@@ -2916,7 +2916,7 @@ fn frame(data: &FD4TaskData) {
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
         let still_flying = blown::flying();
         let blown_away = match hurt {
-            Some(combat::Hurt::Hit(w)) if !still_flying => {
+            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() => {
                 const ACT_FLAG_SWIMMING: u32 = 0x2000;
                 const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
@@ -2954,7 +2954,8 @@ fn frame(data: &FD4TaskData) {
             }
             match hurt {
                 // (flying off already: the blow costs health, SM64's knockback would end the flight)
-                Some(combat::Hurt::Hit(wedges)) if still_flying => unsafe {
+                // (let go by an enemy: thrown off it already, the same)
+                Some(combat::Hurt::Hit(wedges)) if still_flying || grab::just_released() => unsafe {
                     sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x100).max(0xFF) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
@@ -3273,7 +3274,7 @@ fn frame(data: &FD4TaskData) {
     static SHIMMER: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let vanish = caps::VANISH_OPACITY * (1.0 + 0.3 * (SHIMMER.get_or_init(std::time::Instant::now).elapsed().as_secs_f32() * 6.0).sin());
     // an enemy's grab (grab.rs): the game holds him, Mario follows; swallowed, he's hidden
-    let (grabbed, released) = grab::update(&player_ref.chr_ins);
+    let grabbed = grab::update(&player_ref.chr_ins);
     set_opacity(if cutscene || grab::swallowed() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
 
     // event animations (fog walls, doors, ladders...): after an interact, if the Tarnished starts a
@@ -3463,12 +3464,16 @@ fn frame(data: &FD4TaskData) {
             let limit = if ladder_anim(last) { 60.0 } else { 15.0 };
             if !(game_driven(cur) || riding || grabbed) || (!riding && t.elapsed().as_secs_f32() > limit) {
                 log("follow: done");
+                if grabbed {
+                    grab::ignore_current(&player_ref.chr_ins);
+                }
                 // let go by an enemy: thrown off it
+                let release = grab::take_release();
                 if m.state.action == grab::ACT_ER_GRABBED {
                     let id = m.id;
-                    let release = released.unwrap_or(grab::Release { swallowed: false });
+                    let release = release.unwrap_or(grab::Release { swallowed: false });
                     worker::call("grab release", move |_| grab::throw_off(id, &release));
-                    m.state.action = 0x010208BE;
+                    m.state.action = grab::ACT_THROWN_BACKWARD;
                 }
                 // off the ladder or off Torrent: SM64 takes over, dropping him onto the floor he's on
                 if m.state.action == ACT_ER_LADDER || m.state.action == ACT_ER_RIDE {
@@ -3577,6 +3582,8 @@ fn frame(data: &FD4TaskData) {
                 drop(loaded_at);
                 let ladder_was = m.state.action == ACT_ER_LADDER;
                 let grabbed_was = m.state.action == grab::ACT_ER_GRABBED;
+                // (not on a mount, nor once he's dead: then he just goes limp with the game)
+                let dangle = grabbed && !riding && !m.dead;
                 let sitting = m.state.action == ACT_ER_RIDE;
                 let parts = worker::call("follow tick", move |ctx| {
                     if let Some(floors) = &floors {
@@ -3589,7 +3596,7 @@ fn frame(data: &FD4TaskData) {
                     }
                     unsafe { sm64::sm64_set_mario_position(id, sm[0], sm[1], sm[2]) };
                     // held by an enemy: he dangles in its grip
-                    if grabbed && !grabbed_was {
+                    if dangle && !grabbed_was {
                         unsafe { sm64::sm64_set_mario_action(id, grab::ACT_ER_GRABBED) };
                     }
                     // on Torrent: he sits (SM64's slide pose)

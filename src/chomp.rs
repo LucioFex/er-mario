@@ -94,6 +94,9 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if !s.out || !visible {
         s.pos = None;
+        s.last_centre = None;
+        s.step = 0.0;
+        s.squash = 0;
         HOOKING.store(false, std::sync::atomic::Ordering::Relaxed);
         return None;
     }
@@ -202,7 +205,7 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         // (on a long hook the chain is drawn as a line, hud.rs: four pairs of links can't span it)
         let links = if hooked.is_some() && span.length() > CHAIN_LINKS as f32 * PAIR_LEN * 2.1 { 0.0001 } else { links };
         // (taut: each link pulled long and thin)
-        let pull = (1.0 - slack) * LINK_STRETCH;
+        let pull = ((1.0 - slack - 0.8) / 0.2).clamp(0.0, 1.0) * LINK_STRETCH;
         parts[CHAIN + k] = PartPose { rot, pos: p, scale: links, stretch: Vec3::new(1.0 - pull * 0.4, 1.0 + pull, 1.0 - pull * 0.4) };
     }
     // (on the hook the hook's own catch hits, not its body)
@@ -213,5 +216,9 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
 }
 
 pub fn clear() {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).pos = None;
+    let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    s.pos = None;
+    s.last_centre = None;
+    s.step = 0.0;
+    s.squash = 0;
 }

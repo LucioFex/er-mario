@@ -195,7 +195,8 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let want = if s.squash > 0 {
             s.squash -= 1;
             let p = s.squash as f32 / SQUASH_TICKS as f32;
-            Vec3::new(1.0 + 0.25 * p, 1.0 - 0.22 * p, 1.0 + 0.25 * p)
+            // (flattened against what it hit: short the way it struck, wide across)
+            Vec3::new(1.0 + 0.25 * p, 1.0 + 0.1 * p, 1.0 - 0.3 * p)
         } else {
             let k = if scripted { (speed / STRETCH_SPEED).clamp(0.0, 1.0) } else { 0.0 };
             let (y, z) = (1.0 + STRETCH_HANDLE * k, 1.0 + STRETCH_SMEAR * k);
