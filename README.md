@@ -195,10 +195,13 @@ heavy ones (`src/impact.rs`). Fireballs are lit balls of fire with flames lickin
 corridor or a small room it comes closer and lower and stays under the ceiling, a wall right behind
 it makes it slide round to where it can see instead of zooming into Mario's back, and it keeps off
 walls by the lens. Out in the open it looks a little ahead of where Mario runs and backs off a bit
-at full speed. It keeps real time in slow motion, so it never lags behind Mario. Next to a big enemy Lakitu's camera backs off and looks up at it,
+at full speed, and on a steady run it swings round behind him on its own (God of War style, never
+when he runs towards it or right after you turn it yourself). It keeps real time in slow motion, so
+it never lags behind Mario. Next to a big enemy Lakitu's camera backs off and looks up at it,
 more the bigger and closer it is; if one is close but out of view, the camera drifts round to
 show it (not right after you turn the camera yourself). In a fight the camera works like God of
-War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen,
+War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen (with a group around Mario,
+towards the group's middle, backing off a little for each enemy),
 turns gently to keep it in view, and in an air combo it rises with Mario, backs off a little and
 levels out to look up at the fight. A big enemy that gets between the camera
 and Mario (or around the camera) turns see-through until it's out of the way.

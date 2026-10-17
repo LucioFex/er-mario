@@ -1099,6 +1099,16 @@ pub fn home(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f3
         .map(|(_, x, z)| (x, z))
 }
 
+/// The enemies around Mario the fight's camera frames as a group (lakitu.rs): their chests (Elden
+/// Ring), not the big bodies (the camera has its own way with those).
+pub fn crowd(targets: &[Target]) -> Vec<glam::Vec3> {
+    targets
+        .iter()
+        .filter(|t| t.shootable().is_some() && t.height * crate::scale() < 4.0)
+        .map(|t| glam::Vec3::new(t.er.0, t.er.1 + (t.height * crate::scale()).min(3.0) * 0.5, t.er.2))
+        .collect()
+}
+
 /// The enemy the fight's camera frames with Mario (lakitu.rs): one he's juggling first, else the
 /// nearest hostile around him (those in front of him first); its chest (Elden Ring) and whether
 /// it's up in the air for him.

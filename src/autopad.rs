@@ -12,6 +12,8 @@ use windows::Win32::UI::Input::XboxController::*;
 use crate::log;
 
 struct Step {
+    /// `GO`: the left stick steers to the nearest hostile (stops 4 m off it)
+    seek: bool,
     buttons: u16,
     ms: u32,
     sticks: [f32; 4],
@@ -57,8 +59,10 @@ fn parse(text: &str) -> Vec<Step> {
         let (Some(names), Some(ms)) = (it.next(), it.next().and_then(|m| m.parse::<u32>().ok())) else { continue };
         let mut buttons = 0;
         let mut triggers = [0.0; 2];
+        let mut seek = false;
         for n in names.split('+') {
             match n.to_ascii_uppercase().as_str() {
+                "GO" => seek = true,
                 "LT" => triggers[0] = 1.0,
                 "RT" => triggers[1] = 1.0,
                 _ => buttons |= button(n).unwrap_or(0),
@@ -69,7 +73,7 @@ fn parse(text: &str) -> Vec<Step> {
         if nums.len() > 4 {
             triggers = [at(4).max(triggers[0]), at(5).max(triggers[1])];
         }
-        out.push(Step { buttons, ms, sticks: [at(0), at(1), at(2), at(3)], triggers });
+        out.push(Step { seek, buttons, ms, sticks: [at(0), at(1), at(2), at(3)], triggers });
     }
     out
 }
@@ -130,7 +134,13 @@ pub fn apply(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     let g = &mut st.Gamepad;
     g.wButtons.0 |= step.buttons;
     let axis = |v: f32| (v * 32767.0) as i16;
-    for (k, v) in step.sticks.iter().enumerate() {
+    let mut sticks = step.sticks;
+    if step.seek {
+        let (x, y) = *SEEK.lock().unwrap_or_else(|e| e.into_inner());
+        sticks[0] = x;
+        sticks[1] = y;
+    }
+    for (k, v) in sticks.iter().enumerate() {
         if *v != 0.0 {
             match k {
                 0 => g.sThumbLX = axis(*v),
@@ -146,6 +156,9 @@ pub fn apply(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     0
 }
 
+/// The stick that heads for the nearest hostile (screen right, forward), from the game thread.
+static SEEK: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
+
 /// Game thread, every frame: while autopad.txt is there, every second, the hostiles
 /// within 60 m: id, distance, where they are from the Tarnished (degrees, 0 = ahead), which way
 /// they face (0 = at him), animation; to see whether they notice Mario.
@@ -159,12 +172,13 @@ pub fn report(player: &eldenring::cs::ChrIns) {
             return;
         }
     }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
+    seek(player, wcm);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     if last.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0) {
         return;
     }
     *last = Some(Instant::now());
-    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     let p = player.modules.physics.position;
     let o = player.modules.physics.orientation;
     let fwd = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(glam::vec3(0.0, 0.0, -1.0));
@@ -199,3 +213,30 @@ pub fn report(player: &eldenring::cs::ChrIns) {
     log(format!("autopad: hostiles {}", if list.is_empty() { "none".into() } else { list.join(" | ") }));
 }
 
+
+/// The stick (camera-relative) that walks Mario to the nearest hostile within 60 m.
+fn seek(player: &eldenring::cs::ChrIns, wcm: &eldenring::cs::WorldChrMan) {
+    use fromsoftware_shared::FromStatic;
+    let p = player.modules.physics.position;
+    let me = glam::Vec3::new(p.0, p.1, p.2);
+    let nearest = wcm
+        .chr_sets
+        .iter()
+        .flatten()
+        .flat_map(|set| set.characters())
+        .filter(|c| c.modules.data.hp > 0 && c.team_type != 0 && !crate::combat::own_side(c.team_type) && crate::combat::hittable(c.chr_type))
+        .map(|c| glam::Vec3::new(c.modules.physics.position.0, c.modules.physics.position.1, c.modules.physics.position.2) - me)
+        .filter(|d| d.length() < 60.0)
+        .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()));
+    let stick = match (nearest, unsafe { eldenring::cs::CSCamera::instance() }) {
+        (Some(d), Ok(cam)) if d.with_y(0.0).length() > 4.0 => {
+            let m = &cam.pers_cam_1.matrix;
+            let right = glam::Vec3::new(m.0.0, 0.0, m.0.2).normalize_or_zero();
+            let fwd = glam::Vec3::new(m.2.0, 0.0, m.2.2).normalize_or_zero();
+            let d = d.with_y(0.0).normalize_or_zero();
+            (d.dot(right), d.dot(fwd))
+        }
+        _ => (0.0, 0.0),
+    };
+    *SEEK.lock().unwrap_or_else(|e| e.into_inner()) = stick;
+}

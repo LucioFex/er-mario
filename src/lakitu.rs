@@ -200,6 +200,11 @@ struct Cam {
     /// the view's lead ahead of where Mario runs, and the eased push off walls close to the lens
     lead: Vec3,
     pad: Vec3,
+    /// how long he's kept running the same way (s), and that way
+    run_time: f32,
+    run_dir: Vec3,
+    /// how far it backs off for a group of enemies (m, eased)
+    crowd: f32,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -219,6 +224,14 @@ static FIGHT: Mutex<Option<(Vec3, bool)>> = Mutex::new(None);
 
 pub fn set_fight(target: Option<(Vec3, bool)>) {
     *FIGHT.lock().unwrap_or_else(|e| e.into_inner()) = target;
+}
+
+/// The enemies around Mario he could be fighting (their chests), set every tick by the combat
+/// code: with a few of them about, the view frames the group (God of War), not just the one.
+static CROWD: Mutex<Vec<Vec3>> = Mutex::new(Vec::new());
+
+pub fn set_crowd(chests: Vec<Vec3>) {
+    *CROWD.lock().unwrap_or_else(|e| e.into_inner()) = chests;
 }
 
 /// When Mario last threw a blow (set by the combat code): the fight's camera turns to the enemy
@@ -322,6 +335,9 @@ pub fn update(
             speed: 0.0,
             lead: Vec3::ZERO,
             pad: Vec3::ZERO,
+            run_time: 0.0,
+            run_dir: Vec3::ZERO,
+            crowd: 0.0,
         }
     });
 
@@ -429,6 +445,9 @@ pub fn update(
     // Cry): the camera keeps up with his height, backs off a little and levels out to look up
     let fight = *FIGHT.lock().unwrap_or_else(|e| e.into_inner());
     let fight = fight.filter(|(c, _)| (*c - mario).with_y(0.0).length() < FIGHT_FAR);
+    // a group around him: where its middle is (and how many), for framing them all
+    let group: Vec<Vec3> = CROWD.lock().unwrap_or_else(|e| e.into_inner()).iter().copied().filter(|c| (*c - mario).with_y(0.0).length() < CROWD_FAR).collect();
+    let crowd = (group.len() >= 2).then(|| group.iter().copied().sum::<Vec3>() / group.len() as f32);
     let air_fight = airborne && fight.is_some_and(|(c, up)| up || (c.y > mario.y + 0.3 && (c - mario).length() < AIR_NEAR));
     cam.air += (if air_fight { 1.0 } else { 0.0 } - cam.air) * rate(if air_fight { 3.0 } else { 1.2 });
     let vy = if airborne && want.y > cam.focus.y - 0.5 { 1.2 + (AIR_FOLLOW - 1.2) * cam.air } else { 5.0 };
@@ -485,6 +504,16 @@ pub fn update(
     // (eased: the feet move on SM64's 30 ticks a second, the camera on every frame)
     cam.speed += ((vel.length() / (8.0 * ks)).clamp(0.0, 1.0) - cam.speed) * rate(2.0);
     let speed_k = cam.speed;
+    // running the same way a while (the chase camera below follows only a steady run)
+    let run = vel.normalize_or_zero();
+    if vel.length() > 2.5 * ks && run.dot(cam.run_dir) > 0.85 {
+        cam.run_time += dt;
+    } else {
+        cam.run_time = 0.0;
+    }
+    if vel.length() > 2.5 * ks {
+        cam.run_dir = (cam.run_dir * 0.9 + run * 0.1).normalize_or(run);
+    }
 
     let yaw_before = cam.yaw;
     // yaw: a C-button swing, or the leash (the camera stays put, Mario runs around it)
@@ -504,6 +533,18 @@ pub fn update(
             }
         }
     }
+    // a steady run (not towards the camera, not in a fight, not right after a swing of his own):
+    // Lakitu drifts round behind Mario, like God of War's camera, faster the faster he runs; the
+    // stick never has to steer it
+    if cam.target_yaw.is_none() && !manual && cam.slide.is_none() && !fighting_now && cam.run_time > CHASE_AFTER && !airborne {
+        let view = -Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin());
+        let along = cam.run_dir.dot(view);
+        if along > CHASE_COS {
+            let want = (-cam.run_dir.z).atan2(-cam.run_dir.x);
+            let k = ((along - CHASE_COS) / (1.0 - CHASE_COS)).clamp(0.0, 1.0) * speed_k * (1.0 - 0.5 * enc);
+            cam.yaw += angle_diff(want, cam.yaw) * rate(CHASE_RATE * k);
+        }
+    }
     // a big body close by but out of the view (behind or beside the camera): Lakitu drifts round,
     // slowly, until it and Mario are both in sight (Mario in front of it), unless he swung the
     // camera himself just now
@@ -518,6 +559,7 @@ pub fn update(
         // (no big body: the enemy he fights, gentler)
         let fought = FIGHT.lock().unwrap_or_else(|e| e.into_inner()).filter(|(c, _)| (*c - mario).with_y(0.0).length() < FIGHT_FAR);
         let fighting = BLOW.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < FIGHT_HOT);
+        let fought = crowd.map(|c| (c, false)).or(fought);
         let nearest = nearest.or_else(|| {
             let (c, _) = fought.filter(|_| close.is_empty() && fighting)?;
             let d = (c - mario).with_y(0.0).length();
@@ -602,6 +644,14 @@ pub fn update(
     let (dist, height) = (dist + AIR_BACK * cam.air, height * (1.0 - AIR_LEVEL * cam.air));
     // the fight's framing: the view leans towards the enemy, so Mario and it share the screen
     // (more in the air: the one he juggles is up there)
+    // (a group: back off a little for each one past the first, and lean to its middle)
+    let want_crowd = if fighting_now || group.len() >= 3 { (group.len().saturating_sub(1) as f32 * CROWD_BACK).min(CROWD_MAX) * ks } else { 0.0 };
+    cam.crowd += (want_crowd - cam.crowd) * if want_crowd > cam.crowd { rate(1.5) } else { rate(0.4) };
+    let (dist, height) = (dist + cam.crowd * (1.0 - 0.5 * enc), height + cam.crowd * 0.35 * (1.0 - 0.5 * enc));
+    let fight = match (crowd, fight) {
+        (Some(c), Some((_, up))) if cam.air < 0.5 => Some((c, up)),
+        _ => fight,
+    };
     let want_fight = fight.map_or(Vec3::ZERO, |(c, _)| {
         let to = c - head;
         let lean = FIGHT_LEAN + (AIR_LEAN - FIGHT_LEAN) * cam.air;
@@ -749,6 +799,16 @@ const LEAD_TIME: f32 = 0.18;
 const LEAD_MAX: f32 = 1.3;
 const RUN_BACK: f32 = 0.7;
 
+/// the chase camera: after a steady run this long (s) within this angle of the view (cos, about
+/// 110 degrees: not running at the camera), it swings behind Mario at up to this rate
+const CHASE_AFTER: f32 = 0.6;
+const CHASE_COS: f32 = -0.35;
+const CHASE_RATE: f32 = 1.1;
+/// a group of enemies within this far (m): the camera backs off this much for each past the first
+/// (m), at most this far
+const CROWD_FAR: f32 = 9.0;
+const CROWD_BACK: f32 = 0.6;
+const CROWD_MAX: f32 = 2.4;
 /// A big body's pull on the camera: how close (m, off its side) it starts and is full, the most it
 /// backs off (m), and how far the view turns to it (m sideways, m up, at most)
 const BIG_FAR: f32 = 14.0;

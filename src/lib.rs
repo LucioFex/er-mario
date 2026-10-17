@@ -2733,6 +2733,7 @@ fn frame(data: &FD4TaskData) {
         let home = combat::home(&m.state, &targets);
         lakitu::set_big(combat::big_bodies(&targets));
         lakitu::set_fight(combat::fight_focus(&m.state, &targets));
+        lakitu::set_crowd(combat::crowd(&targets));
         match lakitu::position() {
             Some(cam) => {
                 let feet = to_er(m.origin, m.state.position);
