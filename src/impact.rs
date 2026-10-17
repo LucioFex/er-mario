@@ -380,6 +380,14 @@ pub fn mega_step(feet: Vec3, heavy: bool) {
 }
 
 /// L1: the hammer pops out (or away) in Mario's hand: a puff, sparkles, SM64's sparkle and whoosh.
+/// A weapon switched in the middle of a fight (moves.rs's swap strike): a golden ring round Mario
+/// and a flash of stars at his chest. `feet`: Elden Ring.
+pub fn swap(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.8, 1.3, 0.22, GOLD);
+    ring(feet + Vec3::Y * 0.1, 1.8, 0.3, GOLD);
+    burst(feet + Vec3::Y * 0.9, 3, Bit::Star);
+}
+
 pub fn summon(hand: Vec3, out: bool) {
     puffs(hand - Vec3::Y * 0.15, 3, 0.2);
     if out {

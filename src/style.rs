@@ -35,6 +35,8 @@ pub const RANKS: [(f32, &str, &str); 7] = [
 const POINTS: f32 = 1.0;
 const FINISHER_POINTS: f32 = 1.5;
 const VARIETY_POINTS: f32 = 0.6;
+/// a weapon switched in the middle of a string
+const SWAP_POINTS: f32 = 1.2;
 const STAR_POINTS: f32 = 3.0;
 /// the rank from which every kill slows the world (B), and from which finishers are star ones (S)
 const SLOW_RANK: usize = 2;
@@ -147,6 +149,16 @@ pub fn hit(attack: Attack) {
     }
     m.last_kind = Some(kind);
     add(m, points);
+}
+
+/// Game thread: Mario switched weapons in the middle of a string (moves.rs's swap strike): a
+/// bonus, if the string is still going.
+pub fn swap() {
+    let mut m = METER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(m) = m.as_mut().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP) {
+        m.last = Instant::now();
+        add(m, SWAP_POINTS);
+    }
 }
 
 /// Game thread: a combo's finisher landed at `at` (Elden Ring, the target's chest). From the S

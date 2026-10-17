@@ -3,7 +3,8 @@
 //! what they hit with (combat.rs, as the hammer's head). Between blows it hops along beside him,
 //! straining at the chain. It's a real model (assets/gear.rs, on bones of its own like the hammer):
 //! the ball with its eyes and teeth, its jaw biting, and the chain's links from his hand, sagging
-//! when slack and taut in a lash.
+//! when slack and taut in a lash. With the Chomp in hand, the hook (hook.rs) is the Chomp itself:
+//! it flies out on its chain, jaws open, and bites what it catches (Kratos' blades pulling him in).
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -54,6 +55,12 @@ struct State {
 }
 
 static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0 });
+/// the Chomp is the hook's head right now (hud.rs draws no cap and line then)
+static HOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn hooking() -> bool {
+    HOOKING.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// The Chain Chomp is in hand or not (weapons.rs).
 pub fn set_out(out: bool) {
@@ -72,8 +79,11 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if !s.out || !visible {
         s.pos = None;
+        HOOKING.store(false, std::sync::atomic::Ordering::Relaxed);
         return None;
     }
+    let hook = crate::hook::sprite();
+    HOOKING.store(hook.is_some(), std::sync::atomic::Ordering::Relaxed);
     let mario = Vec3::from(state.position);
     let face = state.face_angle;
     let scripted = mv.chomp_scripted != 0;
@@ -101,7 +111,13 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let d = (p - mario) * crate::scale();
         Vec3::new(-d.x, d.y, d.z)
     };
-    let centre = rel(now) + Vec3::Y * LIFT;
+    // (the hook's head: where the hook is, from his hand; part axes are Elden Ring's)
+    let hooked = hook.map(|hk| hand + (hk.head - hk.hand));
+    let centre = hooked.unwrap_or(rel(now) + Vec3::Y * LIFT);
+    if hooked.is_some() {
+        // (back from the hook it hops in from where it was)
+        s.pos = Some(mario + Vec3::new(-centre.x, centre.y - LIFT, centre.z) / crate::scale());
+    }
     let moved = rel(now) - rel(prev);
     let size = {
         let p = (t / POP_TIME).min(1.0);
@@ -112,12 +128,17 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let ahead = Vec3::new(-face.sin(), 0.0, face.cos());
     let away = (centre - hand).with_y(0.0);
     let flat = if away.length() > 0.3 { away.normalize() } else { ahead };
+    // (on the hook it looks along the chain, up or down, jaws wide)
+    let (flat, scripted) = match hooked {
+        Some(c) => ((c - hand).normalize_or(flat), true),
+        None => (flat, scripted),
+    };
     let pitch = if scripted { (moved.y / moved.with_y(0.0).length().max(0.05)).clamp(-1.2, 1.2) * 0.35 } else { 0.0 };
     let want = (flat * pitch.cos() + Vec3::Y * pitch.sin()).normalize_or(flat);
     let look = s.look.lerp(want, TURN).normalize_or(want);
     s.look = look;
     // its jaw: what the move says, or a snap now and then between blows
-    let bite = if scripted { mv.chomp_bite } else { ((t * 3.3) as i32 % 4 == 0) as u8 as f32 };
+    let bite = if hooked.is_some() { 1.0 } else if scripted { mv.chomp_bite } else { ((t * 3.3) as i32 % 4 == 0) as u8 as f32 };
     s.jaw += (bite.clamp(0.0, 1.0) - s.jaw) * JAW_RATE;
     let jaw = s.jaw * JAW_OPEN;
     let right = Vec3::Y.cross(look).normalize_or(Vec3::X);
@@ -146,7 +167,13 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         // in a slam didn't twist about)
         let x = (side - along * side.dot(along)).try_normalize().unwrap_or(Vec3::X);
         let rot = Quat::from_mat3(&Mat3::from_cols(x, along, x.cross(along))).normalize();
+        // (on a long hook the chain is drawn as a line, hud.rs: four pairs of links can't span it)
+        let links = if hooked.is_some() && span.length() > CHAIN_LINKS as f32 * PAIR_LEN * 2.1 { 0.0001 } else { links };
         parts[CHAIN + k] = PartPose { rot, pos: p, scale: links };
+    }
+    // (on the hook the hook's own catch hits, not its body)
+    if hooked.is_some() {
+        return None;
     }
     Some(Swing { grip, head: now, prev: if scripted { prev } else { now }, scale: HIT_SCALE })
 }

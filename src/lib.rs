@@ -2883,11 +2883,16 @@ fn frame(data: &FD4TaskData) {
             hammer::set_out(false);
             chomp::set_out(false);
         }
-        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !moves::hammer_busy(m.state.action), m.ticks) {
+        // (in the middle of one of the weapons' moves too: the new one comes in swinging, moves.rs;
+        // not while a fireball is being thrown)
+        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !m.fire.throwing(m.ticks), m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             let hand = to_er(m.origin, m.state.position);
             impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), w != weapons::FISTS);
+            if m.moves.swapping() {
+                impact::swap(glam::Vec3::new(hand.0, hand.1, hand.2));
+            }
         }
         let weapon_on = if hands_free { m.moves.weapon } else { weapons::FISTS };
         let rangs_ready = boomerang::ready() as i32;

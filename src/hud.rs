@@ -683,7 +683,21 @@ impl ImguiRenderLoop for Overlay {
         }
         // the hook: a line of light from his hand with twinkles running along it, his cap spinning
         // at its end
-        if let Some(hk) = crate::hook::sprite() {
+        // (the Chomp as the hook: its chain, dark iron links along the line)
+        if let Some(hk) = crate::hook::sprite().filter(|_| crate::chomp::hooking()) {
+            let n = ((hk.head - hk.hand).length() / 0.22).clamp(2.0, 120.0) as usize;
+            for k in 0..n {
+                let p = hk.hand + (hk.head - hk.hand) * ((k as f32 + 0.5) / n as f32);
+                let Some((c, z)) = project(p, size) else { continue };
+                if z > 60.0 {
+                    continue;
+                }
+                let r = (size[1] / z.max(1.0) * 0.045).clamp(1.0, 9.0);
+                let (w, h) = if k % 2 == 0 { (r, r * 0.55) } else { (r * 0.45, r) };
+                dl.add_rect([c[0] - w, c[1] - h], [c[0] + w, c[1] + h], imgui::ImColor32::from_rgba_f32s(0.16, 0.16, 0.18, 0.95)).rounding(h).thickness((r * 0.35).max(1.0)).build();
+            }
+        }
+        if let Some(hk) = crate::hook::sprite().filter(|_| !crate::chomp::hooking()) {
             if let (Some((a, za)), Some((b, zb))) = (project(hk.hand, size), project(hk.head, size)) {
                 if za < 60.0 && zb < 60.0 {
                     let width = (size[1] / za.min(zb).max(1.0) * 0.025).clamp(1.0, 5.0);

@@ -24,6 +24,10 @@
 //!   fan, held the big one, X, X, Y the launcher; in the air X and Y throw too, each holding him up
 //! - the Chain Chomp (chomp.rs): X lashes, sweeps, crashes it down; Y the cyclone, X, Y the bite
 //!   that tosses them up; in the air X swings it round him, Y crashes down with it
+//! Mixing them (Devil May Cry's weapon switching, God of War's): L1 in the middle of a string, or
+//! right after a blow, switches on the spot and opens with the new weapon's swap strike, the string
+//! going on: the hammer's overhead smash, the Chomp's wide sweep, the boomerangs' fan, the fists'
+//! rush; in the air its air blow (a couple a jump, more with an enemy up there).
 
 use crate::sm64;
 
@@ -62,11 +66,14 @@ const COMBO_ACTIONS: [u32; 18] = [
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
     ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR,
 ];
-/// the weapons' moves on the ground: L1 waits for them to end
-const HAMMER_ACTIONS: [u32; 8] =
-    [ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP, ACT_ER_CHOMP_SPIN];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
+/// a switch this soon (ticks) after a blow is a swap strike; at most one this often; in the air at
+/// most this many a jump (more with an enemy up there)
+const SWAP_AFTER: u32 = 14;
+const SWAP_COOLDOWN: u32 = 15;
+const AIR_SWAPS: u32 = 2;
+const AIR_SWAPS_JUGGLE: u32 = 4;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
 /// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
@@ -174,11 +181,6 @@ pub fn combo(action: u32) -> bool {
     COMBO_ACTIONS.contains(&action)
 }
 
-/// One of the weapons' moves on the ground (L1 waits for it to end).
-pub fn hammer_busy(action: u32) -> bool {
-    HAMMER_ACTIONS.contains(&action)
-}
-
 /// The meteor dive and the Koopa shell leave a streak like the dash's (impact.rs).
 pub fn streaking(action: u32) -> bool {
     action == ACT_ER_METEOR || action == ACT_ER_SHELL
@@ -241,6 +243,12 @@ pub struct Moves {
     x_buffer: Option<u32>,
     /// Mega Mario's next slam
     mega_slam_ready: u32,
+    /// the last tick he was throwing a blow; a swap strike to start (the weapon, when), the next
+    /// one allowed, and those in this jump
+    attack_seen: Option<u32>,
+    swap: Option<(u8, u32)>,
+    swap_ready: u32,
+    air_swaps: u32,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -274,7 +282,16 @@ impl Moves {
             chain_seen: None,
             x_buffer: None,
             mega_slam_ready: 0,
+            attack_seen: None,
+            swap: None,
+            swap_ready: 0,
+            air_swaps: 0,
         }
+    }
+
+    /// A swap strike is coming (the switch came in the middle of a fight).
+    pub fn swapping(&self) -> bool {
+        self.swap.is_some()
     }
 
     /// The hammer is out.
@@ -306,6 +323,10 @@ impl Moves {
         let next = next.filter(|_| allowed)?;
         self.weapon = next;
         crate::weapons::set(next);
+        // in the middle of a fight: the new weapon comes in swinging
+        if self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER) && tick >= self.swap_ready {
+            self.swap = Some((next, tick));
+        }
         Some(next)
     }
 
@@ -408,6 +429,52 @@ impl Moves {
         let free = allowed && a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 && a & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE;
         let ground = free && a & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0;
         let in_air = free && air && a != ACT_GROUND_POUND;
+        if !air {
+            self.air_swaps = 0;
+        }
+        // a blow going on (the combos' moves, SM64's punches and kicks, the air string)
+        if combo(a) || punching || a == ACT_ER_RUSH || a == ACT_GROUND_POUND || a == ACT_SLIDE_KICK || a == ACT_TWIRLING || a == 0x0180_08A9 || a == 0x0180_08AE {
+            self.attack_seen = Some(tick);
+        }
+        // the swap strike: the weapon just taken opens with its own blow, the string going on
+        if let Some((w, at)) = self.swap.take().filter(|(_, at)| tick.wrapping_sub(*at) <= 3) {
+            use crate::weapons::{CHOMP, FISTS, HAMMER, RANG};
+            let rangs = crate::boomerang::ready() > 0;
+            let mega = crate::mega::active();
+            let air_left = self.air_swaps < if crate::juggle::active() { AIR_SWAPS_JUGGLE } else { AIR_SWAPS };
+            let strike = if ground {
+                match w {
+                    HAMMER => Some((ACT_ER_HAMMER, 2, "hammer smash")),
+                    CHOMP => Some((ACT_ER_CHOMP, 1, "Chomp sweep")),
+                    RANG if rangs => Some((ACT_ER_THROW, THROW_STORM, "boomerang fan")),
+                    FISTS if !mega => Some((ACT_ER_RUSH, 0, "rush")),
+                    _ => None,
+                }
+            } else if in_air && air_left {
+                match w {
+                    HAMMER => Some((ACT_ER_HAMMER_AIR, 0, "hammer whirl")),
+                    CHOMP => Some((ACT_ER_CHOMP_AIR, 0, "Chomp swing")),
+                    RANG if rangs => Some((ACT_ER_AIR_THROW, THROW_STORM, "boomerang fan")),
+                    FISTS if !mega => Some((ACT_ER_AIR_COMBO, 0, "air string")),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some((action, arg, name)) = strike {
+                let _ = at;
+                self.swap_ready = tick + SWAP_COOLDOWN;
+                if air {
+                    self.air_swaps += 1;
+                }
+                // (the string goes on: its next X is the new weapon's next blow)
+                self.x_chain = 1;
+                self.chain_seen = Some(tick);
+                crate::style::swap();
+                crate::log(format!("moves: swap strike, {name}"));
+                return Some(Request::Action(action, arg));
+            }
+        }
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
         if b_pressed && tick >= self.dash_ready && !crate::mega::active() {
             if ground {
