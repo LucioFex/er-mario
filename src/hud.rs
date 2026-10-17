@@ -828,6 +828,25 @@ impl ImguiRenderLoop for Overlay {
                     dl.add_rect(bar, [x + s * ready.clamp(0.0, 1.0), bar[1] + px * 2.0], [1.0, 0.85, 0.2, 0.9]).filled(true).build();
                 }
             }
+            // the weapon in hand (L1), after a gap (nothing with the fists); the boomerang with a
+            // pip for each one ready to throw
+            let weapon = match crate::weapons::current() {
+                crate::weapons::HAMMER => Some(IMG_HAMMER_ICON),
+                crate::weapons::RANG => Some(IMG_RANG),
+                crate::weapons::CHOMP => Some(IMG_CHOMP),
+                _ => None,
+            };
+            if let Some(img) = weapon {
+                let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
+                dl.add_rect([x - px * 2.0, y0 - px * 2.0], [x + s + px * 2.0, y0 + s + px * 2.0], [0.0, 0.0, 0.0, 0.35]).filled(true).rounding(px * 3.0).build();
+                dl.add_image(textures[img], [x, y0], [x + s, y0 + s]).build();
+                if crate::weapons::current() == crate::weapons::RANG {
+                    for k in 0..crate::boomerang::ready() {
+                        let c = [x + s * (0.2 + 0.3 * k as f32), y0 + s + px * 3.0];
+                        dl.add_circle(c, px * 1.3, [1.0, 0.85, 0.2, 0.95]).filled(true).build();
+                    }
+                }
+            }
         }
 
         // boss bars at the bottom (Elden Ring's layout), the name in SM64's font

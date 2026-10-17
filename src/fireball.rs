@@ -518,6 +518,13 @@ impl Fire {
                 out.push(Sprite { pos: b.pos + off, vel: Vec3::ZERO, size: SIZE[level] * 0.45 * (1.0 - age * 0.5), frame: (i + (age * 8.0) as usize) % 8, tint: c });
             }
         }
+        // Mega Mario's fireballs are a giant's (their reach and speed are in his scaled units already)
+        let k = crate::size_factor();
+        if k != 1.0 {
+            for s in &mut out {
+                s.size *= k;
+            }
+        }
         *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (out, Some(Instant::now()));
     }
 }

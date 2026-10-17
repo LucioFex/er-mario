@@ -895,6 +895,14 @@ static u32 set_mario_action_airborne(struct MarioState *m, u32 action, u32 actio
             break;
     }
 
+    // er-mario: Mega Mario (mega.rs) is heavy: his jumps go up a giant's way, not 4 times as high
+    {
+        extern int er_mega;
+        if (er_mega && m->vel[1] > 0.0f) {
+            m->vel[1] *= 0.62f;
+        }
+    }
+
     m->peakHeight = m->pos[1];
     m->flags |= MARIO_UNKNOWN_08;
 

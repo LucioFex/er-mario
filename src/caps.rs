@@ -118,7 +118,8 @@ pub fn tick(id: i32, flags: u32, dpad: [bool; 4], allowed: bool, boss: bool) -> 
     };
     let ready = state.ready_at[kind as usize].is_none_or(|t| Instant::now() >= t);
     drop(state);
-    if now == Some(kind) || !ready {
+    // (no cap on Mega Mario: Lakitu's buzz)
+    if now == Some(kind) || !ready || crate::mega::active() || crate::mega::changing() {
         worker::call("cap buzz", |_| unsafe { sm64::sm64_play_sound_global(SOUND_BUZZ) });
         return changed;
     }

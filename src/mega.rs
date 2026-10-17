@@ -177,7 +177,7 @@ pub fn tick(right: bool, can_start: bool, can_stay: bool, room: impl Fn() -> boo
                     sounds(vec![SOUND_HEAVY_LANDING]);
                 } else if !air && action & 0x400 != 0 && tick.wrapping_sub(s.last_step) >= 11 {
                     s.last_step = tick;
-                    crate::lakitu::shake(0.45);
+                    crate::lakitu::shake(0.3);
                     crate::impact::mega_step(feet, false);
                 }
             }
