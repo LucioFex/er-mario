@@ -446,6 +446,10 @@ pub fn install(module: usize) -> bool {
     }
 }
 
+fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+
 /// World position -> screen pixel (None behind the camera), and its distance.
 fn project(p: Vec3, size: [f32; 2]) -> Option<([f32; 2], f32)> {
     let cam = unsafe { CSCamera::instance() }.ok()?;
@@ -769,6 +773,36 @@ impl ImguiRenderLoop for Overlay {
             let edge = (pts[0], pts[1]);
             dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
             dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
+        }
+        // the Chain Chomp's ribbon of fire (Blades of Chaos): a hot core over a wider red glow, its
+        // older end cooling and thinning, flames licking along it; and the sparks off its chain
+        let chomp = crate::impact::chomp_trail();
+        for (k, pair) in chomp.windows(2).enumerate() {
+            let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+            let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();
+            let Some(pts) = pts else { continue };
+            let fade = 1.0 - t0.max(t1);
+            dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(0.9, 0.22, 0.05, 0.35 * fade)).filled(true).build();
+            let core: Vec<[f32; 2]> = vec![pts[0], pts[1], lerp2(pts[1], pts[2], 0.45), lerp2(pts[0], pts[3], 0.45)];
+            dl.add_polyline(core, imgui::ImColor32::from_rgba_f32s(1.0, 0.62 + 0.3 * fade, 0.2 + 0.4 * fade, 0.55 * fade)).filled(true).build();
+            dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 0.95, 0.75, 0.85 * fade)).thickness(2.5).build();
+            if k % 2 == 0 {
+                if let (Some((c, z)), Some((top, _))) = (project(h1, size), project(h1 + Vec3::Y * 0.35, size)) {
+                    let h = (c[1] - top[1]) * 2.0 * (0.6 + 0.6 * fade);
+                    if z < 45.0 && h > 1.0 {
+                        let frame = (k + (t1 * 24.0) as usize) % 8;
+                        dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.6], [c[0] + h * 0.5, c[1] + h * 0.4]).col([1.0, 0.7, 0.35, 0.8 * fade]).build();
+                    }
+                }
+            }
+        }
+        for (now, before, t) in crate::impact::flying_sparks() {
+            let (Some((a, za)), Some((b, _))) = (project(now, size), project(before, size)) else { continue };
+            if za > 40.0 {
+                continue;
+            }
+            let width = (size[1] / za.max(1.0) * 0.012).clamp(1.0, 3.0);
+            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.9 - 0.4 * t, 0.45 - 0.3 * t, 1.0 - t)).thickness(width).build();
         }
         // shockwave rings on the ground, widening and fading
         for (r, t) in crate::impact::rings() {

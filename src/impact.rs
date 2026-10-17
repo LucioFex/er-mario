@@ -380,6 +380,15 @@ pub fn mega_step(feet: Vec3, heavy: bool) {
 }
 
 /// L1: the hammer pops out (or away) in Mario's hand: a puff, sparkles, SM64's sparkle and whoosh.
+/// A perfect dodge (dodge.rs): a cold blue flash at the screen's edges, rings round Mario and
+/// stars. `feet`: Elden Ring.
+pub fn perfect_dodge(feet: Vec3) {
+    flash([0.35, 0.6, 1.0], 0.55, 0.45);
+    ring(feet + Vec3::Y * 0.8, 1.6, 0.35, [0.5, 0.75, 1.0, 1.0]);
+    ring(feet + Vec3::Y * 0.1, 2.6, 0.5, [0.5, 0.75, 1.0, 1.0]);
+    burst(feet + Vec3::Y * 1.0, 4, Bit::Star);
+}
+
 /// A weapon switched in the middle of a fight (moves.rs's swap strike): a golden ring round Mario
 /// and a flash of stars at his chest. `feet`: Elden Ring.
 pub fn swap(feet: Vec3) {
@@ -413,6 +422,51 @@ pub fn bits() -> Vec<(Bit, Vec3, f32, f32, f32)> {
             let age = b.born.elapsed().as_secs_f32();
             let pos = b.pos + b.vel * age - Vec3::Y * (0.5 * BIT_GRAVITY * age * age);
             (age < BIT_TIME).then_some((b.bit, pos, b.size, age / BIT_TIME, age))
+        })
+        .collect()
+}
+
+/// The Chain Chomp's swing (Kratos' Blades of Chaos): a ribbon of fire behind its body, longer
+/// lived than the hammer's, and sparks thrown off its chain. Game thread, every tick it hits:
+/// its body and a point on the chain near it, and the chain's ends (hand, body).
+static CHOMP_TRAIL: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
+const CHOMP_TRAIL_TIME: f32 = 0.3;
+/// sparks flying: from, velocity (m/s), when
+static FLYING_SPARKS: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
+const FLYING_SPARK_TIME: f32 = 0.35;
+const FLYING_SPARK_GRAVITY: f32 = 9.0;
+
+pub fn chomp_point(head: Vec3, mid: Vec3, hand: Vec3) {
+    let mut trail = CHOMP_TRAIL.lock().unwrap_or_else(|e| e.into_inner());
+    trail.retain(|(.., t)| t.elapsed().as_secs_f32() < CHOMP_TRAIL_TIME);
+    trail.push((head, mid, Instant::now()));
+    drop(trail);
+    // (two or three sparks off the taut chain, each tick, flying out sideways)
+    let mut sparks = FLYING_SPARKS.lock().unwrap_or_else(|e| e.into_inner());
+    sparks.retain(|(.., t)| t.elapsed().as_secs_f32() < FLYING_SPARK_TIME);
+    let along = head - hand;
+    for _ in 0..(2 + (crate::rand01() * 2.0) as usize) {
+        let at = hand + along * (0.25 + 0.75 * crate::rand01());
+        let side = Vec3::new(crate::rand01() - 0.5, crate::rand01() * 0.8, crate::rand01() - 0.5).normalize_or(Vec3::Y);
+        sparks.push((at, side * (3.0 + 4.0 * crate::rand01()), Instant::now()));
+    }
+}
+
+/// The Chomp's fire ribbon, oldest first: body, chain point, how faded (0-1).
+pub fn chomp_trail() -> Vec<(Vec3, Vec3, f32)> {
+    let trail = CHOMP_TRAIL.lock().unwrap_or_else(|e| e.into_inner());
+    trail.iter().map(|(h, m, t)| (*h, *m, t.elapsed().as_secs_f32() / CHOMP_TRAIL_TIME)).filter(|(.., t)| *t < 1.0).collect()
+}
+
+/// The sparks flying: where each is, where it was a moment ago (a streak), how far along (0-1).
+pub fn flying_sparks() -> Vec<(Vec3, Vec3, f32)> {
+    let sparks = FLYING_SPARKS.lock().unwrap_or_else(|e| e.into_inner());
+    sparks
+        .iter()
+        .filter_map(|(p, v, t)| {
+            let age = t.elapsed().as_secs_f32();
+            let at = |a: f32| *p + *v * a - Vec3::Y * (0.5 * FLYING_SPARK_GRAVITY * a * a);
+            (age < FLYING_SPARK_TIME).then(|| (at(age), at((age - 0.03).max(0.0)), age / FLYING_SPARK_TIME))
         })
         .collect()
 }
@@ -568,6 +622,8 @@ pub fn clear() {
     RINGS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     BITS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     SWING.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CHOMP_TRAIL.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    FLYING_SPARKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *HURT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *FLASH.lock().unwrap_or_else(|e| e.into_inner()) = None;
     STREAKS.lock().unwrap_or_else(|e| e.into_inner()).clear();

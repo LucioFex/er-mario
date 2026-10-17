@@ -15,6 +15,7 @@ mod chomp;
 mod collision;
 mod coins;
 mod combat;
+mod dodge;
 mod engine_mario;
 mod fireball;
 mod equip;
@@ -2475,6 +2476,7 @@ fn frame(data: &FD4TaskData) {
         knock::clear();
         juggle::clear();
         style::clear();
+        dodge::clear();
         caps::clear();
         mega::clear();
         swing::reset();
@@ -2899,6 +2901,10 @@ fn frame(data: &FD4TaskData) {
         let juggling = juggle::active();
         let hold_y = y_move;
         let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
+        {
+            let p = player_ref.chr_ins.modules.physics.position;
+            dodge::tick(m.state.action, glam::Vec3::new(p.0, p.1, p.2), m.ticks);
+        }
         let no_punch = m.fire.throwing(m.ticks);
         let tt = std::time::Instant::now();
         let tick_span = perf::span(perf::TICK);
@@ -3098,7 +3104,7 @@ fn frame(data: &FD4TaskData) {
                         // (the Chomp's: from its chain's far end, a lash of light behind it)
                         match weapon_on {
                             weapons::HAMMER => impact::swing_point(er(s.head), er(s.grip.lerp(s.head, 0.45))),
-                            weapons::CHOMP => impact::swing_point(er(s.head) + glam::Vec3::Y * 0.2, er(s.grip.lerp(s.head, 0.7)) + glam::Vec3::Y * 0.1),
+                            weapons::CHOMP => impact::chomp_point(er(s.head) + glam::Vec3::Y * 0.2, er(s.grip.lerp(s.head, 0.75)) + glam::Vec3::Y * 0.15, er(s.grip)),
                             _ => {}
                         }
                     }

@@ -942,6 +942,10 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
+    // a counter, out of a perfect dodge (dodge.rs)
+    if crate::dodge::countering() {
+        pct *= crate::dodge::COUNTER_DAMAGE;
+    }
     // Mega Mario's blows are a giant's
     if crate::mega::active() {
         pct *= crate::mega::DAMAGE;

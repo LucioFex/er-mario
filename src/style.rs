@@ -105,6 +105,11 @@ fn slow(time: f32) {
     }
 }
 
+/// The perfect dodge's witch time (dodge.rs): the world slowed this long (s), Mario not.
+pub fn witch_time(time: f32) {
+    slow(time);
+}
+
 /// The current rank, if the string is still going.
 pub fn rank() -> Option<usize> {
     METER.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP).and_then(|m| m.rank)
