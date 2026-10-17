@@ -140,6 +140,35 @@ fn set_vagabond_model(model: u16) -> bool {
     true
 }
 
+/// A cap's look is going on: the chest piece came off and goes back on with the new model.
+static LOOK_RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mario's chest piece model: his own, Metal Mario's or the wing cap's (assets::MODEL_*). The
+/// chest piece comes off, and look_tick puts it back on next frame, so the game loads the model.
+pub fn set_look(model: u16) {
+    use crate::assets::{MODEL_MARIO, MODEL_METAL, MODEL_WING};
+    let Ok(repo) = (unsafe { eldenring::cs::SoloParamRepository::instance_mut() }) else { return };
+    let Some(row) = repo.get_mut::<eldenring::cs::EquipParamProtector>(VAGABOND[1]) else { return };
+    let now = row.equip_model_id();
+    // (only in Mario mode, and only a change)
+    if now == model || ![MODEL_MARIO, MODEL_METAL, MODEL_WING].contains(&now) {
+        return;
+    }
+    row.set_equip_model_id(model);
+    if equip(BARE[1].0, BARE[1].1) {
+        LOOK_RELOAD.store(true, std::sync::atomic::Ordering::Relaxed);
+        log(format!("equip: chest model {now} -> {model}"));
+    }
+}
+
+/// Every frame: the chest piece back on after set_look took it off.
+pub fn look_tick(player: &PlayerIns) {
+    if LOOK_RELOAD.load(std::sync::atomic::Ordering::Relaxed) && equipped(player, BARE[1].0) == BARE[1].1 {
+        LOOK_RELOAD.store(false, std::sync::atomic::Ordering::Relaxed);
+        equip(MARIO_SET[1].0, MARIO_SET[1].1);
+    }
+}
+
 /// The Vagabond's starting template (CharaInitParam).
 const VAGABOND_CLASS: u32 = 3000;
 

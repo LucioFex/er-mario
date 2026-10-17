@@ -251,6 +251,8 @@
 #define ACT_TRIPLE_JUMP_LAND           0x04000478 // (0x078 | ACT_FLAG_MOVING | ACT_FLAG_ALLOW_FIRST_PERSON)
 #define ACT_LONG_JUMP_LAND             0x00000479 // (0x079 | ACT_FLAG_MOVING)
 #define ACT_BACKFLIP_LAND              0x0400047A // (0x07A | ACT_FLAG_MOVING | ACT_FLAG_ALLOW_FIRST_PERSON)
+// er-mario: the dash (pad B), on the ground
+#define ACT_ER_DASH                    0x0002047B // (0x07B | ACT_FLAG_MOVING | ACT_FLAG_INVULNERABLE)
 
 // group 0x080: airborne actions
 #define ACT_JUMP                       0x03000880 // (0x080 | ACT_FLAG_AIR | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION | ACT_FLAG_CONTROL_JUMP_HEIGHT)
@@ -296,6 +298,13 @@
 #define ACT_SOFT_BONK                  0x010208B6 // (0x0B6 | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_LAVA_BOOST                 0x010208B7 // (0x0B7 | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_GETTING_BLOWN              0x010208B8 // (0x0B8 | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
+// er-mario: the dash (pad B), in the air
+#define ACT_ER_AIR_DASH                0x000208B9 // (0x0B9 | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE)
+// er-mario: the combos (er_moves.c): the super jump punch, its meteor dive, the hammer in the air
+#define ACT_ER_UPPERCUT                0x008008BA // (0x0BA | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
+#define ACT_ER_METEOR                  0x008008BB // (0x0BB | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
+#define ACT_ER_HAMMER_AIR              0x008008BC // (0x0BC | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
+#define ACT_ER_AIR_COMBO               0x008008BF // (0x0BF | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
 #define ACT_THROWN_FORWARD             0x010208BD // (0x0BD | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_THROWN_BACKWARD            0x010208BE // (0x0BE | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 
@@ -409,6 +418,18 @@
 
 // group 0x180: object actions
 #define ACT_PUNCHING                   0x00800380 // (0x180 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+// er-mario: the pause combo's rush (two jabs and a flying kick)
+#define ACT_ER_RUSH                    0x0080038A // (0x18A | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+// er-mario: the combos (er_moves.c): the hammer's swings, slam, flurry and spin, the tornado, the
+// meteor dive's landing
+#define ACT_ER_HAMMER                  0x0080038B // (0x18B | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_HAMMER_SLAM             0x0080038C // (0x18C | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_HAMMER_FLURRY           0x0080038D // (0x18D | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_HAMMER_GIRO             0x0080038E // (0x18E | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_TORNADO                 0x0080038F // (0x18F | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_METEOR_LAND             0x00800393 // (0x193 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_CHAIN                   0x00800394 // (0x194 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_SHELL                   0x00800395 // (0x195 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_PICKING_UP                 0x00000383 // (0x183 | ACT_FLAG_STATIONARY)
 #define ACT_DIVE_PICKING_UP            0x00000385 // (0x185 | ACT_FLAG_STATIONARY)
 #define ACT_STOMACH_SLIDE_STOP         0x00000386 // (0x186 | ACT_FLAG_STATIONARY)

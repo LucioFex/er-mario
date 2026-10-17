@@ -26,9 +26,27 @@ pub fn spawn(pos: Vec3) {
     COINS.lock().unwrap_or_else(|e| e.into_inner()).push(Coin { pos: pos + Vec3::Y * 0.05, born: Instant::now(), visible: true });
 }
 
+/// Within this distance (m) a coin flies to Mario like to a magnet, faster the closer it gets
+pub const MAGNET: f32 = 3.5;
+
+/// Moves `pos` toward Mario's middle (feet at `mario`) if he's within MAGNET, over `dt` seconds.
+pub fn attract(pos: &mut Vec3, mario: Vec3, dt: f32) {
+    let to = mario + Vec3::Y * 0.4 - *pos;
+    let d = to.length();
+    if d < MAGNET && d > 0.01 {
+        let speed = 3.0 + (MAGNET - d) * 6.0;
+        *pos += to / d * (speed * dt).min(d);
+    }
+}
+
 /// Coins Mario (feet at `mario`) touches now; they're gone (as are expired ones).
 pub fn collect(mario: Vec3) -> u32 {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let dt = LAST.lock().unwrap_or_else(|e| e.into_inner()).replace(Instant::now()).map_or(0.0, |t| t.elapsed().as_secs_f32().min(0.1));
     let mut coins = COINS.lock().unwrap_or_else(|e| e.into_inner());
+    for c in coins.iter_mut() {
+        attract(&mut c.pos, mario, dt);
+    }
     let mut taken = 0;
     coins.retain(|c| {
         let d = c.pos - mario;

@@ -66,9 +66,9 @@ uint32_t fake_damage_knock_back(struct MarioState *m, uint32_t damage,uint32_t i
             damage = 0;
         }
 
-        // er-mario: half a wedge per point of damage (SM64's 4 is a whole one): Elden Ring hits
-        // took two wedges at a time
-        m->hurtCounter += 2 * damage; // apply hurt counter
+        // er-mario: three quarters of a wedge per point of damage (SM64's 4 is a whole one):
+        // Elden Ring hits took two wedges at a time, then half a wedge was too little
+        m->hurtCounter += 3 * damage; // apply hurt counter
 
         if (interactionSubtype & INT_SUBTYPE_BIG_KNOCKBACK) {
             m->forwardVel = 40.0f;
@@ -184,7 +184,7 @@ u32 fake_determine_interaction(struct MarioState *m, float x, float y, float z) 
 
     s16 dYawToObject = fake_mario_obj_angle_to_pos(m, x, z) - m->faceAngle[1];
     if (action & ACT_FLAG_ATTACKING) {
-        if (action == ACT_PUNCHING || action == ACT_MOVE_PUNCHING || action == ACT_JUMP_KICK) {
+        if (action == ACT_PUNCHING || action == ACT_MOVE_PUNCHING || action == ACT_JUMP_KICK || action == ACT_ER_RUSH) {
             
 
             if (m->flags & MARIO_PUNCHING) {
@@ -280,6 +280,10 @@ u32 fake_interact_hit_from_below(struct MarioState *m, float x, float y, float z
     return FALSE;
 }
 
+/** er-mario: a stomp's bounce speed, and with A held (set by the mod: higher off big bodies) */
+f32 er_stomp_vel = 30.0f;
+f32 er_stomp_vel_a = 30.0f;
+
 u32 fake_interact_bounce_top(struct MarioState *m, float x, float y, float z, float hitboxHeight) {
     u32 interaction;
     if (m->flags & MARIO_METAL_CAP) {
@@ -292,7 +296,7 @@ u32 fake_interact_bounce_top(struct MarioState *m, float x, float y, float z, fl
         fake_bounce_back_from_attack(m, interaction);
 
         if (interaction & INT_HIT_FROM_ABOVE) {
-            fake_bounce_off_object(m, x, y, z, hitboxHeight, 30.0f);
+            fake_bounce_off_object(m, x, y, z, hitboxHeight, (m->input & INPUT_A_DOWN) ? er_stomp_vel_a : er_stomp_vel);
         }
         return TRUE;
     } else/* if (fake_damage_knock_back(m, 0, 0, x, y, z))*/ {

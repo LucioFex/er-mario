@@ -162,9 +162,39 @@ struct Cam {
     zoom: usize,
     /// C-button edges (left, right, up, down)
     held: [bool; 4],
+    /// how far it backs off for a big body nearby (m, eases in and out)
+    big: f32,
+    /// ...and for the bounces in a row up a big body (m), and how long it stays out after them (s)
+    climb: f32,
+    climb_hold: f32,
+    /// the eased push out of a big body (snapped there and back, it popped as enemies walked by)
+    push: Vec3,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
+
+/// Big bodies near Mario (feet position, radius, height in m), set every frame by the combat
+/// code: the camera backs off to fit them in and never goes inside one.
+static BIG: Mutex<Vec<(Vec3, f32, f32)>> = Mutex::new(Vec::new());
+
+pub fn set_big(bodies: Vec<(Vec3, f32, f32)>) {
+    *BIG.lock().unwrap_or_else(|e| e.into_inner()) = bodies;
+}
+
+/// Bounces in a row up a big body (set every frame by the combat code).
+static CLIMB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_climb(bounces: u32) {
+    CLIMB.store(bounces, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Each bounce in a row up a big body backs the camera off this much more (m; it rises by
+/// CLIMB_RISE of that), up to CLIMB_MAX: the beast grows huge on screen. It stays out CLIMB_HOLD
+/// seconds after Mario lands, then eases back in.
+const CLIMB_STEP: f32 = 2.2;
+const CLIMB_RISE: f32 = 0.55;
+const CLIMB_MAX: f32 = 11.0;
+const CLIMB_HOLD: f32 = 1.5;
 
 pub fn reset() {
     FIRST_PERSON.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -217,6 +247,10 @@ pub fn update(
             target_yaw: None,
             zoom: 0,
             held: c,
+            big: 0.0,
+            climb: 0.0,
+            climb_hold: 0.0,
+            push: Vec3::ZERO,
         }
     });
 
@@ -347,6 +381,27 @@ pub fn update(
         ));
     }
     let (dist, height) = ZOOM[cam.zoom];
+    // a big body close to Mario (a giant beast, a dragon): the camera backs off and rises to fit
+    // it in (close up it ended up inside the body)
+    let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let want_big = bodies
+        .iter()
+        .filter(|(p, r, _)| (*p - mario).with_y(0.0).length() < r + 12.0)
+        .map(|(_, r, h)| ((h - 2.0) * 0.6 + r * 0.8).clamp(0.0, 7.0))
+        .fold(0.0, f32::max);
+    cam.big += (want_big - cam.big) * rate(1.0);
+    // bounces in a row up a big body: farther out with each (fast, a swoop), slowly back in
+    let bounces = CLIMB.load(std::sync::atomic::Ordering::Relaxed);
+    let want_climb = (bounces as f32 * CLIMB_STEP).min(CLIMB_MAX);
+    if want_climb >= cam.climb {
+        cam.climb += (want_climb - cam.climb) * rate(2.5);
+        cam.climb_hold = CLIMB_HOLD;
+    } else if cam.climb_hold > 0.0 {
+        cam.climb_hold -= dt;
+    } else {
+        cam.climb += (want_climb - cam.climb) * rate(0.6);
+    }
+    let (dist, height) = (dist + cam.big + cam.climb, height + cam.big * 0.45 + cam.climb * CLIMB_RISE);
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
     // uphill ahead (in the view direction): look up the slope, the camera a bit lower
     // (the ground ahead, measured from a point in the open near head height: from high up it
@@ -387,7 +442,19 @@ pub fn update(
         hit(head, ideal).map(|h| ((h - cam.focus).length() - 0.3).max(0.6)).unwrap_or(full)
     };
     cam.dist += (want - cam.dist) * if want < cam.dist { rate(15.0) } else { rate(2.0) };
-    let mut pos = cam.focus + dir * cam.dist;
+    let base = cam.focus + dir * cam.dist;
+    // never inside a big body: out to its side (or the top, close above it), eased
+    let mut pos = base;
+    for (p, r, h) in &bodies {
+        let side = (pos - *p).with_y(0.0);
+        let r = r + 0.5;
+        if side.length() < r && pos.y > p.y - 0.5 && pos.y < p.y + h + 0.5 {
+            let out = side.try_normalize().or((mario - *p).with_y(0.0).try_normalize()).unwrap_or(Vec3::X);
+            pos = Vec3::new(p.x + out.x * r, pos.y, p.z + out.z * r);
+        }
+    }
+    cam.push += (pos - base - cam.push) * rate(6.0);
+    let mut pos = base + cam.push;
     // never under the ground (the ray starts at head or camera height, inside the room: from
     // higher up it would find the roof in interiors and put the camera on top of it)
     let top = Vec3::new(pos.x, pos.y.max(head.y) + 0.1, pos.z);

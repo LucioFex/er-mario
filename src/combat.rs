@@ -20,7 +20,7 @@ use crate::{log, sm64};
 
 /// (bullet row, attack row, damage (flat, and % of the weapon's attack rating), poise damage,
 /// hit reaction level, hit radius m)
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Attack {
     Punch,
     Kick,
@@ -28,6 +28,39 @@ pub enum Attack {
     GroundPound,
     Stomp,
     Dash,
+    /// Mario's fireball (fireball.rs), by charge level 0-3
+    Fire(u8),
+    /// Y in the air: the twirl, hitting all around him (moves.rs)
+    Spin,
+    /// a ground pound's landing, on everyone around the one under him
+    Shockwave,
+    /// the pause combo's rush (moves.rs): its two jabs, and its flying kick
+    Rush,
+    RushKick,
+    /// the combos (moves.rs, er_moves.c), bare-handed: the super jump punch on the way up and at
+    /// its top, the meteor dive and its landing, the tornado and its last turn
+    Uppercut,
+    UppercutTop,
+    Meteor,
+    MeteorLand,
+    Tornado,
+    TornadoEnd,
+    /// with the hammer: its side swings, its overhead smash, the slam (and the plunge's landing),
+    /// the swing in the air (and the plunge), the flurry's blows and its giant one, the Bowser spin
+    /// and its release
+    Hammer,
+    HammerSmash,
+    Quake,
+    HammerAir,
+    Flurry,
+    FlurryEnd,
+    Giro,
+    GiroEnd,
+    /// the bare-handed string past the kick (and its whirlwind kick), the Koopa shell, the air string
+    Chain,
+    ChainEnd,
+    Shell,
+    AirHit,
 }
 
 impl Attack {
@@ -41,19 +74,70 @@ impl Attack {
             Attack::GroundPound => (68, 997, 350, 20.0, 3, 1.5),
             Attack::Stomp => (69, 998, 250, 14.0, 2, 0.8),
             Attack::Dash => (70, 999, 175, 14.0, 2, 0.8),
+            // (no bullets of its own: the blow of the move that staggers about as hard)
+            Attack::Fire(0 | 1) => Attack::Kick.spec(),
+            Attack::Fire(2) => Attack::Stomp.spec(),
+            Attack::Fire(_) => Attack::GroundPound.spec(),
+            Attack::Spin => Attack::Sweep.spec(),
+            Attack::Shockwave => Attack::Stomp.spec(),
+            Attack::Rush => Attack::Punch.spec(),
+            Attack::RushKick => Attack::GroundPound.spec(),
+            Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::AirHit => Attack::Punch.spec(),
+            Attack::Chain | Attack::Shell => Attack::Kick.spec(),
+            Attack::ChainEnd => Attack::Stomp.spec(),
+            Attack::Meteor => Attack::Stomp.spec(),
+            Attack::Hammer | Attack::HammerAir | Attack::Giro | Attack::TornadoEnd => Attack::Sweep.spec(),
+            Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
+                Attack::GroundPound.spec()
+            }
         }
     }
 
     /// Share of a normal enemy's max HP per hit (%), and its er_mario.ini key.
     fn percent(self) -> (f32, &'static str) {
+        // (all of them down to 60% once Mario had his combos, his dash and his speed: the giant
+        // fireball, 10 s of charging, only a little)
         match self {
-            Attack::Punch => (67.0, "damage_punch"),
-            Attack::Kick => (67.0, "damage_kick"),
-            Attack::Sweep => (67.0, "damage_sweep"),
-            Attack::Dash => (34.0, "damage_dive"),
-            Attack::Stomp => (67.0, "damage_stomp"),
-            // slow and leaves Mario open: it has to be worth it (a regular enemy in one)
-            Attack::GroundPound => (100.0, "damage_ground_pound"),
+            // (a regular enemy in four blows)
+            Attack::Punch => (27.0, "damage_punch"),
+            Attack::Kick => (27.0, "damage_kick"),
+            Attack::Sweep => (27.0, "damage_sweep"),
+            Attack::Dash => (15.0, "damage_dive"),
+            Attack::Stomp => (27.0, "damage_stomp"),
+            // slow and leaves Mario open: it has to be worth it (a regular enemy in three)
+            Attack::GroundPound => (42.0, "damage_ground_pound"),
+            // a regular enemy in nine plain shots, seven, five, four fully charged ones
+            Attack::Fire(0) => (12.0, "damage_fire"),
+            Attack::Fire(1) => (16.0, "damage_fire_charged"),
+            Attack::Fire(2) => (22.0, "damage_fire_charged_2"),
+            Attack::Fire(3) => (33.0, "damage_fire_max"),
+            // the giant one (10 s): kills a regular enemy outright
+            Attack::Fire(_) => (100.0, "damage_fire_giant"),
+            Attack::Spin => (15.0, "damage_spin"),
+            Attack::Shockwave => (21.0, "damage_shockwave"),
+            // the reward for the beat: harder blows than the plain combo's
+            Attack::Rush => (27.0, "damage_rush"),
+            Attack::RushKick => (45.0, "damage_rush_kick"),
+            // the combos: their finishers hit hardest, worth the longer string of buttons
+            Attack::Uppercut => (13.0, "damage_uppercut"),
+            Attack::UppercutTop => (36.0, "damage_uppercut_top"),
+            Attack::Meteor => (21.0, "damage_meteor"),
+            Attack::MeteorLand => (51.0, "damage_meteor_land"),
+            Attack::Tornado => (11.0, "damage_tornado"),
+            Attack::TornadoEnd => (36.0, "damage_tornado_end"),
+            // the hammer: slower than the fists, every blow heavier
+            Attack::Hammer => (33.0, "damage_hammer"),
+            Attack::HammerSmash => (51.0, "damage_hammer_smash"),
+            Attack::Quake => (39.0, "damage_hammer_slam"),
+            Attack::HammerAir => (27.0, "damage_hammer_air"),
+            Attack::Flurry => (12.0, "damage_hammer_flurry"),
+            Attack::FlurryEnd => (60.0, "damage_hammer_giant"),
+            Attack::Giro => (15.0, "damage_hammer_spin"),
+            Attack::GiroEnd => (42.0, "damage_hammer_spin_end"),
+            Attack::Chain => (24.0, "damage_string"),
+            Attack::ChainEnd => (48.0, "damage_string_end"),
+            Attack::Shell => (21.0, "damage_shell"),
+            Attack::AirHit => (18.0, "damage_air"),
         }
     }
 
@@ -65,7 +149,56 @@ impl Attack {
             Attack::Punch | Attack::Kick | Attack::Sweep => 1.5,
             Attack::Stomp => 1.4,
             Attack::Dash => 1.1,
+            // from afar and safe: on bosses only the charged ones count for more
+            Attack::Fire(level) => 1.0 + 0.15 * level as f32,
+            Attack::Spin => 1.2,
+            Attack::Shockwave => 1.4,
+            Attack::Rush => 1.6,
+            Attack::RushKick => 1.9,
+            Attack::Uppercut | Attack::Meteor | Attack::Flurry | Attack::HammerAir => 1.3,
+            Attack::Tornado | Attack::Giro => 1.2,
+            Attack::UppercutTop => 1.7,
+            Attack::MeteorLand | Attack::HammerSmash => 1.8,
+            Attack::TornadoEnd | Attack::Hammer => 1.5,
+            Attack::Quake => 1.4,
+            Attack::FlurryEnd => 1.9,
+            Attack::GiroEnd => 1.6,
+            Attack::Chain => 1.5,
+            Attack::ChainEnd => 1.8,
+            Attack::Shell | Attack::AirHit => 1.3,
         }
+    }
+
+    /// Ticks before the same enemy can take another of these (the rush's blows come 4 ticks apart).
+    fn cooldown(self) -> u32 {
+        match self {
+            Attack::Rush | Attack::RushKick => 3,
+            // the flurry's blows come 3 ticks apart, the spins' every few
+            Attack::Uppercut | Attack::Flurry | Attack::Chain | Attack::AirHit => 3,
+            Attack::Shell => 5,
+            Attack::Tornado | Attack::Giro => 5,
+            // a swing hits over 3 ticks, once; the next one comes 8 ticks later at the soonest
+            Attack::Hammer | Attack::HammerAir | Attack::Meteor => 6,
+            Attack::HammerSmash => 4,
+            // the finishers always land, right after the blows before them
+            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd => 1,
+            _ => 12,
+        }
+    }
+
+    /// A combo's finishing blow (or the hammer's smash): stars fly off it (impact.rs).
+    pub fn finisher(self) -> bool {
+        matches!(
+            self,
+            Attack::UppercutTop
+                | Attack::MeteorLand
+                | Attack::TornadoEnd
+                | Attack::HammerSmash
+                | Attack::Quake
+                | Attack::FlurryEnd
+                | Attack::GiroEnd
+                | Attack::ChainEnd
+        )
     }
 
     const ALL: [Attack; 6] = [Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash];
@@ -78,11 +211,17 @@ const MARIO_KICKING: u32 = 0x0020_0000;
 const MARIO_TRIPPING: u32 = 0x0040_0000;
 const ACT_GROUND_POUND: u32 = 0x008008A9;
 const ACT_GROUND_POUND_LAND: u32 = 0x0080023C;
+const ACT_SLIDE_KICK: u32 = 0x018008AA;
+const ACT_SLIDE_KICK_SLIDE: u32 = 0x0080045A;
+const ACT_TWIRLING: u32 = 0x108008A4;
+const ACT_ER_RUSH: u32 = 0x0080038A;
 
 /// What kind of hit Mario's current state makes (after libsm64 said it is one).
 fn classify(state: &sm64::SM64MarioState) -> Attack {
     let a = state.action;
-    if state.flags & MARIO_PUNCHING != 0 {
+    if a == ACT_ER_RUSH {
+        if state.flags & MARIO_KICKING != 0 { Attack::RushKick } else { Attack::Rush }
+    } else if state.flags & MARIO_PUNCHING != 0 {
         Attack::Punch
     } else if state.flags & MARIO_KICKING != 0 {
         Attack::Kick
@@ -90,6 +229,9 @@ fn classify(state: &sm64::SM64MarioState) -> Attack {
         Attack::Sweep
     } else if a == ACT_GROUND_POUND || a == ACT_GROUND_POUND_LAND {
         Attack::GroundPound
+    } else if a == ACT_SLIDE_KICK || a == ACT_SLIDE_KICK_SLIDE {
+        // (Y while running, moves.rs: in the air for most of it, it's no stomp)
+        Attack::Kick
     } else if a & ACT_FLAG_AIR != 0 && state.velocity[1] < 0.0 {
         Attack::Stomp
     } else {
@@ -127,7 +269,8 @@ const BULLET_DAMAGE: u16 = 10;
 /// ...and the share of the bare fist's attack they hit with (%)
 const FIST_SHARE: u16 = 100;
 /// Share of the normal damage bosses (anything with a boss health bar) take.
-const BOSS_FACTOR: f32 = 0.05;
+/// (raised with the lower shares above, so bosses lose only a little)
+const BOSS_FACTOR: f32 = 0.065;
 const INVADER_FACTOR: f32 = 0.25;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
@@ -221,6 +364,8 @@ pub struct Combat {
     drain: f32,
     /// stomps per enemy since Mario last stood on the ground
     stomps: HashMap<u64, u32>,
+    /// stomps per enemy in a row, and the tick of the last one (their damage fades)
+    stomp_run: HashMap<u64, (u32, u32)>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -233,7 +378,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), stomp_run: HashMap::new() }
     }
 }
 
@@ -255,6 +400,25 @@ impl Target {
     /// A breakable prop (crate, barrel, clutter), not a character.
     pub fn is_prop(&self) -> bool {
         self.handle.is_none()
+    }
+
+    /// An enemy (not a friendly NPC, an ally or a prop).
+    pub fn hostile(&self) -> bool {
+        self.hostile
+    }
+
+    /// A character that isn't an enemy (an NPC, an ally): Mario's blows leave it alone.
+    pub fn friendly(&self) -> bool {
+        !self.hostile && !self.is_prop()
+    }
+
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// An enemy a fireball hits: hostile, up, not in Mario's hands or thrown. Its handle.
+    pub fn shootable(&self) -> Option<&FieldInsHandle> {
+        self.handle.as_ref().filter(|h| self.hostile && !crate::swing::is_down(h) && !crate::carry::is_carried(h))
     }
 }
 
@@ -411,6 +575,16 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
 }
 
 /// Whether Mario can pick this character up (a regular enemy: not a boss, not on his side).
+/// A regular enemy (not a boss, not one of Mario's side, not held or thrown) the giant fireball
+/// blows away (knock.rs).
+pub fn blowable(handle: &FieldInsHandle) -> bool {
+    if is_boss(handle) || crate::carry::is_carried(handle) || crate::swing::busy_with(handle) || crate::knock::is_flying(handle) {
+        return false;
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return false };
+    wcm.chr_ins_by_handle(handle).is_some_and(|c| !own_side(c.team_type) && !boss_class(handle, c))
+}
+
 fn liftable(handle: &FieldInsHandle) -> bool {
     if is_boss(handle) {
         return false;
@@ -427,7 +601,7 @@ const BOSS_MAX_HP: i32 = 2500;
 
 /// Whether a character takes boss damage: a boss bar now or before, the strong-enemy team, or
 /// big / tough enough (a field boss hit before his bar showed took a regular enemy's 50%).
-fn boss_class(handle: &FieldInsHandle, chr: &ChrIns) -> bool {
+pub fn boss_class(handle: &FieldInsHandle, chr: &ChrIns) -> bool {
     is_boss(handle)
         || chr.team_type == TEAM_STRONG_ENEMY
         || SEEN_BOSSES.lock().unwrap_or_else(|e| e.into_inner()).contains(&handle_key(handle))
@@ -657,7 +831,8 @@ fn pass_to_bar(wcm: &mut WorldChrMan, dealt: i32) {
 
 /// Takes the attack's share of the character's max HP (never the last point: the bullet deals the
 /// final blow, so the kill is the game's own). Returns true if it's down to that last point.
-fn take_share(handle: &FieldInsHandle, attack: Attack) -> bool {
+/// `scale`: a share of the attack's damage (stomps in a row, Combat::deal).
+fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return false };
     let bar = is_boss(handle);
     // a thrown boss in the air or lying limp takes no hits (the throw's impact is the damage)
@@ -676,9 +851,13 @@ fn take_share(handle: &FieldInsHandle, attack: Attack) -> bool {
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
-    let mut pct = config_f32(key, default);
+    let mut pct = config_f32(key, default) * scale;
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
+    }
+    // Metal Mario hits harder (his fireballs too)
+    if crate::caps::active() == Some(crate::caps::METAL) {
+        pct *= crate::caps::METAL_DAMAGE;
         if let Some((t, tmax)) = crate::swing::toughness_of(handle) {
             log(format!("combat: boss poise {t:.0}/{tmax:.0}"));
         }
@@ -693,13 +872,19 @@ fn take_share(handle: &FieldInsHandle, attack: Attack) -> bool {
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     data.hp = (hp - dmg).max(1);
     show_damage(handle, hp, hp - data.hp, bar);
-    log(format!("combat: {:?} on team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", attack as u8, if boss { " boss" } else { "" }, data.hp));
+    log(format!("combat: {:?} on team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", attack, if boss { " boss" } else { "" }, data.hp));
     let (last, dealt) = (data.hp == 1, hp - data.hp);
     if boss && !bar {
         pass_to_bar(wcm, dealt);
     }
     last
 }
+
+/// Stomps in a row on the same body (bouncing up a big one is many): each takes this much of the
+/// one before, down to STOMP_FLOOR, back to full after STOMP_RESET ticks without one.
+const STOMP_FADE: f32 = 0.65;
+const STOMP_FLOOR: f32 = 0.1;
+const STOMP_RESET: u32 = 75;
 
 /// Target body in SM64 units: horizontal radius and height (a human-sized capsule).
 const TARGET_RADIUS: f32 = 55.0;
@@ -715,10 +900,13 @@ const STOMP_HEIGHT: f32 = 220.0;
 const PUNCH_REACH: f32 = 135.0;
 const PUNCH_CONE_COS: f32 = 0.5;
 /// Each hit of the punch combo turns Mario to the nearest enemy within this reach beyond its
-/// body (SM64 units) and this cone (cos 80°) around where he faces: punches thrown a little to
+/// body (SM64 units) and this cone (cos 110°) around where he faces: punches thrown a little to
 /// the side of an enemy in front missed it.
-const AIM_REACH: f32 = 200.0;
-const AIM_CONE_COS: f32 = 0.17;
+const AIM_REACH: f32 = 320.0;
+const AIM_CONE_COS: f32 = -0.34;
+/// Falling, Mario drifts onto the nearest enemy below within this reach beyond its body (SM64
+/// units): stomps landed just beside heads.
+const HOME_REACH: f32 = 150.0;
 
 /// The enemy (SM64 x, z) the next hit of Mario's punch combo turns him to, if any.
 pub fn aim(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32)> {
@@ -740,15 +928,164 @@ pub fn aim(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, x, z)| (x, z))
 }
-/// Picking an enemy up (punch, or dive) only this close: farther hits just hurt.
-const PUNCH_GRAB_REACH: f32 = 80.0;
+
+/// The enemy (SM64 x, z) a falling Mario drifts onto, if any: the nearest whose top is below him.
+pub fn home(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32)> {
+    let m = state.position;
+    targets
+        .iter()
+        .filter(|t| t.hostile && t.handle.as_ref().is_some_and(|h| !crate::swing::is_down(h) && !crate::carry::is_carried(h)))
+        .filter_map(|t| {
+            let (dx, dz) = (t.sm[0] - m[0], t.sm[2] - m[2]);
+            let edge = (dx * dx + dz * dz).sqrt() - t.radius;
+            // a big body is climbed anywhere on it (hits), a small one from above its head
+            let low = if t.height > STOMP_HEIGHT { t.sm[1] + CLIMB_MIN } else { t.sm[1] + t.height.min(STOMP_HEIGHT) * 0.5 };
+            (edge <= HOME_REACH && m[1] > low && m[1] < t.sm[1] + t.height + 600.0).then_some((edge, t.sm[0], t.sm[2]))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, x, z)| (x, z))
+}
+
+/// Big bodies near Mario (Elden Ring feet position, radius and height in m): the camera keeps
+/// out of them.
+pub fn big_bodies(targets: &[Target]) -> Vec<(glam::Vec3, f32, f32)> {
+    targets
+        .iter()
+        .filter(|t| !t.is_prop() && (t.height > STOMP_HEIGHT || t.radius > 120.0))
+        .map(|t| (glam::Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2), t.radius / 100.0, t.height / 100.0))
+        .collect()
+}
+/// Picking an enemy up (the dive) only this close: farther hits just hurt.
 const DIVE_GRAB_RADIUS: f32 = 45.0;
 
 /// Called on the libsm64 thread right after a tick: which targets Mario hits now.
 /// Stomps in a row on one enemy before Mario has to land (SM64's head bounce would juggle forever).
 const MAX_STOMPS: u32 = 1;
+/// ...on a big body, climbed a leg, a wing, the back, the head
+const MAX_CLIMB: u32 = 5;
+/// A big body is a foothold from this high above its feet (SM64 units)...
+const CLIMB_MIN: f32 = 40.0;
+/// ...once Mario falls this fast (SM64 units per tick: past the top of the last bounce)
+const CLIMB_FALL: f32 = 12.0;
+/// Each bounce off a big body lifts Mario this high (SM64 units), A held, up to its top and this
+/// much over (so the last one lands him on the head).
+const CLIMB_STEP: f32 = 180.0;
+const CLIMB_STEP_A: f32 = 340.0;
+const CLIMB_OVER: f32 = 120.0;
+/// SM64's gravity in the air (units per tick per tick)
+const GRAVITY: f32 = 4.0;
+/// the twirl's reach around Mario, and a ground pound's shockwave's (SM64 units)
+const SPIN_RADIUS: f32 = 150.0;
+const SHOCK_RADIUS: f32 = 260.0;
 
-pub fn hits(id: i32, state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], no_stomp: &[usize]) -> Vec<(usize, Attack, bool)> {
+/// The combos' reach (SM64 units): the hammer's head beyond its own size, the giant one's and the
+/// slams' blows around where it struck, the spins around Mario
+const HAMMER_HEAD_REACH: f32 = 110.0;
+const SMASH_RADIUS: f32 = 200.0;
+const QUAKE_RADIUS: f32 = 420.0;
+const GIANT_RADIUS: f32 = 520.0;
+const GIRO_RADIUS: f32 = 300.0;
+const UPPERCUT_RADIUS: f32 = 150.0;
+const METEOR_RADIUS: f32 = 130.0;
+const METEOR_LAND_RADIUS: f32 = 340.0;
+const TORNADO_RADIUS: f32 = 190.0;
+/// the string past the kick and the air string reach in front of him like the punches, a bit
+/// further; the shell all around him as he rolls
+const STRING_REACH: f32 = 170.0;
+const SHELL_RADIUS: f32 = 140.0;
+
+/// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
+/// all around a point.
+fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], hit: crate::moves::Hit, swing: Option<crate::hammer::Swing>) -> Vec<(usize, Attack, bool)> {
+    use crate::moves::Hit;
+    use glam::Vec3;
+    let me = Vec3::from(state.position);
+    let head = swing.map_or(me, |s| s.head);
+    let size = swing.map_or(1.0, |s| s.scale);
+    // along the hammer head's sweep, or all around a point within a radius
+    enum Reach {
+        Sweep,
+        Around(Vec3, f32),
+        Front(f32),
+    }
+    let (attack, reach) = match hit {
+        Hit::Hammer => (Attack::Hammer, Reach::Sweep),
+        Hit::HammerSmash => (Attack::HammerSmash, Reach::Sweep),
+        Hit::SmashWave => (Attack::HammerSmash, Reach::Around(head, SMASH_RADIUS)),
+        Hit::Quake => (Attack::Quake, Reach::Around(head, QUAKE_RADIUS)),
+        Hit::HammerAir => (Attack::HammerAir, Reach::Sweep),
+        Hit::Flurry => (Attack::Flurry, Reach::Sweep),
+        Hit::FlurryEnd => (Attack::FlurryEnd, Reach::Around(head, GIANT_RADIUS)),
+        Hit::Giro => (Attack::Giro, Reach::Around(me, GIRO_RADIUS * size.max(1.0))),
+        Hit::GiroEnd => (Attack::GiroEnd, Reach::Around(me, GIRO_RADIUS + 30.0)),
+        Hit::Uppercut => (Attack::Uppercut, Reach::Around(me, UPPERCUT_RADIUS)),
+        Hit::UppercutTop => (Attack::UppercutTop, Reach::Around(me, UPPERCUT_RADIUS + 20.0)),
+        Hit::Meteor => (Attack::Meteor, Reach::Around(me, METEOR_RADIUS)),
+        Hit::MeteorLand => (Attack::MeteorLand, Reach::Around(me, METEOR_LAND_RADIUS)),
+        Hit::Tornado => (Attack::Tornado, Reach::Around(me, TORNADO_RADIUS)),
+        Hit::TornadoEnd => (Attack::TornadoEnd, Reach::Around(me, TORNADO_RADIUS + 40.0)),
+        Hit::Chain => (Attack::Chain, Reach::Front(STRING_REACH)),
+        Hit::ChainEnd => (Attack::ChainEnd, Reach::Around(me, TORNADO_RADIUS + 30.0)),
+        Hit::Shell => (Attack::Shell, Reach::Around(me, SHELL_RADIUS)),
+        Hit::Air => (Attack::AirHit, Reach::Front(STRING_REACH)),
+    };
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+    let mut out = Vec::new();
+    for &(t, radius, height, index) in targets {
+        let foot = Vec3::from(t);
+        let top = foot.y + height;
+        let hit = match reach {
+            Reach::Around(c, r) => {
+                // (the super jump punch rises above them: anyone up to 1.5 m under his feet)
+                flat(foot - c).length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
+            }
+            Reach::Front(r) => {
+                let d = flat(foot - me);
+                let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+                let ahead = d.length() < 1.0 || (d.x * fx + d.z * fz) / d.length() >= PUNCH_CONE_COS;
+                ahead && d.length() <= r + radius && me.y - 150.0 <= top && me.y + 200.0 >= foot.y
+            }
+            Reach::Sweep => {
+                let Some(s) = swing else { continue };
+                // the head's path this tick (flat), against the body's axis
+                let (a, b) = (flat(s.prev), flat(s.head));
+                let ab = b - a;
+                let k = if ab.length_squared() > 1.0 { ((flat(foot) - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
+                let at = s.prev.lerp(s.head, k);
+                let near = flat(foot - at).length() <= HAMMER_HEAD_REACH * s.scale + radius;
+                let level = at.y >= foot.y - 80.0 * s.scale && at.y <= top + 80.0 * s.scale;
+                // ...and someone hugging Mario, in front of him, inside the head's arc
+                let close = {
+                    let d = flat(foot - me);
+                    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+                    d.length() <= MARIO_RADIUS + radius + 40.0 && (d.x * fx + d.z * fz) >= 0.0 && me.y <= top && me.y + 150.0 >= foot.y
+                };
+                (near && level) || close
+            }
+        };
+        if hit {
+            out.push((index, attack, false));
+        }
+    }
+    out
+}
+
+/// `no_punch`: Mario's punch is only the fireball's throw (fireball.rs), it hits no one.
+/// `combo`, `swing`: what a combo's move did this tick (moves.rs), and the hammer's head.
+pub fn hits(
+    id: i32,
+    state: &sm64::SM64MarioState,
+    targets: &[([f32; 3], f32, f32, usize)],
+    no_stomp: &[usize],
+    no_punch: bool,
+    combo: &sm64::SM64ErMove,
+    swing: Option<crate::hammer::Swing>,
+) -> Vec<(usize, Attack, bool)> {
+    // the combos' moves hit only as they say (SM64's own checks took the dive for a dash, the
+    // super jump punch for a stomp)
+    if crate::moves::combo(state.action) {
+        return crate::moves::Hit::from(combo.hit).map_or_else(Vec::new, |hit| combo_hits(state, targets, hit, swing));
+    }
     // diving (SM64's dive or its belly slide): kept with each hit, a dive into an enemy's back
     // picks it up like diving into a Bob-omb
     const ACT_FLAG_DIVING: u32 = 0x0008_0000;
@@ -763,6 +1100,24 @@ pub fn hits(id: i32, state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f3
         let (dx, dz) = (t[0] - m[0], t[2] - m[2]);
         let horizontal = (dx * dx + dz * dz).sqrt();
         let attack = classify(state);
+        if no_punch && matches!(attack, Attack::Punch) {
+            continue;
+        }
+        let level = m[1] <= t[1] + height && m[1] + 150.0 >= t[1];
+        // the twirl hits everyone around him (SM64's only hits from above)
+        if state.action == ACT_TWIRLING {
+            if level && horizontal <= SPIN_RADIUS + radius {
+                out.push((index, Attack::Spin, false));
+            }
+            continue;
+        }
+        // a ground pound's landing: the shockwave reaches those around the one under him
+        if state.action == ACT_GROUND_POUND_LAND && horizontal > MARIO_RADIUS + radius {
+            if level && horizontal <= SHOCK_RADIUS + radius {
+                out.push((index, Attack::Shockwave, false));
+            }
+            continue;
+        }
         // punches and kicks reach a bit further than SM64's (its hitbox is made for small
         // objects): up to PUNCH_REACH, in front of Mario (picking enemies up from behind was hard
         // to land)
@@ -770,15 +1125,33 @@ pub fn hits(id: i32, state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f3
             let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
             (dx * fx + dz * fz) / horizontal >= PUNCH_CONE_COS
         };
-        let punch_reach = matches!(attack, Attack::Punch | Attack::Kick) && in_front && horizontal <= PUNCH_REACH + radius;
+        let punch_reach = matches!(attack, Attack::Punch | Attack::Kick | Attack::Rush | Attack::RushKick) && in_front && horizontal <= PUNCH_REACH + radius;
         let body = if matches!(attack, Attack::Stomp) { STOMP_RADIUS } else { MARIO_RADIUS };
+        // a big body (a giant beast, a dragon): anywhere on it is a foothold, and each bounce off
+        // it lifts Mario higher, a leg up to a wing, up to the head (A held lifts him farther)
+        if matches!(attack, Attack::Stomp) && height > STOMP_HEIGHT {
+            if horizontal > body + radius || m[1] < t[1] + CLIMB_MIN || m[1] > t[1] + height + 60.0 || state.velocity[1] > -CLIMB_FALL {
+                continue;
+            }
+            let rest = t[1] + height + CLIMB_OVER - m[1];
+            let lift = |step: f32| (2.0 * GRAVITY * rest.clamp(100.0, step)).sqrt();
+            unsafe { sm64::sm64_er_set_stomp(lift(CLIMB_STEP), lift(CLIMB_STEP_A)) };
+            let hit = unsafe { sm64::sm64_mario_attack(id, t[0], m[1] - 1.0, t[2], 1.0) };
+            unsafe { sm64::sm64_er_set_stomp(30.0, 30.0) };
+            // the climb's reward: landed on the head (its top fifth), the stomp hits like a ground
+            // pound (more damage, and its poise damage staggers the beast)
+            let head = m[1] > t[1] + height * 0.8;
+            if hit {
+                out.push((index, if head { Attack::GroundPound } else { attack }, false));
+            }
+            continue;
+        }
         if (horizontal > body + radius && !punch_reach) || m[1] > t[1] + height || m[1] + 100.0 < t[1] {
             continue;
         }
-        // a pickup only as close as before the longer reach (from farther it looked like a grab
-        // at a distance)
-        let grab = (matches!(attack, Attack::Punch) && horizontal <= PUNCH_GRAB_REACH + radius)
-            || (diving && horizontal <= DIVE_GRAB_RADIUS + radius);
+        // only the dive picks an enemy up (a punch that grabbed instead of hitting was hard to
+        // tell apart from one that hit)
+        let grab = diving && horizontal <= DIVE_GRAB_RADIUS + radius;
         // aim at mid-body: stomps need Mario above that (and bounce him to the top), on a body no
         // taller than STOMP_HEIGHT: a big beast's 5 m capsule left its back below "mid-body", so
         // Mario walked on it, and a stomp that landed threw him up to 5 m
@@ -800,6 +1173,7 @@ impl Combat {
             }
         }
         self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < 12);
+        self.stomp_run.retain(|_, (_, t)| tick.wrapping_sub(*t) <= STOMP_RESET);
         {
             let mut until = FINISHER_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
             if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
@@ -896,13 +1270,15 @@ impl Combat {
         });
         for &(index, attack, grab) in hits {
             let Some(target) = targets.get(index) else { continue };
-            if self.cooldown.contains_key(&target.key) {
+            // (every bounce counts, also within the cooldown: quick climbing bounces did too)
+            // (a head stomp at the top of a climb comes as a ground pound: it counts too)
+            if matches!(attack, Attack::Stomp | Attack::GroundPound) {
+                *self.stomps.entry(target.key).or_insert(0) += 1;
+            }
+            if self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
                 continue;
             }
             self.cooldown.insert(target.key, tick);
-            if matches!(attack, Attack::Stomp) {
-                *self.stomps.entry(target.key).or_insert(0) += 1;
-            }
             if let Some(handle) = &target.handle {
                 // a thrown boss in the air or lying limp: no hit at all (not even the game's own,
                 // which could finish a ragdolled character)
@@ -918,24 +1294,58 @@ impl Combat {
                         continue;
                     }
                 }
-                // a boss with a broken stance: this hit grabs him by the tail (swing.rs)
-                if !hands_off(handle) && crate::swing::try_grab(handle, target.radius / 100.0) {
+                // the super jump punch lifts small enemies, and stunned strong ones not too big, up
+                // with Mario (juggle.rs); a blow on one up there keeps it up
+                if matches!(attack, Attack::Uppercut | Attack::UppercutTop) && !hands_off(handle) {
+                    let me = player.modules.physics.position;
+                    let regular = liftable(handle);
+                    let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
+                    crate::juggle::try_launch(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius / 100.0, target.height / 100.0, regular, stunned);
+                }
+                crate::juggle::hit(handle);
+                // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
+                // is there (not a fireball from afar), and not up in the air with him
+                if !matches!(attack, Attack::Fire(_)) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius / 100.0) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
                 self.victims.insert(target.key, (*handle, tick));
                 match attack {
                     Attack::Stomp => crate::squish::start(handle, 0.35, 0.0),
-                    Attack::GroundPound => crate::squish::start(handle, 0.8, 1.0),
+                    Attack::GroundPound | Attack::Quake | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
-                if take_share(handle, attack) {
+                // the Bowser spin's release flings regular enemies away, like the giant fireball
+                if matches!(attack, Attack::GiroEnd) && blowable(handle) {
+                    let me = player.modules.physics.position;
+                    crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
+                }
+                // stomps in a row on the same body: each worth less (bouncing up a big one was a
+                // lot of free damage)
+                let scale = if matches!(attack, Attack::Stomp) {
+                    let run = self.stomp_run.entry(target.key).or_insert((0, tick));
+                    if tick.wrapping_sub(run.1) > STOMP_RESET {
+                        run.0 = 0;
+                    }
+                    run.0 += 1;
+                    run.1 = tick;
+                    STOMP_FADE.powi(run.0 as i32 - 1).max(STOMP_FLOOR)
+                } else {
+                    1.0
+                };
+                if take_share(handle, attack, scale) {
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
             }
             let (bullet, ..) = attack.spec();
+            // (breaking a jar or a crate is no blow to stop for)
+            if !matches!(attack, Attack::Fire(_)) && !target.is_prop() {
+                let me = player.modules.physics.position;
+                let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height / 100.0).min(3.0) * 0.5, target.er.2);
+                crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
+            }
             let result = strike(player, &target.er, bullet);
-            log(format!("combat: {:?} hit -> bullet {bullet}: {result}", attack as u8));
+            log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
         }
     }
 }
@@ -977,6 +1387,12 @@ impl Combat {
 
     /// Game thread, every tick: the targets Mario can't stomp again before landing (indexes into
     /// `targets`); landing resets the count.
+    /// Bounces in a row on a big body since Mario last stood on the ground (the camera backs off
+    /// with each, lakitu.rs).
+    pub fn climb(&self, targets: &[Target]) -> u32 {
+        targets.iter().filter(|t| t.height > STOMP_HEIGHT).filter_map(|t| self.stomps.get(&t.key)).copied().max().unwrap_or(0)
+    }
+
     pub fn stomp_limits(&mut self, targets: &[Target], grounded: bool) -> Vec<usize> {
         if grounded {
             self.stomps.clear();
@@ -984,7 +1400,7 @@ impl Combat {
         targets
             .iter()
             .enumerate()
-            .filter(|(_, t)| self.stomps.get(&t.key).is_some_and(|&n| n >= MAX_STOMPS))
+            .filter(|(_, t)| self.stomps.get(&t.key).is_some_and(|&n| n >= if t.height > STOMP_HEIGHT { MAX_CLIMB } else { MAX_STOMPS }))
             .map(|(i, _)| i)
             .collect()
     }

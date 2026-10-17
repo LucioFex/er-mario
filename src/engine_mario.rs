@@ -9,17 +9,27 @@ use glam::{Mat3, Quat, Vec3};
 
 use crate::{explore, log};
 
-/// SM64 part -> skeleton bone (same list as tools/build_mario_parts.py).
-const PART_BONES: [&str; PARTS] = [
+/// SM64 part -> skeleton bone (same list as tools/build_mario_parts.py; the hammer's comes from
+/// the asset build, `hammer_bone`).
+const PART_BONES: [&str; PARTS - 1] = [
     "", "Pelvis_Mantle", "Spine2", "Neck", "L_ShoulderArmor", "L_Pectoral", "Collar", "R_Shoulder", "R_Pectoral", "Spine2_Mantle", "L_Hip", "SpineArmor1", "Spine_Mantle", "R_Hip", "SpineArmor2", "L_Shoulder",
     // eye variants (open, half, closed, dead): only the one SM64 is drawing is shown
     "L_UpArmTwist", "L_Elbow", "L_ForeArmTwist", "L_ForeArmTwist1",
     // the peace-sign right hand (star dance), shown instead of the fist
     "R_Elbow",
 ];
-/// SM64's body parts (0..16) plus the eye variants (16..20).
+/// SM64's body parts (0..16) plus the eye variants (16..20), the peace sign (20) and the hammer (21).
 pub const SM64_PARTS: usize = 16;
-pub const PARTS: usize = 21;
+pub const PARTS: usize = 22;
+/// Mario's hammer (hammer.rs), hidden in his hand unless it's out
+pub const HAMMER: usize = 21;
+
+/// The bone the asset build put the hammer on (assets::HAMMER_BONE_FILE), if it did.
+fn hammer_bone() -> Option<String> {
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| std::fs::read_to_string(crate::paths::file(crate::assets::HAMMER_BONE_FILE)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+        .clone()
+}
 /// SM64's right hand part, and our peace-sign copy of it
 const RIGHT_HAND: usize = 9;
 const PEACE: usize = 20;
@@ -69,6 +79,8 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
     if peace {
         out[RIGHT_HAND].scale = 0.01;
     }
+    // the hammer hides in the right hand (hammer.rs shows it)
+    out[HAMMER] = PartPose { scale: 0.01, ..out[RIGHT_HAND] };
     // eyes ride the head; only the variant SM64 is drawing is visible
     for (k, &cell) in EYE_CELLS.iter().enumerate() {
         // hidden variants stay full size, tucked 6 mm into the head behind the visible one (scaling
@@ -136,6 +148,10 @@ fn map_bones(skeleton: usize) -> Option<BoneMap> {
             return None;
         };
         bones[i] = b;
+    }
+    // (without it, or on a skeleton without that bone, the hammer just isn't seen)
+    if let Some(name) = hammer_bone() {
+        bones[HAMMER] = all.iter().position(|n| *n == name).unwrap_or(usize::MAX);
     }
     log(format!("engine mario: skeleton {skeleton:#x} ({count} bones), part bones {:?}", &bones[1..]));
     Some(BoneMap { skeleton, bones })

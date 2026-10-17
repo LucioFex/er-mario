@@ -12,6 +12,8 @@
 #endif
 
 f32 gTrackVolume = 1.0f;
+/** er-mario: the level sequence player's volume (the cap music: kept low under the game's own) */
+f32 er_level_music_volume = 1.0f;
 
 #if defined(VERSION_EU) || defined(VERSION_SH)
 void sequence_channel_process_sound(struct SequenceChannel *seqChannel, s32 recalculateVolume) {
@@ -67,6 +69,9 @@ static void sequence_channel_process_sound(struct SequenceChannel *seqChannel) {
     channelVolume = seqChannel->volume * seqChannel->volumeScale * seqChannel->seqPlayer->fadeVolume;
     if (seqChannel->seqPlayer->muted && (seqChannel->muteBehavior & MUTE_BEHAVIOR_SOFTEN) != 0) {
         channelVolume *= seqChannel->seqPlayer->muteVolumeScale;
+    }
+    if (seqChannel->seqPlayer == &gSequencePlayers[0]) { // SEQ_PLAYER_LEVEL
+        channelVolume *= er_level_music_volume;
     }
 
     panFromChannel = seqChannel->pan * seqChannel->panChannelWeight;

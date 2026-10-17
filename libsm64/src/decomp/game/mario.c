@@ -983,11 +983,15 @@ static u32 set_mario_action_cutscene(struct MarioState *m, u32 action, UNUSED u3
     return action;
 }
 
+/* er-mario: with the hammer out, B's punches become its swings (er_moves.c) */
+u32 er_hammer_redirect(struct MarioState *m, u32 action, u32 *actionArg);
+
 /**
  * Puts Mario into a given action, putting Mario through the appropriate
  * specific function if needed.
  */
 u32 set_mario_action(struct MarioState *m, u32 action, u32 actionArg) {
+    action = er_hammer_redirect(m, action, &actionArg);
     switch (action & ACT_GROUP_MASK) {
         case ACT_GROUP_MOVING:
             action = set_mario_action_moving(m, action, actionArg);

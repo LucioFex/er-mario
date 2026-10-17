@@ -612,18 +612,37 @@ void apply_vertical_wind(struct MarioState *m) {
     }
 }
 
+/** er-mario: the enemy a falling Mario drifts onto (set by the mod every tick) */
+int er_home_active = 0;
+f32 er_home_x = 0.0f;
+f32 er_home_z = 0.0f;
+/** ...at up to this speed (units per tick) */
+#define ER_HOME_PULL 7.0f
+
 s32 perform_air_step(struct MarioState *m, u32 stepArg) {
     Vec3f intendedPos;
     s32 i;
     s32 quarterStepResult;
     s32 stepResult = AIR_STEP_NONE;
+    f32 pullX = 0.0f, pullZ = 0.0f;
 
     m->wall = NULL;
 
+    if (er_home_active && m->vel[1] < 0.0f) {
+        f32 dx = er_home_x - m->pos[0];
+        f32 dz = er_home_z - m->pos[2];
+        f32 dist = sqrtf(dx * dx + dz * dz);
+        if (dist > 1.0f) {
+            f32 pull = dist < ER_HOME_PULL ? dist : ER_HOME_PULL;
+            pullX = dx / dist * pull;
+            pullZ = dz / dist * pull;
+        }
+    }
+
     for (i = 0; i < 4; i++) {
-        intendedPos[0] = m->pos[0] + m->vel[0] / 4.0f;
+        intendedPos[0] = m->pos[0] + (m->vel[0] + pullX) / 4.0f;
         intendedPos[1] = m->pos[1] + m->vel[1] / 4.0f;
-        intendedPos[2] = m->pos[2] + m->vel[2] / 4.0f;
+        intendedPos[2] = m->pos[2] + (m->vel[2] + pullZ) / 4.0f;
 
         quarterStepResult = perform_air_quarter_step(m, intendedPos, stepArg);
 

@@ -128,11 +128,15 @@ replaces this fork's DLL with the original one.
 |---|---|---|
 | Left stick | W A S D | Move |
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
-| X or B | , / left mouse | Punch, kick, dive (auto-aimed combo) |
+| X | , / left mouse | Punch, punch, kick (auto-aimed combo); punch, punch, a beat, X: a harder rush of two jabs and a flying kick. Running: dive (into an enemy's back or side it picks the enemy up) |
+| Y | | Special move: breakdance sweep, slide kick (running), ground pound slam (after a punch), twirl (in the air) |
+| B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
+| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
+| D-pad | | Caps: left Metal, up Wing, right Vanish, down take it off |
 | LB or LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
-| Y | E | Interact |
-| RB or RT | R | Whistle for Yoshi |
+| Y | E | Interact (also does Y's special move) |
+| RT | R | Whistle for Yoshi |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
 | | F1 (hold 3 s) | Give up and respawn at the last grace |
 

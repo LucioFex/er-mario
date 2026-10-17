@@ -120,7 +120,7 @@ fn hold_at(chr: &mut eldenring::cs::ChrIns, home: Vec3) {
 
 /// No falling as far as the game is concerned: fall timer and fell-out-of-the-world flag
 /// (CSChrFallModule +0x1C) cleared.
-fn clear_fall(chr: &mut eldenring::cs::ChrIns) {
+pub fn clear_fall(chr: &mut eldenring::cs::ChrIns) {
     let fall = &mut chr.modules.fall;
     fall.fall_timer = 0.0;
     unsafe { *((&mut **fall as *mut eldenring::cs::CSChrFallModule as *mut u8).add(0x1C)) = 0 };
@@ -327,6 +327,12 @@ pub fn watch_stances(bosses: &[FieldInsHandle]) {
             st.open.push((*h, Instant::now() + std::time::Duration::from_secs_f32(OPEN_FOR)));
         }
     }
+}
+
+/// Whether this boss's stance is broken right now (open for the grab, or a juggle: juggle.rs).
+pub fn is_open(h: &FieldInsHandle) -> bool {
+    let st = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    st.open.iter().any(|(o, until)| key(o) == key(h) && *until > Instant::now())
 }
 
 /// Poise of a character (for the combat log).

@@ -30,6 +30,10 @@ pub const INNER: usize = TILE - 2 * PAD;
 const EYE_CELLS: [usize; 4] = [5, 6, 7, 8];
 const EYE_PARTS: [usize; 4] = [16, 17, 18, 19];
 const PEACE_PART: usize = 20;
+const HAMMER_PART: usize = super::model::HAMMER_PART as usize;
+/// Bones the hammer can go on (the first the chest piece skins): the right arm's twist bones,
+/// like the left one's carry the eye variants
+const HAMMER_BONES: [&str; 3] = ["R_ForeArmTwist", "R_ForeArmTwist1", "R_UpArmTwist"];
 
 fn u32_at(d: &[u8], o: usize) -> u32 {
     u32::from_le_bytes(d[o..o + 4].try_into().unwrap())
@@ -214,9 +218,10 @@ pub fn mean_u(t: &Tri) -> f32 {
 
 /// Mario's mesh as indexed vertices: every eye triangle once per eye texture (each on its own
 /// bone, the mod shows the one SM64 draws), the peace hand on its own bone.
-pub fn mario_vertices(model: &MarioModel) -> (Vec<Vertex>, Vec<[u16; 3]>) {
+pub fn mario_vertices(model: &MarioModel, hammer: bool) -> (Vec<Vertex>, Vec<[u16; 3]>) {
     let colors = mario_colors(model);
-    let all = model.tris.iter().map(|t| (t, t.part as usize)).chain(model.peace.iter().map(|t| (t, PEACE_PART)));
+    let hammer = model.hammer.iter().filter(|_| hammer).map(|t| (t, HAMMER_PART));
+    let all = model.tris.iter().map(|t| (t, t.part as usize)).chain(model.peace.iter().map(|t| (t, PEACE_PART))).chain(hammer);
     let mut verts: Vec<Vertex> = Vec::new();
     let mut index: HashMap<(usize, [i64; 3], [i64; 2]), usize> = HashMap::new();
     let mut tris = Vec::new();
@@ -309,6 +314,15 @@ fn front_winding(f: &Flver, vb: &VertexBuffer, fs: &Faceset) -> Option<f64> {
     (along + against > 0).then(|| if along >= against { 1.0 } else { -1.0 })
 }
 
+/// The bone the hammer goes on: the first of HAMMER_BONES the chest piece skins.
+pub fn hammer_bone(f: &Flver) -> Option<(usize, &'static str)> {
+    let names = f.bone_names();
+    HAMMER_BONES.iter().find_map(|&n| {
+        let b = names.iter().position(|x| x == n)?;
+        (i32_at(&f.d, f.bone_off + b * 0x80 + 0x3C) == 8).then_some((b, n))
+    })
+}
+
 /// Mario into mesh `target` of an armour FLVER, every other mesh emptied.
 pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Vec<u8>, String> {
     let names = f.bone_names();
@@ -317,6 +331,9 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         .map(|n| if n.is_empty() { Some(0) } else { names.iter().position(|b| b == n) })
         .collect::<Option<Vec<usize>>>()
         .ok_or("the chest piece's skeleton is not the expected one")?;
+    let hammer = hammer_bone(&f).filter(|(b, _)| !bone_ids.contains(b));
+    let mut bone_ids = bone_ids;
+    bone_ids.push(hammer.map_or(0, |(b, _)| b));
     // identity binds, so the hierarchy composes to identity for our bones
     for b in 0..f.bones {
         let a = f.bone_off + b * 0x80;
@@ -324,7 +341,7 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         put_f32s(&mut f.d, a + 0x10, &[0.0; 3]);
         put_f32s(&mut f.d, a + 0x20, &[1.0; 3]);
     }
-    for &b in &bone_ids[1..] {
+    for &b in &bone_ids[1..PART_BONES.len()] {
         let a = f.bone_off + b * 0x80;
         if i32_at(&f.d, a + 0x3C) != 8 {
             return Err(format!("bone {} is not skinned by the chest piece", names[b]));
@@ -332,7 +349,13 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
         put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
     }
-    put_f32s(&mut f.d, 0x28, &[-1.5, -0.5, -1.5, 1.5, 2.5, 1.5]);
+    if let Some((b, _)) = hammer {
+        let a = f.bone_off + b * 0x80;
+        put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
+        put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
+    }
+    // (wide enough for the giant hammer, held out at arm's length)
+    put_f32s(&mut f.d, 0x28, &[-4.0, -1.0, -4.0, 4.0, 5.0, 4.0]);
     let (meshes, fsets) = (f.meshes(), f.facesets());
     let mesh = meshes.get(target).ok_or("chest piece mesh missing")?;
     for (mi, m) in meshes.iter().enumerate() {
@@ -342,10 +365,17 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
             }
         }
     }
-    let (verts, tris) = mario_vertices(model);
+    let (verts, tris) = mario_vertices(model, hammer.is_some());
     let vb = f.vertex_buffers(mesh.vbufs[0]);
     let members = f.layout_members(vb.layout);
     const EXPECTED: [(i32, i32, i32); 7] = [(0, 2, 0), (12, 17, 3), (16, 17, 6), (20, 17, 2), (24, 19, 1), (28, 19, 10), (32, 22, 5)];
+    // (no room for the hammer: Mario without it)
+    let (verts, tris) = if hammer.is_some() && verts.len() > vb.vcount {
+        crate::log(format!("assets: no room for the hammer ({} vertices, {} fit)", verts.len(), vb.vcount));
+        mario_vertices(model, false)
+    } else {
+        (verts, tris)
+    };
     if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) || verts.len() > vb.vcount {
         return Err("the chest piece's vertex layout is not the expected one".into());
     }

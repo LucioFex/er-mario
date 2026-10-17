@@ -5,26 +5,34 @@
 
 mod assets;
 mod audio;
+mod caps;
 mod carry;
 mod collision;
 mod coins;
 mod combat;
 mod engine_mario;
+mod fireball;
 mod equip;
 mod kbd;
+mod knock;
 mod lakitu;
 mod menu_mario;
 mod havok_col;
 mod explore;
 mod gameover;
+mod hammer;
 mod hud;
+mod impact;
+mod juggle;
 mod moving;
+mod moves;
 mod collision_geometry;
 mod throw_collision;
 mod trample;
 mod names;
 mod notes;
 mod pads;
+mod save_backup;
 mod paths;
 mod perf;
 mod sm64;
@@ -55,6 +63,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::Input::XboxController::{
     XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
     XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
+    XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
     XINPUT_STATE,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -184,10 +193,21 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     }
     let s = unsafe { &mut *state };
     pads::xinput_seen(index, s);
-    // Mario plays with the first pad; the game reads all four and merges them, so every one's
-    // sticks are hidden (Proton can show one controller twice, e.g. Steam's virtual pad and the
-    // real one: the second one, untouched, walked the Tarnished under Mario)
-    if index == 0 {
+    // Mario plays with the pad in use: the last slot anything was pressed or pushed on (a pad
+    // plugged back in, or with Steam's virtual one in slot 0, came up in slot 1 and Mario didn't
+    // move). The game reads all four and merges them, so every one's sticks are hidden (Proton can
+    // show one controller twice, e.g. Steam's virtual pad and the real one: the second one,
+    // untouched, walked the Tarnished under Mario)
+    static ACTIVE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let g = &s.Gamepad;
+    let used = g.wButtons.0 != 0
+        || g.bLeftTrigger > 30
+        || g.bRightTrigger > 30
+        || [g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY].iter().any(|v| (*v as i32).abs() > 12000);
+    if used && ACTIVE.swap(index, Ordering::Relaxed) != index {
+        log(format!("pads: Mario follows controller {index}"));
+    }
+    if index == ACTIVE.load(Ordering::Relaxed) {
         *PAD.lock().unwrap_or_else(|e| e.into_inner()) = Some((*s, std::time::Instant::now()));
     }
     let (left, right) = hidden_sticks();
@@ -201,10 +221,14 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         g.sThumbRY = 0;
     }
     if ENABLED.load(Ordering::Relaxed) && IN_WORLD.load(Ordering::Relaxed) && !MENU_OPEN.load(Ordering::Relaxed) {
-        // RB and RT whistle for Torrent (input_task); as the game's attack buttons, pressed in
-        // the same frame, they kept the whistle from being used
+        // RB is the fireball and RT whistles for Torrent (input_task); as the game's attack
+        // buttons, pressed in the same frame, they kept the whistle from being used
         g.wButtons &= !XINPUT_GAMEPAD_RIGHT_SHOULDER;
         g.bRightTrigger = 0;
+        // L1 brings out Mario's hammer (moves.rs), not the game's guard
+        g.wButtons &= !XINPUT_GAMEPAD_LEFT_SHOULDER;
+        // the D-pad changes Mario's caps (caps.rs), not the game's items and spells
+        g.wButtons &= !(XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT);
         // X is Mario's punch and the game's "use item": the game only gets it for the whistle
         // (punching while getting off Yoshi whistled him back, over and over in a fight)
         if WHISTLING.load(Ordering::Relaxed) {
@@ -337,6 +361,12 @@ struct MarioState {
     /// Mario's body parts relative to him (this tick and the previous one), for the engine model
     parts: Option<[engine_mario::PartPose; engine_mario::PARTS]>,
     combat: combat::Combat,
+    /// Mario's fireball (RB)
+    fire: fireball::Fire,
+    /// the dash (B) and the special moves (Y)
+    moves: moves::Moves,
+    /// what the combos' moves did on the last tick
+    combo: sm64::SM64ErMove,
     /// the Tarnished died: Mario plays SM64's death until the game respawns the player
     dead: bool,
     /// lifts, doors and other moving collision as SM64 surface objects
@@ -355,6 +385,7 @@ const HEAD_PITCH_SIGN: f32 = -1.0;
 /// SOUND_GENERAL_COIN, SOUND_GENERAL_HEART_SPIN
 const SOUND_COIN: i32 = 0x3811_8081;
 const SOUND_HEART: i32 = 0x3064_C081;
+const SOUND_METAL_BONK: i32 = 0x0442_8081;
 /// Elden Ring's HUD in Mario mode: its HP / FP / stamina bars mean nothing (the power meter is
 /// Mario's health), and nothing at all shows over the game-over screen; menus keep their own HUD
 /// states. Runs after the menu manager, before the HUD is drawn.
@@ -1190,6 +1221,9 @@ static CUTSCENE_HIDE: AtomicBool = AtomicBool::new(false);
 
 /// Set by input_task when the player pressed interact; frame() then watches for an event animation.
 static INTERACT_PRESSED: AtomicBool = AtomicBool::new(false);
+/// ...and what the game made of it then: interact allowed by the Tarnished's animation, blocked,
+/// queued (a door once didn't open on Y: logged when no event animation follows)
+static INTERACT_STATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// Elden Ring's ladder animations (getting on, climbing, sliding, getting off).
 fn ladder_anim(anim: i32) -> bool {
     (28000..29000).contains(&anim) || (51100..51200).contains(&anim)
@@ -1288,6 +1322,31 @@ fn input_task() {
             || (menu && stick);
         opener |= b.contains(XINPUT_GAMEPAD_START) || b.contains(XINPUT_GAMEPAD_BACK);
     }
+    // Start or Select that opened no menu (seen once: the pad's Start did nothing until the game
+    // was minimised and restored): logged with the focus, to tell what the game was waiting for
+    {
+        static START_AT: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+        static START_HELD: AtomicBool = AtomicBool::new(false);
+        let start = pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_START) || p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_BACK));
+        let mut at = START_AT.lock().unwrap_or_else(|e| e.into_inner());
+        if start && !START_HELD.swap(true, Ordering::Relaxed) && !menu {
+            *at = Some((std::time::Instant::now(), kbd::focused()));
+        }
+        START_HELD.store(start, Ordering::Relaxed);
+        if menu || game_menu_open() {
+            *at = None;
+        } else if let Some((t, focused)) = *at {
+            if t.elapsed().as_secs_f32() > 1.0 {
+                *at = None;
+                log(format!(
+                    "input: Start/Select pressed, no menu after 1 s (game window in front: {} then, {} now; world paused: {})",
+                    focused,
+                    kbd::focused(),
+                    WORLD_PAUSED.load(Ordering::Relaxed)
+                ));
+            }
+        }
+    }
     if kbd::focused() {
         let key = |vk: i32| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0;
         // Esc (menu), G (map); E interact, Space, F, R, Q, Enter, mouse buttons, and WASD in menus
@@ -1340,6 +1399,9 @@ fn input_task() {
     }
     if *bits(&mut req.new_action_presses) & ACTION != 0 {
         INTERACT_PRESSED.store(true, Ordering::Relaxed);
+        let flag = |a: &mut eldenring::cs::ChrActions, bit: u32| if *bits(a) & ACTION != 0 { bit } else { 0 };
+        let state = flag(&mut req.possible_action_inputs, 1) | flag(&mut req.disabled_action_inputs, 2) | flag(&mut req.queued_action_inputs, 4);
+        INTERACT_STATE.store(state, Ordering::Relaxed);
     }
     // on Torrent the game needs the rider's buttons: dash (5), jump (6) and getting off (13)
     const USE_ITEM: u64 = 1 << 7;
@@ -1355,12 +1417,13 @@ fn input_task() {
     ] {
         *bits(a) &= keep;
     }
-    // RB, RT (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
+    // RT (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
+    // (RB is the fireball)
     {
         static HELD: AtomicBool = AtomicBool::new(false);
         let rb = kbd::focused()
             && !MENU_OPEN.load(Ordering::Relaxed)
-            && (pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_RIGHT_SHOULDER) || p.Gamepad.bRightTrigger > 100)
+            && (pad.is_some_and(|p| p.Gamepad.bRightTrigger > 100)
                 || unsafe { GetAsyncKeyState(0x52) } as u16 & 0x8000 != 0);
         // The key is held for a few frames. Not while he's getting on or off (a second whistle
         // then breaks it off half way).
@@ -1552,6 +1615,7 @@ fn frame(data: &FD4TaskData) {
     if !ENABLED.load(Ordering::Relaxed) {
         if let Ok(flags) = unsafe { eldenring::cs::WorldChrManDbgFlags::instance_mut() } {
             flags.player_no_dead = false;
+            flags.all_no_hit = false;
         }
     }
     {
@@ -1956,6 +2020,9 @@ fn frame(data: &FD4TaskData) {
             last_query_havok: false,
             parts: None,
             combat: combat::Combat::new(),
+            fire: fireball::Fire::new(),
+            moves: moves::Moves::new(),
+            combo: sm64::SM64ErMove::default(),
             dead: false,
             moving,
             stuck_ticks: 0,
@@ -1972,6 +2039,8 @@ fn frame(data: &FD4TaskData) {
         return;
     }
 
+    // a cap's look going on (the chest piece back on, with its new model)
+    equip::look_tick(player_ref);
     // equipment lock: only the Mario set and fists while Mario is on
     {
         static LOCK_TIMER: Mutex<f32> = Mutex::new(0.0);
@@ -2155,6 +2224,28 @@ fn frame(data: &FD4TaskData) {
         for (mob, pct) in &impact {
             combat::impact(&mut m.combat, mob, *pct, m.ticks);
         }
+        // enemies up in the air with Mario (the air combos), or falling back down
+        {
+            let me = to_er(m.origin, m.state.position);
+            juggle::update(data.delta_time.time, glam::Vec3::new(me.0, me.1, me.2), |from, to| {
+                let h = havok?;
+                let d = to - from;
+                h.phys_world
+                    .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                    .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+            });
+        }
+        // enemies the giant fireball blew away, landing
+        let landed = knock::update(data.delta_time.time, |from, to| {
+            let h = havok?;
+            let d = to - from;
+            h.phys_world
+                .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+        });
+        for (mob, pct) in &landed {
+            combat::impact(&mut m.combat, mob, *pct, m.ticks);
+        }
     }
     let st = stats::get();
     hud::set_counters(st.deaths, st.coins, st.stars);
@@ -2228,6 +2319,11 @@ fn frame(data: &FD4TaskData) {
         log("the Tarnished died: Mario dies");
         stats::update(|s| s.deaths += 1);
         coins::clear();
+        fireball::clear();
+        impact::clear();
+        knock::clear();
+        juggle::clear();
+        caps::clear();
         swing::reset();
         carry::reset();
     } else if m.dead && hp > 0 {
@@ -2292,6 +2388,11 @@ fn frame(data: &FD4TaskData) {
         m.acc -= 1.0 / 30.0;
         SM64_TICKS.fetch_add(1, Ordering::Relaxed);
         let mut inputs = sm64::SM64MarioInputs::default();
+        // RB is the fireball (fireball.rs), B the dash and Y the special moves (moves.rs); B is
+        // SM64's B like X while Mario holds an enemy (the throw) or rides
+        let fire_ok = !carry::holding() && !RIDING.load(Ordering::Relaxed);
+        let (mut b_fire, mut b_dash, mut y_move, mut x_move, mut l_hammer) = (false, false, false, false, false);
+        let mut dpad = [false; 4];
         if let Some(p) = pad.filter(|_| !m.dead) {
             let g = p.Gamepad;
             let axis = |v: i16| {
@@ -2301,8 +2402,15 @@ fn frame(data: &FD4TaskData) {
             inputs.stick_x = axis(g.sThumbLX);
             inputs.stick_y = -axis(g.sThumbLY);
             inputs.button_a = g.wButtons.contains(XINPUT_GAMEPAD_A) as u8;
-            inputs.button_b = (g.wButtons.contains(XINPUT_GAMEPAD_X) || g.wButtons.contains(XINPUT_GAMEPAD_B)) as u8;
-            inputs.button_z = (g.wButtons.contains(XINPUT_GAMEPAD_LEFT_SHOULDER) || g.bLeftTrigger > 100) as u8;
+            inputs.button_b = (g.wButtons.contains(XINPUT_GAMEPAD_X) || (g.wButtons.contains(XINPUT_GAMEPAD_B) && !fire_ok)) as u8;
+            b_fire = g.wButtons.contains(XINPUT_GAMEPAD_RIGHT_SHOULDER);
+            b_dash = g.wButtons.contains(XINPUT_GAMEPAD_B);
+            y_move = g.wButtons.contains(XINPUT_GAMEPAD_Y);
+            x_move = g.wButtons.contains(XINPUT_GAMEPAD_X);
+            dpad = [XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT].map(|b| g.wButtons.contains(b));
+            // (L1 is the hammer, L2 SM64's Z)
+            l_hammer = g.wButtons.contains(XINPUT_GAMEPAD_LEFT_SHOULDER);
+            inputs.button_z = (g.bLeftTrigger > 100) as u8;
         }
         // SM64's first-person view: Mario stands still, the stick looks around
         if lakitu::first_person() {
@@ -2312,6 +2420,7 @@ fn frame(data: &FD4TaskData) {
         // (in a menu where the game walks the character: WASD walks Mario, the buttons stay the menu's)
         let menu_walk = MENU_OPEN.load(Ordering::Relaxed) && MENU_WALK.load(Ordering::Relaxed);
         let gameplay = !m.dead && (!MENU_OPEN.load(Ordering::Relaxed) || menu_walk) && !FOLLOWING.load(Ordering::Relaxed);
+        let fire_allowed = fire_ok && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person();
         if let Some(k) = kbd::read().filter(|_| gameplay && !lakitu::first_person()) {
             if inputs.stick_x == 0.0 && inputs.stick_y == 0.0 {
                 inputs.stick_x = k.stick_x;
@@ -2430,15 +2539,24 @@ fn frame(data: &FD4TaskData) {
         // stomped enemy when he drops onto them (he bounced off "nothing"); ground pounds still break them
         let mut no_stomp = no_stomp;
         no_stomp.extend(targets.iter().enumerate().filter(|(_, t)| t.is_prop()).map(|(i, _)| i));
-        let target_pos: Vec<([f32; 3], f32, f32, usize)> = targets.iter().enumerate().map(|(i, t)| (t.sm, t.radius, t.height, i)).collect();
+        // (NPCs and allies: never hit, Y's moves near a merchant swept him)
+        let target_pos: Vec<([f32; 3], f32, f32, usize)> =
+            targets.iter().enumerate().filter(|(_, t)| !t.friendly()).map(|(i, t)| (t.sm, t.radius, t.height, i)).collect();
         // the enemy the next hit of a punch combo turns Mario to
         let aim = combat::aim(&m.state, &targets);
+        // the enemy a falling Mario drifts onto, and the big bodies the camera keeps out of
+        let home = combat::home(&m.state, &targets);
+        lakitu::set_big(combat::big_bodies(&targets));
+        lakitu::set_climb(m.combat.climb(&targets));
         // SM64's health is Mario's: Elden Ring hits cost wedges, and the Tarnished's HP is kept full
         // (a hit bigger than his whole HP would still kill him outright, a low-level character
         // against a late boss: the game's own "player can't die" flag stops him at 1 HP, and it
         // comes off when Mario himself is out of health, since his death is the Tarnished's)
         if let Ok(flags) = unsafe { eldenring::cs::WorldChrManDbgFlags::instance_mut() } {
             flags.player_no_dead = !m.dead;
+            // the Vanish cap: enemy hits go through Mario
+            // (and while he dashes)
+            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::dodging(m.state.action));
         }
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
@@ -2482,6 +2600,15 @@ fn frame(data: &FD4TaskData) {
             }
             hurt
         };
+        // the Metal and Vanish caps: Elden Ring's hits do nothing (on Metal Mario they clang)
+        if matches!(hurt, Some(combat::Hurt::Hit(_))) && caps::active() == Some(caps::METAL) {
+            worker::call("metal clang", |_| unsafe { sm64::sm64_play_sound_global(SOUND_METAL_BONK) });
+        }
+        let hurt = hurt.filter(|_| !caps::shielded() && !moves::dodging(m.state.action));
+        if matches!(hurt, Some(combat::Hurt::Hit(_))) {
+            let me = to_er(m.origin, m.state.position);
+            impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
+        }
         // healing: enemies Mario defeated drop coins (a wedge each when he touches one); a grace
         // or a boss's star refills him
         let kills = if m.dead {
@@ -2566,6 +2693,28 @@ fn frame(data: &FD4TaskData) {
             m.stuck_ticks = 0;
         }
         let stuck_at = m.state.position;
+        // Y's moves give way to the game's interact (Y): an NPC close by, or the Tarnished in an
+        // event animation (picking up, a grace, a door...) or a menu up
+        let interacting = FOLLOWING.load(Ordering::Relaxed) || MENU_OPEN.load(Ordering::Relaxed) || game_driven(current_anim(&player_ref.chr_ins));
+        let npc_near = targets.iter().any(|t| t.friendly() && glam::Vec3::from(t.sm).distance(glam::Vec3::from(m.state.position)) < 350.0);
+        // L1: the hammer out or away (not while holding anyone or riding: his hands are busy)
+        let hands_free = fire_allowed && !carry::holding();
+        // (not in the middle of one of the combos' moves)
+        if let Some(out) = m.moves.toggle_hammer(l_hammer, hands_free && !m.dead && !moves::hammer_busy(m.state.action)) {
+            hammer::set_out(out);
+            let hand = to_er(m.origin, m.state.position);
+            impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), out);
+        }
+        let hammer_on = m.moves.hammer && hands_free;
+        let juggling = juggle::active();
+        // an enemy close by: a fight, Y's moves are on (otherwise Y only interacts)
+        let fight = targets.iter().any(|t| t.hostile() && glam::Vec3::from(t.sm).distance(glam::Vec3::from(m.state.position)) < 800.0);
+        let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, npc_near, fight, &m.state, m.combo.action_timer, m.ticks);
+        // (an X pressed for Y, X while Y's move waits: no punch first)
+        if m.moves.swallows_x() {
+            inputs.button_b = 0;
+        }
+        let no_punch = m.fire.throwing(m.ticks);
         let tt = std::time::Instant::now();
         let tick_span = perf::span(perf::TICK);
         // lava under the Tarnished (he stands where Mario does): SM64's lava boost
@@ -2600,7 +2749,8 @@ fn frame(data: &FD4TaskData) {
                 None => {}
             }
             if kills > 0 {
-                unsafe { sm64::sm64_mario_heal(id, (4 * kills).min(32) as u8) };
+                // (a wedge and a half each)
+                unsafe { sm64::sm64_mario_heal(id, (6 * kills).min(32) as u8) };
                 unsafe { sm64::sm64_play_sound_global(SOUND_COIN) };
             }
             // Bowser's tail swing: Mario grabs the boss (SM64's pickup, swing and throw follow)
@@ -2635,9 +2785,18 @@ fn frame(data: &FD4TaskData) {
                 Some((x, z)) => unsafe { sm64::sm64_er_set_aim(1, x, z) },
                 None => unsafe { sm64::sm64_er_set_aim(0, 0.0, 0.0) },
             }
+            match home {
+                Some((x, z)) => unsafe { sm64::sm64_er_set_home(1, x, z) },
+                None => unsafe { sm64::sm64_er_set_home(0, 0.0, 0.0) },
+            }
             if rested {
                 unsafe { sm64::sm64_set_mario_health(id, 0x880) };
                 unsafe { sm64::sm64_play_sound_global(SOUND_HEART) };
+            }
+            unsafe { sm64::sm64_er_set_hammer(hammer_on as i32) };
+            unsafe { sm64::sm64_er_set_juggle(juggling as i32) };
+            if let Some(r) = request {
+                r.apply(id);
             }
             let mut state = sm64::SM64MarioState::default();
             {
@@ -2658,14 +2817,20 @@ fn frame(data: &FD4TaskData) {
             let right_hand = tri_part[..ctx.geo.used()].iter().filter(|&&p| p == 9).count();
             let peace = right_hand > engine_mario::FIST_TRIANGLES;
             let eye_cell = eye_cell(&ctx.geo.uv, ctx.geo.used());
-            let parts = engine_mario::relative_parts(&mats, count, state.position, eye_cell, peace);
-            let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp) } else { Vec::new() };
-            (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits)
+            let mut parts = engine_mario::relative_parts(&mats, count, state.position, eye_cell, peace);
+            let mut combo = sm64::SM64ErMove::default();
+            unsafe { sm64::sm64_er_get_move(id, &mut combo) };
+            // the hammer in his hand (out, and not swimming or in a cutscene)
+            const ACT_GROUP_MASK: u32 = 0x1C0;
+            let busy_hands = matches!(state.action & ACT_GROUP_MASK, 0x0C0 | 0x100) || peace;
+            let swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
+            let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing) } else { Vec::new() };
+            (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
         });
         drop(tick_span);
         PERF.lock().unwrap_or_else(|e| e.into_inner()).tick_ms += tt.elapsed().as_secs_f32() * 1000.0;
         match result {
-            Some((state, mesh, colors, normals, parts, hits)) => {
+            Some((state, mesh, colors, normals, parts, hits, combo, swing)) => {
                 // debug: Mario's centre crossing a loaded wall front to back in one tick
                 let step = glam::Vec3::from(state.position) - glam::Vec3::from(m.state.position);
                 if debug() && !FOLLOWING.load(Ordering::Relaxed) && step.length() < 200.0 {
@@ -2677,6 +2842,45 @@ fn frame(data: &FD4TaskData) {
                     }
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                // the dash's streaks (hud.rs), the meteor dive's too
+                let streak = |a: u32| moves::dodging(a) || moves::streaking(a);
+                if streak(state.action) {
+                    let p = to_er(m.origin, state.position);
+                    impact::dash_point(glam::Vec3::new(p.0, p.1, p.2), !streak(m.state.action));
+                }
+                // the combos' rings, stars and dust, and the hammer's swing ribbon
+                {
+                    let er = |p: glam::Vec3| {
+                        let h = to_er(m.origin, p.into());
+                        glam::Vec3::new(h.0, h.1, h.2)
+                    };
+                    let feet = er(state.position.into());
+                    let head = swing.map(|s| er(s.head));
+                    if combo.fx != 0 {
+                        impact::combo(combo.fx, feet, head);
+                    }
+                    if let (Some(s), true) = (swing, moves::Hit::from(combo.hit).is_some()) {
+                        impact::swing_point(er(s.head), er(s.grip.lerp(s.head, 0.45)));
+                    }
+                }
+                m.combo = combo;
+                {
+                    let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+                    let ray = |from: glam::Vec3, to: glam::Vec3| {
+                        let d = to - from;
+                        havok?
+                            .phys_world
+                            .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                            .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+                    };
+                    m.fire.tick(id, b_fire, fire_allowed, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                }
+                let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
+                    .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
+                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed), boss) {
+                    let p = to_er(m.origin, state.position);
+                    impact::cap_change(glam::Vec3::new(p.0, p.1, p.2), cap);
+                }
                 m.prev_parts = m.parts.take();
                 m.parts = parts;
                 static PARTS_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -2754,7 +2958,10 @@ fn frame(data: &FD4TaskData) {
         }
     }
     CUTSCENE_HIDE.store(cutscene, Ordering::Relaxed);
-    set_opacity(if cutscene { 0.0 } else { 1.0 });
+    // (see-through with the Vanish cap)
+    static SHIMMER: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let vanish = caps::VANISH_OPACITY * (1.0 + 0.3 * (SHIMMER.get_or_init(std::time::Instant::now).elapsed().as_secs_f32() * 6.0).sin());
+    set_opacity(if cutscene { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
 
     // event animations (fog walls, doors, ladders...): after an interact, if the Tarnished starts a
     // new animation, the game drives him and Mario follows until he's back to what he was doing
@@ -2870,6 +3077,20 @@ fn frame(data: &FD4TaskData) {
                 *armed = None;
             } else if t.elapsed().as_secs_f32() > 1.0 {
                 *armed = None;
+                // (once every few seconds at most: Y is also Mario's special move)
+                static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+                let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+                if last.is_none_or(|l| l.elapsed().as_secs_f32() > 3.0) {
+                    *last = Some(std::time::Instant::now());
+                    let st = INTERACT_STATE.load(Ordering::Relaxed);
+                    log(format!(
+                        "input: interact (Y) pressed, no event animation after 1 s (allowed {}, blocked {}, queued {}; tarnished anim {before} -> {cur}, Mario action {:#x})",
+                        st & 1 != 0,
+                        st & 2 != 0,
+                        st & 4 != 0,
+                        m.state.action
+                    ));
+                }
             }
         }
         if let Some((t, before, last)) = *follow {
@@ -3359,6 +3580,8 @@ pub unsafe extern "C" fn DllMain(hmodule: usize, reason: u32) -> bool {
             return;
         }
         std::panic::set_hook(Box::new(|info| log(format!("PANIC: {info}"))));
+        save_backup::run();
+        assets::apply_pending();
         let started = std::time::Instant::now();
         let cs_task = loop {
             match CSTaskImp::wait_for_instance(Duration::from_secs(30)) {

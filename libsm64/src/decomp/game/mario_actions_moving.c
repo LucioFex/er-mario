@@ -1982,6 +1982,58 @@ s32 check_common_moving_cancels(struct MarioState *m) {
     return FALSE;
 }
 
+/* er-mario: the dash (pad B), Devil May Cry's Trickster: a quick lunge where the stick points (ahead
+ * without it), leaning into it like a long jump, out of harm's way all along
+ * (ACT_FLAG_INVULNERABLE). From its third frame B turns it into a punch and A into a jump, both
+ * keeping its speed. */
+s32 act_er_dash(struct MarioState *m) {
+    f32 speed;
+
+    if (m->actionTimer == 0) {
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            m->faceAngle[1] = m->intendedYaw;
+        }
+        play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+        set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
+    }
+
+    // (out of it the dash's speed is cut: a punch kept it all and slid on, hitting all the way)
+    if (m->actionTimer >= 3) {
+        if (m->input & INPUT_B_PRESSED) {
+            mario_set_forward_vel(m, 12.0f);
+            return set_mario_action(m, ACT_MOVE_PUNCHING, 0);
+        }
+        if (m->input & INPUT_A_PRESSED) {
+            mario_set_forward_vel(m, 32.0f);
+            return set_jumping_action(m, ACT_JUMP, 0);
+        }
+    }
+
+    // 5 frames flat out, then 2 slowing down (about 4.5 m in a quarter of a second)
+    speed = m->actionTimer < 5 ? 76.0f : 76.0f * (0.5f - 0.2f * (m->actionTimer - 5));
+    mario_set_forward_vel(m, speed);
+    set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
+
+    switch (perform_ground_step(m)) {
+        case GROUND_STEP_LEFT_GROUND:
+            return set_mario_action(m, ACT_FREEFALL, 0);
+
+        case GROUND_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            return set_mario_action(m, ACT_IDLE, 0);
+    }
+
+    if (++m->actionTimer >= 7) {
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            mario_set_forward_vel(m, 26.0f);
+            return set_mario_action(m, ACT_WALKING, 0);
+        }
+        mario_set_forward_vel(m, 0.0f);
+        return set_mario_action(m, ACT_IDLE, 0);
+    }
+    return FALSE;
+}
+
 s32 mario_execute_moving_action(struct MarioState *m) {
     s32 cancel;
 
@@ -2033,6 +2085,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
         case ACT_QUICKSAND_JUMP_LAND:      cancel = act_quicksand_jump_land(m);      break;
         case ACT_HOLD_QUICKSAND_JUMP_LAND: cancel = act_hold_quicksand_jump_land(m); break;
         case ACT_LONG_JUMP_LAND:           cancel = act_long_jump_land(m);           break;
+        case ACT_ER_DASH:                  cancel = act_er_dash(m);                  break;
     }
     /* clang-format on */
 

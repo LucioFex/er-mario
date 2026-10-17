@@ -157,6 +157,8 @@ unsafe extern "C" {
     pub fn sm64_mario_heal(id: i32, heal_counter: u8);
     pub fn sm64_play_sound_global(sound_bits: i32);
     pub fn sm64_set_mario_action(id: i32, action: u32);
+    pub fn sm64_set_mario_action_arg(id: i32, action: u32, action_arg: u32);
+    pub fn sm64_set_mario_velocity(id: i32, x: f32, y: f32, z: f32);
     pub fn sm64_surface_object_create(object: *const SM64SurfaceObject) -> u32;
     pub fn sm64_surface_object_move(id: u32, transform: *const SM64ObjectTransform);
     pub fn sm64_surface_object_delete(id: u32);
@@ -169,6 +171,14 @@ unsafe extern "C" {
     pub fn sm64_er_set_head(active: i32, pitch: f32, yaw: f32);
     /// er-mario patch: the enemy (SM64 x, z) each hit of the punch combo turns Mario to (0 = none)
     pub fn sm64_er_set_aim(active: i32, x: f32, z: f32);
+    pub fn sm64_er_set_home(active: i32, x: f32, z: f32);
+    pub fn sm64_er_set_stomp(vel: f32, vel_a: f32);
+    pub fn sm64_er_end_cap(id: i32, now: i32);
+    pub fn sm64_er_set_music_volume(volume: f32);
+    /// a blow landed: Mario (and his animation) hold still for this many ticks
+    pub fn sm64_er_hitstop(frames: i32);
+    pub fn sm64_er_set_cap_flags(id: i32, flags: u32);
+    pub fn sm64_mario_interact_cap(id: i32, cap_flag: u32, cap_time: u16, play_music: u8);
     pub fn sm64_er_set_ladder(rate: f32);
     pub fn sm64_er_lava(id: i32);
     pub fn sm64_er_mute(mute: i32);
@@ -176,4 +186,26 @@ unsafe extern "C" {
     pub fn sm64_er_held(id: i32, pos: *mut f32) -> i32;
     pub fn sm64_er_drop(id: i32);
     pub fn sm64_er_get_parts(matrices: *mut f32, tri_part: *mut i32, local_pos: *mut f32, local_normal: *mut f32) -> i32;
+    /// er-mario patch: the hammer is out (L1), B's punches are its swings
+    pub fn sm64_er_set_hammer(on: i32);
+    /// er-mario patch: an enemy is up in the air with Mario (juggle.rs): his air blows keep him up
+    pub fn sm64_er_set_juggle(on: i32);
+    /// er-mario patch: what the combos' moves did on the last tick
+    pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
+}
+
+/// What the combos' moves (libsm64's er_moves.c) did on a tick: what they hit (moves::Hit), what
+/// to show (moves::FX_*), where the hammer points (degrees around Mario's facing, positive to his
+/// left, and up from level) and how big it is.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SM64ErMove {
+    pub hit: i32,
+    pub fx: u32,
+    pub hammer_scripted: i32,
+    pub hammer_yaw: f32,
+    pub hammer_pitch: f32,
+    pub hammer_scale: f32,
+    pub action_arg: u32,
+    pub action_timer: i32,
 }

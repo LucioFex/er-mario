@@ -2064,6 +2064,55 @@ s32 check_common_airborne_cancels(struct MarioState *m) {
     return FALSE;
 }
 
+/* er-mario: the dash in the air (pad B): a flat lunge where the stick points (ahead without it), no
+ * falling while it lasts, out of harm's way; from its third frame B kicks and Z ground pounds */
+s32 act_er_air_dash(struct MarioState *m) {
+    if (m->actionTimer == 0) {
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            m->faceAngle[1] = m->intendedYaw;
+        }
+        play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+    }
+
+    if (m->actionTimer >= 3) {
+        if (m->input & INPUT_B_PRESSED) {
+            mario_set_forward_vel(m, 16.0f);
+            return set_mario_action(m, ACT_JUMP_KICK, 0);
+        }
+        if (m->input & INPUT_Z_PRESSED) {
+            return set_mario_action(m, ACT_GROUND_POUND, 0);
+        }
+    }
+
+    mario_set_forward_vel(m, m->actionTimer < 5 ? 70.0f : 32.0f);
+    m->vel[1] = 0.0f;
+    set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
+
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+
+    if (++m->actionTimer >= 7) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
+/* er-mario: the combos' moves in the air (er_moves.c) */
+s32 act_er_uppercut(struct MarioState *m);
+s32 act_er_meteor(struct MarioState *m);
+s32 act_er_hammer_air(struct MarioState *m);
+s32 act_er_air_combo(struct MarioState *m);
+
 s32 mario_execute_airborne_action(struct MarioState *m) {
     u32 cancel;
 
@@ -2083,6 +2132,11 @@ s32 mario_execute_airborne_action(struct MarioState *m) {
         case ACT_SIDE_FLIP:            cancel = act_side_flip(m);            break;
         case ACT_WALL_KICK_AIR:        cancel = act_wall_kick_air(m);        break;
         case ACT_TWIRLING:             cancel = act_twirling(m);             break;
+        case ACT_ER_AIR_DASH:          cancel = act_er_air_dash(m);          break;
+        case ACT_ER_UPPERCUT:          cancel = act_er_uppercut(m);          break;
+        case ACT_ER_METEOR:            cancel = act_er_meteor(m);            break;
+        case ACT_ER_HAMMER_AIR:        cancel = act_er_hammer_air(m);        break;
+        case ACT_ER_AIR_COMBO:         cancel = act_er_air_combo(m);         break;
         case ACT_WATER_JUMP:           cancel = act_water_jump(m);           break;
         case ACT_HOLD_WATER_JUMP:      cancel = act_hold_water_jump(m);      break;
         case ACT_STEEP_JUMP:           cancel = act_steep_jump(m);           break;

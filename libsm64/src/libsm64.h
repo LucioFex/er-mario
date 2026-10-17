@@ -68,6 +68,19 @@ struct SM64MarioState
     int16_t invincTimer;
 };
 
+/* er-mario: what the combos' moves did on a tick (sm64_er_get_move) */
+struct SM64ErMove
+{
+    int32_t hit;
+    uint32_t fx;
+    int32_t hammerScripted;
+    float hammerYaw;
+    float hammerPitch;
+    float hammerScale;
+    uint32_t actionArg;
+    int32_t actionTimer;
+};
+
 struct SM64MarioGeometryBuffers
 {
     float *position;

@@ -220,6 +220,23 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
     return marioIndex;
 }
 
+/** er-mario: the combos' moves (decomp/game/er_moves.c) */
+extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted;
+extern u32 er_move_fx;
+extern f32 er_hammer_yaw, er_hammer_pitch, er_hammer_scale;
+void er_moves_begin_tick(int frozen);
+
+/** er-mario: hit-stop frames left, and the button presses made during them */
+static int er_hitstop = 0;
+static u16 er_held_presses = 0;
+
+/** er-mario: a blow landed: Mario holds still for this many ticks */
+SM64_LIB_FN void sm64_er_hitstop(int frames)
+{
+    if( frames > er_hitstop )
+        er_hitstop = frames;
+}
+
 SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs *inputs, struct SM64MarioState *outState, struct SM64MarioGeometryBuffers *outBuffers )
 {
     if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
@@ -230,9 +247,21 @@ SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs 
 
     global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
 
+    // er-mario: a hit-stop holds Mario (and his animation) still; presses made meanwhile are kept
+    // for when he moves again (a combo's next punch wasn't lost in it)
+    int frozen = er_hitstop > 0;
+    if( frozen )
+        er_hitstop--;
+    er_moves_begin_tick( frozen );
     update_button( inputs->buttonA, A_BUTTON );
     update_button( inputs->buttonB, B_BUTTON );
     update_button( inputs->buttonZ, Z_TRIG );
+    er_held_presses |= gController.buttonPressed;
+    if( !frozen )
+    {
+        gController.buttonPressed |= er_held_presses;
+        er_held_presses = 0;
+    }
 
     gMarioState->marioObj->header.gfx.cameraToObject[0] = 0;
     gMarioState->marioObj->header.gfx.cameraToObject[1] = 0;
@@ -244,15 +273,20 @@ SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs 
     gController.stickY = 64.0f * inputs->stickY;
     gController.stickMag = sqrtf( gController.stickX*gController.stickX + gController.stickY*gController.stickY );
 
-    apply_mario_platform_displacement();
-    bhv_mario_update();
-    update_mario_platform();
+    if( !frozen )
+    {
+        apply_mario_platform_displacement();
+        bhv_mario_update();
+        update_mario_platform();
+    }
 
     gfx_adapter_bind_output_buffers( outBuffers );
 
     geo_process_root_hack_single_node( s_mario_graph_node );
 
-    gAreaUpdateCounter++;
+    // (the animations only move on when this does)
+    if( !frozen )
+        gAreaUpdateCounter++;
 
     outState->health = gMarioState->health;
     vec3f_copy( outState->position, gMarioState->pos );
@@ -858,4 +892,91 @@ SM64_LIB_FN void sm64_er_set_aim(int active, float x, float z)
     er_aim_active = active;
     er_aim_x = x;
     er_aim_z = z;
+}
+
+extern int er_home_active;
+extern f32 er_home_x, er_home_z;
+
+SM64_LIB_FN void sm64_er_set_home(int active, float x, float z)
+{
+    er_home_active = active;
+    er_home_x = x;
+    er_home_z = z;
+}
+
+/** er-mario: the special cap ends (next tick, with SM64's own music change), or right away
+ * (another one goes on next) */
+SM64_LIB_FN void sm64_er_end_cap(int32_t marioId, int now)
+{
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    struct GlobalState *globalState = ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState;
+    global_state_bind( globalState );
+    if (gMarioState->capTimer == 0)
+        return;
+    if (now) {
+        stop_cap_music();
+        gMarioState->flags &= ~MARIO_SPECIAL_CAPS;
+        gMarioState->flags |= MARIO_NORMAL_CAP | MARIO_CAP_ON_HEAD;
+        gMarioState->capTimer = 0;
+    } else {
+        gMarioState->capTimer = 1;
+    }
+}
+
+extern f32 er_level_music_volume;
+
+/** er-mario: the cap music's volume (0-1) */
+SM64_LIB_FN void sm64_er_set_music_volume(float volume)
+{
+    er_level_music_volume = volume;
+}
+
+/** er-mario: sets Mario's cap flags as they are, no pickup (the model export's wing cap) */
+SM64_LIB_FN void sm64_er_set_cap_flags(int32_t marioId, uint32_t flags)
+{
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    struct GlobalState *globalState = ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState;
+    global_state_bind( globalState );
+    gMarioState->flags = (gMarioState->flags & ~MARIO_CAPS) | flags;
+}
+
+extern f32 er_stomp_vel, er_stomp_vel_a;
+
+SM64_LIB_FN void sm64_er_set_stomp(float vel, float velA)
+{
+    er_stomp_vel = vel;
+    er_stomp_vel_a = velA;
+}
+
+/** er-mario: an enemy is up in the air with Mario (juggle.rs) */
+SM64_LIB_FN void sm64_er_set_juggle(int on)
+{
+    er_juggle = on;
+}
+
+/** er-mario: the hammer is out (L1): B's punches are its swings */
+SM64_LIB_FN void sm64_er_set_hammer(int on)
+{
+    er_hammer_mode = on;
+}
+
+/** er-mario: what the combos' moves did on the last tick (sm64.rs SM64ErMove) */
+SM64_LIB_FN void sm64_er_get_move(int32_t marioId, struct SM64ErMove *out)
+{
+    out->hit = er_move_hit;
+    out->fx = er_move_fx;
+    out->hammerScripted = er_hammer_scripted;
+    out->hammerYaw = er_hammer_yaw;
+    out->hammerPitch = er_hammer_pitch;
+    out->hammerScale = er_hammer_scale;
+    out->actionArg = 0;
+    out->actionTimer = 0;
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    struct GlobalState *globalState = ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState;
+    global_state_bind( globalState );
+    out->actionArg = gMarioState->actionArg;
+    out->actionTimer = gMarioState->actionTimer;
 }

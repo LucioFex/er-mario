@@ -192,6 +192,64 @@ s32 mario_update_punch_sequence(struct MarioState *m) {
     return FALSE;
 }
 
+/**
+ * er-mario: the pause combo (punch, punch, a beat, then X): a rush of two quick jabs and a flying
+ * kick, each blow stepping in and turning to the enemy the mod aims at. actionArg is the blow
+ * (0-2), actionTimer its frame.
+ */
+static const s16 sRushAnims[3] = { MARIO_ANIM_FIRST_PUNCH, MARIO_ANIM_SECOND_PUNCH, MARIO_ANIM_AIR_KICK };
+static const s16 sRushFrames[3] = { 4, 4, 10 };
+static const f32 sRushStep[3] = { 22.0f, 22.0f, 30.0f };
+
+/* er-mario: the combos' moves (er_moves.c) */
+s32 act_er_hammer(struct MarioState *m);
+s32 act_er_hammer_slam(struct MarioState *m);
+s32 act_er_hammer_flurry(struct MarioState *m);
+s32 act_er_hammer_giro(struct MarioState *m);
+s32 act_er_tornado(struct MarioState *m);
+s32 act_er_meteor_land(struct MarioState *m);
+s32 act_er_chain(struct MarioState *m);
+s32 act_er_shell(struct MarioState *m);
+
+s32 act_er_rush(struct MarioState *m) {
+    u32 blow = m->actionArg;
+
+    if (m->input & (INPUT_A_PRESSED | INPUT_OFF_FLOOR)) {
+        return check_common_action_exits(m);
+    }
+
+    set_mario_anim_with_accel(m, sRushAnims[blow], blow == 2 ? 0x18000 : 0x28000);
+    if (m->actionTimer == 0) {
+        er_aim_turn(m);
+        set_anim_to_frame(m, 0);
+        if (blow == 2) {
+            play_sound(SOUND_MARIO_PUNCH_HOO, m->marioObj->header.gfx.cameraToObject);
+            play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+        } else {
+            play_sound(blow == 0 ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH, m->marioObj->header.gfx.cameraToObject);
+        }
+    }
+
+    // the blow lands from its second frame (the kick holds on longer)
+    if (m->actionTimer >= 1 && m->actionTimer <= (blow == 2 ? 6 : 3)) {
+        m->flags |= blow == 2 ? MARIO_KICKING : MARIO_PUNCHING;
+    }
+
+    mario_set_forward_vel(m, m->actionTimer < 2 ? sRushStep[blow] : 0.0f);
+    if (perform_ground_step(m) == GROUND_STEP_LEFT_GROUND) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+
+    if (++m->actionTimer >= sRushFrames[blow]) {
+        if (blow == 2) {
+            return set_mario_action(m, ACT_IDLE, 0);
+        }
+        m->actionArg++;
+        m->actionTimer = 0;
+    }
+    return FALSE;
+}
+
 s32 act_punching(struct MarioState *m) {
     if (m->input & INPUT_UNKNOWN_10) {
         return drop_and_set_mario_action(m, ACT_SHOCKWAVE_BOUNCE, 0);
@@ -509,6 +567,15 @@ s32 mario_execute_object_action(struct MarioState *m) {
     /* clang-format off */
     switch (m->action) {
         case ACT_PUNCHING:           cancel = act_punching(m);           break;
+        case ACT_ER_RUSH:            cancel = act_er_rush(m);            break;
+        case ACT_ER_HAMMER:          cancel = act_er_hammer(m);          break;
+        case ACT_ER_HAMMER_SLAM:     cancel = act_er_hammer_slam(m);     break;
+        case ACT_ER_HAMMER_FLURRY:   cancel = act_er_hammer_flurry(m);   break;
+        case ACT_ER_HAMMER_GIRO:     cancel = act_er_hammer_giro(m);     break;
+        case ACT_ER_TORNADO:         cancel = act_er_tornado(m);         break;
+        case ACT_ER_METEOR_LAND:     cancel = act_er_meteor_land(m);     break;
+        case ACT_ER_CHAIN:           cancel = act_er_chain(m);           break;
+        case ACT_ER_SHELL:           cancel = act_er_shell(m);           break;
         case ACT_PICKING_UP:         cancel = act_picking_up(m);         break;
         case ACT_DIVE_PICKING_UP:    cancel = act_dive_picking_up(m);    break;
         case ACT_STOMACH_SLIDE_STOP: cancel = act_stomach_slide_stop(m); break;

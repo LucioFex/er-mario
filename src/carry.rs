@@ -1,4 +1,4 @@
-//! Picking enemies up like SM64's Bob-ombs: Mario's punch from behind lifts a regular (not boss,
+//! Picking enemies up like SM64's Bob-ombs: Mario's dive into an enemy's back lifts a regular (not boss,
 //! not too big) enemy, he carries it between his hands (SM64's own carrying: walk, jump), and B
 //! throws it: a moment into the flight it goes limp (the game's death ragdoll) and whatever it
 //! hits first kills it.
@@ -149,6 +149,11 @@ pub fn is_carried(h: &FieldInsHandle) -> bool {
         Phase::Held { mob, .. } | Phase::Flying { mob, .. } | Phase::Limp { mob, .. } => key(mob) == key(h),
         Phase::Idle => false,
     }
+}
+
+/// Mario holds an enemy (B throws it).
+pub fn holding() -> bool {
+    matches!(*PHASE.lock().unwrap_or_else(|e| e.into_inner()), Phase::Held { .. })
 }
 
 pub fn reset() {

@@ -130,6 +130,35 @@ fn cell_resized(atlas: &[u8], cell: usize, size: usize) -> Vec<[f32; 4]> {
 
 /// 2048x2048: per SM64 colour a band of padded tiles (each atlas texture composited over the
 /// colour), plus solid swatches for untextured triangles.
+/// Metal Mario (the metal cap): silver all over, his features barely showing, like SM64's.
+pub fn metal_albedo(model: &MarioModel) -> Image {
+    let mut img = mario_albedo(model);
+    for p in &mut img.px {
+        let lum = 0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2];
+        let v = 0.6 + 0.35 * lum;
+        *p = [v, v, (v * 1.04).min(1.0), 1.0];
+    }
+    img
+}
+
+/// The wing cap's albedo: the wing textures (cells 9 and 10) keep their see-through feathers.
+pub fn wing_albedo(model: &MarioModel) -> Image {
+    let mut img = mario_albedo(model);
+    let cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
+    for k in 0..mario_colors(model).len() {
+        for i in [9, 10] {
+            for ty in 0..TILE {
+                for tx in 0..TILE {
+                    let inside = (PAD..PAD + INNER).contains(&tx) && (PAD..PAD + INNER).contains(&ty);
+                    let a = if inside { cells[i][(ty - PAD) * INNER + tx - PAD][3] } else { 0.0 };
+                    img.px[(k * 256 + ty) * SIZE + i * TILE + tx][3] = a;
+                }
+            }
+        }
+    }
+    img
+}
+
 pub fn mario_albedo(model: &MarioModel) -> Image {
     let mut img = Image::new(SIZE, SIZE, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
     let cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
@@ -227,8 +256,9 @@ fn dds_header(dds: &[u8]) -> usize {
 }
 
 /// Mario's albedo, a flat matte normal map and an empty metal mask, in the chest piece's own
-/// sizes and formats (full textures "X_a", low-detail ones "X_a_l").
-pub fn build_tpf(tpf: &[u8], albedo: &Image) -> Result<Vec<u8>, String> {
+/// sizes and formats (full textures "X_a", low-detail ones "X_a_l"). `metal`: a full metal mask and
+/// a shiny surface instead (Metal Mario).
+pub fn build_tpf(tpf: &[u8], albedo: &Image, metal: bool) -> Result<Vec<u8>, String> {
     let mut t = tpf.to_vec();
     for tex in tpf_textures(tpf) {
         let base = tex.name.strip_suffix("_l").unwrap_or(&tex.name);
@@ -243,13 +273,16 @@ pub fn build_tpf(tpf: &[u8], albedo: &Image) -> Result<Vec<u8>, String> {
             bc1_mips(&img, tex.mips)
         } else if base.ends_with("_n") {
             // BC7 mode 6, constant (128, 128, 50, 254): flat normal, low shine, no detail grime
+            // (shine 230 for metal)
+            let shine = if metal { 115 } else { 25 };
             let mut bits: u128 = 1 << 6;
-            for (k, c7) in [64u128, 64, 64, 64, 25, 25, 127, 127].into_iter().enumerate() {
+            for (k, c7) in [64u128, 64, 64, 64, shine, shine, 127, 127].into_iter().enumerate() {
                 bits |= c7 << (7 + 7 * k);
             }
             bits.to_le_bytes().repeat((tex.size - head) / 16)
         } else if base.ends_with("_m") {
-            vec![0; tex.size - head]
+            // BC4: all 255 is metal everywhere
+            vec![if metal { 0xFF } else { 0 }; tex.size - head]
         } else {
             continue;
         };

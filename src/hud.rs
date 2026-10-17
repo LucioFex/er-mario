@@ -24,6 +24,12 @@ const RIGHT: usize = 0x243E0;
 const PIES: [usize; 8] = [0x28BE0, 0x283E0, 0x27BE0, 0x273E0, 0x26BE0, 0x263E0, 0x25BE0, 0x253E0];
 /// the yellow coin's spin: front, tilted right, side, tilted left (IA16, tinted yellow)
 const COIN_FRAMES: [usize; 4] = [0x5780, 0x5F80, 0x6780, 0x6F80];
+/// SM64's flame (actors/flame): 8 frames, IA16, Mario's fireball (fireball.rs)
+const FLAME_FRAMES: usize = 0x17320;
+/// MIO0 block with SM64's "!" boxes (actors/exclamation_box): the faces of the green (Metal), red
+/// (Wing) and blue (Vanish) cap boxes, by caps.rs order
+const COMMON0: usize = 0x1F2200;
+const CAP_BOXES: [usize; 3] = [0x14620, 0x15E20, 0x12E20];
 /// MIO0 block with the HUD font (segment 2): digits 0-9 at 0x200 each, then these
 const SEGMENT2: usize = 0x108A40;
 const GLYPH_MULTIPLY: usize = 0x4200;
@@ -113,6 +119,12 @@ const IMG_CAMERA: usize = 50;
 const IMG_LAKITU: usize = 51;
 const IMG_ARROW_UP: usize = 52;
 const IMG_ARROW_DOWN: usize = 53;
+const IMG_FLAME: usize = 54; // 8
+const IMG_CAP_BOX: usize = 62; // 3
+const IMG_SPARK: usize = 65; // 3
+/// the fireball's glow, then the giant shot's ball (4 frames), fireball.rs FRAME_GLOW / FRAME_ORB
+const IMG_GLOW: usize = 68;
+const IMG_ORB: usize = 69; // 4
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -170,6 +182,42 @@ pub fn load(rom: &[u8]) {
         out.push(glyph(0x7200)?); // Lakitu
         out.push(tex(&seg2, 0x7600, 128).map(|t| rgba16(&t, 8, 8))?); // arrow up
         out.push(tex(&seg2, 0x7680, 128).map(|t| rgba16(&t, 8, 8))?); // arrow down
+        // the flame: white-hot inside, orange at the edges (tinted per charge level when drawn)
+        for k in 0..8 {
+            let t = tex(&d, FLAME_FRAMES + k * 0x800, 2048)?;
+            out.push(Image::new(32, 32, |x, y| {
+                let (v, a) = (t[(y * 32 + x) * 2] as f32 / 255.0, t[(y * 32 + x) * 2 + 1]);
+                let mix = |lo: f32, hi: f32| (lo + (hi - lo) * v) as u8;
+                [255, mix(110.0, 250.0), mix(20.0, 210.0), a]
+            }));
+        }
+        let boxes = crate::gameover::mio0(rom, COMMON0)?;
+        for &o in &CAP_BOXES {
+            out.push(rgba16(&tex(&boxes, o, 2048)?, 32, 32));
+        }
+        // a blow's star burst (impact.rs), drawn in SM64's chunky pixels: a small star, the full
+        // burst, then only its rays flying out
+        for (core, axis, diagonal, hollow) in [(2.5f32, 5.0f32, 0.0f32, 0.0f32), (3.0, 8.0, 6.0, 0.0), (0.0, 8.0, 7.0, 4.5)] {
+            out.push(Image::new(16, 16, |x, y| {
+                let (dx, dy) = (x as f32 - 7.5, y as f32 - 7.5);
+                let r = (dx * dx + dy * dy).sqrt();
+                let on_axis = (dx.abs() < 1.0 || dy.abs() < 1.0) && r <= axis;
+                let on_diagonal = (dx.abs() - dy.abs()).abs() < 1.0 && r <= diagonal;
+                if r < hollow || !(r <= core || on_axis || on_diagonal) {
+                    return [0; 4];
+                }
+                if r <= core + 1.0 { [255, 255, 255, 255] } else { [255, 236, 96, 255] }
+            }));
+        }
+        // a soft round glow (tinted when drawn)
+        out.push(Image::new(32, 32, |x, y| {
+            let r = ((x as f32 - 15.5).powi(2) + (y as f32 - 15.5).powi(2)).sqrt() / 16.0;
+            [255, 255, 255, ((1.0 - r).max(0.0).powi(2) * 255.0) as u8]
+        }));
+        // the giant fireball: a lit ball of fire, its surface churning over 4 frames
+        for frame in 0..4 {
+            out.push(Image::new(48, 48, |x, y| orb_pixel(x, y, frame)));
+        }
         Some(out)
     };
     match load() {
@@ -448,7 +496,7 @@ impl ImguiRenderLoop for Overlay {
                     }
                 });
         }
-        if self.textures.len() <= IMG_ARROW_DOWN {
+        if self.textures.len() < IMG_ORB + 4 {
             return;
         }
         let size = ui.io().display_size;
@@ -531,8 +579,142 @@ impl ImguiRenderLoop for Overlay {
             image(IMG_COIN_FRAMES + (age * 15.0) as usize % 4, foot[0] - h * 0.5, head[1], h, h);
         }
 
+        // Mario's fireball: the charge at his hand, the shots and their bursts
+        for f in crate::fireball::sprites() {
+            let (Some((c, z)), Some((top, _))) = (project(f.pos, size), project(f.pos + Vec3::Y * f.size * 0.5, size)) else { continue };
+            let h = (c[1] - top[1]) * 2.0;
+            if z > 60.0 || h < 1.0 {
+                continue;
+            }
+            let img = match f.frame {
+                crate::fireball::FRAME_GLOW => IMG_GLOW,
+                n if n >= crate::fireball::FRAME_ORB => IMG_ORB + (n - crate::fireball::FRAME_ORB) % 4,
+                n => IMG_FLAME + n % 8,
+            };
+            dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(f.tint).build();
+        }
+
+        // the blows that landed: a star burst each, growing a little as it goes
+        for (spark, t) in crate::impact::sparks() {
+            let s = spark.size * (0.7 + 0.5 * t);
+            let (Some((c, z)), Some((top, _))) = (project(spark.pos, size), project(spark.pos + Vec3::Y * s * 0.5, size)) else { continue };
+            let h = (c[1] - top[1]) * 2.0;
+            if z > 60.0 || h < 1.0 {
+                continue;
+            }
+            let frame = ((t * 3.0) as usize).min(2);
+            dl.add_image(textures[IMG_SPARK + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(spark.tint).build();
+        }
+        // the dash: streaks along Mario's path, fading behind him, and puffs where it started
+        let trail = crate::impact::dash_trail();
+        for pair in trail.windows(2) {
+            let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+            let fade = 1.0 - ta.max(tb);
+            for (k, up) in [0.25f32, 0.55, 0.85].into_iter().enumerate() {
+                let (Some((pa, za)), Some((pb, _))) = (project(a + Vec3::Y * up, size), project(b + Vec3::Y * up, size)) else { continue };
+                if za > 40.0 {
+                    continue;
+                }
+                let width = (size[1] / za.max(1.0) * 0.025).clamp(1.0, 6.0) * if k == 1 { 1.4 } else { 0.8 };
+                let col = imgui::ImColor32::from_rgba_f32s(0.85, 0.95, 1.0, 0.55 * fade);
+                dl.add_line(pa, pb, col).thickness(width).build();
+            }
+        }
+        for (p, t) in crate::impact::dash_puffs() {
+            let s = 0.5 + 0.9 * t;
+            let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
+            let h = (c[1] - top[1]) * 2.0;
+            if z > 40.0 || h < 1.0 {
+                continue;
+            }
+            dl.add_image(textures[IMG_GLOW], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5])
+                .col([0.85, 0.85, 0.8, 0.6 * (1.0 - t)])
+                .build();
+        }
+
+        // the combos (impact.rs): the hammer's swing as a fading ribbon from its handle to its head
+        let swing = crate::impact::swing_trail();
+        for pair in swing.windows(2) {
+            let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+            let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 40.0).map(|(c, _)| c)).collect();
+            let Some(pts) = pts else { continue };
+            let fade = 1.0 - t0.max(t1);
+            let edge = (pts[0], pts[1]);
+            dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
+            dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
+        }
+        // shockwave rings on the ground, widening and fading
+        for (r, t) in crate::impact::rings() {
+            let radius = r.radius * (0.25 + 0.75 * (1.0 - (1.0 - t) * (1.0 - t)));
+            let pts: Vec<[f32; 2]> = (0..=20)
+                .filter_map(|k| {
+                    let a = k as f32 / 20.0 * std::f32::consts::TAU;
+                    project(r.pos + Vec3::new(a.cos() * radius, 0.0, a.sin() * radius), size).filter(|(_, z)| *z < 50.0).map(|(c, _)| c)
+                })
+                .collect();
+            if pts.len() < 21 {
+                continue;
+            }
+            let Some((_, z)) = project(r.pos, size) else { continue };
+            let width = (size[1] / z.max(1.0) * 0.06).clamp(1.5, 10.0) * (1.0 - t * 0.6);
+            let [cr, cg, cb, ca] = r.tint;
+            dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(cr, cg, cb, ca * 0.8 * (1.0 - t))).thickness(width).build();
+        }
+        // stars and coins flying off the blows
+        for (bit, p, s, t, age) in crate::impact::bits() {
+            let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
+            let h = (c[1] - top[1]) * 2.0;
+            if z > 50.0 || h < 1.0 {
+                continue;
+            }
+            let fade = if t > 0.75 { (1.0 - t) / 0.25 } else { 1.0 };
+            let img = match bit {
+                crate::impact::Bit::Coin => IMG_COIN_FRAMES + (age * 15.0) as usize % 4,
+                crate::impact::Bit::Star => IMG_STAR,
+            };
+            dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col([1.0, 1.0, 1.0, fade]).build();
+        }
+
+        // Mario got hurt: the screen's edges flash red, fading
+        let flash = crate::impact::hurt_flash();
+        if flash > 0.0 {
+            let edge = size[1] * 0.18;
+            let red = |a: f32| imgui::ImColor32::from_rgba_f32s(0.85, 0.05, 0.02, a);
+            let (on, off) = (red(0.55 * flash), red(0.0));
+            let [w, h] = size;
+            dl.add_rect_filled_multicolor([0.0, 0.0], [w, edge], on, on, off, off);
+            dl.add_rect_filled_multicolor([0.0, h - edge], [w, h], off, off, on, on);
+            dl.add_rect_filled_multicolor([0.0, 0.0], [edge, h], on, off, off, on);
+            dl.add_rect_filled_multicolor([w - edge, 0.0], [w, h], off, on, on, off);
+        }
+
         // one of SM64's pixels (its screen is 240 lines high), at HUD size
         let px = size[1] / 240.0 * SIZE;
+
+        // the caps (top left, in D-pad order: left Metal, up Wing, right Vanish): bright when
+        // ready, pulsing while worn, dim and filling up while recharging
+        let caps = crate::caps::hud();
+        {
+            let worn = crate::caps::active();
+            let s = 20.0 * px;
+            let (x0, y0) = (size[1] * 0.04, size[1] * 0.05);
+            static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let t = T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f32();
+            for (i, &ready) in caps.iter().enumerate() {
+                let x = x0 + i as f32 * s * 1.25;
+                let on = worn == Some(i as u8);
+                let grow = if on { s * 0.12 * (1.0 + (t * 8.0).sin()) } else { 0.0 };
+                let alpha = if on || ready >= 1.0 { 1.0 } else { 0.35 };
+                dl.add_image(textures[IMG_CAP_BOX + i], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow])
+                    .col([1.0, 1.0, 1.0, alpha])
+                    .build();
+                if !on && ready < 1.0 {
+                    let bar = [x, y0 + s + px * 2.0];
+                    dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
+                    dl.add_rect(bar, [x + s * ready.clamp(0.0, 1.0), bar[1] + px * 2.0], [1.0, 0.85, 0.2, 0.9]).filled(true).build();
+                }
+            }
+        }
 
         // boss bars at the bottom (Elden Ring's layout), the name in SM64's font
         for (i, boss) in BOSSES.lock().unwrap_or_else(|e| e.into_inner()).iter().enumerate() {
@@ -655,4 +837,46 @@ impl ImguiRenderLoop for Overlay {
             }
         }
     }
+}
+
+/// The giant fireball's ball (48 x 48, one of 4 frames): a sphere lit from the upper left, hot
+/// white in the middle through yellow and orange to a deep red rim, its surface churning (value
+/// noise, shifted with each frame).
+fn orb_pixel(x: usize, y: usize, frame: usize) -> [u8; 4] {
+    let (dx, dy) = ((x as f32 - 23.5) / 23.5, (y as f32 - 23.5) / 23.5);
+    let r2 = dx * dx + dy * dy;
+    if r2 >= 1.0 {
+        return [0; 4];
+    }
+    let nz = (1.0 - r2).sqrt();
+    let light = (-0.45 * dx - 0.5 * dy + 0.74 * nz).max(0.0);
+    fn hash(x: i32, y: i32) -> f32 {
+        let h = (x.wrapping_mul(374_761_393) ^ y.wrapping_mul(668_265_263)) as u32;
+        let h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+        (h ^ (h >> 16)) as f32 / u32::MAX as f32
+    }
+    fn noise(x: f32, y: f32) -> f32 {
+        let (ix, iy) = (x.floor() as i32, y.floor() as i32);
+        let (fx, fy) = (x - x.floor(), y - y.floor());
+        let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+        let top = hash(ix, iy) + (hash(ix + 1, iy) - hash(ix, iy)) * sx;
+        let bottom = hash(ix, iy + 1) + (hash(ix + 1, iy + 1) - hash(ix, iy + 1)) * sx;
+        top + (bottom - top) * sy
+    }
+    // (the surface, bent round the ball, drifting up and across frame by frame)
+    let (u, v) = (dx / (nz + 0.5) * 3.0 + frame as f32 * 0.7, dy / (nz + 0.5) * 3.0 - frame as f32 * 0.9);
+    let churn = noise(u, v) * 0.65 + noise(u * 2.3 + 5.0, v * 2.3) * 0.35;
+    let heat = (0.4 * nz + 0.75 * (churn - 0.5) + 0.3 * light + 0.15).clamp(0.0, 1.0);
+    let stops = [(0.0, [110.0, 15.0, 5.0]), (0.35, [225.0, 80.0, 15.0]), (0.6, [255.0, 165.0, 40.0]), (0.8, [255.0, 225.0, 110.0]), (1.0, [255.0, 252.0, 230.0])];
+    let mut c = stops[0].1;
+    for w in stops.windows(2) {
+        let ((a, ca), (b, cb)) = (w[0], w[1]);
+        if heat >= a {
+            let k = ((heat - a) / (b - a)).min(1.0);
+            c = [ca[0] + (cb[0] - ca[0]) * k, ca[1] + (cb[1] - ca[1]) * k, ca[2] + (cb[2] - ca[2]) * k];
+        }
+    }
+    // (a soft edge)
+    let alpha = ((1.0 - r2.sqrt()) * 12.0).clamp(0.0, 1.0);
+    [c[0] as u8, c[1] as u8, c[2] as u8, (alpha * 255.0) as u8]
 }
