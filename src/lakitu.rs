@@ -269,6 +269,14 @@ pub fn update(
     exit: bool,
     hit: impl Fn(Vec3, Vec3) -> Option<Vec3>,
 ) {
+    // (in real time: in a slow-motion moment, style.rs, the world slows but Mario doesn't, and the
+    // camera has to keep up with him)
+    let dt = {
+        static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        let now = std::time::Instant::now();
+        let real = LAST.lock().unwrap_or_else(|e| e.into_inner()).replace(now).map(|t| now.duration_since(t).as_secs_f32());
+        real.filter(|r| *r > 0.0).map_or(dt, |r| r.min(0.1))
+    };
     let Ok(camera) = (unsafe { CSCamera::instance_mut() }) else { return };
     let render = &mut camera.pers_cam_1;
     let m = &render.matrix;

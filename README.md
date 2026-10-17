@@ -63,15 +63,26 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y in the air | Meteor dive |
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
-| B | Dash, invulnerable, where the stick points |
+| B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
 | RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
 | D-pad left / up | Metal and Wing caps (they recharge in about 40 s) |
 | D-pad right | **Mega Mushroom** (see below) |
 
-**Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, boomerang, Chain Chomp. Holding
+**Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, Chain Chomp, boomerang. Holding
 LB goes back to the fists. A banner shows the weapon's name for a moment.
+
+**Mixing weapons (swap strikes).** Tap LB in the middle of a string, or right after a blow, and
+Mario switches on the spot, opening with the new weapon's swap strike while the string goes on
+(the next X is the new weapon's next blow), Devil May Cry and God of War style: the hammer comes in
+with its overhead smash, the Chain Chomp with its wide sweep, the boomerangs with a fan of three,
+the fists with the rush. In the air it's the weapon's air blow (two per jump, four with an enemy up
+there). Each swap scores style points and flashes a golden ring.
+
+**Perfect dodge.** Dash (B) just as an enemy close by starts an attack and the world slows down for
+a second, Bayonetta's Witch Time: a blue flash, a "waha!", and for a moment Mario's blows are
+counters that hit 1.6x as hard (`src/dodge.rs`). Once every few seconds at most.
 
 **Hammer.** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
 moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air), a
@@ -98,7 +109,7 @@ louder or softer each time, and the boomerangs whir one at a time.
 |---|---|
 | X | Throw one, from one hand then the other. It curves out, hits on the way out and again on the way back. Up to three in the air |
 | Y | Three at once in a fan |
-| Y (hold) | The big boomerang: it flies to the enemy and hangs there spinning, hitting everyone around it again and again |
+| Y (hold) | The big boomerang: it flies far (up to 28 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
 | X, X, Y | Boomerang launcher: thrown up in an arc, it sends enemies flying up |
 | X / Y in the air | Throws in the air; the first few hold Mario up, Devil May Cry style |
 
@@ -106,7 +117,9 @@ Boomerangs and fireballs keep a launched enemy floating where it is, so you can 
 the hammer or the boomerang and keep it up from a distance.
 
 **Chain Chomp**, the crowd weapon (`src/chomp.rs`): wide reach, low damage, many enemies at once. It
-hops along beside Mario between attacks.
+hops along beside Mario between attacks. Its swings leave a ribbon of fire behind it and throw
+sparks off the chain (Kratos' Blades of Chaos), and with the Chomp in hand the hook (RT) is the
+Chomp itself: it flies out on its chain, jaws open.
 
 | Input | Move |
 |---|---|
@@ -167,7 +180,14 @@ and a longer slow motion. A finisher that takes an enemy out, or any kill from r
 world down for a moment (`src/style.rs`).
 
 Hits come with hit-stop, star bursts, shockwave rings, a swing trail and a camera shake on the
-heavy ones (`src/impact.rs`). Next to a big enemy Lakitu's camera backs off and looks up at it,
+heavy ones (`src/impact.rs`). Fireballs are lit balls of fire with flames licking all around them
+(drawn back to front, so they turn with the camera), a cooling tail and embers, hidden behind walls.
+
+**The camera indoors.** Lakitu senses the room around Mario (walls all around, the ceiling): in a
+corridor or a small room it comes closer and lower and stays under the ceiling, a wall right behind
+it makes it slide round to where it can see instead of zooming into Mario's back, and it keeps off
+walls by the lens. Out in the open it looks a little ahead of where Mario runs and backs off a bit
+at full speed. It keeps real time in slow motion, so it never lags behind Mario. Next to a big enemy Lakitu's camera backs off and looks up at it,
 more the bigger and closer it is; if one is close but out of view, the camera drifts round to
 show it (not right after you turn the camera yourself). In a fight the camera works like God of
 War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen,
@@ -189,6 +209,7 @@ close and risky hits.
 |---|---|---|
 | Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch |
 | Boomerang | — | **2-4%** per pass (it hits going and coming back); the big one about 2% per hit while it hovers |
+| Counters (after a perfect dodge) | — | **x1.6** for 1.6 s |
 | Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least |
 | Long strings | — | Past 10 hits on the same enemy each hit is worth 5% less than the one before (down to 40%, finishers 70%), so long combos last instead of melting the enemy |
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
@@ -280,7 +301,7 @@ replaces this fork's DLL with the original one.
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
 | D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
 | RT | Middle mouse button | The hook (see above) |
-| LB | | Next weapon (fists, hammer, boomerang, Chain Chomp); hold to go back to the fists |
+| LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
@@ -288,6 +309,16 @@ replaces this fork's DLL with the original one.
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
 | | F1 (hold 3 s) | Give up and respawn at the last grace |
+
+## Luigi and co-op (experimental)
+
+`character = luigi` in `er_mario.ini` builds the model as Luigi, in green and navy (the next two
+launches rebuild it). `docs/coop/er-mario-coop.me3` is a me3 profile that loads
+[Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510) (its `SeamlessCoop` folder next to
+the profile) together with ER Mario. This is groundwork, **not real co-op yet**: each player sees
+themselves as Mario or Luigi, but the other player isn't animated as Mario on your screen, and as
+the guest Mario's blows don't stick (the host's game owns the enemies). Syncing Mario's pose and
+the guest's blows over the network is the next step.
 
 ## Building
 

@@ -1,0 +1,18 @@
+profileVersion = "v1"
+# ER Mario with Seamless Co-op (EXPERIMENTAL, see "Co-op" in README.md).
+# Put Seamless Co-op's SeamlessCoop folder (ersc.dll, ersc_settings.ini) next to this file, in the
+# ER-Mario folder. Seamless keeps its own save (.co2, set in ersc_settings.ini): no savefile here,
+# so your normal save and the solo Mario save stay untouched.
+
+[[supports]]
+game = "eldenring"
+
+[[natives]]
+path = "SeamlessCoop/ersc.dll"
+
+[[natives]]
+path = "er_mario.dll"
+
+[[packages]]
+id = "er-mario"
+path = "package"
