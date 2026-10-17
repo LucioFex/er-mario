@@ -485,6 +485,21 @@ pub fn tick() {
         crate::worker::call("yoshi step", |_| unsafe { crate::sm64::sm64_play_sound_global(SOUND_YOSHI_WALK) });
     }
     s.pose = yoshi.pose(anim, s.at);
+    // his moves in a fight (ride.rs): the mouth open for the tongue, a nod with each egg and on a
+    // stomp (about his head, which looks down -Z: a turn about X)
+    let (jaw, nod) = crate::ride::pose_hint();
+    if jaw > 0.0 || nod != 0.0 {
+        const HEAD: usize = 2;
+        const JAW: usize = 3;
+        let pivot = s.pose[HEAD].0;
+        let turn = Quat::from_rotation_x(-nod);
+        for i in [HEAD, JAW] {
+            let (p, q) = s.pose[i];
+            s.pose[i] = (pivot + turn * (p - pivot), (turn * q).normalize());
+        }
+        let (p, q) = s.pose[JAW];
+        s.pose[JAW] = (p, (Quat::from_rotation_x(-0.6 * jaw) * q).normalize());
+    }
 }
 
 /// How far below Torrent's saddle Mario sits: on Yoshi's back, or not at all on the horse.

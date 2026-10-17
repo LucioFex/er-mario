@@ -311,6 +311,13 @@ pub fn egg_burst(at: Vec3) {
     burst(at, 2, Bit::Star);
 }
 
+/// Mario's fireball from Yoshi's saddle going out (ride.rs): an orange ring, a puff, a twinkle.
+pub fn fire_pop(at: Vec3) {
+    ring(at, 0.9, 0.22, [1.0, 0.55, 0.15, 0.9]);
+    puffs(at, 2, 0.3);
+    burst(at, 1, Bit::Star);
+}
+
 /// Yoshi's stomp landing (ride.rs): a wide ring of dust, a green one, puffs all round.
 pub fn yoshi_stomp(feet: Vec3) {
     ring(feet + Vec3::Y * 0.05, 4.5, 0.45, DUST);

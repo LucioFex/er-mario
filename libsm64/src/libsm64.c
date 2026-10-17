@@ -1014,6 +1014,13 @@ SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kin
         set_mario_action(gMarioState, ACT_ER_ZIP, (u32) kind);
 }
 
+/** er-mario: Mario throws a fireball from Yoshi's saddle (ride.rs): his palm thrust */
+SM64_LIB_FN void sm64_er_ride_throw(void)
+{
+    extern s32 er_ride_throw;
+    er_ride_throw = 8;
+}
+
 /** er-mario: Mega Mario (mega.rs): slow for his size, the power-up music while he lasts */
 SM64_LIB_FN void sm64_er_set_mega(int on)
 {

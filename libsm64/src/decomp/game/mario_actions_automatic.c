@@ -880,10 +880,25 @@ s32 act_er_ladder(struct MarioState *m) {
 
 // er-mario: Elden Ring rides the mount and Mario with it; SM64 only sits him down (the pose of
 // his slide)
+/** er-mario: ticks left of Mario's fireball thrust from the saddle (ride.rs) */
+s32 er_ride_throw = 0;
+#define ER_RIDE_THROW_TICKS 8
+
 s32 act_er_ride(struct MarioState *m) {
     mario_set_forward_vel(m, 0.0f);
     m->vel[1] = 0.0f;
-    set_mario_animation(m, MARIO_ANIM_SLIDE);
+    // (a fireball from the saddle: a palm thrust, then back to sitting)
+    if (er_ride_throw > 0) {
+        if (er_ride_throw == ER_RIDE_THROW_TICKS) {
+            set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
+            set_anim_to_frame(m, 0);
+        } else {
+            set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
+        }
+        er_ride_throw--;
+    } else {
+        set_mario_animation(m, MARIO_ANIM_SLIDE);
+    }
     vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
     vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
     return FALSE;

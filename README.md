@@ -135,12 +135,13 @@ It barely hurts: it's for keeping a combo going and for getting around. It works
 and in the air (`src/hook.rs`).
 
 **Yoshi in a fight (`src/ride.rs`).** Riding Yoshi, A still jumps and B dashes, and Yoshi has his
-own moves:
+own moves (his mouth opens for the tongue, he nods with each egg and on a stomp):
 
 | Input on Yoshi | Move |
 |---|---|
 | X | Tongue: lashed out ahead, it hits whoever it reaches, and every enemy it licks makes him an egg |
-| Y or RB (hold for more) | Throw an egg at the nearest enemy ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
+| Y (hold for more) | Throw an egg at the nearest enemy ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
+| RB (hold for more) | Mario's fireball from the saddle, a palm thrust straight at the nearest enemy ahead |
 | LT in the air | Stomp: a shockwave all around where he lands |
 | LB | Burst of speed for 2.5 s, dust behind him (fast enough to run enemies over), then 6 s of rest |
 
@@ -258,7 +259,7 @@ replaces this fork's DLL with the original one.
 | Right stick | Arrow keys | Lakitu's camera |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
 | L3 (left stick click) | R | Whistle for Yoshi |
-| X / Y / RB / LT / LB on Yoshi | , or left mouse / middle mouse / K | Tongue, eggs, stomp, burst of speed |
+| X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
 | | F1 (hold 3 s) | Give up and respawn at the last grace |
 

@@ -2,8 +2,9 @@
 //! dashes), the rest is Yoshi's:
 //! - X: his tongue, lashed out ahead: it hits whoever it reaches, and each enemy it licks makes him
 //!   an egg (Yoshi's Island)
-//! - Y or RB: an egg thrown at the nearest enemy ahead (held: one after the other), arcing and
-//!   bouncing once off the ground; he has a few, more with every lick and a new one now and then
+//! - Y: an egg thrown at the nearest enemy ahead (held: one after the other), arcing and bouncing
+//!   once off the ground; he has a few, more with every lick and a new one now and then
+//! - RB: Mario's fireball from the saddle, a palm thrust, straight at the nearest enemy ahead
 //! - L2 in the air: a stomp, a shockwave all around where he lands
 //! - LB: a burst of speed (his stride faster, dust behind him), then a rest
 //! Mario's world doesn't tick while he rides (lib.rs follows the game), so the hits are dealt here
@@ -35,6 +36,12 @@ const EGG_AIM: f32 = 28.0;
 const EGG_REST: f32 = 0.28;
 /// how near an egg hits (m, plus the enemy's body)
 const EGG_RADIUS: f32 = 0.5;
+/// Mario's fireball from the saddle: how fast (m/s), gone after (s), between two (s), how near it hits
+/// (m, plus the enemy's body)
+const FIRE_SPEED: f32 = 30.0;
+const FIRE_LIFE: f32 = 0.9;
+const FIRE_REST: f32 = 0.4;
+const FIRE_RADIUS: f32 = 0.45;
 /// the stomp's reach (m), and before the next (s)
 const STOMP_REACH: f32 = 4.5;
 const STOMP_REST: f32 = 1.5;
@@ -54,6 +61,7 @@ const SOUND_THROW: i32 = 0x0435_8081;
 const SOUND_POP: i32 = 0x502C_8081;
 const SOUND_STOMP: i32 = 0x5068_4081;
 const SOUND_BUZZ: i32 = 0x700E_0081;
+const SOUND_FLAME: i32 = 0x5055_8081;
 
 struct Egg {
     pos: Vec3,
@@ -61,6 +69,12 @@ struct Egg {
     age: f32,
     bounced: bool,
     hit: Vec<u64>,
+}
+
+struct Shot {
+    pos: Vec3,
+    vel: Vec3,
+    age: f32,
 }
 
 struct State {
@@ -73,6 +87,11 @@ struct State {
     tongue_ready: f32,
     egg_ready: f32,
     eggs: Vec<Egg>,
+    fires: Vec<Shot>,
+    fire_ready: f32,
+    /// when he last threw an egg, landed a stomp (s): Yoshi's head nods along
+    egg_at: f32,
+    stomp_at: f32,
     /// the stomp, armed in the air; when it may come again
     stomp: bool,
     stomp_ready: f32,
@@ -90,6 +109,7 @@ struct State {
 pub struct Sprites {
     pub tongue: Option<(Vec3, Vec3)>,
     pub eggs: Vec<(Vec3, f32)>,
+    pub fires: Vec<(Vec3, f32)>,
     pub stock: u32,
     pub riding: bool,
 }
@@ -98,6 +118,18 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 pub fn sprites() -> Sprites {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|s| s.sprites.clone()).unwrap_or_default()
+}
+
+/// Yoshi's head and jaw now (yoshi.rs poses them): how open his mouth is (0-1), how far his head
+/// nods down (radians).
+pub fn pose_hint() -> (f32, f32) {
+    let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = guard.as_ref().filter(|s| s.sprites.riding) else { return (0.0, 0.0) };
+    let jaw = if s.tongue.is_some() { 1.0 } else { 0.0 };
+    // (a nod with each egg, down and back up; a deeper one on a stomp's landing)
+    let bump = |since: f32, length: f32| if (0.0..length).contains(&since) { (since / length * std::f32::consts::PI).sin() } else { 0.0 };
+    let nod = 0.45 * bump(s.t - s.egg_at, 0.3) + 0.5 * bump(s.t - s.stomp_at, 0.35) - if s.tongue.is_some() { 0.1 } else { 0.0 };
+    (jaw, nod)
 }
 
 /// How much faster Yoshi goes now (the burst of speed, LB).
@@ -139,6 +171,7 @@ pub fn tick(
             s.sprites = Sprites::default();
             s.tongue = None;
             s.eggs.clear();
+            s.fires.clear();
         }
         return;
     };
@@ -151,6 +184,10 @@ pub fn tick(
         tongue_ready: 0.0,
         egg_ready: 0.0,
         eggs: Vec::new(),
+        fires: Vec::new(),
+        fire_ready: 0.0,
+        egg_at: -1.0,
+        stomp_at: -1.0,
         stomp: false,
         stomp_ready: 0.0,
         air: false,
@@ -242,11 +279,11 @@ pub fn tick(
         }
     }
 
-    // Y or RB: an egg (held: one after another)
-    let throw = buttons.0[1] || buttons.0[2];
+    // Y: an egg (held: one after another)
+    let throw = buttons.0[1];
     if throw && s.t >= s.egg_ready {
         if s.stock == 0 {
-            if pressed[1] || pressed[2] {
+            if pressed[1] {
                 sound(SOUND_BUZZ, 0.35);
             }
         } else {
@@ -274,6 +311,7 @@ pub fn tick(
                 None => face * EGG_SPEED + Vec3::Y * 4.0 + vel.with_y(0.0),
             };
             s.eggs.push(Egg { pos: from, vel: v, age: 0.0, bounced: false, hit: Vec::new() });
+            s.egg_at = s.t;
             sound(SOUND_THROW, 0.45);
         }
     }
@@ -321,6 +359,60 @@ pub fn tick(
     });
     s.eggs = eggs;
 
+    // RB: Mario's fireball, from his hand on the saddle (held: one after another)
+    if buttons.0[2] && s.t >= s.fire_ready {
+        s.fire_ready = s.t + FIRE_REST;
+        let hand = feet + Vec3::Y * 1.75 + face * 0.4;
+        let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
+        let aim = combat::nearby(&here, EGG_AIM, origin)
+            .iter()
+            .filter(|t| t.shootable().is_some())
+            .map(&chest)
+            .filter(|c| {
+                let d = (*c - hand).with_y(0.0);
+                d.length() > 1.0 && d.normalize().dot(face) >= AHEAD_COS && ray(hand, *c).is_none()
+            })
+            .min_by(|a, b| (*a - hand).length().total_cmp(&(*b - hand).length()));
+        let dir = aim.map_or(face, |c| (c - hand).normalize_or(face));
+        // (with his speed when it's not aimed: it doesn't fall behind him)
+        let v = dir * FIRE_SPEED + if aim.is_none() { vel.with_y(0.0) } else { Vec3::ZERO };
+        s.fires.push(Shot { pos: hand, vel: v, age: 0.0 });
+        sound(SOUND_FLAME, 0.4);
+        worker::call("ride throw", |_| unsafe { sm64::sm64_er_ride_throw() });
+    }
+    let mut fires = std::mem::take(&mut s.fires);
+    fires.retain_mut(|f| {
+        f.age += dt;
+        let next = f.pos + f.vel * dt;
+        if let Some(at) = ray(f.pos, next) {
+            crate::impact::fire_pop(at);
+            return false;
+        }
+        let prev = f.pos;
+        f.pos = next;
+        let here = HavokPosition(f.pos.x, f.pos.y, f.pos.z, 0.0);
+        let near = combat::nearby(&here, 4.0, origin);
+        for (i, t) in near.iter().enumerate() {
+            if t.shootable().is_none() {
+                continue;
+            }
+            let c = chest(t);
+            let body = t.radius * crate::scale();
+            let tall = t.height * crate::scale();
+            let ab = f.pos - prev;
+            let k = if ab.length_squared() > 1e-4 { ((c - prev).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
+            let at = prev + ab * k;
+            let foot = c.y - tall * 0.5;
+            if (c - at).with_y(0.0).length() <= FIRE_RADIUS + body && at.y >= foot - FIRE_RADIUS && at.y <= foot + tall + FIRE_RADIUS {
+                combat.deal(player, &near, &[(i, Attack::Fire(0), false)], tick);
+                crate::impact::fire_pop(at);
+                return false;
+            }
+        }
+        f.age < FIRE_LIFE
+    });
+    s.fires = fires;
+
     // L2 in the air: the stomp, on landing
     if pressed[3] && air && !s.stomp && s.t >= s.stomp_ready {
         s.stomp = true;
@@ -329,6 +421,7 @@ pub fn tick(
     if s.stomp && s.air && !air {
         s.stomp = false;
         s.stomp_ready = s.t + STOMP_REST;
+        s.stomp_at = s.t;
         log("ride: Yoshi stomp");
         let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
         let near = combat::nearby(&here, STOMP_REACH + 3.0, origin);
@@ -364,5 +457,5 @@ pub fn tick(
         crate::impact::dash_point(feet + Vec3::Y * 0.2, false);
     }
 
-    s.sprites = Sprites { tongue: tongue_tip.map(|tip| (mouth, tip)), eggs: s.eggs.iter().map(|e| (e.pos, e.age)).collect(), stock: s.stock, riding: true };
+    s.sprites = Sprites { tongue: tongue_tip.map(|tip| (mouth, tip)), eggs: s.eggs.iter().map(|e| (e.pos, e.age)).collect(), fires: s.fires.iter().map(|f| (f.pos, f.age)).collect(), stock: s.stock, riding: true };
 }

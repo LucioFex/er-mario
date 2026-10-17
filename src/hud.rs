@@ -675,6 +675,16 @@ impl ImguiRenderLoop for Overlay {
                     }
                 }
             }
+            for (pos, age) in ride.fires {
+                let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.3, size)) else { continue };
+                let h = (c[1] - top[1]) * 2.0;
+                if z > 60.0 || h < 1.0 {
+                    continue;
+                }
+                let frame = (age * 24.0) as usize % 8;
+                dl.add_image(textures[IMG_GLOW], [c[0] - h, c[1] - h], [c[0] + h, c[1] + h]).col([1.0, 0.55, 0.15, 0.6]).build();
+                dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
+            }
             for (pos, age) in ride.eggs {
                 let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.2, size)) else { continue };
                 let h = (c[1] - top[1]) * 2.0;
