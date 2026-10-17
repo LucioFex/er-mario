@@ -96,12 +96,13 @@ impl Attack {
     /// Share of a normal enemy's max HP per hit (%), and its er_mario.ini key.
     fn percent(self) -> (f32, &'static str) {
         // (all of them down to 60% once Mario had his combos, his dash and his speed: the giant
-        // fireball, 10 s of charging, only a little)
+        // fireball, 10 s of charging, only a little; then the fists, kicks and hammer, X and Y, down to half
+        // again: the stomps, the ground pound, the dash and the fireballs kept theirs)
         match self {
-            // (a regular enemy in four blows)
-            Attack::Punch => (27.0, "damage_punch"),
-            Attack::Kick => (27.0, "damage_kick"),
-            Attack::Sweep => (27.0, "damage_sweep"),
+            // (a regular enemy in eight blows)
+            Attack::Punch => (13.5, "damage_punch"),
+            Attack::Kick => (13.5, "damage_kick"),
+            Attack::Sweep => (13.5, "damage_sweep"),
             Attack::Dash => (15.0, "damage_dive"),
             Attack::Stomp => (27.0, "damage_stomp"),
             // slow and leaves Mario open: it has to be worth it (a regular enemy in three)
@@ -113,31 +114,31 @@ impl Attack {
             Attack::Fire(3) => (33.0, "damage_fire_max"),
             // the giant one (10 s): kills a regular enemy outright
             Attack::Fire(_) => (100.0, "damage_fire_giant"),
-            Attack::Spin => (15.0, "damage_spin"),
+            Attack::Spin => (7.5, "damage_spin"),
             Attack::Shockwave => (21.0, "damage_shockwave"),
             // the reward for the beat: harder blows than the plain combo's
-            Attack::Rush => (27.0, "damage_rush"),
-            Attack::RushKick => (45.0, "damage_rush_kick"),
+            Attack::Rush => (13.5, "damage_rush"),
+            Attack::RushKick => (22.5, "damage_rush_kick"),
             // the combos: their finishers hit hardest, worth the longer string of buttons
-            Attack::Uppercut => (13.0, "damage_uppercut"),
-            Attack::UppercutTop => (36.0, "damage_uppercut_top"),
-            Attack::Meteor => (21.0, "damage_meteor"),
-            Attack::MeteorLand => (51.0, "damage_meteor_land"),
-            Attack::Tornado => (11.0, "damage_tornado"),
-            Attack::TornadoEnd => (36.0, "damage_tornado_end"),
+            Attack::Uppercut => (6.5, "damage_uppercut"),
+            Attack::UppercutTop => (18.0, "damage_uppercut_top"),
+            Attack::Meteor => (10.5, "damage_meteor"),
+            Attack::MeteorLand => (25.5, "damage_meteor_land"),
+            Attack::Tornado => (5.5, "damage_tornado"),
+            Attack::TornadoEnd => (18.0, "damage_tornado_end"),
             // the hammer: slower than the fists, every blow heavier
-            Attack::Hammer => (33.0, "damage_hammer"),
-            Attack::HammerSmash => (51.0, "damage_hammer_smash"),
-            Attack::Quake => (39.0, "damage_hammer_slam"),
-            Attack::HammerAir => (27.0, "damage_hammer_air"),
-            Attack::Flurry => (12.0, "damage_hammer_flurry"),
-            Attack::FlurryEnd => (60.0, "damage_hammer_giant"),
-            Attack::Giro => (15.0, "damage_hammer_spin"),
-            Attack::GiroEnd => (42.0, "damage_hammer_spin_end"),
-            Attack::Chain => (24.0, "damage_string"),
-            Attack::ChainEnd => (48.0, "damage_string_end"),
-            Attack::Shell => (21.0, "damage_shell"),
-            Attack::AirHit => (18.0, "damage_air"),
+            Attack::Hammer => (16.5, "damage_hammer"),
+            Attack::HammerSmash => (25.5, "damage_hammer_smash"),
+            Attack::Quake => (19.5, "damage_hammer_slam"),
+            Attack::HammerAir => (13.5, "damage_hammer_air"),
+            Attack::Flurry => (6.0, "damage_hammer_flurry"),
+            Attack::FlurryEnd => (30.0, "damage_hammer_giant"),
+            Attack::Giro => (7.5, "damage_hammer_spin"),
+            Attack::GiroEnd => (21.0, "damage_hammer_spin_end"),
+            Attack::Chain => (12.0, "damage_string"),
+            Attack::ChainEnd => (24.0, "damage_string_end"),
+            Attack::Shell => (10.5, "damage_shell"),
+            Attack::AirHit => (9.0, "damage_air"),
         }
     }
 

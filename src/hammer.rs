@@ -1,9 +1,9 @@
 //! Mario's hammer (L1): a big, solid, dark mallet in his right hand (Mario & Luigi's, Donkey
 //! Kong's), a mesh of its own in his model (assets/model.rs) on a bone of its own, shown only while
 //! it's out. Its swings come from libsm64 (er_moves.c): during them it points where the move says
-//! (degrees around Mario's facing and up from level); otherwise it rests on his shoulder, the head
-//! behind him (along his swinging forearm it shook all over the place as he ran). Its head is what
-//! the swings hit with (combat.rs).
+//! (degrees around Mario's facing and up from level); otherwise it's slung across his back, following
+//! his body (on his shoulder it looked afloat), and it comes to his hand quickly for a swing. Its
+//! head is what the swings hit with (combat.rs).
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -13,7 +13,9 @@ use glam::{Mat3, Quat, Vec3};
 use crate::engine_mario::{HAMMER, PARTS, PartPose};
 use crate::sm64;
 
-/// SM64 parts: the left upper arm, the right upper arm and hand
+/// SM64 parts: the pelvis, the head, the left upper arm, the right upper arm and hand
+const PELVIS: usize = 1;
+const HEAD: usize = 3;
 const L_UPPER_ARM: usize = 4;
 const R_UPPER_ARM: usize = 7;
 const R_HAND: usize = 9;
@@ -22,10 +24,19 @@ const R_HAND: usize = 9;
 pub const HEAD_AT: f32 = 0.8;
 /// how far the hand reaches from the shoulder when a swing places the hammer (m)
 const ARM: f32 = 0.22;
-/// at rest on his shoulder: how much of the way to his hand the grip is, and how fast it settles
-/// there after a swing (share of the way per tick)
-const REST_TO_HAND: f32 = 0.25;
-const REST_SETTLE: f32 = 0.3;
+/// slung on his back, across it: the grip by his right hip (up from the pelvis, out to the side,
+/// out behind), the handle leaning over to his left shoulder and a little away from his back (the
+/// head is fat), all in metres
+const BACK_GRIP: (f32, f32, f32) = (0.06, 0.13, 0.24);
+const BACK_LEAN: f32 = 0.45;
+const BACK_TILT: f32 = 0.14;
+/// in his hand for a swing: how fast it gets there and goes back (share of the way per tick), and
+/// how long it stays after one (ticks: a string's swings don't bounce it back between them)
+const TO_HAND: f32 = 0.45;
+const TO_BACK: f32 = 0.22;
+const HOLD: u32 = 8;
+/// held between swings: the handle up and a little forward and out, settling there
+const READY_SETTLE: f32 = 0.3;
 /// it pops out, and shrinks away (s)
 const POP_TIME: f32 = 0.22;
 const AWAY_TIME: f32 = 0.12;
@@ -37,8 +48,11 @@ struct State {
     across: Vec3,
     /// the head's last position (SM64), for the swept hit
     head: Option<Vec3>,
-    /// the handle's last direction (settling onto the shoulder after a swing)
+    /// the handle's last direction in his hand (settling after a swing)
     dir: Vec3,
+    /// 0 on his back .. 1 in his hand, and the ticks since the last swing
+    in_hand: f32,
+    idle: u32,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -47,7 +61,7 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     // (put away long ago: it doesn't shrink away on the first tick)
     let since = Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap_or_else(Instant::now);
-    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y }))
+    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y, in_hand: 0.0, idle: HOLD }))
 }
 
 /// L1: the hammer comes out or goes away.
@@ -88,7 +102,7 @@ fn mirror(v: Vec3) -> Vec3 {
     Vec3::new(-v.x, v.y, v.z)
 }
 
-/// Worker thread, after each SM64 tick: puts the hammer part in Mario's hand (or hides it there)
+/// Worker thread, after each SM64 tick: puts the hammer part in Mario's hand or on his back (or hides it)
 /// and returns where it is. `visible`: his hands are free (not riding, holding, swimming); it shows
 /// while it's out, or shrinking away.
 pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm64::SM64ErMove, visible: bool) -> Option<Swing> {
@@ -103,6 +117,16 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let face = state.face_angle;
     let fwd = Vec3::new(-face.sin(), 0.0, face.cos());
     let scripted = mv.hammer_scripted != 0;
+    // in his hand while he swings it (and a moment after), on his back otherwise
+    let t = with(|s| {
+        s.idle = if scripted { 0 } else { s.idle.saturating_add(1) };
+        let want = if s.idle <= HOLD { 1.0 } else { 0.0 };
+        s.in_hand += (want - s.in_hand).clamp(-TO_BACK, TO_HAND);
+        s.in_hand
+    });
+    let t = t * t * (3.0 - 2.0 * t);
+    // in his hand: where the move points it, or held ready between swings
+    let side = (parts[R_UPPER_ARM].pos - parts[L_UPPER_ARM].pos).normalize_or(fwd.cross(up));
     let (dir, grip) = if scripted {
         let yaw = face + mv.hammer_yaw.to_radians();
         let pitch = mv.hammer_pitch.to_radians();
@@ -112,30 +136,43 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let reach = parts[R_UPPER_ARM].pos + dir * ARM;
         (dir, hand.pos.lerp(reach, 0.5))
     } else {
-        // on his shoulder: the handle up over it and a little out, the head behind him, settling
-        // there after a swing; held between the shoulder and his hand
-        let side = (parts[R_UPPER_ARM].pos - parts[L_UPPER_ARM].pos).normalize_or(fwd.cross(up));
-        let rest = (up - fwd * 0.6 + side * 0.15).normalize();
-        let dir = with(|s| s.dir.lerp(rest, REST_SETTLE).normalize_or(rest));
-        (dir, parts[R_UPPER_ARM].pos.lerp(hand.pos, REST_TO_HAND) + fwd * 0.06)
+        let ready = (up + fwd * 0.35 + side * 0.2).normalize();
+        let dir = with(|s| s.dir.lerp(ready, READY_SETTLE).normalize_or(ready));
+        (dir, hand.pos)
     };
     with(|s| s.dir = dir);
     let scale = size * if scripted { mv.hammer_scale.max(0.1) } else { 1.0 };
-    let head_rel = grip + dir * HEAD_AT * scale;
-    let to_sm64 = |rel: Vec3| Vec3::from(state.position) + mirror(rel) / crate::SCALE;
-    let head = to_sm64(head_rel);
     // the head faces where it moves (its flat ends strike), kept across the handle
+    let head_now = Vec3::from(state.position) + mirror(grip + dir * HEAD_AT * scale) / crate::SCALE;
     let across = with(|s| {
-        let moved = s.head.map_or(Vec3::ZERO, |h| mirror(head - h) * crate::SCALE);
+        let moved = s.head.map_or(Vec3::ZERO, |h| mirror(head_now - h) * crate::SCALE);
         let want = s.across + moved * 6.0;
-        let across = (want - dir * want.dot(dir)).try_normalize().unwrap_or_else(|| {
+        (want - dir * want.dot(dir)).try_normalize().unwrap_or_else(|| {
             let fallback = fwd.cross(up).cross(dir);
             fallback.try_normalize().unwrap_or(Vec3::X)
-        });
-        s.across = across;
-        across
+        })
     });
-    let rot = Quat::from_mat3(&Mat3::from_cols(dir.cross(across), dir, across)).normalize();
+    let held = Quat::from_mat3(&Mat3::from_cols(dir.cross(across), dir, across)).normalize();
+    // on his back, following his body (pelvis to head, shoulder to shoulder): the head behind his
+    // left shoulder, lying flat across his back
+    let spine = (parts[HEAD].pos - parts[PELVIS].pos).normalize_or(up);
+    let side_b = (side - spine * side.dot(spine)).normalize_or(fwd.cross(up));
+    let mut back = spine.cross(side_b);
+    if back.dot(fwd) > 0.0 {
+        back = -back;
+    }
+    let (rise, out, behind) = BACK_GRIP;
+    let slung_grip = parts[PELVIS].pos + spine * rise + side_b * out + back * behind;
+    let slung_dir = (spine - side_b * BACK_LEAN + back * BACK_TILT).normalize();
+    let slung_across = slung_dir.cross(back).normalize_or(side_b);
+    let slung = Quat::from_mat3(&Mat3::from_cols(slung_dir.cross(slung_across), slung_dir, slung_across)).normalize();
+    let rot = slung.slerp(held, t).normalize();
+    let grip = slung_grip.lerp(grip, t);
+    let scale = size + (scale - size) * t;
+    let dir = rot * Vec3::Y;
+    with(|s| s.across = rot * Vec3::Z);
+    let to_sm64 = |rel: Vec3| Vec3::from(state.position) + mirror(rel) / crate::SCALE;
+    let head = to_sm64(grip + dir * HEAD_AT * scale);
     parts[HAMMER] = PartPose { rot, pos: grip, scale };
     let prev = with(|s| s.head.replace(head)).unwrap_or(head);
     Some(Swing { grip: to_sm64(grip), head, prev, scale })

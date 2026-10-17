@@ -50,15 +50,44 @@ the combo turns him toward the enemy.
 Auto-aim only targets enemies: regular foes, bosses, hostile groups and invaders. Friendly NPCs,
 allies, props, and enemies already down or being carried are left alone.
 
+### New moves
+
+On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 actions in
+`libsm64/src/decomp/game/er_moves.c`, sequences in `src/moves.rs`):
+
+| Input | Move |
+|---|---|
+| X, X, X, then X again | Punch, punch, kick, then a longer string: spinning backfist, double kick, whirlwind kick |
+| X, X, (beat), X | Rush: two fast jabs and a flying kick |
+| X, X, Y | Super jump punch. Small or stunned enemies go up with Mario for an air combo (X in the air) |
+| Y in the air | Meteor dive |
+| Y, X | Mario Tornado |
+| B, Y | Koopa shell slide |
+| B | Dash, invulnerable, where the stick points |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
+| D-pad | Metal, Wing and Vanish caps (they recharge in about 40 s) |
+
+**Hammer mode (LB).** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
+moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air), a
+Donkey Kong flurry that ends with a giant hammer (X, X, Y) and a Bowser spin (Y, X). When he's
+not swinging it, the hammer hangs across his back and he grabs it for each attack.
+
+Hits come with hit-stop, star bursts, shockwave rings and a swing trail (`src/impact.rs`).
+
 ### Damage balance
+
+Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
+close and risky hits.
 
 | Attack | Original | This fork |
 |---|---|---|
-| Stomp | 50% of enemy HP | **67%**, boss bonus ×1.4 |
-| Ground pound | 67%, no boss bonus | **100%** (one-shots regular enemies), boss bonus **×2** |
+| Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **5-30%** per hit. A regular enemy takes about 8 punches; finishers hit hardest |
+| Stomp | 50% of enemy HP | **27%**, weaker when you keep bouncing on the same enemy |
+| Ground pound | 67%, no boss bonus | **42%**, boss bonus **×2**, shockwave hits enemies around |
+| Fireball | — | **12-33%** by charge; the giant one kills a regular enemy |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
 
-The ground pound is slow and leaves Mario open, so now it's worth the risk.
+The ground pound is slow and leaves Mario open, so it's worth the risk.
 
 ### Fixes and quality of life
 
@@ -128,12 +157,13 @@ replaces this fork's DLL with the original one.
 |---|---|---|
 | Left stick | W A S D | Move |
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
-| X | , / left mouse | Punch, punch, kick (auto-aimed combo); punch, punch, a beat, X: a harder rush of two jabs and a flying kick. Running: dive (into an enemy's back or side it picks the enemy up) |
-| Y | | Special move: breakdance sweep, slide kick (running), ground pound slam (after a punch), twirl (in the air) |
+| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive (into an enemy's back or side it picks the enemy up) |
+| Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
 | D-pad | | Caps: left Metal, up Wing, right Vanish, down take it off |
-| LB or LT | K | Crouch, ground pound in the air |
+| LB | | Hammer mode on and off |
+| LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
 | Y | E | Interact (also does Y's special move) |
 | RT | R | Whistle for Yoshi |
