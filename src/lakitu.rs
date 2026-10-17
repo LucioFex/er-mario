@@ -178,6 +178,10 @@ struct Cam {
     frame: Vec3,
     /// how much farther and higher it all is for Mega Mario (eased)
     size: f32,
+    /// the air fight's share (0 on the ground .. 1 in an air combo), and the view's lean towards
+    /// the enemy Mario fights (eased)
+    air: f32,
+    fight_frame: Vec3,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -188,6 +192,23 @@ static BIG: Mutex<Vec<(Vec3, f32, f32)>> = Mutex::new(Vec::new());
 
 pub fn set_big(bodies: Vec<(Vec3, f32, f32)>) {
     *BIG.lock().unwrap_or_else(|e| e.into_inner()) = bodies;
+}
+
+/// The enemy Mario fights (its chest, and whether it's up in the air for him), set every tick by
+/// the combat code: God of War's and Devil May Cry's fight camera frames him with it, and in an
+/// air combo rises with him, a little back and level, looking up at the fight.
+static FIGHT: Mutex<Option<(Vec3, bool)>> = Mutex::new(None);
+
+pub fn set_fight(target: Option<(Vec3, bool)>) {
+    *FIGHT.lock().unwrap_or_else(|e| e.into_inner()) = target;
+}
+
+/// When Mario last threw a blow (set by the combat code): the fight's camera turns to the enemy
+/// only while he fights, not as he runs away from it.
+static BLOW: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+pub fn blow() {
+    *BLOW.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
 }
 
 /// Bounces in a row up a big body (set every frame by the combat code).
@@ -213,6 +234,7 @@ pub fn reset() {
     }
     *CAM.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LAST.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *FIGHT.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn angle_diff(a: f32, b: f32) -> f32 {
@@ -262,12 +284,20 @@ pub fn update(
             push: Vec3::ZERO,
             frame: Vec3::ZERO,
             size: 1.0,
+            air: 0.0,
+            fight_frame: Vec3::ZERO,
         }
     });
 
     // C-buttons (edges)
     let pressed: Vec<bool> = (0..4).map(|i| c[i] && !cam.held[i]).collect();
     cam.held = c;
+    // (a swing of his own: the camera leaves the big body's framing to him a while)
+    static MANUAL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    if pressed[0] || pressed[1] {
+        *MANUAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    }
+    let manual = MANUAL.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < ASSIST_HOLD);
     let base = cam.target_yaw.unwrap_or(cam.yaw);
     if cam.fp.is_none() && pressed[0] {
         cam.target_yaw = Some(base - STEP);
@@ -359,7 +389,13 @@ pub fn update(
     let rate = |r: f32| 1.0 - (-r * dt).exp();
     cam.focus.x = want.x;
     cam.focus.z = want.z;
-    let vy = if airborne && want.y > cam.focus.y - 0.5 { 1.2 } else { 5.0 };
+    // an air fight: an enemy up there with him, or one near and above (God of War / Devil May
+    // Cry): the camera keeps up with his height, backs off a little and levels out to look up
+    let fight = *FIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    let fight = fight.filter(|(c, _)| (*c - mario).with_y(0.0).length() < FIGHT_FAR);
+    let air_fight = airborne && fight.is_some_and(|(c, up)| up || (c.y > mario.y + 0.3 && (c - mario).length() < AIR_NEAR));
+    cam.air += (if air_fight { 1.0 } else { 0.0 } - cam.air) * rate(if air_fight { 3.0 } else { 1.2 });
+    let vy = if airborne && want.y > cam.focus.y - 0.5 { 1.2 + (AIR_FOLLOW - 1.2) * cam.air } else { 5.0 };
     cam.focus.y += (want.y - cam.focus.y) * rate(vy);
     // the lag must never put the focus into the ground (running uphill): at least half a metre
     // above the ground under Mario (not his feet: in a jump the focus should stay low)
@@ -382,6 +418,35 @@ pub fn update(
             let d = cam.leash - cam.focus;
             if d.x.abs() + d.z.abs() > 0.01 {
                 cam.yaw = d.z.atan2(d.x);
+            }
+        }
+    }
+    // a big body close by but out of the view (behind or beside the camera): Lakitu drifts round,
+    // slowly, until it and Mario are both in sight (Mario in front of it), unless he swung the
+    // camera himself just now
+    if cam.target_yaw.is_none() && !manual && cam.fp.is_none() {
+        let bodies = BIG.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let view = -Vec3::new(cam.yaw.cos(), 0.0, cam.yaw.sin());
+        let close: Vec<(f32, Vec3)> =
+            bodies.iter().map(|(p, r, _)| (((*p - mario).with_y(0.0).length() - r).max(0.0), *p)).filter(|(gap, _)| *gap < ASSIST_FAR).collect();
+        // (one already in view: leave it; two on either side of him can't both be)
+        let seen = close.iter().any(|(_, p)| (*p - mario).with_y(0.0).normalize_or(view).dot(view) >= ASSIST_COS);
+        let nearest = close.iter().copied().filter(|_| !seen).min_by(|a, b| a.0.total_cmp(&b.0));
+        // (no big body: the enemy he fights, gentler)
+        let fought = FIGHT.lock().unwrap_or_else(|e| e.into_inner()).filter(|(c, _)| (*c - mario).with_y(0.0).length() < FIGHT_FAR);
+        let fighting = BLOW.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < FIGHT_HOT);
+        let nearest = nearest.or_else(|| {
+            let (c, _) = fought.filter(|_| close.is_empty() && fighting)?;
+            let d = (c - mario).with_y(0.0).length();
+            Some((d.max(0.0) * ASSIST_FAR / FIGHT_FAR + ASSIST_FAR * (1.0 - FIGHT_ASSIST), c))
+        });
+        if let Some((gap, p)) = nearest {
+            let to = (p - mario).with_y(0.0);
+            let off = to.normalize_or(view).dot(view);
+            if to.length() > 0.5 && off < ASSIST_COS {
+                let want = (-to.z).atan2(-to.x);
+                let pull = (1.0 - gap / ASSIST_FAR).clamp(0.0, 1.0) * ((ASSIST_COS - off) / (ASSIST_COS + 1.0)).clamp(0.0, 1.0);
+                cam.yaw += angle_diff(want, cam.yaw) * (rate(ASSIST_RATE) * pull);
             }
         }
     }
@@ -433,6 +498,17 @@ pub fn update(
         cam.climb += (want_climb - cam.climb) * rate(0.6);
     }
     let (dist, height) = (dist + cam.big + cam.climb, height + cam.big * 0.4 + cam.climb * CLIMB_RISE);
+    // (the air fight: back a little, and lower relative to him, looking up at the fight)
+    let (dist, height) = (dist + AIR_BACK * cam.air, height * (1.0 - AIR_LEVEL * cam.air));
+    // the fight's framing: the view leans towards the enemy, so Mario and it share the screen
+    // (more in the air: the one he juggles is up there)
+    let want_fight = fight.map_or(Vec3::ZERO, |(c, _)| {
+        let to = c - head;
+        let lean = FIGHT_LEAN + (AIR_LEAN - FIGHT_LEAN) * cam.air;
+        let v = Vec3::new(to.x * lean, to.y * (lean + 0.15 * cam.air), to.z * lean);
+        v.clamp_length_max(FIGHT_FRAME_MAX)
+    });
+    cam.fight_frame += (want_fight - cam.fight_frame) * rate(2.0);
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
     // uphill ahead (in the view direction): look up the slope, the camera a bit lower
     // (the ground ahead, measured from a point in the open near head height: from high up it
@@ -494,7 +570,10 @@ pub fn update(
     }
     cam.pos = pos;
 
-    let fwd = (cam.focus + cam.frame + Vec3::Y * cam.look_up - cam.pos).normalize_or(Vec3::Z);
+    // (the big body's framing wins over the fight's: both lean the view, the bigger counts)
+    let (a, b) = (cam.frame.length(), cam.fight_frame.length());
+    let frame = if a + b > 1e-4 { (cam.frame * a + cam.fight_frame * b) / (a + b) } else { Vec3::ZERO };
+    let fwd = (cam.focus + frame + Vec3::Y * cam.look_up - cam.pos).normalize_or(Vec3::Z);
     write(render, fwd, cam.pos);
 }
 
@@ -502,9 +581,31 @@ pub fn update(
 /// backs off (m), and how far the view turns to it (m sideways, m up, at most)
 const BIG_FAR: f32 = 14.0;
 const BIG_NEAR: f32 = 3.0;
-const BIG_MAX: f32 = 9.0;
-const BIG_FRAME_SIDE: f32 = 2.0;
-const BIG_FRAME_UP: f32 = 2.2;
+const BIG_MAX: f32 = 9.5;
+const BIG_FRAME_SIDE: f32 = 2.4;
+const BIG_FRAME_UP: f32 = 2.6;
+/// a big body this close (m, off its side) and outside this cone (cos 60°) of the view pulls the
+/// camera round, at most this fast (rate), not for this long after a C-button swing (s)
+const ASSIST_FAR: f32 = 10.0;
+const ASSIST_COS: f32 = 0.5;
+const ASSIST_RATE: f32 = 1.4;
+const ASSIST_HOLD: f32 = 2.5;
+/// the fight's camera: an enemy within this (m, flat) is framed with Mario; the view leans this
+/// share of the way to it (on the ground, in the air), at most this far (m); the camera turns to
+/// it at this share of the big bodies' pull
+const FIGHT_FAR: f32 = 10.0;
+const FIGHT_LEAN: f32 = 0.22;
+const AIR_LEAN: f32 = 0.42;
+const FIGHT_FRAME_MAX: f32 = 2.6;
+const FIGHT_ASSIST: f32 = 0.45;
+/// ...for this long after one of his blows (s)
+const FIGHT_HOT: f32 = 1.5;
+/// an air fight: with an enemy above him this close (m), the camera follows his height this fast
+/// (rate), backs off this much (m) and keeps this share less of its height above him
+const AIR_NEAR: f32 = 6.0;
+const AIR_FOLLOW: f32 = 6.0;
+const AIR_BACK: f32 = 1.6;
+const AIR_LEVEL: f32 = 0.55;
 
 /// A heavy blow shakes Lakitu's camera: when, and how hard (~1 a big hit, 2 the giant hammer).
 static SHAKE: Mutex<Option<(std::time::Instant, f32)>> = Mutex::new(None);

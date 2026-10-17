@@ -34,6 +34,8 @@ pub struct MarioModel {
     pub wings: Vec<Tri>,
     /// Mario's hammer (hammer.rs), on a part of its own
     pub hammer: Vec<Tri>,
+    /// the boomerangs, the Chain Chomp and its chain (gear.rs), each on a part of its own
+    pub gear: Vec<Tri>,
     /// SM64's texture atlas (11 textures of 64x64, RGBA)
     pub atlas: Vec<u8>,
 }
@@ -128,7 +130,8 @@ pub fn export(geo: &mut sm64::Geometry, atlas: Vec<u8>) -> Option<MarioModel> {
     let peace = tris(&c, geo, |p| p == RIGHT_HAND);
     unsafe { sm64::sm64_mario_delete(id) };
     let hammer = hammer(&model_tris, &atlas);
-    Some(MarioModel { tris: model_tris, matrices, peace, wings, hammer, atlas })
+    let gear = super::gear::build(&model_tris, &atlas);
+    Some(MarioModel { tris: model_tris, matrices, peace, wings, hammer, gear, atlas })
 }
 
 /// The hammer's part (engine_mario::HAMMER)
@@ -202,7 +205,7 @@ fn hammer(model: &[Tri], atlas: &[u8]) -> Vec<Tri> {
 
 /// The centre texel of the darkest opaque 5x5 patch in SM64's texture atlas (11 cells of 64x64,
 /// RGBA), as an atlas UV, and a texel's size in UV; None if nothing there is dark enough.
-fn dark_patch(atlas: &[u8]) -> Option<([f32; 2], (f32, f32))> {
+pub(super) fn dark_patch(atlas: &[u8]) -> Option<([f32; 2], (f32, f32))> {
     const CELL: usize = 64;
     const CELLS: usize = 11;
     let w = CELL * CELLS;

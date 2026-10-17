@@ -1322,11 +1322,11 @@ void update_mario_joystick_inputs(struct MarioState *m) {
     } else {
         m->intendedMag = mag / 8.0f;
     }
-    // er-mario: Mega Mario (mega.rs) is slow for his size: the stick asks for less
+    // er-mario: Mega Mario (mega.rs) is a titan, slow for his size: the stick asks for less
     {
         extern int er_mega;
         if (er_mega) {
-            m->intendedMag *= 0.3f;
+            m->intendedMag *= 0.24f;
         }
     }
 

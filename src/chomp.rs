@@ -1,22 +1,26 @@
 //! Mario's Chain Chomp (weapons.rs): held on its chain, it lunges, sweeps and crashes where
 //! er_moves.c's moves put it (degrees around his facing, how far out, how high), and its body is
 //! what they hit with (combat.rs, as the hammer's head). Between blows it hops along beside him,
-//! straining at the chain. Drawn by hud.rs: the ball with its eye and teeth, the chain's links from
-//! his hand.
+//! straining at the chain. It's a real model (assets/gear.rs, on bones of its own like the hammer):
+//! the ball with its eyes and teeth, its jaw biting, and the chain's links from his hand, sagging
+//! when slack and taut in a lash.
 
 use std::sync::Mutex;
 use std::time::Instant;
 
 use glam::Vec3;
 
-use crate::engine_mario::{PARTS, PartPose};
+use glam::{Mat3, Quat};
+
+use crate::assets::gear::{CHOMP_R, HINGE, PAIR_LEN};
+use crate::engine_mario::{CHAIN, CHAIN_LINKS, CHOMP, JAW, PARTS, PartPose};
 use crate::hammer::Swing;
 use crate::sm64;
 
 /// SM64 parts: the right hand
 const R_HAND: usize = 9;
 /// its reach for the hits: the hammer head's reach times this (combat.rs)
-const HIT_SCALE: f32 = 0.7;
+const HIT_SCALE: f32 = 0.72;
 /// beside him between blows: degrees around his facing (behind, to his right), how far (SM64
 /// units), how fast it gets there (share of the way per tick), its hops (units high, per second)
 const REST_YAW: f32 = -140.0;
@@ -25,15 +29,31 @@ const FOLLOW: f32 = 0.3;
 const HOP: f32 = 30.0;
 const HOP_RATE: f32 = 7.0;
 
+/// the ball sits this much above the place the moves give (m: that's low, its bottom on the floor)
+const LIFT: f32 = 0.2;
+/// its jaw: open this far at most (radians), how fast it opens and shuts (share per tick)
+const JAW_OPEN: f32 = 0.8;
+const JAW_RATE: f32 = 0.55;
+/// it turns to where it lunges this fast (share per tick)
+const TURN: f32 = 0.45;
+/// the chain sags this much when slack (m), taut from this long (m)
+const SAG: f32 = 0.35;
+const TAUT: f32 = 4.5;
+/// it pops out (s)
+const POP_TIME: f32 = 0.25;
+
 struct State {
     out: bool,
     /// the Chomp's last place (SM64), and whether a move held it
     pos: Option<Vec3>,
     scripted: bool,
     born: Option<Instant>,
+    /// where it looks (part axes), how open its jaw is
+    look: Vec3,
+    jaw: f32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None });
+static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0 });
 
 /// The Chain Chomp is in hand or not (weapons.rs).
 pub fn set_out(out: bool) {
@@ -46,8 +66,9 @@ pub fn set_out(out: bool) {
 }
 
 /// Worker thread, after each SM64 tick: where the Chomp is now (SM64 units) and its sweep for the
-/// hits, if it's out. `parts`: his part poses (the hand holds the chain).
-pub fn pose(parts: &[PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm64::SM64ErMove, visible: bool) -> Option<Swing> {
+/// hits, if it's out; puts its ball, jaw and chain on their parts. `parts`: his part poses (the
+/// hand holds the chain).
+pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm64::SM64ErMove, visible: bool) -> Option<Swing> {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if !s.out || !visible {
         s.pos = None;
@@ -75,43 +96,61 @@ pub fn pose(parts: &[PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm64::
     s.scripted = scripted;
     let hand = parts[R_HAND].pos;
     let grip = mario + Vec3::new(-hand.x, hand.y, hand.z) / crate::scale();
+    // the model: SM64 -> part axes (mirrored, metres from Mario)
+    let rel = |p: Vec3| {
+        let d = (p - mario) * crate::scale();
+        Vec3::new(-d.x, d.y, d.z)
+    };
+    let centre = rel(now) + Vec3::Y * LIFT;
+    let moved = rel(now) - rel(prev);
+    let size = {
+        let p = (t / POP_TIME).min(1.0);
+        (if p < 0.6 { p / 0.6 * 1.2 } else { 1.2 - 0.2 * (p - 0.6) / 0.4 }).max(0.01)
+    };
+    // it looks away from his hand (straining), and up or down the way it flies
+    let face = state.face_angle;
+    let ahead = Vec3::new(-face.sin(), 0.0, face.cos());
+    let away = (centre - hand).with_y(0.0);
+    let flat = if away.length() > 0.3 { away.normalize() } else { ahead };
+    let pitch = if scripted { (moved.y / moved.with_y(0.0).length().max(0.05)).clamp(-1.2, 1.2) * 0.35 } else { 0.0 };
+    let want = (flat * pitch.cos() + Vec3::Y * pitch.sin()).normalize_or(flat);
+    let look = s.look.lerp(want, TURN).normalize_or(want);
+    s.look = look;
+    // its jaw: what the move says, or a snap now and then between blows
+    let bite = if scripted { mv.chomp_bite } else { ((t * 3.3) as i32 % 4 == 0) as u8 as f32 };
+    s.jaw += (bite.clamp(0.0, 1.0) - s.jaw) * JAW_RATE;
+    let jaw = s.jaw * JAW_OPEN;
+    let right = Vec3::Y.cross(look).normalize_or(Vec3::X);
+    let up = look.cross(right);
+    let body = Quat::from_mat3(&Mat3::from_cols(right, up, look)).normalize();
+    // (a little wobble as it hops)
+    let body = if scripted { body } else { body * Quat::from_rotation_z((t * 7.0).sin() * 0.12) };
+    parts[CHOMP] = PartPose { rot: body, pos: centre, scale: size };
+    let open = Quat::from_rotation_x(jaw);
+    parts[JAW] = PartPose { rot: (body * open).normalize(), pos: centre + body * (HINGE - open * HINGE) * size, scale: size };
+    // the chain: from his hand to the back of the ball, its pairs of links spread along it (a
+    // little bigger when it's long, so it reads as a chain), sagging when slack (and swaying a
+    // little); a pair's second link is turned a quarter, so the next pair's first hooks into it
+    let anchor = centre - look * CHOMP_R * 0.85 * size;
+    let span = anchor - hand;
+    let slack = 1.0 - (span.length() / TAUT).min(1.0);
+    let sag = SAG * slack;
+    let side = Vec3::Y.cross(span).normalize_or(right);
+    let links = (span.length() / (CHAIN_LINKS as f32 * PAIR_LEN)).clamp(1.0, 1.7) * size.min(1.0);
+    for k in 0..CHAIN_LINKS {
+        let u = (k as f32 + 0.5) / CHAIN_LINKS as f32;
+        let sway = (t * 6.0 + k as f32 * 0.9).sin() * 0.05 * slack * (u * (1.0 - u) * 4.0);
+        let p = hand + span * u - Vec3::Y * (sag * 4.0 * u * (1.0 - u)) + side * sway;
+        let along = (span - Vec3::Y * (sag * 4.0 * (1.0 - 2.0 * u))).normalize_or(Vec3::Y);
+        // (turned about the chain from a steady side, not the vertical: a chain going straight up
+        // in a slam didn't twist about)
+        let x = (side - along * side.dot(along)).try_normalize().unwrap_or(Vec3::X);
+        let rot = Quat::from_mat3(&Mat3::from_cols(x, along, x.cross(along))).normalize();
+        parts[CHAIN + k] = PartPose { rot, pos: p, scale: links };
+    }
     Some(Swing { grip, head: now, prev: if scripted { prev } else { now }, scale: HIT_SCALE })
 }
 
-/// What hud.rs draws: the Chomp (Elden Ring), his hand, its mouth open (0-1).
-#[derive(Clone, Copy)]
-pub struct Sprite {
-    pub chomp: Vec3,
-    pub hand: Vec3,
-    pub bite: f32,
-    pub vel: Vec3,
-}
-
-static SPRITE: Mutex<Option<(Sprite, Instant)>> = Mutex::new(None);
-
-/// Game thread, after each tick: where to draw it (None: not out).
-pub fn publish(sprite: Option<Sprite>) {
-    let mut s = SPRITE.lock().unwrap_or_else(|e| e.into_inner());
-    // (velocity from the last tick's place: drawn moving on between ticks)
-    let sprite = sprite.map(|mut n| {
-        if let Some((old, t)) = *s {
-            let dt = t.elapsed().as_secs_f32().max(1.0 / 60.0);
-            n.vel = ((n.chomp - old.chomp) / dt).clamp_length_max(40.0);
-        }
-        n
-    });
-    *s = sprite.map(|n| (n, Instant::now()));
-}
-
-/// The Chomp to draw now.
-pub fn sprite() -> Option<Sprite> {
-    let s = SPRITE.lock().unwrap_or_else(|e| e.into_inner());
-    let (n, t) = (*s)?;
-    let dt = t.elapsed().as_secs_f32();
-    (dt < 0.25).then(|| Sprite { chomp: n.chomp + n.vel * dt.min(1.0 / 30.0), ..n })
-}
-
 pub fn clear() {
-    *SPRITE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     STATE.lock().unwrap_or_else(|e| e.into_inner()).pos = None;
 }

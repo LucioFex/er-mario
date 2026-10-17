@@ -129,6 +129,7 @@ const IMG_ORB: usize = 69; // 4
 /// the hammer's icon; the Mega Mushroom (mega.rs)
 const IMG_RANG: usize = 73;
 const IMG_CHOMP: usize = 74; // 2
+#[allow(dead_code)] // (its slot stays: the images after it keep their numbers)
 const IMG_LINK: usize = 76;
 const IMG_HAMMER_ICON: usize = 77;
 const IMG_MUSHROOM: usize = 78;
@@ -627,39 +628,22 @@ impl ImguiRenderLoop for Overlay {
                 dl.add_line(pa, pb, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.45 * fade)).thickness(width).build();
             }
         }
-        // the boomerangs: spinning, a fading trail of ghosts behind each, and the one in his hand
+        // the boomerangs (models of their own, engine_mario): a streak of air behind each, thin
+        // and fading
         {
-            let (rangs, held) = crate::boomerang::sprites();
-            let quad = |c: [f32; 2], h: f32, angle: f32, alpha: f32| {
-                let (s, co) = (angle.sin() * h * 0.5, angle.cos() * h * 0.5);
-                let corner = |x: f32, y: f32| [c[0] + x * co - y * s, c[1] + x * s + y * co];
-                dl.add_image_quad(textures[IMG_RANG], corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0))
-                    .col([1.0, 1.0, 1.0, alpha])
-                    .build();
-            };
+            let (rangs, _) = crate::boomerang::sprites();
             for r in &rangs {
                 let n = r.trail.len();
-                for (k, p) in r.trail.iter().enumerate().take(n.saturating_sub(1)) {
-                    let (Some((c, z)), Some((top, _))) = (project(*p, size), project(*p + Vec3::Y * r.size * 0.5, size)) else { continue };
-                    let h = (c[1] - top[1]) * 2.0;
-                    if z > 60.0 || h < 1.0 {
+                let pts: Vec<Vec3> = r.trail.iter().copied().chain(std::iter::once(r.pos)).collect();
+                for (k, pair) in pts.windows(2).enumerate() {
+                    let (Some((a, za)), Some((b, _))) = (project(pair[0], size), project(pair[1], size)) else { continue };
+                    if za > 60.0 {
                         continue;
                     }
-                    quad(c, h, r.spin - (n - k) as f32 * 0.9, 0.12 + 0.3 * k as f32 / n as f32);
-                }
-                let (Some((c, z)), Some((top, _))) = (project(r.pos, size), project(r.pos + Vec3::Y * r.size * 0.5, size)) else { continue };
-                let h = (c[1] - top[1]) * 2.0;
-                if z > 60.0 || h < 1.0 {
-                    continue;
-                }
-                quad(c, h, r.spin, 1.0);
-            }
-            if let Some(p) = held {
-                if let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * 0.18, size)) {
-                    let h = (c[1] - top[1]) * 2.0;
-                    if z < 40.0 && h > 1.0 {
-                        quad(c, h, 0.6, 1.0);
-                    }
+                    let fade = (k + 1) as f32 / (n + 1) as f32;
+                    let width = (size[1] / za.max(1.0) * 0.035 * r.size / 0.55).clamp(1.0, 12.0) * fade;
+                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.3 * fade)).thickness(width).build();
+                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.6, 0.5, 0.25 * fade)).thickness(width * 0.35).build();
                 }
             }
         }
@@ -723,34 +707,6 @@ impl ImguiRenderLoop for Overlay {
                 }
             }
         }
-        // the Chain Chomp: its chain from his hand (sagging when slack), then the ball facing the
-        // way it's going on screen, its mouth open in a lunge
-        if let Some(ch) = crate::chomp::sprite() {
-            let span = ch.chomp - ch.hand;
-            let sag = 0.35 * (1.0 - (span.length() / 4.5).min(1.0));
-            const LINKS: usize = 9;
-            for k in 1..LINKS {
-                let t = k as f32 / LINKS as f32;
-                let p = ch.hand + span * t - Vec3::Y * (sag * 4.0 * t * (1.0 - t));
-                let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * 0.07, size)) else { continue };
-                let h = (c[1] - top[1]) * 2.0;
-                if z > 50.0 || h < 0.5 {
-                    continue;
-                }
-                dl.add_image(textures[IMG_LINK], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
-            }
-            if let (Some((c, z)), Some((top, _)), Some((hand, _))) = (project(ch.chomp, size), project(ch.chomp + Vec3::Y * 0.45, size), project(ch.hand, size)) {
-                let h = (c[1] - top[1]) * 2.0;
-                if z < 60.0 && h > 1.0 {
-                    // (facing away from Mario on screen)
-                    let right = c[0] >= hand[0];
-                    let (u0, u1) = if right { (0.0, 1.0) } else { (1.0, 0.0) };
-                    let img = IMG_CHOMP + (ch.bite > 0.5) as usize;
-                    dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).uv_min([u0, 0.0]).uv_max([u1, 1.0]).build();
-                }
-            }
-        }
-
         // the blows that landed: a star burst each, growing a little as it goes
         for (spark, t) in crate::impact::sparks() {
             let s = spark.size * (0.7 + 0.5 * t);

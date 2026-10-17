@@ -10,6 +10,7 @@ pub mod archive;
 pub mod bnd4;
 pub mod dcx;
 pub mod flver;
+pub mod gear;
 pub mod icons;
 pub mod matbin;
 pub mod model;
@@ -22,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 10";
+const VERSION: &str = "er-mario assets 12";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -34,6 +35,8 @@ const QUALITIES: [&str; 2] = ["hi", "low"];
 
 /// The bone the build put Mario's hammer on (engine_mario reads it), next to the package files.
 pub const HAMMER_BONE_FILE: &str = "package/hammer_bone.txt";
+/// "1" when the build put the gear (boomerangs, Chain Chomp) into Mario's model (engine_mario reads it)
+pub const GEAR_FILE: &str = "package/gear.txt";
 
 /// The package files were complete when the game started (so me3 serves them this session).
 static READY: AtomicBool = AtomicBool::new(false);
@@ -200,6 +203,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
         peace: model.peace.clone(),
         wings: Vec::new(),
         hammer: model.hammer.clone(),
+        gear: model.gear.clone(),
         atlas: model.atlas.clone(),
     };
     log(format!("assets: wing cap {} triangles", model.wings.len()));
@@ -214,6 +218,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     // chest piece again for each cap's look
     let mut done = 0.0;
     let total = (PIECES.len() + looks.len() - 1) * 2;
+    let mut all_gear = true;
     for piece in PIECES {
         for (look, mesh, albedo, metal) in &looks {
             if piece != "bd" && *look != MODEL_MARIO {
@@ -235,7 +240,8 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                                 log(format!("assets: the hammer goes on {}", if bone.is_empty() { "no bone" } else { bone }));
                                 write(HAMMER_BONE_FILE, bone.as_bytes())?;
                             }
-                            let mut d = flver::build_mario(fl, mesh, 1)?;
+                            let (mut d, gear) = flver::build_mario(fl, mesh, 1)?;
+                            all_gear &= gear;
                             tex::rename(&mut d, "P[BD_M_1280]_Fabric.matxml", &format!("P[BD_M_{id}]_Fabric.matxml"));
                             d
                         } else {
@@ -293,6 +299,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
         tex::patch_portrait(&mut tpf, i, if i == 0 { &hi } else { &low }, (w >> i, h >> i))?;
         write(&format!("package/menu/{q}/01_common.tpf.dcx"), &dcx::compress(&tpf)?)?;
     }
+    write(GEAR_FILE, if all_gear { b"1" } else { b"0" })?;
     step(0.95, "Building Yoshi");
     if let Err(e) = build_yoshi(&archives) {
         // (Torrent stays Torrent then: none of his files may be left half done)

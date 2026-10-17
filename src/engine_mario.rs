@@ -11,18 +11,35 @@ use crate::{explore, log};
 
 /// SM64 part -> skeleton bone (same list as tools/build_mario_parts.py; the hammer's comes from
 /// the asset build, `hammer_bone`).
-const PART_BONES: [&str; PARTS - 1] = [
+const PART_BONES: [&str; HAMMER] = [
     "", "Pelvis_Mantle", "Spine2", "Neck", "L_ShoulderArmor", "L_Pectoral", "Collar", "R_Shoulder", "R_Pectoral", "Spine2_Mantle", "L_Hip", "SpineArmor1", "Spine_Mantle", "R_Hip", "SpineArmor2", "L_Shoulder",
     // eye variants (open, half, closed, dead): only the one SM64 is drawing is shown
     "L_UpArmTwist", "L_Elbow", "L_ForeArmTwist", "L_ForeArmTwist1",
     // the peace-sign right hand (star dance), shown instead of the fist
     "R_Elbow",
 ];
-/// SM64's body parts (0..16) plus the eye variants (16..20), the peace sign (20) and the hammer (21).
+/// SM64's body parts (0..16) plus the eye variants (16..20), the peace sign (20), the hammer (21)
+/// and the gear (assets/gear.rs): three boomerangs, the Chain Chomp, its jaw, its chain's links.
 pub const SM64_PARTS: usize = 16;
-pub const PARTS: usize = 22;
+pub const PARTS: usize = 31;
 /// Mario's hammer (hammer.rs), hidden in his hand unless it's out
 pub const HAMMER: usize = 21;
+/// the boomerangs (boomerang.rs), one part each
+pub const RANG: usize = 22;
+pub const RANGS: usize = 3;
+/// the Chain Chomp (chomp.rs): its ball, its lower jaw, its chain's links (in pairs)
+pub const CHOMP: usize = 25;
+pub const JAW: usize = 26;
+pub const CHAIN: usize = 27;
+pub const CHAIN_LINKS: usize = 4;
+/// The bones the gear goes on, part by part from RANG: the chest piece skins them all, and none
+/// is above another bone of Mario's (map_bones checks) or carries much below it (a calf would have
+/// dragged the Tarnished's feet, and their footsteps, along)
+pub const GEAR_BONES: [&str; PARTS - RANG] = [
+    "R_ForeArmTwist1", "R_UpArmTwist", "R_UpArmTwist1",
+    "L_UpArmTwist1", "R_ThighTwist",
+    "L_Hand", "R_Hand", "L_Thigh_Skirt", "R_Thigh_Skirt",
+];
 
 /// The bone the asset build put the hammer on (assets::HAMMER_BONE_FILE), if it did.
 fn hammer_bone() -> Option<String> {
@@ -86,8 +103,10 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
     if peace {
         out[RIGHT_HAND].scale = 0.01;
     }
-    // the hammer hides in the right hand (hammer.rs shows it)
-    out[HAMMER] = PartPose { scale: 0.01, ..out[RIGHT_HAND] };
+    // the hammer and the gear hide in the right hand (hammer.rs, boomerang.rs, chomp.rs show them)
+    for p in HAMMER..PARTS {
+        out[p] = PartPose { scale: 0.01, ..out[RIGHT_HAND] };
+    }
     // eyes ride the head; only the variant SM64 is drawing is visible
     for (k, &cell) in EYE_CELLS.iter().enumerate() {
         // hidden variants stay full size, tucked 6 mm into the head behind the visible one (scaling
@@ -159,6 +178,31 @@ fn map_bones(skeleton: usize) -> Option<BoneMap> {
     // (without it, or on a skeleton without that bone, the hammer just isn't seen)
     if let Some(name) = hammer_bone() {
         bones[HAMMER] = all.iter().position(|n| *n == name).unwrap_or(usize::MAX);
+    }
+    // the gear's bones, only if the asset build put the gear in (assets::GEAR_FILE), and none
+    // above a bone of Mario's (its size and place would carry him along)
+    let gear = std::fs::read_to_string(crate::paths::file(crate::assets::GEAR_FILE)).is_ok_and(|s| s.trim() == "1");
+    let parents = explore::read_u64(skeleton + 0x20).map(|p| p as usize).filter(|&p| p != 0 && explore::readable(p & !7, count * 2 + 8));
+    let parent_of = |b: usize| parents.filter(|_| b < count).map_or(-1, |p| unsafe { *((p + b * 2) as *const i16) });
+    for (k, name) in GEAR_BONES.iter().enumerate().filter(|_| gear) {
+        let Some(b) = all.iter().position(|n| n == name) else { continue };
+        let above_mario = bones[1..RANG].iter().filter(|&&m| m < count).any(|&m| {
+            let mut p = parent_of(m);
+            let mut steps = 0;
+            while p >= 0 && steps < 64 {
+                if p as usize == b {
+                    return true;
+                }
+                p = parent_of(p as usize);
+                steps += 1;
+            }
+            false
+        });
+        if above_mario || parents.is_none() || bones[..RANG].contains(&b) {
+            log(format!("engine mario: gear bone {name} skipped (above a bone of Mario's, or taken)"));
+            continue;
+        }
+        bones[RANG + k] = b;
     }
     log(format!("engine mario: skeleton {skeleton:#x} ({count} bones), part bones {:?}", &bones[1..]));
     Some(BoneMap { skeleton, bones })

@@ -161,6 +161,7 @@ unsafe extern "C" {
     pub fn sm64_set_mario_action(id: i32, action: u32);
     pub fn sm64_set_mario_action_arg(id: i32, action: u32, action_arg: u32);
     pub fn sm64_set_mario_velocity(id: i32, x: f32, y: f32, z: f32);
+    pub fn sm64_set_mario_forward_velocity(id: i32, vel: f32);
     pub fn sm64_surface_object_create(object: *const SM64SurfaceObject) -> u32;
     pub fn sm64_surface_object_move(id: u32, transform: *const SM64ObjectTransform);
     pub fn sm64_surface_object_delete(id: u32);
@@ -173,6 +174,8 @@ unsafe extern "C" {
     pub fn sm64_er_set_head(active: i32, pitch: f32, yaw: f32);
     /// er-mario patch: the enemy (SM64 x, z) each hit of the punch combo turns Mario to (0 = none)
     pub fn sm64_er_set_aim(active: i32, x: f32, z: f32);
+    /// er-mario patch: how far that enemy is beyond a blow's reach (units): an aimed blow lunges
+    pub fn sm64_er_set_aim_gap(gap: f32);
     pub fn sm64_er_set_home(active: i32, x: f32, z: f32);
     pub fn sm64_er_set_stomp(vel: f32, vel_a: f32);
     pub fn sm64_er_end_cap(id: i32, now: i32);

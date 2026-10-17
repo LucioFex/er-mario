@@ -42,7 +42,7 @@ the combo turns him toward the enemy.
 |---|---|---|
 | **Punch knockback** | A landed punch pushes Mario back (SM64's `-48` bounce) | Mario keeps his speed and stays in range for the next hit |
 | **Combo step** | Only the first punch steps forward | Every hit (punch, punch, kick) steps forward a little further |
-| **Auto-aim** | None | Each hit of the combo turns Mario to the nearest hostile within an 80° cone |
+| **Auto-aim** | None | Each hit of the combo turns Mario to the nearest hostile around him (it keeps to the same one during a string), and a blow lunges a step at an enemy just out of reach (fists and hammer, on the ground) |
 | **Jump kick** | From a standstill it goes straight up | A small dash forward, aimed like the combo |
 | **Punch / kick reach** | 80 units, 50° cone, punches only | 135 units, 60° cone, punches **and** kicks |
 | **Head stomp** | Wide hitbox bounced Mario off heads he missed; walked on top of big beasts | Tighter stomp radius, height capped so large enemies can be stomped properly |
@@ -85,6 +85,13 @@ still turn), it grows with a soft chime per level, and fully charged it comes do
 hammer. Enemies that fall out of an air combo bounce off the ground once, and a hit on the bounce
 sends them back up. Launched enemies leave a streak and land with a thud of dust.
 
+**Real 3D weapons.** The hammer, the boomerangs and the Chain Chomp are 3D models built into
+Mario's own mesh, each on a bone of its own (`src/assets/gear.rs`): the boomerangs spin flat and
+bank into their curve, the Chomp is a dark iron ball with eyes and teeth whose jaw opens to bite,
+on a chain of real links that sags when slack and pulls taut in a lash. Their sounds vary and stay
+soft when repeated: the Chomp's chain rattles with SM64's metal clinks, its bark and whooshes come
+louder or softer each time, and the boomerangs whir one at a time.
+
 **Boomerang** (the Boomerang Bros.'), the ranged weapon (`src/boomerang.rs`):
 
 | Input | Move |
@@ -109,20 +116,22 @@ hops along beside Mario between attacks.
 | X in the air | It swings once all the way around him |
 | Y in the air | Crash: Mario drops with it under him, shockwave on landing |
 
-**Mega Mushroom (D-pad right).** Mario grows to 4 times his height for 20 seconds (75 s
+**Mega Mushroom (D-pad right).** Mario grows to 4 times his height for 15 seconds (90 s
 recharge), in SM64 power-up steps with the power-up music. His whole SM64 world is scaled, so
 collisions grow with him: low ceilings and narrow passages stop him, and if there is no room
-where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's slow for
-his size and heavy: fists only, every hit does 1.35x and shakes the screen, enemy hits hurt half
-as much, his steps and landings shake the ground, his jumps go up a giant's way, and Y is a
+where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's a titan:
+all of him moves at 70% pace (walk, blows, jumps; the music keeps its own), he walks slowly for
+his size, fists only, every hit does 2.3x and shakes the screen, enemy hits hurt about a third as
+much, his steps and landings shake the ground, his jumps go up a giant's way, and Y is a
 two-fisted slam with a huge shockwave (hold Y to charge it; one every 2.5 s). No dashes, shell,
 meteor dive or super jump punch (too fast for a giant), no caps, no Yoshi and no first-person
 view while he's big. D-pad right again ends it early, and so do a door, a fog wall, a ladder, a
 loading screen or dying. It replaced the Vanish cap.
 
-**The hook (RT).** Mario flings his cap out on a line of light, Devil May Cry's Snatch. It goes
-for the enemy nearest to where the camera looks, or, with none there, the spot of the map the
-camera looks at (up to 20 m):
+**The hook (RT).** Mario flings his cap out on a line of light, Devil May Cry's Snatch. It aims
+itself: any enemy close to Mario (within 9 m, all around him, the nearest first and those in front
+before those behind), farther ones where Mario or the camera looks; with none, the spot of the map
+the camera looks at (up to 20 m):
 
 | It catches | What happens |
 |---|---|
@@ -131,8 +140,11 @@ camera looks at (up to 20 m):
 | A wall | Mario flies to it and clings to it a moment: A wall kicks off it, LT lets go |
 | A floor or a ledge | Mario flies there and lands |
 
-It barely hurts: it's for keeping a combo going and for getting around. It works on the ground
-and in the air (`src/hook.rs`).
+Walls and ledges are good for **one hook per jump**: after that it only clinks off them until
+Mario lands, so there's no climbing forever. Enemies can be hooked any number of times, and each
+one gives the wall hook back (jump, wall, enemy, wall again works). It barely hurts: it's for
+keeping a combo going and for getting around. It works on the ground and in the air
+(`src/hook.rs`).
 
 **Yoshi in a fight (`src/ride.rs`).** Riding Yoshi, A still jumps and B dashes, and Yoshi has his
 own moves (his mouth opens for the tongue, he nods with each egg and on a stomp):
@@ -156,8 +168,17 @@ world down for a moment (`src/style.rs`).
 
 Hits come with hit-stop, star bursts, shockwave rings, a swing trail and a camera shake on the
 heavy ones (`src/impact.rs`). Next to a big enemy Lakitu's camera backs off and looks up at it,
-more the bigger and closer it is, and a big enemy that gets between the camera and Mario (or
-around the camera) turns see-through until it's out of the way.
+more the bigger and closer it is; if one is close but out of view, the camera drifts round to
+show it (not right after you turn the camera yourself). In a fight the camera works like God of
+War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen,
+turns gently to keep it in view, and in an air combo it rises with Mario, backs off a little and
+levels out to look up at the fight. A big enemy that gets between the camera
+and Mario (or around the camera) turns see-through until it's out of the way.
+
+**Big blows hurt more than wedges.** A heavy hit from a boss or a big brute sometimes (a roll of
+the dice, never twice in a row) sends Mario flying far off, screaming; if a wall is in the way he
+smacks into it with stars and a bonk (`src/blown.rs`). And a fall from very high up (over 22 m)
+is the end of him, as in Elden Ring.
 
 ### Damage balance
 
@@ -178,6 +199,11 @@ close and risky hits.
 The ground pound is slow and leaves Mario open, so it's worth the risk.
 
 ### Fixes and quality of life
+
+- **Enemies notice Mario like a normal player.** The game never walks the Tarnished in Mario
+  mode, so enemies never heard his steps and only fought back once hit. Now Mario makes the
+  game's own AI noise (`src/noise.rs`): soft when he walks, louder when he runs, jumps, lands
+  or fights, loudest on heavy blows. Standing still or crawling is silent, so sneaking still works.
 
 - **Yoshi kept coming back on his own.** Punching (X) while getting off Yoshi queued the game's
   "use item" whistle, and he was summoned again every few seconds. X now reaches the game only

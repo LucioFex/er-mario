@@ -65,6 +65,9 @@ s32 lava_boost_on_wall(struct MarioState *m) {
     return drop_and_set_mario_action(m, ACT_LAVA_BOOST, 1);
 }
 
+/* er-mario: a fall from higher than this kills (units: 22 m) */
+#define ER_LETHAL_FALL 2200.0f
+
 s32 check_fall_damage(struct MarioState *m, u32 hardFallAction) {
     f32 fallHeight;
     f32 damageHeight;
@@ -85,6 +88,15 @@ s32 check_fall_damage(struct MarioState *m, u32 hardFallAction) {
 
     if (m->action != ACT_TWIRLING && m->floor->type != SURFACE_BURNING) {
         if (m->vel[1] < -55.0f) {
+            // er-mario: from very high up a fall is the end (in Elden Ring's cliffs he never died
+            // falling; SM64's worst fall cost only a few wedges)
+            if (fallHeight > ER_LETHAL_FALL) {
+                m->health = 0xFF;
+                m->hurtCounter = 0;
+                set_camera_shake_from_hit(SHAKE_FALL_DAMAGE);
+                play_sound(SOUND_MARIO_ATTACKED, m->marioObj->header.gfx.cameraToObject);
+                return drop_and_set_mario_action(m, hardFallAction, 4);
+            }
             if (fallHeight > 3000.0f) {
                 m->hurtCounter += (m->flags & MARIO_CAP_ON_HEAD) ? 16 : 24;
 #ifdef VERSION_SH

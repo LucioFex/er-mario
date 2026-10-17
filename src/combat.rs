@@ -486,7 +486,7 @@ impl Target {
     }
 }
 
-fn handle_key(h: &FieldInsHandle) -> u64 {
+pub fn handle_key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
 
@@ -978,31 +978,42 @@ const PUNCH_CONE_COS: f32 = 0.5;
 /// Each hit of the punch combo turns Mario to the nearest enemy within this reach beyond its
 /// body (SM64 units) and this cone (cos 110°) around where he faces: punches thrown a little to
 /// the side of an enemy in front missed it.
-const AIM_REACH: f32 = 320.0;
+const AIM_REACH: f32 = 420.0;
 const AIM_CONE_COS: f32 = -0.34;
+/// ...and keeps to the one it turned him to last while it's about as good (a string doesn't hop
+/// between two enemies side by side); enemies up to this high above his feet count (units)
+const AIM_KEEP: f32 = 70.0;
+const AIM_ABOVE: f32 = 160.0;
 /// Falling, Mario drifts onto the nearest enemy below within this reach beyond its body (SM64
 /// units): stomps landed just beside heads.
 const HOME_REACH: f32 = 150.0;
 
-/// The enemy (SM64 x, z) the next hit of Mario's punch combo turns him to, if any.
-pub fn aim(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32)> {
+/// The enemy (SM64 x, z) the next hit of Mario's punch combo turns him to, if any, and how far it
+/// is beyond a punch's reach (units: the blow lunges at it).
+pub fn aim(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f32, f32)> {
+    static LAST: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
     let m = state.position;
     let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-    targets
+    let last = *LAST.lock().unwrap_or_else(|e| e.into_inner());
+    let best = targets
         .iter()
         .filter(|t| t.hostile && t.handle.as_ref().is_some_and(|h| !crate::swing::is_down(h) && !crate::carry::is_carried(h)))
         .filter_map(|t| {
             let (dx, dz) = (t.sm[0] - m[0], t.sm[2] - m[2]);
             let horizontal = (dx * dx + dz * dz).sqrt();
-            if horizontal < 1.0 || horizontal > AIM_REACH + t.radius || m[1] > t.sm[1] + t.height || m[1] + 100.0 < t.sm[1] {
+            let radius = t.radius;
+            if horizontal < 1.0 || horizontal > AIM_REACH + radius || m[1] > t.sm[1] + t.height || m[1] + AIM_ABOVE < t.sm[1] {
                 return None;
             }
             let cos = (dx * fx + dz * fz) / horizontal;
-            // the nearest, and of two as near the one more in front
-            (cos >= AIM_CONE_COS).then(|| ((horizontal - t.radius).max(0.0) + 100.0 * (1.0 - cos), t.sm[0], t.sm[2]))
+            // the nearest, and of two as near the one more in front (the last one a little ahead)
+            let gap = (horizontal - radius).max(0.0);
+            let keep = if last == Some(t.key()) { AIM_KEEP } else { 0.0 };
+            (cos >= AIM_CONE_COS).then(|| (gap + 110.0 * (1.0 - cos) - keep, t.sm[0], t.sm[2], gap - PUNCH_REACH * 0.8, t.key()))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, x, z)| (x, z))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    *LAST.lock().unwrap_or_else(|e| e.into_inner()) = best.map(|b| b.4);
+    best.map(|(_, x, z, gap, _)| (x, z, gap.max(0.0)))
 }
 
 /// The enemy (SM64 x, z) a falling Mario drifts onto, if any: the nearest whose top is below him.
@@ -1020,6 +1031,33 @@ pub fn home(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(f32, f3
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, x, z)| (x, z))
+}
+
+/// The enemy the fight's camera frames with Mario (lakitu.rs): one he's juggling first, else the
+/// nearest hostile around him (those in front of him first); its chest (Elden Ring) and whether
+/// it's up in the air for him.
+pub fn fight_focus(state: &sm64::SM64MarioState, targets: &[Target]) -> Option<(glam::Vec3, bool)> {
+    const REACH: f32 = 900.0;
+    let m = state.position;
+    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+    targets
+        .iter()
+        .filter(|t| t.hostile && t.height <= STOMP_HEIGHT * 2.0)
+        .filter_map(|t| {
+            let h = t.handle.as_ref()?;
+            let (dx, dz) = (t.sm[0] - m[0], t.sm[2] - m[2]);
+            let d = (dx * dx + dz * dz).sqrt();
+            if d > REACH + t.radius || (t.sm[1] - m[1]).abs() > 800.0 || crate::carry::is_carried(h) {
+                return None;
+            }
+            let up = crate::juggle::is_juggled(h);
+            let cos = if d > 1.0 { (dx * fx + dz * fz) / d } else { 1.0 };
+            let score = (d - t.radius).max(0.0) + 150.0 * (1.0 - cos) - if up { 2000.0 } else { 0.0 };
+            let chest = glam::Vec3::new(t.er.0, t.er.1 + t.height * crate::scale() * 0.6, t.er.2);
+            Some((score, chest, up))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, c, up)| (c, up))
 }
 
 /// Big bodies near Mario (Elden Ring feet position, radius and height in m): the camera keeps
@@ -1108,7 +1146,7 @@ const SHOCK_RADIUS: f32 = 260.0;
 
 /// The combos' reach (SM64 units): the hammer's head beyond its own size, the giant one's and the
 /// slams' blows around where it struck, the spins around Mario
-const HAMMER_HEAD_REACH: f32 = 110.0;
+const HAMMER_HEAD_REACH: f32 = 125.0;
 const SMASH_RADIUS: f32 = 200.0;
 const QUAKE_RADIUS: f32 = 420.0;
 const GIANT_RADIUS: f32 = 520.0;
@@ -1534,6 +1572,11 @@ impl Combat {
 }
 
 /// One of Mario's hits as the game sees it: a bullet of his, 1 m above `p`.
+/// A bullet of the player's at `p` (noise.rs's noise; Mario's blows go through strike).
+pub fn shoot(player: &ChrIns, p: &HavokPosition, bullet: i32) -> String {
+    strike(player, p, bullet)
+}
+
 fn strike(player: &ChrIns, p: &HavokPosition, bullet: i32) -> String {
     {
         {

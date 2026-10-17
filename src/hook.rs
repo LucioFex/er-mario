@@ -7,8 +7,12 @@
 //!   popping up in front of it for an air string (er_moves.c act_er_zip)
 //! - a wall: he flies to it and clings to it a moment (A: a wall kick off it); a floor or a ledge:
 //!   he lands there
-//! It barely hurts (combat.rs Attack::Hook): it's for keeping a combo going, not for damage. Works on
-//! the ground and in the air. Drawn by hud.rs: Mario's spinning cap on a sparkling line.
+//! It finds enemies on its own: the near ones all around him (the nearest first, those in front of
+//! him or the camera before those behind), the far ones only where he or the camera looks. The map
+//! is fair game once per airtime: after a wall or a ledge it only clinks off them until he's back on
+//! his feet, or until it catches an enemy (enemies are always fair game, and give the wall back: jump,
+//! wall, enemy, wall again). It barely hurts (combat.rs Attack::Hook): it's for keeping a combo
+//! going, not for damage. Works on the ground and in the air. Drawn by hud.rs: Mario's spinning cap on a sparkling line.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -26,8 +30,10 @@ use crate::{log, moves, sm64, worker};
 const RANGE: f32 = 20.0;
 const SPEED: f32 = 75.0;
 const BACK_SPEED: f32 = 60.0;
-/// enemies within this cone (cos 60°) around where the camera looks
+/// enemies within this cone (cos 60°) around where the camera or Mario looks, and any closer than
+/// this all around him (m)
 const AIM_CONE_COS: f32 = 0.5;
+const AIM_NEAR: f32 = 9.0;
 /// ticks after it's back before the next one; ticks the throw may take to let go
 const COOLDOWN: u32 = 10;
 const FALLBACK: u32 = 6;
@@ -47,8 +53,8 @@ enum Aim {
     Enemy { mob: FieldInsHandle, radius: f32, height: f32, drag: bool },
     /// a spot on the map (Elden Ring), and whether it's a floor (aimed down at it)
     Map { at: Vec3, floor: bool },
-    /// nothing there: out to its reach, then back
-    Miss { at: Vec3 },
+    /// nothing there: out to its reach, then back; or the map when it isn't fair game (a clink there)
+    Miss { at: Vec3, clink: bool },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -70,6 +76,8 @@ pub struct Hook {
     born: u32,
     ready_at: u32,
     pressed: bool,
+    /// a wall or a ledge was hooked this airtime (the next only clinks off)
+    map_used: bool,
 }
 
 /// What hud.rs draws: his hand, the cap's spot, its spin (radians).
@@ -117,7 +125,7 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 
 impl Hook {
     pub fn new() -> Self {
-        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false }
+        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false }
     }
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
@@ -149,6 +157,10 @@ impl Hook {
         let pressed = button && !self.pressed;
         self.pressed = button;
         let air = state.action & ACT_FLAG_AIR != 0;
+        // back on his feet: the map is fair game again
+        if !air && state.action != moves::ACT_ER_ZIP && !matches!(self.phase, Some(Phase::Zipping(_))) {
+            self.map_used = false;
+        }
         if pressed {
             let busy = state.action & (ACT_FLAG_SWIMMING | ACT_FLAG_INVULNERABLE) != 0 || state.action == moves::ACT_ER_ZIP;
             if self.phase.is_some() || tick < self.ready_at || !allowed || busy {
@@ -183,7 +195,7 @@ impl Hook {
                             self.pos
                         }
                     },
-                    Aim::Map { at, .. } | Aim::Miss { at } => at,
+                    Aim::Map { at, .. } | Aim::Miss { at, .. } => at,
                 };
                 let d = to - self.pos;
                 let step = SPEED * DT;
@@ -255,6 +267,8 @@ impl Hook {
         let flat = look.map_or(face, |v| v.with_y(0.0).normalize_or(face));
         // the enemy nearest to where he looks, in sight
         let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
+        // (near ones all around, the nearest first, those in front before those behind; far ones only
+        // where he or the camera looks)
         let enemy = combat::nearby(&here, RANGE, origin)
             .iter()
             .filter_map(|t| {
@@ -262,13 +276,16 @@ impl Hook {
                 let c = sm_to_er(origin, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.5, t.sm[2]]);
                 let c = Vec3::new(c.0, c.1, c.2);
                 let d = (c - hand).with_y(0.0);
-                let cos = d.normalize_or(flat).dot(flat);
-                if d.length() < 0.3 || cos < AIM_CONE_COS || ray(hand, c).is_some() {
+                let cos = d.normalize_or(flat).dot(flat).max(d.normalize_or(face).dot(face));
+                let dist = d.length().max((c - hand).length() * 0.8);
+                if d.length() < 0.3 || (cos < AIM_CONE_COS && dist > AIM_NEAR) || ray(hand, c).is_some() {
                     return None;
                 }
                 let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
                 let drag = crate::juggle::draggable(&mob, radius, height);
-                Some((d.length() * (1.6 - cos), Aim::Enemy { mob, radius, height, drag }, c))
+                // (the edge of a big one's body counts, not its centre)
+                let gap = (dist - radius * 0.7).max(0.5);
+                Some((gap * (1.8 - cos), Aim::Enemy { mob, radius, height, drag }, c))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let (aim, at) = match enemy {
@@ -278,13 +295,15 @@ impl Hook {
                 let dir = look.unwrap_or((face + Vec3::Y * 0.2).normalize());
                 let from = feet + Vec3::Y * CHEST;
                 match ray(from, from + dir * RANGE) {
+                    // (once an airtime: then it only clinks off)
+                    Some(p) if self.map_used => (Aim::Miss { at: p, clink: true }, p),
                     Some(p) => {
                         // (a floor if there's ground right under a spot just short of it)
                         let near = p - dir * 0.3;
                         let floor = ray(near + Vec3::Y * 0.4, near - Vec3::Y * 0.6).is_some();
                         (Aim::Map { at: p, floor }, p)
                     }
-                    None => (Aim::Miss { at: from + dir * RANGE }, from + dir * RANGE),
+                    None => (Aim::Miss { at: from + dir * RANGE, clink: false }, from + dir * RANGE),
                 }
             }
         };
@@ -295,6 +314,7 @@ impl Hook {
                 Aim::Enemy { .. } => "a big enemy, to fly to",
                 Aim::Map { floor: true, .. } => "a floor",
                 Aim::Map { .. } => "a wall",
+                Aim::Miss { clink: true, .. } => "the map again this airtime (clinks off)",
                 Aim::Miss { .. } => "nothing",
             }
         ));
@@ -328,6 +348,8 @@ impl Hook {
                 }
                 sound(SOUND_LATCH, 0.6);
                 crate::impact::hook_latch(self.pos);
+                // (an enemy gives the wall back)
+                self.map_used = false;
                 if drag && crate::juggle::pull(&mob, air) {
                     log("hook: pulling an enemy in");
                     return Some(Phase::Pulling);
@@ -340,6 +362,7 @@ impl Hook {
                 Some(Phase::Zipping(tick))
             }
             Aim::Map { at, floor } => {
+                self.map_used = true;
                 sound(SOUND_CLINK, 0.55);
                 crate::impact::hook_latch(at);
                 // a floor: his feet on it; a wall: his chest at the spot, his body against it
@@ -353,7 +376,13 @@ impl Hook {
                 worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], kind, 1) });
                 Some(Phase::Zipping(tick))
             }
-            Aim::Miss { .. } => Some(Phase::Back),
+            Aim::Miss { at, clink } => {
+                if clink {
+                    sound(SOUND_CLINK, 0.4);
+                    crate::impact::hook_latch(at);
+                }
+                Some(Phase::Back)
+            }
         }
     }
 }

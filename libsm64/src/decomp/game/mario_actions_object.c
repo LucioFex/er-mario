@@ -34,11 +34,42 @@ int er_aim_active = 0;
 f32 er_aim_x = 0.0f;
 f32 er_aim_z = 0.0f;
 
+/** er-mario: how far that enemy is beyond a blow's reach (units), and the lunge it gives a blow
+ * on the ground with the fists or the hammer (a few ticks of extra step, fading: sm64_er_set_aim_gap) */
+f32 er_aim_gap = 0.0f;
+f32 er_lunge = 0.0f;
+static u32 sErLungeAction = 0;
+extern int er_weapon;
+extern int er_mega;
+/* the lunge covers about this share of the gap, at most this fast (units per tick); the hammer
+   reaches further than a fist */
+#define ER_LUNGE_SHARE 0.36f
+#define ER_LUNGE_MAX 42.0f
+#define ER_HAMMER_EXTRA 70.0f
+
 /** er-mario: turns Mario to the enemy the mod aims at, if there is one. */
 void er_aim_turn(struct MarioState *m) {
     if (er_aim_active) {
         m->faceAngle[1] = atan2s(er_aim_z - m->pos[2], er_aim_x - m->pos[0]);
     }
+}
+
+/** er-mario: a blow of the fists or the hammer on the ground, aimed: it lunges at the enemy when
+ * it's a little out of reach (not Mega Mario: a titan doesn't dart about). */
+void er_aim_lunge(struct MarioState *m) {
+    f32 gap = er_aim_gap - (er_weapon == 1 ? ER_HAMMER_EXTRA : 0.0f);
+    if (er_aim_active && er_weapon <= 1 && !er_mega && gap > 0.0f && !(m->action & ACT_FLAG_AIR)) {
+        er_lunge = MIN(gap * ER_LUNGE_SHARE, ER_LUNGE_MAX);
+        sErLungeAction = m->action;
+    }
+}
+
+/** er-mario: this tick's lunge (extra forward speed) after an aimed blow, while that blow lasts. */
+f32 er_take_lunge(struct MarioState *m) {
+    if (m->action != sErLungeAction) {
+        er_lunge = 0.0f;
+    }
+    return er_lunge;
 }
 
 /**
@@ -53,6 +84,7 @@ f32 er_punch_step(struct MarioState *m) {
         m->actionState = arg + 2;
         m->actionTimer = 7;
         er_aim_turn(m);
+        er_aim_lunge(m);
     } else if (m->actionState == 0) {
         m->actionState = 1;
     }
@@ -61,7 +93,7 @@ f32 er_punch_step(struct MarioState *m) {
     if (m->actionTimer > 0) {
         m->actionTimer--;
     }
-    return step;
+    return step + er_take_lunge(m);
 }
 
 void animated_stationary_ground_step(struct MarioState *m, s32 animation, u32 endAction) {

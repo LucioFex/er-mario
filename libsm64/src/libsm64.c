@@ -920,6 +920,19 @@ SM64_LIB_FN void sm64_er_set_aim(int active, float x, float z)
     er_aim_z = z;
 }
 
+// how far that enemy is beyond a blow's reach (units): the blow's lunge (mario_actions_object.c)
+extern f32 er_aim_gap, er_lunge;
+
+SM64_LIB_FN void sm64_er_set_aim_gap(float gap)
+{
+    er_aim_gap = gap;
+    // (a lunge lasts a few ticks, fading)
+    er_lunge *= 0.55f;
+    if (er_lunge < 1.0f) {
+        er_lunge = 0.0f;
+    }
+}
+
 extern int er_home_active;
 extern f32 er_home_x, er_home_z;
 

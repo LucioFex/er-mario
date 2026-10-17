@@ -186,9 +186,12 @@ static void er_shout(struct MarioState *m) {
     er_sound(m, SOUND_MARIO_YAH_WAH_HOO + ((gAudioRandom % 3) << 16));
 }
 
-/** A grounded step at `speed`; FALSE once he's off the floor (falling). */
+f32 er_take_lunge(struct MarioState *m);
+void er_aim_lunge(struct MarioState *m);
+
+/** A grounded step at `speed` (and an aimed blow's lunge); FALSE once he's off the floor (falling). */
 static s32 er_ground(struct MarioState *m, f32 speed) {
-    mario_set_forward_vel(m, speed);
+    mario_set_forward_vel(m, speed + er_take_lunge(m));
     if (perform_ground_step(m) == GROUND_STEP_LEFT_GROUND) {
         set_mario_action(m, ACT_FREEFALL, 0);
         return FALSE;
@@ -202,7 +205,7 @@ static s32 er_ground(struct MarioState *m, f32 speed) {
 #define ER_SWINGS 5
 static const s8 sSwingWind[ER_SWINGS] = { 3, 3, 6, 2, 7 };
 static const s8 sSwingHit[ER_SWINGS] = { 3, 3, 3, 5, 3 };
-static const s8 sSwingRest[ER_SWINGS] = { 8, 8, 10, 7, 16 };
+static const s8 sSwingRest[ER_SWINGS] = { 7, 7, 9, 6, 14 };
 #define ER_FINAL_SCALE 1.9f
 
 /**
@@ -223,6 +226,7 @@ s32 act_er_hammer(struct MarioState *m) {
 
     if (t == 0) {
         er_aim_turn(m);
+        er_aim_lunge(m);
         er_sound(m, swing == 4 ? SOUND_MARIO_YAHOO : swing == 2 ? SOUND_MARIO_PUNCH_HOO
                     : swing == 1 ? SOUND_MARIO_PUNCH_WAH : SOUND_MARIO_PUNCH_YAH);
         if (swing == 4) {
@@ -1512,8 +1516,41 @@ static const s8 sChompEnd[4] = { 15, 17, 25, 20 };
 #define ER_CHOMP_FAR 540.0f
 #define ER_CHOMP_HOME 110.0f
 
-static void er_chomp_bark(struct MarioState *m) {
-    er_sound(m, (gAudioRandom & 1) ? SOUND_GENERAL_CHAIN_CHOMP1 : SOUND_GENERAL_CHAIN_CHOMP2);
+/** A random share 0..1 (the sounds' volumes: the same cue again and again must not drone). */
+static f32 er_random(void) {
+    static u32 seed = 0x2545F491;
+    seed = seed * 1664525u + 1013904223u + gAudioRandom;
+    return (f32)((seed >> 8) % 1000) / 1000.0f;
+}
+
+/** Its bark (SM64's Chomp lunging), at a varied volume, not too loud: it comes with every blow. */
+static void er_chomp_bark(UNUSED struct MarioState *m) {
+    er_sound_soft((gAudioRandom & 1) ? SOUND_GENERAL_CHAIN_CHOMP1 : SOUND_GENERAL_CHAIN_CHOMP2, 0.45f + 0.25f * er_random());
+}
+
+/** The chain: a rattle of iron links (SM64's metal steps and the Chomp's chain), soft and varied. */
+static void er_chain(f32 volume) {
+    static const u32 links[] = { SOUND_ACTION_METAL_STEP, SOUND_ACTION_METAL_STEP_TIPTOE, SOUND_ACTION_METAL_LANDING, SOUND_GENERAL_CHAIN_CHOMP1 };
+    static u32 last = 0;
+    u32 k = (u32)(er_random() * 4.0f) % 4;
+    if (k == last) {
+        k = (k + 1) % 4;
+    }
+    last = k;
+    er_sound_soft(links[k], volume * (0.75f + 0.4f * er_random()));
+}
+
+/** A whoosh through the air, a little louder or softer each time (SWISH_AIR_2 is the same sample
+ * always at full volume; Mario's own whooshes would cut his steps and voice short). */
+static void er_whoosh(f32 volume) {
+    er_sound_soft(SOUND_GENERAL_SWISH_AIR, volume * (0.65f + 0.55f * er_random()));
+}
+
+/** Mario's shout on a blow, but not on every one (a voice on each lash got tiring). */
+static void er_maybe_shout(struct MarioState *m, u32 sound, f32 chance) {
+    if (er_random() < chance) {
+        er_sound(m, sound);
+    }
 }
 
 /**
@@ -1533,11 +1570,13 @@ s32 act_er_chomp(struct MarioState *m) {
     if (t == 0) {
         er_aim_turn(m);
         switch (step) {
-            case ER_CHOMP_LASH: er_sound(m, SOUND_MARIO_PUNCH_YAH); break;
-            case ER_CHOMP_SWEEP: er_sound(m, SOUND_MARIO_PUNCH_WAH); break;
+            case ER_CHOMP_LASH: er_maybe_shout(m, SOUND_MARIO_PUNCH_YAH, 0.55f); break;
+            case ER_CHOMP_SWEEP: er_maybe_shout(m, SOUND_MARIO_PUNCH_WAH, 0.55f); break;
             case ER_CHOMP_SLAM: er_sound(m, SOUND_MARIO_HOOHOO); break;
-            default: er_sound(m, SOUND_MARIO_PUNCH_HOO); break;
+            default: er_maybe_shout(m, SOUND_MARIO_PUNCH_HOO, 0.7f); break;
         }
+        // the chain comes off the floor
+        er_chain(0.3f);
     }
     if (t >= 3 && step < ER_CHOMP_SLAM && (m->input & INPUT_B_PRESSED)) {
         m->actionState = 1;
@@ -1557,7 +1596,10 @@ s32 act_er_chomp(struct MarioState *m) {
                 er_move_hit = ER_HIT_CHOMP;
                 speed = 8.0f;
                 if (t == 3) {
-                    er_sound(m, SOUND_GENERAL_SWISH_AIR);
+                    er_whoosh(0.5f);
+                }
+                if (t == 5) {
+                    er_chain(0.4f);
                 }
                 if (t == 6) {
                     er_chomp_bark(m);
@@ -1578,7 +1620,10 @@ s32 act_er_chomp(struct MarioState *m) {
                 er_chomp(er_lerp(-125.0f, 130.0f, er_ease_out(p)), 420.0f, 70.0f, 1.0f);
                 er_move_hit = ER_HIT_CHOMP;
                 if (t == 3) {
-                    er_sound(m, SOUND_ACTION_SPIN);
+                    er_whoosh(0.55f);
+                }
+                if (t == 5 || t == 8) {
+                    er_chain(0.35f);
                 }
                 if (t == 6) {
                     er_move_fx |= ER_FX_SPIN;
@@ -1598,6 +1643,12 @@ s32 act_er_chomp(struct MarioState *m) {
             if (t < 7) {
                 p = (f32)(t + 1) / 7;
                 er_chomp(0.0f, er_lerp(ER_CHOMP_HOME, 140.0f, p), er_lerp(80.0f, 460.0f, er_ease_out(p)), 0.6f);
+                if (t == 3) {
+                    er_chain(0.35f);
+                }
+                if (t == 6) {
+                    er_whoosh(0.6f);
+                }
             } else if (t <= 9) {
                 p = (f32)(t - 6) / 3;
                 er_chomp(0.0f, er_lerp(140.0f, 470.0f, p), er_lerp(460.0f, 0.0f, p * p), 1.0f);
@@ -1626,6 +1677,9 @@ s32 act_er_chomp(struct MarioState *m) {
                 p = (f32)(t - 2) / 4;
                 er_chomp(0.0f, er_lerp(60.0f, 330.0f, er_ease_out(p)), 40.0f, t == 6 ? 0.0f : 1.0f);
                 speed = 10.0f;
+                if (t == 4) {
+                    er_whoosh(0.45f);
+                }
                 if (t == 6) {
                     er_move_hit = ER_HIT_CHOMP_LAUNCH;
                     er_move_fx |= ER_FX_LAUNCH;
@@ -1680,9 +1734,15 @@ s32 act_er_chomp_spin(struct MarioState *m) {
         p = (f32) t / ER_CYCLONE_RELEASE;
         set_mario_animation(m, t < 3 ? MARIO_ANIM_GRAB_BOWSER : MARIO_ANIM_SWINGING_BOWSER);
         sErSpin += (s16) er_lerp(0x1000, 0x2600, p * 2.0f);
+        // each turn round: a whoosh or the chain's rattle, now and then a bark, all soft (it
+        // turns many times)
         if ((u16) sErSpin < (u16) before) {
-            er_sound(m, SOUND_ACTION_SPIN);
-            if (t % 3 == 0) {
+            if (gAudioRandom & 1) {
+                er_whoosh(0.35f);
+            } else {
+                er_chain(0.3f);
+            }
+            if (er_random() < 0.3f) {
                 er_chomp_bark(m);
             }
         }

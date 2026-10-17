@@ -6,7 +6,8 @@
 //!   hitting everyone around it again and again, then comes back
 //! - X, X, Y: the launcher, thrown up in an arc: whoever it catches flies up (juggle.rs)
 //! Its blows keep enemies up in the air up there (juggle::shot): launch one, then keep it floating
-//! from afar. Walls send it back early. Drawn by hud.rs (a spinning sprite with a trail).
+//! from afar. Walls send it back early. Each is a real model (assets/gear.rs) on a bone of its own,
+//! spinning flat and banking into its curve; hud.rs only draws the streak of air behind it.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -14,14 +15,16 @@ use std::time::Instant;
 
 use eldenring::cs::ChrIns;
 use eldenring::position::HavokPosition;
-use glam::Vec3;
+use glam::{Mat3, Quat, Vec3};
 
 use crate::collision::er_to_sm;
 use crate::combat::{self, Attack, Combat};
+use crate::engine_mario::{PARTS, PartPose, RANG, RANGS};
 use crate::{log, moves, sm64, worker};
 
-/// at most this many out at once
+/// at most this many out at once (each has a model of its own)
 pub const MAX_OUT: u32 = 3;
+const _: () = assert!(MAX_OUT as usize == RANGS);
 /// how far one flies (m), the launcher's and the big one's at most, how long the way out takes
 /// (s), how far it curves to the side (m), how high the launcher's arc goes (m)
 const RANGE: f32 = 12.0;
@@ -52,10 +55,13 @@ const AIM_CONE_COS: f32 = 0.64;
 /// the fan's three: this far apart (radians)
 const FAN: f32 = 0.38;
 
-// SM64 sounds: its whir, the catch, a wall
-const SOUND_WHIR: i32 = 0x315C_0081;
+// SM64 sounds: its whir (two different whooshes; the big one's a spin), the catch, a wall
+const SOUND_WHIR: [i32; 2] = [0x305C_0081, 0x045A_8081];
+const SOUND_SPIN: i32 = 0x0437_8081;
 const SOUND_CATCH: i32 = 0x0436_8081;
 const SOUND_WALL: i32 = 0x0444_A081;
+/// one whir every this many ticks at most, whatever the number out (three whirring at once droned)
+const WHIR_EVERY: u32 = 6;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -72,6 +78,8 @@ enum Phase {
 }
 
 struct Rang {
+    /// which of the models it is (engine_mario::RANG + slot)
+    slot: usize,
     kind: Kind,
     phase: Phase,
     start: Vec3,
@@ -104,6 +112,8 @@ pub struct Sprite {
 
 pub struct Boomerang {
     out: Vec<Rang>,
+    /// the tick of the last whir
+    whir: u32,
 }
 
 static READY: AtomicU32 = AtomicU32::new(MAX_OUT);
@@ -132,12 +142,14 @@ pub fn clear() {
 }
 
 fn sound(id: i32, volume: f32) {
+    // (a little louder or softer each time)
+    let volume = volume * (0.8 + 0.35 * crate::rand01());
     worker::call("boomerang sound", move |_| unsafe { sm64::sm64_play_sound_volume(id, volume) });
 }
 
 impl Boomerang {
     pub fn new() -> Self {
-        Boomerang { out: Vec::new() }
+        Boomerang { out: Vec::new(), whir: 0 }
     }
 
     /// Game thread, after every SM64 tick: what the throws did (`mv`), Mario's state, feet and hand
@@ -211,15 +223,19 @@ impl Boomerang {
                 }
             }
             r.vel = if matches!(r.phase, Phase::Back) { r.vel } else { (r.pos - prev) / DT };
-            if (tick + (r.spin * 10.0) as u32) % 7 == 0 {
-                sound(SOUND_WHIR, if r.kind == Kind::Big { 0.45 } else { 0.25 });
+            if tick.wrapping_sub(self.whir) >= WHIR_EVERY && crate::rand01() < 0.6 {
+                self.whir = tick;
+                match r.kind {
+                    Kind::Big => sound(SOUND_SPIN, 0.3),
+                    _ => sound(SOUND_WHIR[(crate::rand01() * 2.0) as usize % 2], 0.17),
+                }
             }
             hits(r, prev, origin, tick, player, combat);
             r.age < LIFE
         });
         self.out = out;
         if caught > 0 {
-            sound(SOUND_CATCH, 0.6);
+            sound(SOUND_CATCH, 0.4);
         }
         READY.store(MAX_OUT.saturating_sub(self.out.len() as u32), Ordering::Relaxed);
         self.publish(held.then_some(hand));
@@ -253,14 +269,18 @@ impl Boomerang {
             moves::THROW_BIG => (Kind::Big, 1, reach.map_or(RANGE, |r| r.min(BIG_RANGE)), BIG_OUT_TIME),
             _ => (Kind::Normal, 1, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
         };
+        // (off it goes: a whoosh)
+        sound(SOUND_WHIR[(crate::rand01() * 2.0) as usize % 2], if kind == Kind::Big { 0.45 } else { 0.3 });
         static FLIP: AtomicU32 = AtomicU32::new(0);
         let flip = FLIP.fetch_add(1, Ordering::Relaxed) % 2 == 0;
         for k in 0..n.min(free) {
+            let Some(slot) = (0..RANGS).find(|s| !self.out.iter().any(|r| r.slot == *s)) else { break };
             // the fan: one ahead, one to each side, curving outwards
             let turn = if n == 3 { (k as f32 - 1.0) * FAN } else { 0.0 };
             let dir = glam::Quat::from_rotation_y(turn) * toward;
             let side = Vec3::Y.cross(dir).normalize_or(Vec3::X) * if n == 3 { if k == 0 { -1.0 } else { 1.0 } } else if flip { 1.0 } else { -1.0 };
             self.out.push(Rang {
+                slot,
                 kind,
                 phase: Phase::Out,
                 start: hand,
@@ -277,6 +297,37 @@ impl Boomerang {
             });
         }
         log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
+    }
+
+    /// Puts the boomerangs on their models: the ones out where they fly (`feet`: Mario's, Elden
+    /// Ring), spinning flat and banking into their curve; one in his right hand while he has one
+    /// (`held`: the boomerang is his weapon now).
+    pub fn pose(&self, parts: &mut [PartPose; PARTS], feet: Vec3, face_angle: f32, held: bool) {
+        for r in &self.out {
+            let size = if r.kind == Kind::Big { BIG_SIZE / SIZE } else { 1.0 };
+            // (tilted towards the side it curves to, and up a little in the launcher's arc)
+            let bank = match (r.kind, r.phase) {
+                (Kind::Upper, Phase::Out) => Quat::from_axis_angle(r.dir.cross(Vec3::Y).normalize_or(Vec3::X), 0.5),
+                (_, Phase::Back) => Quat::IDENTITY,
+                _ => Quat::from_axis_angle(r.dir.normalize_or(Vec3::Z), 0.3 * r.side.dot(Vec3::Y.cross(r.dir).normalize_or(Vec3::X)).signum()),
+            };
+            let rot = (bank * Quat::from_rotation_y(-r.spin)).normalize();
+            // (popping to full size as it leaves his hand)
+            let grow = (r.age / 0.08).min(1.0);
+            parts[RANG + r.slot] = PartPose { rot, pos: r.pos - feet, scale: size * (0.6 + 0.4 * grow) };
+        }
+        if !held {
+            return;
+        }
+        let Some(slot) = (0..RANGS).find(|s| !self.out.iter().any(|r| r.slot == *s)) else { return };
+        // in his fist by one tip, upright, its bend back over his forearm
+        let hand = parts[9].pos;
+        let ahead = Vec3::new(-face_angle.sin(), 0.0, face_angle.cos());
+        let right = Vec3::Y.cross(ahead).normalize_or(Vec3::X);
+        let face = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, ahead));
+        let rot = (face * Quat::from_rotation_x(-1.25) * Quat::from_rotation_y(0.4)).normalize();
+        let tip = Vec3::new(crate::assets::gear::RANG_SPAN * 0.5, 0.0, -0.12);
+        parts[RANG + slot] = PartPose { rot, pos: hand - rot * tip * 0.85, scale: 0.85 };
     }
 
     fn publish(&mut self, hand: Option<Vec3>) {

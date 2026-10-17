@@ -5,6 +5,7 @@
 
 mod assets;
 mod audio;
+mod blown;
 mod boomerang;
 mod hook;
 mod ride;
@@ -30,6 +31,7 @@ mod hud;
 mod impact;
 mod juggle;
 mod moving;
+mod noise;
 mod moves;
 mod collision_geometry;
 mod throw_collision;
@@ -84,6 +86,17 @@ pub(crate) const BASE_SCALE: f32 = 0.01;
 
 pub(crate) fn scale() -> f32 {
     f32::from_bits(SCALE_BITS.load(Ordering::Relaxed))
+}
+
+/// A random share 0..1 (cues' volumes and picks, so the same sound again and again doesn't drone).
+pub(crate) fn rand01() -> f32 {
+    static SEED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x9E37_79B9);
+    let mut x = SEED.load(Ordering::Relaxed);
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    SEED.store(x, Ordering::Relaxed);
+    (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
 pub(crate) fn set_scale(s: f32) {
@@ -2454,6 +2467,7 @@ fn frame(data: &FD4TaskData) {
         coins::clear();
         fireball::clear();
         boomerang::clear();
+        blown::clear();
         m.hook.drop();
         ride::clear();
         chomp::clear();
@@ -2529,7 +2543,10 @@ fn frame(data: &FD4TaskData) {
     }
     // (in the style meter's slow motion Mario keeps his pace)
     let dt = style::mario_dt(data.delta_time.time);
-    m.acc += if paused { 0.0 } else { dt.min(0.25) };
+    // (Mega Mario is a titan: all of him runs slower, his walk, his blows, his jumps)
+    let titan = if mega::active() { mega::TIME } else { 1.0 };
+    m.acc += if paused { 0.0 } else { dt.min(0.25) * titan };
+    let ticks_before = SM64_TICKS.load(Ordering::Relaxed);
     while m.acc >= 1.0 / 30.0 {
         m.acc -= 1.0 / 30.0;
         SM64_TICKS.fetch_add(1, Ordering::Relaxed);
@@ -2698,6 +2715,7 @@ fn frame(data: &FD4TaskData) {
         // the enemy a falling Mario drifts onto, and the big bodies the camera keeps out of
         let home = combat::home(&m.state, &targets);
         lakitu::set_big(combat::big_bodies(&targets));
+        lakitu::set_fight(combat::fight_focus(&m.state, &targets));
         match lakitu::position() {
             Some(cam) => {
                 let feet = to_er(m.origin, m.state.position);
@@ -2882,6 +2900,23 @@ fn frame(data: &FD4TaskData) {
         // lava under the Tarnished (he stands where Mario does): SM64's lava boost
         let lava = !safe_lava(combat::lava_fight()) && LAVA_MATERIALS.contains(&player_ref.chr_ins.modules.physics.material_info.hit_material);
         let lift_k = size_factor();
+        // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
+        let still_flying = blown::flying();
+        let blown_away = match hurt {
+            Some(combat::Hurt::Hit(w)) if !still_flying => {
+                const ACT_FLAG_SWIMMING: u32 = 0x2000;
+                const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
+                const ACT_FLAG_HANGING: u32 = 0x0020_0000;
+                let a = m.state.action;
+                let free = a & (ACT_FLAG_SWIMMING | ACT_FLAG_ON_POLE | ACT_FLAG_HANGING) == 0 && a != moves::ACT_ER_ZIP && a != ACT_ER_LADDER;
+                let calm = free && !m.dead && !mega::active() && caps::active() != Some(caps::METAL) && !RIDING.load(Ordering::Relaxed);
+                let calm = calm && !carry::holding() && !swing::holding() && !FOLLOWING.load(Ordering::Relaxed);
+                let p = player_ref.chr_ins.modules.physics.position;
+                calm && blown::roll(w, &player_ref.chr_ins, glam::Vec3::new(p.0, p.1, p.2))
+            }
+            _ => false,
+        };
+        let mario_at = m.state.position;
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -2905,8 +2940,15 @@ fn frame(data: &FD4TaskData) {
                 log(if f7 { "unstuck: F7, lifted 1 m" } else { "unstuck: Mario stuck for 3 s, lifted 1 m" });
             }
             match hurt {
+                // (flying off already: the blow costs health, SM64's knockback would end the flight)
+                Some(combat::Hurt::Hit(wedges)) if still_flying => unsafe {
+                    sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x100).max(0xFF) as u16)
+                },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
-                    sm64::sm64_mario_take_damage(id, wedges, 0, hurt_from[0], hurt_from[1], hurt_from[2])
+                    sm64::sm64_mario_take_damage(id, wedges, 0, hurt_from[0], hurt_from[1], hurt_from[2]);
+                    if blown_away {
+                        blown::launch(id, mario_at, hurt_from);
+                    }
                 },
                 Some(combat::Hurt::Drain) => unsafe { sm64::sm64_set_mario_health(id, (health_before - 0x100).max(0xFF) as u16) },
                 None => {}
@@ -2945,8 +2987,14 @@ fn frame(data: &FD4TaskData) {
                 None => unsafe { sm64::sm64_er_set_head(0, 0.0, 0.0) },
             }
             match aim {
-                Some((x, z)) => unsafe { sm64::sm64_er_set_aim(1, x, z) },
-                None => unsafe { sm64::sm64_er_set_aim(0, 0.0, 0.0) },
+                Some((x, z, gap)) => unsafe {
+                    sm64::sm64_er_set_aim(1, x, z);
+                    sm64::sm64_er_set_aim_gap(gap);
+                },
+                None => unsafe {
+                    sm64::sm64_er_set_aim(0, 0.0, 0.0);
+                    sm64::sm64_er_set_aim_gap(0.0);
+                },
             }
             match home {
                 Some((x, z)) => unsafe { sm64::sm64_er_set_home(1, x, z) },
@@ -2989,7 +3037,7 @@ fn frame(data: &FD4TaskData) {
             let busy_hands = matches!(state.action & ACT_GROUP_MASK, 0x0C0 | 0x100) || peace;
             let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
             // (the Chain Chomp's body hits like the hammer's head)
-            let chomp_swing = parts.as_ref().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
+            let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
             let swing = chomp_swing.or(hammer_swing);
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing) } else { Vec::new() };
             (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
@@ -2997,7 +3045,7 @@ fn frame(data: &FD4TaskData) {
         drop(tick_span);
         PERF.lock().unwrap_or_else(|e| e.into_inner()).tick_ms += tt.elapsed().as_secs_f32() * 1000.0;
         match result {
-            Some((state, mesh, colors, normals, parts, hits, combo, swing)) => {
+            Some((state, mesh, colors, normals, mut parts, hits, combo, swing)) => {
                 // debug: Mario's centre crossing a loaded wall front to back in one tick
                 let step = glam::Vec3::from(state.position) - glam::Vec3::from(m.state.position);
                 if debug() && !FOLLOWING.load(Ordering::Relaxed) && step.length() < 200.0 {
@@ -3009,6 +3057,21 @@ fn frame(data: &FD4TaskData) {
                     }
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                {
+                    let p = to_er(m.origin, state.position);
+                    blown::tick(id, &state, glam::Vec3::new(p.0, p.1, p.2));
+                    // the noise he makes, that the enemies hear (the game hears no steps of his)
+                    const ACT_GROUND_POUND_LAND: u32 = 0x0080_023C;
+                    const LOUD_FX: u32 = moves::FX_QUAKE | moves::FX_GIANT | moves::FX_METEOR | moves::FX_BANG;
+                    let heavy = combo.fx & LOUD_FX != 0 || (state.action == ACT_GROUND_POUND_LAND && m.state.action != ACT_GROUND_POUND_LAND);
+                    let attacking = !hits.is_empty() || moves::Hit::from(combo.hit).is_some() || state.flags & (0x0010_0000 | 0x0020_0000) != 0;
+                    if !m.dead {
+                        noise::tick(&player_ref.chr_ins, &state, &m.state, attacking, heavy);
+                    }
+                    if attacking {
+                        lakitu::blow();
+                    }
+                }
                 // the dash's streaks (hud.rs), the meteor dive's too
                 let streak = |a: u32| moves::dodging(a) || moves::streaking(a);
                 if streak(state.action) {
@@ -3026,16 +3089,14 @@ fn frame(data: &FD4TaskData) {
                     if combo.fx != 0 {
                         impact::combo(combo.fx, feet, head);
                     }
-                    if let (Some(s), true, true) = (swing, moves::Hit::from(combo.hit).is_some(), weapon_on == weapons::HAMMER) {
-                        impact::swing_point(er(s.head), er(s.grip.lerp(s.head, 0.45)));
+                    if let (Some(s), true) = (swing, moves::Hit::from(combo.hit).is_some()) {
+                        // (the Chomp's: from its chain's far end, a lash of light behind it)
+                        match weapon_on {
+                            weapons::HAMMER => impact::swing_point(er(s.head), er(s.grip.lerp(s.head, 0.45))),
+                            weapons::CHOMP => impact::swing_point(er(s.head) + glam::Vec3::Y * 0.2, er(s.grip.lerp(s.head, 0.7)) + glam::Vec3::Y * 0.1),
+                            _ => {}
+                        }
                     }
-                    // the Chain Chomp to draw: its body, the hand holding its chain
-                    chomp::publish(swing.filter(|_| weapon_on == weapons::CHOMP).map(|s| chomp::Sprite {
-                        chomp: er(s.head),
-                        hand: er(s.grip),
-                        bite: if combo.chomp_scripted != 0 { combo.chomp_bite } else { ((m.ticks / 9) % 4 == 0) as u8 as f32 },
-                        vel: glam::Vec3::ZERO,
-                    }));
                 }
                 m.combo = combo;
                 {
@@ -3053,6 +3114,11 @@ fn frame(data: &FD4TaskData) {
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
                     let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
                     m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    if let Some(p) = parts.as_mut() {
+                        // (none in his hand while he swims or is in a cutscene)
+                        let busy = matches!(state.action & 0x1C0, 0x0C0 | 0x100);
+                        m.rang.pose(p, feet, state.face_angle, weapon_on == weapons::RANG && hands_free && !busy);
+                    }
                     // the hook: out of the same hand
                     m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
@@ -3120,6 +3186,27 @@ fn frame(data: &FD4TaskData) {
                 log(format!("surfaces loaded: {}", m.surfaces.len()));
                 return;
             }
+        }
+    }
+
+    // SM64's sound ticks with Mario: while he runs slower (the titan) it gets the ticks he skips, so
+    // the music and the sounds keep their pace
+    {
+        static AUDIO_DEBT: Mutex<f32> = Mutex::new(0.0);
+        let mut debt = AUDIO_DEBT.lock().unwrap_or_else(|e| e.into_inner());
+        if titan < 1.0 && !paused {
+            let ran = SM64_TICKS.load(Ordering::Relaxed).wrapping_sub(ticks_before);
+            *debt = (*debt + dt.min(0.25) - ran as f32 / 30.0).clamp(-0.1, 0.25);
+            while *debt >= 1.0 / 30.0 {
+                *debt -= 1.0 / 30.0;
+                worker::call("audio", |_| {
+                    let mut buf = [0i16; 544 * 2 * 2];
+                    let frames = unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) } as usize;
+                    audio::push(&buf[..(frames * 2 * 2).min(buf.len())]);
+                });
+            }
+        } else {
+            *debt = 0.0;
         }
     }
 

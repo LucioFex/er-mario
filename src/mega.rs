@@ -1,7 +1,8 @@
 //! The Mega Mushroom (D-pad right; it took the Vanish cap's place): Mario grows to SIZE times his
-//! height for LAST seconds, then needs RECHARGE seconds before the next one. Big, he's slow for his
-//! size and heavy: every blow hits harder (DAMAGE) and shakes the screen, enemies' hits hurt him less
-//! (HURT), his steps and landings shake the ground; Y is a two-fisted slam that shakes everything
+//! height for LAST seconds, then needs RECHARGE seconds before the next one. Big, he's a titan: slow
+//! (all of him runs at TIME of his pace, and he walks slowly for his size), heavy and tough: every
+//! blow hits much harder (DAMAGE) and shakes the screen, enemies' hits hurt him far less (HURT), his
+//! steps and landings shake the ground; Y is a two-fisted slam that shakes everything
 //! around (held: charged, like the hammer's). Fists only while he's big.
 //! He grows the way SM64's power-ups flash, in steps up and down (frozen meanwhile), with SM64's
 //! power-up music. His whole SM64 world is scaled (lib.rs scale()), so his collisions grow with him:
@@ -18,15 +19,17 @@ use crate::{log, sm64, worker};
 
 /// how big, how long (s), how long before the next one (s, from when it ends)
 pub const SIZE: f32 = 4.0;
-const LAST: f32 = 20.0;
-const RECHARGE: f32 = 75.0;
+const LAST: f32 = 15.0;
+const RECHARGE: f32 = 90.0;
+/// the titan's pace: SM64 ticks him this much slower (lib.rs; his sounds keep theirs)
+pub const TIME: f32 = 0.7;
 /// growing and shrinking (s), the steps shown on the way (times his size before)
 const GROW_TIME: f32 = 1.3;
 const SHRINK_TIME: f32 = 0.8;
 const STEPS: [f32; 7] = [1.0, 1.6, 1.25, 2.4, 1.8, 3.1, SIZE];
 /// his blows hit this much harder, enemies' hurt him this much
-pub const DAMAGE: f32 = 1.35;
-pub const HURT: f32 = 0.5;
+pub const DAMAGE: f32 = 2.3;
+pub const HURT: f32 = 0.35;
 /// his room: his height (m) and how wide he is (m) at SIZE
 const HEIGHT: f32 = 1.6 * SIZE + 0.3;
 const WIDTH: f32 = 0.5 * SIZE + 0.15;

@@ -31,6 +31,7 @@ const EYE_CELLS: [usize; 4] = [5, 6, 7, 8];
 const EYE_PARTS: [usize; 4] = [16, 17, 18, 19];
 const PEACE_PART: usize = 20;
 const HAMMER_PART: usize = super::model::HAMMER_PART as usize;
+use crate::engine_mario::{GEAR_BONES, RANG};
 /// Bones the hammer can go on (the first the chest piece skins): the right arm's twist bones,
 /// like the left one's carry the eye variants
 const HAMMER_BONES: [&str; 3] = ["R_ForeArmTwist", "R_ForeArmTwist1", "R_UpArmTwist"];
@@ -218,10 +219,11 @@ pub fn mean_u(t: &Tri) -> f32 {
 
 /// Mario's mesh as indexed vertices: every eye triangle once per eye texture (each on its own
 /// bone, the mod shows the one SM64 draws), the peace hand on its own bone.
-pub fn mario_vertices(model: &MarioModel, hammer: bool) -> (Vec<Vertex>, Vec<[u16; 3]>) {
+pub fn mario_vertices(model: &MarioModel, hammer: bool, gear: bool) -> (Vec<Vertex>, Vec<[u16; 3]>) {
     let colors = mario_colors(model);
     let hammer = model.hammer.iter().filter(|_| hammer).map(|t| (t, HAMMER_PART));
-    let all = model.tris.iter().map(|t| (t, t.part as usize)).chain(model.peace.iter().map(|t| (t, PEACE_PART))).chain(hammer);
+    let gear = model.gear.iter().filter(|_| gear).map(|t| (t, t.part as usize));
+    let all = model.tris.iter().map(|t| (t, t.part as usize)).chain(model.peace.iter().map(|t| (t, PEACE_PART))).chain(hammer).chain(gear);
     let mut verts: Vec<Vertex> = Vec::new();
     let mut index: HashMap<(usize, [i64; 3], [i64; 2]), usize> = HashMap::new();
     let mut tris = Vec::new();
@@ -323,8 +325,9 @@ pub fn hammer_bone(f: &Flver) -> Option<(usize, &'static str)> {
     })
 }
 
-/// Mario into mesh `target` of an armour FLVER, every other mesh emptied.
-pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Vec<u8>, String> {
+/// Mario into mesh `target` of an armour FLVER, every other mesh emptied; and whether the gear
+/// went in with him.
+pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<(Vec<u8>, bool), String> {
     let names = f.bone_names();
     let bone_ids = PART_BONES
         .iter()
@@ -334,6 +337,17 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
     let hammer = hammer_bone(&f).filter(|(b, _)| !bone_ids.contains(b));
     let mut bone_ids = bone_ids;
     bone_ids.push(hammer.map_or(0, |(b, _)| b));
+    // the gear's bones (engine_mario::GEAR_BONES), all skinned by the chest piece, or no gear
+    let gear: Option<Vec<usize>> = GEAR_BONES
+        .iter()
+        .map(|n| names.iter().position(|b| b == n).filter(|&b| b < 256 && i32_at(&f.d, f.bone_off + b * 0x80 + 0x3C) == 8 && !bone_ids.contains(&b)))
+        .collect();
+    if gear.is_none() {
+        crate::log("assets: the chest piece lacks the gear's bones: no boomerangs or Chain Chomp".to_string());
+    }
+    debug_assert_eq!(bone_ids.len(), RANG);
+    bone_ids.extend(gear.iter().flatten().copied());
+    let gear = gear.is_some();
     // identity binds, so the hierarchy composes to identity for our bones
     for b in 0..f.bones {
         let a = f.bone_off + b * 0x80;
@@ -349,13 +363,14 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
         put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
     }
-    if let Some((b, _)) = hammer {
+    for &b in hammer.iter().map(|(b, _)| b).chain(bone_ids[RANG..].iter()) {
         let a = f.bone_off + b * 0x80;
         put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
         put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
     }
-    // (wide enough for the giant hammer, held out at arm's length, and for Mega Mario)
-    put_f32s(&mut f.d, 0x28, &[-8.0, -1.0, -8.0, 8.0, 9.0, 8.0]);
+    // (wide enough for the giant hammer held out at arm's length, for Mega Mario and for the
+    // boomerangs at the end of their flight)
+    put_f32s(&mut f.d, 0x28, &[-20.0, -2.0, -20.0, 20.0, 12.0, 20.0]);
     let (meshes, fsets) = (f.meshes(), f.facesets());
     let mesh = meshes.get(target).ok_or("chest piece mesh missing")?;
     for (mi, m) in meshes.iter().enumerate() {
@@ -365,17 +380,25 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
             }
         }
     }
-    let (verts, tris) = mario_vertices(model, hammer.is_some());
     let vb = f.vertex_buffers(mesh.vbufs[0]);
     let members = f.layout_members(vb.layout);
     const EXPECTED: [(i32, i32, i32); 7] = [(0, 2, 0), (12, 17, 3), (16, 17, 6), (20, 17, 2), (24, 19, 1), (28, 19, 10), (32, 22, 5)];
-    // (no room for the hammer: Mario without it)
-    let (verts, tris) = if hammer.is_some() && verts.len() > vb.vcount {
-        crate::log(format!("assets: no room for the hammer ({} vertices, {} fit)", verts.len(), vb.vcount));
-        mario_vertices(model, false)
-    } else {
-        (verts, tris)
-    };
+    // (no room for the gear, or then for the hammer: Mario without them)
+    let full = *mesh.facesets.iter().max_by_key(|&&fi| fsets[fi].count).ok_or("chest piece mesh has no facesets")?;
+    let fits = |v: &(Vec<Vertex>, Vec<[u16; 3]>)| v.0.len() <= vb.vcount && v.1.len() * 6 <= fsets[full].length;
+    let mut built = mario_vertices(model, hammer.is_some(), gear);
+    let mut gear = gear;
+    if gear && !fits(&built) {
+        crate::log(format!("assets: no room for the gear ({} vertices, {} fit)", built.0.len(), vb.vcount));
+        built = mario_vertices(model, hammer.is_some(), false);
+        gear = false;
+    }
+    if hammer.is_some() && !fits(&built) {
+        crate::log(format!("assets: no room for the hammer ({} vertices, {} fit)", built.0.len(), vb.vcount));
+        built = mario_vertices(model, false, false);
+        gear = false;
+    }
+    let (verts, tris) = built;
     if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) || verts.len() > vb.vcount {
         return Err("the chest piece's vertex layout is not the expected one".into());
     }
@@ -425,7 +448,6 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
     // Mario goes into the biggest faceset (LOD 0); the smaller LODs can't hold him, so their headers
     // point at that same index data: whichever LOD the game draws (shadows use lower ones, picked
     // by distance and angle), it is all of Mario (empty, they left him without one)
-    let full = *mesh.facesets.iter().max_by_key(|&&fi| fsets[fi].count).ok_or("chest piece mesh has no facesets")?;
     let fs = &fsets[full];
     if idx.len() > fs.length {
         return Err("Mario does not fit in the chest piece's index buffer".into());
@@ -440,8 +462,8 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<Ve
         f.d[h + 12..h + 16].copy_from_slice(&offset.to_le_bytes());
         f.d[h + 16..h + 20].copy_from_slice(&(fs.length as i32).to_le_bytes());
     }
-    crate::log(format!("assets: Mario mesh {} vertices, {} triangles", verts.len(), tris.len()));
-    Ok(f.d)
+    crate::log(format!("assets: Mario mesh {} vertices, {} triangles{}", verts.len(), tris.len(), if gear { ", with the gear" } else { "" }));
+    Ok((f.d, gear))
 }
 
 // ---- a mount's stand-in ------------------------------------------------------------------------

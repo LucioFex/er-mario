@@ -23,6 +23,11 @@ const SOUND_GENERAL_POUND_WOOD_POST: i32 = 0x3065_C081;
 const SOUND_GENERAL_SHORT_STAR: i32 = 0x3016_0091;
 const SOUND_ACTION_SPIN: i32 = 0x0437_8081;
 const SOUND_GENERAL_SWISH_AIR: i32 = 0x305C_0081;
+/// the light blows' hit sounds: one of these, louder or softer each time (one sound on every blow of
+/// a string droned); the Chain Chomp's bites clank on its iron
+const SOUND_ACTION_PAT_BACK: i32 = 0x043F_8081;
+const SOUND_METAL_STEP: i32 = 0x042A_9081;
+const SOUND_METAL_BONK: i32 = 0x0442_8081;
 
 /// how long a burst shows (s), and the red flash when Mario is hurt
 pub const SPARK_TIME: f32 = 0.22;
@@ -77,7 +82,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::Shell => (1, 0.8, false),
         Attack::Meteor | Attack::HammerAir | Attack::Giro | Attack::Chain | Attack::AirHit => (2, 1.0, false),
         Attack::ChainEnd => (5, 1.4, true),
-        Attack::Hammer => (3, 1.1, false),
+        Attack::Hammer => (4, 1.2, false),
         Attack::UppercutTop | Attack::Quake | Attack::Launch => (5, 1.4, true),
         Attack::TornadoEnd => (4, 1.3, true),
         Attack::HammerSmash | Attack::GiroEnd => (5, 1.5, true),
@@ -113,10 +118,27 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
     if heavy {
         crate::lakitu::shake(if mega { size * 0.6 } else { size - 0.4 });
+    } else if matches!(attack, Attack::Hammer | Attack::HammerAir) {
+        // (the hammer's every blow has some weight)
+        crate::lakitu::shake(0.35);
     }
+    let chomp = matches!(attack, Attack::Chomp | Attack::ChompAir | Attack::ChompSpin | Attack::ChompLaunch | Attack::ChompEnd);
+    let light = !heavy && !matches!(attack, Attack::Hammer);
+    let (pick, loud) = (crate::rand01(), 0.6 + 0.4 * crate::rand01());
     worker::call("impact", move |_| unsafe {
         sm64::sm64_er_hitstop(stop);
-        sm64::sm64_play_sound_global(SOUND_ACTION_HIT);
+        if light {
+            // (SM64's hit, now and then with a softer thump under it)
+            sm64::sm64_play_sound_volume(SOUND_ACTION_HIT, loud);
+            if pick < 0.45 {
+                sm64::sm64_play_sound_volume(SOUND_ACTION_PAT_BACK, loud * 0.6);
+            }
+        } else {
+            sm64::sm64_play_sound_global(SOUND_ACTION_HIT);
+        }
+        if chomp {
+            sm64::sm64_play_sound_volume(if pick < 0.5 { SOUND_METAL_STEP } else { SOUND_METAL_BONK }, 0.25 + 0.2 * loud);
+        }
         if heavy {
             sm64::sm64_play_sound_global(SOUND_HEAVY_LANDING);
         }
@@ -421,6 +443,16 @@ pub fn enemy_streaks() -> Vec<Vec<(Vec3, f32)>> {
         }
     }
     by.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Game thread: Mario, blown away, smacked into a wall (blown.rs): stars all round, a red spark,
+/// a ring of dust on the wall.
+pub fn splat(at: Vec3) {
+    spark(at, 1.6, GOLD);
+    spark(at, 0.9, RED);
+    burst(at, 6, Bit::Star);
+    ring(at, 1.3, 0.3, DUST);
+    puffs(at - Vec3::Y * 0.5, 3, 0.4);
 }
 
 /// Game thread: an enemy came down hard after a juggle, at its feet `at`: dust, a ring, a thud.
