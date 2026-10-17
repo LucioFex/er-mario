@@ -1147,6 +1147,9 @@ fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
     set_mario_position(m.id, [0.0, 0.0, 0.0]);
     let id = m.id;
     worker::call("mega still", move |_| unsafe { sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0) });
+    if m.state.action == moves::ACT_ER_ZIP {
+        worker::call("mega zip off", move |_| unsafe { sm64::sm64_set_mario_action(id, ACT_FREEFALL) });
+    }
     m.state.position = [0.0, 0.0, 0.0];
     m.prev_pos = [0.0, 0.0, 0.0];
     m.fire.drop_shots();
@@ -2434,6 +2437,10 @@ fn frame(data: &FD4TaskData) {
     if scale() != BASE_SCALE && !mega::active() {
         rescale(m, 1.0, player_ref);
     }
+    // (the hook's off while the game moves him)
+    if FOLLOWING.load(Ordering::Relaxed) || RIDING.load(Ordering::Relaxed) {
+        m.hook.drop();
+    }
 
     // death: the Tarnished's HP is the truth. At 0, Mario dies SM64-style; when the game respawns
     // the player (HP back), Mario is recreated fresh where the player now is.
@@ -2447,7 +2454,7 @@ fn frame(data: &FD4TaskData) {
         coins::clear();
         fireball::clear();
         boomerang::clear();
-        hook::clear();
+        m.hook.drop();
         ride::clear();
         chomp::clear();
         impact::clear();
@@ -2532,8 +2539,8 @@ fn frame(data: &FD4TaskData) {
         let fire_ok = !carry::holding() && !RIDING.load(Ordering::Relaxed);
         let (mut b_fire, mut b_dash, mut y_move, mut x_move, mut l_hammer) = (false, false, false, false, false);
         let mut dpad = [false; 4];
-        // R2 (Q): the hook (hook.rs)
-        let mut b_hook = kbd::focused() && unsafe { GetAsyncKeyState(0x51) } as u16 & 0x8000 != 0;
+        // R2 (the middle mouse button): the hook (hook.rs)
+        let mut b_hook = kbd::focused() && unsafe { GetAsyncKeyState(0x04) } as u16 & 0x8000 != 0;
         if let Some(p) = pad.filter(|_| !m.dead) {
             let g = p.Gamepad;
             let axis = |v: i16| {
@@ -3047,7 +3054,7 @@ fn frame(data: &FD4TaskData) {
                     let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
                     m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     // the hook: out of the same hand
-                    m.hook.tick(id, b_hook, fire_allowed, &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
@@ -3211,7 +3218,7 @@ fn frame(data: &FD4TaskData) {
             let b = |bit| g.is_some_and(|g| g.wButtons.contains(bit));
             let buttons = ride::Buttons([
                 b(XINPUT_GAMEPAD_X) || keys.as_ref().is_some_and(|k| k.b),
-                b(XINPUT_GAMEPAD_Y) || (kbd::focused() && saddle && unsafe { GetAsyncKeyState(0x46) } as u16 & 0x8000 != 0),
+                b(XINPUT_GAMEPAD_Y) || (kbd::focused() && saddle && unsafe { GetAsyncKeyState(0x04) } as u16 & 0x8000 != 0),
                 b(XINPUT_GAMEPAD_RIGHT_SHOULDER),
                 g.is_some_and(|g| g.bLeftTrigger > 100) || keys.as_ref().is_some_and(|k| k.z),
                 b(XINPUT_GAMEPAD_LEFT_SHOULDER),

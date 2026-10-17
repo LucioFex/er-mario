@@ -1,4 +1,4 @@
-//! The hook (R2, Q on the keyboard), Devil May Cry's Snatch with a Mario touch: Mario flings it out
+//! The hook (R2, the middle mouse button), Devil May Cry's Snatch with a Mario touch: Mario flings it out
 //! of his hand (er_moves.c's ER_THROW_HOOK), it flies to the enemy he looks at (the nearest one in
 //! front of the camera) or, with none there, to the spot of the map the camera looks at:
 //! - a small enemy: pulled in to him (juggle.rs), hung in front of him if he's in the air, ready for
@@ -120,10 +120,11 @@ impl Hook {
         Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false }
     }
 
-    /// Mario's world was re-scaled (mega.rs): a hook out goes.
+    /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
     pub fn drop(&mut self) {
-        self.phase = None;
-        clear();
+        if self.phase.take().is_some() {
+            clear();
+        }
     }
 
     /// Game thread, after every SM64 tick: R2 (`button`), whether he may throw it now, what his moves
@@ -167,6 +168,10 @@ impl Hook {
                     self.pos = hand;
                     next = Some(Phase::Out);
                 }
+            }
+            // (dead, holding someone, hurt, swimming, riding, a menu: the pull's off)
+            Phase::Out if !allowed || state.action & (ACT_FLAG_SWIMMING | ACT_FLAG_INVULNERABLE) != 0 => {
+                next = Some(Phase::Back);
             }
             Phase::Out => {
                 // flying to it (an enemy on the move: to where it is now)
@@ -230,6 +235,9 @@ impl Hook {
         if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) {
             next = Some(Phase::Back);
         }
+        if tick.wrapping_sub(self.born) > LIFE + 30 {
+            next = None;
+        }
         if next.is_none() {
             self.ready_at = tick + COOLDOWN;
         }
@@ -270,7 +278,12 @@ impl Hook {
                 let dir = look.unwrap_or((face + Vec3::Y * 0.2).normalize());
                 let from = feet + Vec3::Y * CHEST;
                 match ray(from, from + dir * RANGE) {
-                    Some(p) => (Aim::Map { at: p, floor: dir.y < -0.35 }, p),
+                    Some(p) => {
+                        // (a floor if there's ground right under a spot just short of it)
+                        let near = p - dir * 0.3;
+                        let floor = ray(near + Vec3::Y * 0.4, near - Vec3::Y * 0.6).is_some();
+                        (Aim::Map { at: p, floor }, p)
+                    }
                     None => (Aim::Miss { at: from + dir * RANGE }, from + dir * RANGE),
                 }
             }
@@ -329,15 +342,15 @@ impl Hook {
             Aim::Map { at, floor } => {
                 sound(SOUND_CLINK, 0.55);
                 crate::impact::hook_latch(at);
-                // a floor: his feet on it; a wall: his chest at the spot, just off it
-                let to = if floor {
-                    at + Vec3::Y * 0.05
+                // a floor: his feet on it; a wall: his chest at the spot, his body against it
+                let (to, kind) = if floor {
+                    (at + Vec3::Y * 0.05, 1)
                 } else {
                     let back = (feet - at).with_y(0.0).normalize_or_zero();
-                    at + back * BODY - Vec3::Y * CHEST
+                    (at + back * BODY * 0.6 - Vec3::Y * CHEST, 2)
                 };
                 let sm = er_to_sm(origin, &HavokPosition(to.x, to.y, to.z, 0.0));
-                worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], 1, 1) });
+                worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], kind, 1) });
                 Some(Phase::Zipping(tick))
             }
             Aim::Miss { .. } => Some(Phase::Back),

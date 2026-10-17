@@ -97,6 +97,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Hook => (1, 0.6, false),
         Attack::Tongue => (1, 0.7, false),
         Attack::Egg => (1, 0.9, false),
+        Attack::YoshiStomp => (3, 1.0, true),
         Attack::RangUpper => (2, 1.1, true),
         // the Chain Chomp: light blows on many, a heavy crash
         Attack::Chomp | Attack::ChompAir => (2, 1.0, false),

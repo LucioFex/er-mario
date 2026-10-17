@@ -1387,8 +1387,8 @@ s32 act_er_air_throw(struct MarioState *m) {
 /* ---- the hook: along its line to what it caught ---------------------------------------------- */
 
 /** where the hook pulls him (SM64 units, hook.rs keeps it on a moving enemy), and to what: 0 an
- * enemy (he pops up in front of it, ready for an air string), 1 the map (a wall: he clings to it a
- * moment, A wall kicks off it; a floor: he lands) */
+ * enemy (he pops up in front of it, ready for an air string), 1 a floor (he lands), 2 a wall (he
+ * clings to it a moment, A wall kicks off it) */
 f32 er_zip_target[3] = { 0.0f, 0.0f, 0.0f };
 s32 er_zip_kind = 0;
 #define ER_ZIP_MAX 40
@@ -1435,6 +1435,15 @@ s32 act_er_zip(struct MarioState *m) {
     }
     // there: at an enemy, a pop up in front of it; on the map, falls from there (onto a ledge, a floor)
     if (dist <= speed || t >= ER_ZIP_MAX) {
+        // (at the wall: he clings to it)
+        if (er_zip_kind == 2 && dist <= speed) {
+            vec3f_copy(m->pos, er_zip_target);
+            er_sound(m, SOUND_ACTION_HIT_2);
+            m->particleFlags |= PARTICLE_VERTICAL_STAR;
+            m->actionState = 1;
+            m->actionTimer = 0;
+            return FALSE;
+        }
         if (er_zip_kind == 0) {
             m->vel[1] = 26.0f;
             mario_set_forward_vel(m, 4.0f);
@@ -1457,8 +1466,8 @@ s32 act_er_zip(struct MarioState *m) {
 
     switch (perform_air_step(m, 0)) {
         case AIR_STEP_LANDED:
-            // (a floor on the way down, or near the end: he's there)
-            if (dist < 300.0f || dy < 0.0f) {
+            // (a floor near the end: he's there; earlier he slides along it on his way)
+            if (dist < 300.0f) {
                 return set_mario_action(m, ACT_FREEFALL_LAND, 0);
             }
             break;
@@ -1466,7 +1475,7 @@ s32 act_er_zip(struct MarioState *m) {
             if (m->wall != NULL) {
                 m->faceAngle[1] = atan2s(m->wall->normal.z, m->wall->normal.x) + 0x8000;
             }
-            if (er_zip_kind == 1 || dist < 250.0f) {
+            if (er_zip_kind == 2 || dist < 250.0f) {
                 er_sound(m, SOUND_ACTION_HIT_2);
                 m->particleFlags |= PARTICLE_VERTICAL_STAR;
                 m->actionState = 1;

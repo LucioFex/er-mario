@@ -135,6 +135,7 @@ pub fn tick(
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let (Some((feet, vel, air)), true) = (yoshi, saddle) else {
         if let Some(s) = guard.as_mut() {
+            s.held = buttons.0;
             s.sprites = Sprites::default();
             s.tongue = None;
             s.eggs.clear();
@@ -335,7 +336,7 @@ pub fn tick(
             .iter()
             .enumerate()
             .filter(|(_, t)| t.shootable().is_some() && (chest(t) - feet).with_y(0.0).length() <= STOMP_REACH + t.radius * crate::scale())
-            .map(|(i, _)| (i, Attack::Shockwave, false))
+            .map(|(i, _)| (i, Attack::YoshiStomp, false))
             .collect();
         combat.deal(player, &near, &hits, tick);
         crate::impact::yoshi_stomp(feet);

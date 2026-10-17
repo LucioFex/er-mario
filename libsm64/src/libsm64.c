@@ -1007,7 +1007,10 @@ SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kin
     er_zip_target[1] = y;
     er_zip_target[2] = z;
     er_zip_kind = kind;
-    if (start)
+    // (not dead, holding something, hurt, in a cutscene)
+    if (start && gMarioState->health >= 0x100 && gMarioState->heldObj == NULL
+        && !(gMarioState->action & (ACT_FLAG_INVULNERABLE | ACT_FLAG_INTANGIBLE))
+        && (gMarioState->action & ACT_GROUP_MASK) != ACT_GROUP_CUTSCENE)
         set_mario_action(gMarioState, ACT_ER_ZIP, (u32) kind);
 }
 

@@ -80,6 +80,7 @@ pub enum Attack {
     /// on Yoshi (ride.rs): his tongue, an egg (the stomp is a Shockwave)
     Tongue,
     Egg,
+    YoshiStomp,
 }
 
 impl Attack {
@@ -111,6 +112,7 @@ impl Attack {
             }
             Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook | Attack::Tongue => Attack::Punch.spec(),
             Attack::Egg => Attack::Kick.spec(),
+            Attack::YoshiStomp => Attack::Shockwave.spec(),
             Attack::Chomp | Attack::ChompAir => Attack::Kick.spec(),
             Attack::RangUpper | Attack::ChompLaunch => Attack::Stomp.spec(),
             Attack::ChompEnd => Attack::GroundPound.spec(),
@@ -182,6 +184,7 @@ impl Attack {
             // Yoshi: a lick (it makes him an egg), an egg
             Attack::Tongue => (5.0, "damage_yoshi_tongue"),
             Attack::Egg => (8.0, "damage_yoshi_egg"),
+            Attack::YoshiStomp => (15.0, "damage_yoshi_stomp"),
         }
     }
 
@@ -211,6 +214,7 @@ impl Attack {
             Attack::ChainEnd => 1.8,
             Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
             Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::Egg => 1.0,
+            Attack::YoshiStomp => 1.2,
             Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
             Attack::ChompEnd => 1.5,
         }
@@ -1226,6 +1230,10 @@ pub fn hits(
 ) -> Vec<(usize, Attack, bool)> {
     // the combos' moves hit only as they say (SM64's own checks took the dive for a dash, the
     // super jump punch for a stomp)
+    // (the hook's pull hits no one on the way: hook.rs)
+    if state.action == crate::moves::ACT_ER_ZIP {
+        return Vec::new();
+    }
     if crate::moves::combo(state.action) {
         return crate::moves::Hit::from(combo.hit).map_or_else(Vec::new, |hit| combo_hits(state, targets, hit, swing));
     }
@@ -1420,7 +1428,10 @@ impl Combat {
             if self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
                 continue;
             }
-            self.cooldown.insert(target.key, tick);
+            // (the hook's tug leaves the next blow free: it's what it's for)
+            if !matches!(attack, Attack::Hook) {
+                self.cooldown.insert(target.key, tick);
+            }
             if let Some(handle) = &target.handle {
                 // a thrown boss in the air or lying limp: no hit at all (not even the game's own,
                 // which could finish a ragdolled character)
@@ -1456,7 +1467,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_) | Attack::Hook | Attack::Tongue | Attack::Egg) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !matches!(attack, Attack::Fire(_) | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }

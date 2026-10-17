@@ -114,9 +114,35 @@ recharge), in SM64 power-up steps with the power-up music. His whole SM64 world 
 collisions grow with him: low ceilings and narrow passages stop him, and if there is no room
 where he stands (a ceiling, walls close by) he won't grow and Lakitu buzzes. Big, he's slow for
 his size and heavy: fists only, every hit does 1.35x and shakes the screen, enemy hits hurt half
-as much, his steps and landings shake the ground, and Y is a two-fisted slam with a huge
-shockwave (hold Y to charge it; one every 2.5 s). D-pad right again ends it early. It replaced the
-Vanish cap.
+as much, his steps and landings shake the ground, his jumps go up a giant's way, and Y is a
+two-fisted slam with a huge shockwave (hold Y to charge it; one every 2.5 s). No dashes, shell,
+meteor dive or super jump punch (too fast for a giant), no caps, no Yoshi and no first-person
+view while he's big. D-pad right again ends it early, and so do a door, a fog wall, a ladder, a
+loading screen or dying. It replaced the Vanish cap.
+
+**The hook (RT).** Mario flings his cap out on a line of light, Devil May Cry's Snatch. It goes
+for the enemy nearest to where the camera looks, or, with none there, the spot of the map the
+camera looks at (up to 20 m):
+
+| It catches | What happens |
+|---|---|
+| A small enemy | Dragged in to Mario; in the air it hangs in front of him, ready for the air string |
+| A big enemy (a boss, a strong one) | Mario flies to it and pops up in front of it for an air combo |
+| A wall | Mario flies to it and clings to it a moment: A wall kicks off it, LT lets go |
+| A floor or a ledge | Mario flies there and lands |
+
+It barely hurts: it's for keeping a combo going and for getting around. It works on the ground
+and in the air (`src/hook.rs`).
+
+**Yoshi in a fight (`src/ride.rs`).** Riding Yoshi, A still jumps and B dashes, and Yoshi has his
+own moves:
+
+| Input on Yoshi | Move |
+|---|---|
+| X | Tongue: lashed out ahead, it hits whoever it reaches, and every enemy it licks makes him an egg |
+| Y or RB (hold for more) | Throw an egg at the nearest enemy ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
+| LT in the air | Stomp: a shockwave all around where he lands |
+| LB | Burst of speed for 2.5 s, dust behind him (fast enough to run enemies over), then 6 s of rest |
 
 **Style meter.** Devil May Cry's: every hit in a row scores style points (finishers more, and a
 hit of a different kind than the last one a bonus, so varied strings climb faster), and the string
@@ -226,11 +252,13 @@ replaces this fork's DLL with the original one.
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that blows enemies away |
 | D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
+| RT | Middle mouse button | The hook (see above) |
 | LB | | Next weapon (fists, hammer, boomerang, Chain Chomp); hold to go back to the fists |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
-| RT | R | Whistle for Yoshi |
+| L3 (left stick click) | R | Whistle for Yoshi |
+| X / Y / RB / LT / LB on Yoshi | , or left mouse / middle mouse / K | Tongue, eggs, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
 | | F1 (hold 3 s) | Give up and respawn at the last grace |
 
