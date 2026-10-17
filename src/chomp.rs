@@ -38,7 +38,7 @@ const JAW_RATE: f32 = 0.55;
 const TURN: f32 = 0.45;
 /// the chain sags this much when slack (m), taut from this long (m)
 const SAG: f32 = 0.35;
-const TAUT: f32 = 4.5;
+const TAUT: f32 = 5.6;
 /// it pops out (s)
 const POP_TIME: f32 = 0.25;
 
@@ -136,7 +136,7 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let slack = 1.0 - (span.length() / TAUT).min(1.0);
     let sag = SAG * slack;
     let side = Vec3::Y.cross(span).normalize_or(right);
-    let links = (span.length() / (CHAIN_LINKS as f32 * PAIR_LEN)).clamp(1.0, 1.7) * size.min(1.0);
+    let links = (span.length() / (CHAIN_LINKS as f32 * PAIR_LEN)).clamp(1.0, 2.1) * size.min(1.0);
     for k in 0..CHAIN_LINKS {
         let u = (k as f32 + 0.5) / CHAIN_LINKS as f32;
         let sway = (t * 6.0 + k as f32 * 0.9).sin() * 0.05 * slack * (u * (1.0 - u) * 4.0);

@@ -550,6 +550,28 @@ pub fn last_attacker(player: &ChrIns) -> (Option<u32>, f32) {
     (id, scale.unwrap_or(1.0))
 }
 
+/// Where the character `key` (handle_key) is now, if alive and up: its chest (Elden Ring
+/// position, halfway up its body, at most 1.5 m above its feet).
+pub fn chest_by_key(key: u64) -> Option<glam::Vec3> {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return None };
+    for set in wcm.chr_sets.iter().flatten() {
+        for chr in set.characters() {
+            let chr: &ChrIns = chr;
+            if handle_key(&chr.field_ins_handle) != key {
+                continue;
+            }
+            if chr.modules.data.hp <= 0 || crate::swing::is_down(&chr.field_ins_handle) || crate::carry::is_carried(&chr.field_ins_handle) {
+                return None;
+            }
+            let (p, ph) = (chr.modules.physics.position, &chr.modules.physics);
+            let h = ph.hit_height.max(ph.chr_hit_height);
+            let h = if h.is_finite() && h > 0.3 { h.min(3.0) } else { 1.6 };
+            return Some(glam::Vec3::new(p.0, p.1 + h * 0.5, p.2));
+        }
+    }
+    None
+}
+
 /// Characters within `range` metres of `center` (not the player, alive).
 pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Target> {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };

@@ -1,5 +1,5 @@
-//! Mario's weapons, on L1: a tap is the next one (fists, the hammer, the boomerang, the Chain
-//! Chomp), held a moment back to the fists. Each changes what X and Y do (moves.rs, er_moves.c):
+//! Mario's weapons, on L1: a tap is the next one (fists, the hammer, the Chain Chomp, the
+//! boomerang), held a moment back to the fists. Each changes what X and Y do (moves.rs, er_moves.c):
 //! - the hammer (hammer.rs): heavy blows, slams, the giant hammer
 //! - the boomerang (boomerang.rs): from afar, several in the air at once, each going and coming back
 //! - the Chain Chomp (chomp.rs): wide, on its chain, many enemies at once, a little each
@@ -15,6 +15,8 @@ pub const RANG: u8 = 2;
 pub const CHOMP: u8 = 3;
 pub const COUNT: u8 = 4;
 pub const NAMES: [&str; 4] = ["FISTS", "HAMMER", "BOOMERANG", "CHAIN CHOMP"];
+/// the order a tap of L1 goes through them
+const ORDER: [u8; 4] = [FISTS, HAMMER, CHOMP, RANG];
 /// how long the banner shows (s)
 pub const BANNER_TIME: f32 = 1.3;
 
@@ -23,6 +25,12 @@ static SWITCHED: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub fn current() -> u8 {
     CURRENT.load(Ordering::Relaxed)
+}
+
+/// The one after `w` (L1 tapped).
+pub fn next(w: u8) -> u8 {
+    let i = ORDER.iter().position(|o| *o == w).unwrap_or(0);
+    ORDER[(i + 1) % ORDER.len()]
 }
 
 /// Takes `w` in hand (the banner names it).

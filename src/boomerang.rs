@@ -29,22 +29,25 @@ const _: () = assert!(MAX_OUT as usize == RANGS);
 /// (s), how far it curves to the side (m), how high the launcher's arc goes (m)
 const RANGE: f32 = 12.0;
 const UPPER_RANGE: f32 = 7.0;
-const BIG_RANGE: f32 = 16.0;
+const BIG_RANGE: f32 = 28.0;
 const OUT_TIME: f32 = 0.5;
-const BIG_OUT_TIME: f32 = 0.6;
+const BIG_OUT_TIME: f32 = 0.9;
 const CURVE: f32 = 1.3;
 const UPPER_ARC: f32 = 2.6;
 /// it flies a little past the enemy it was turned to (m)
 const PAST: f32 = 2.5;
-/// the big one hangs there this long (s), hitting within this reach (m)
-const HOVER: f32 = 1.4;
+/// the big one hangs there this long (s), hitting within this reach (m), following its enemy at up
+/// to this speed (m/s); with it gone, it looks for another this close (m)
+const HOVER: f32 = 3.0;
+const HOVER_CHASE: f32 = 9.0;
+const RETARGET: f32 = 8.0;
 const BIG_REACH: f32 = 1.7;
 /// coming back: from this speed up to that one (m/s), caught this close to his chest (m), and gone
 /// for good this long after the throw (s)
 const BACK_FROM: f32 = 6.0;
 const BACK_TO: f32 = 32.0;
 const CATCH: f32 = 0.8;
-const LIFE: f32 = 5.0;
+const LIFE: f32 = 9.0;
 /// the size of its hits (SM64 units) and of the sprite (m), and the big one's
 const RADIUS: f32 = 40.0;
 const SIZE: f32 = 0.55;
@@ -52,6 +55,9 @@ const BIG_SIZE: f32 = 1.5;
 /// turned to the nearest enemy within this range (m) and cone (cos 50°) in front
 const AIM_RANGE: f32 = 25.0;
 const AIM_CONE_COS: f32 = 0.64;
+/// the big one's: farther and wider (cos 70°)
+const BIG_AIM_RANGE: f32 = 40.0;
+const BIG_AIM_CONE_COS: f32 = 0.34;
 /// the fan's three: this far apart (radians)
 const FAN: f32 = 0.38;
 
@@ -96,6 +102,8 @@ struct Rang {
     spin: f32,
     /// a few points back, for its trail
     trail: std::collections::VecDeque<Vec3>,
+    /// the enemy it was turned to (its key): the big one homes in on it and follows it
+    target: Option<u64>,
 }
 
 /// A boomerang to draw (hud.rs): Elden Ring position, velocity (m/s), size (m), its turn (radians),
@@ -181,6 +189,16 @@ impl Boomerang {
             let prev = r.pos;
             match r.phase {
                 Phase::Out => {
+                    // (the big one homes in: its way out bends to where its enemy is now)
+                    if r.kind == Kind::Big {
+                        if let Some(at) = r.target.and_then(|k| chest_of(k, r.pos, origin)) {
+                            let d = at - r.start;
+                            if d.length() > 1.0 {
+                                r.dir = r.dir.lerp(d.normalize(), 0.25).normalize_or(r.dir);
+                                r.range = r.range + (d.length().min(BIG_RANGE) - r.range) * 0.25;
+                            }
+                        }
+                    }
                     let p = (r.age / r.out_time).min(1.0);
                     let along = r.range * (1.0 - (1.0 - p) * (1.0 - p));
                     let (sideways, up) = match r.kind {
@@ -203,7 +221,14 @@ impl Boomerang {
                 }
                 Phase::Hover(t) => {
                     r.phase = if t + DT >= HOVER { Phase::Back } else { Phase::Hover(t + DT) };
-                    // (bobbing a little where it hangs)
+                    // following its enemy (or the nearest other one), bobbing a little
+                    if ((t / DT) as u32) % 6 == 0 && r.target.and_then(|k| chest_of(k, r.pos, origin)).is_none() {
+                        r.target = nearest(r.pos, RETARGET, origin, None);
+                    }
+                    if let Some(at) = r.target.and_then(|k| chest_of(k, r.pos, origin)) {
+                        let step = at - r.pos;
+                        r.pos += step.clamp_length_max(HOVER_CHASE * DT);
+                    }
                     r.pos += Vec3::Y * ((t * 7.0).cos() * 0.4 * DT);
                     if matches!(r.phase, Phase::Back) {
                         r.hit.clear();
@@ -249,24 +274,25 @@ impl Boomerang {
         let face = Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
         // the nearest enemy in front, at its chest
         let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
-        let aim = combat::nearby(&here, AIM_RANGE, origin)
+        let (aim_range, cone) = if kind == moves::THROW_BIG { (BIG_AIM_RANGE, BIG_AIM_CONE_COS) } else { (AIM_RANGE, AIM_CONE_COS) };
+        let found = combat::nearby(&here, aim_range, origin)
             .iter()
             .filter(|t| t.shootable().is_some())
             .filter_map(|t| {
-                let at = crate::collision::sm_to_er(origin, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.5, t.sm[2]]);
-                let at = Vec3::new(at.0, at.1, at.2);
+                let at = chest(t, origin);
                 let d = at - hand;
                 let flat = d.with_y(0.0);
-                (flat.length() > 0.5 && flat.normalize().dot(face) >= AIM_CONE_COS).then_some((flat.length(), at))
+                (flat.length() > 0.5 && flat.normalize().dot(face) >= cone).then_some((flat.length(), at, t.key()))
             })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, p)| p);
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let aim = found.map(|(_, p, _)| p);
+        let target = found.map(|(_, _, k)| k);
         let toward = aim.map_or(face, |p| (p - hand).normalize_or(face));
         let reach = aim.map(|p| (p - hand).length());
         let (kind, n, range, out_time) = match kind {
             moves::THROW_STORM => (Kind::Normal, 3, RANGE, OUT_TIME),
             moves::THROW_UPPER => (Kind::Upper, 1, reach.map_or(UPPER_RANGE, |r| (r + 1.0).min(UPPER_RANGE)), OUT_TIME * 0.9),
-            moves::THROW_BIG => (Kind::Big, 1, reach.map_or(RANGE, |r| r.min(BIG_RANGE)), BIG_OUT_TIME),
+            moves::THROW_BIG => (Kind::Big, 1, reach.map_or(BIG_RANGE * 0.75, |r| r.min(BIG_RANGE)), BIG_OUT_TIME),
             _ => (Kind::Normal, 1, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
         };
         // (off it goes: a whoosh)
@@ -294,6 +320,7 @@ impl Boomerang {
                 hit: Vec::new(),
                 spin: k as f32,
                 trail: Default::default(),
+                target,
             });
         }
         log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
@@ -345,6 +372,27 @@ impl Boomerang {
         let held = hand.filter(|_| self.out.len() < MAX_OUT as usize);
         *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (sprites, held, Some(Instant::now()));
     }
+}
+
+/// An enemy's chest (Elden Ring position).
+fn chest(t: &combat::Target, origin: [f32; 3]) -> Vec3 {
+    let at = crate::collision::sm_to_er(origin, [t.sm[0], t.sm[1] + t.height.min(300.0) * 0.5, t.sm[2]]);
+    Vec3::new(at.0, at.1, at.2)
+}
+
+/// Where the enemy `key` is now, if it's still up and within reach of `near`.
+fn chest_of(key: u64, near: Vec3, _origin: [f32; 3]) -> Option<Vec3> {
+    combat::chest_by_key(key).filter(|p| (*p - near).length() < BIG_AIM_RANGE)
+}
+
+/// The nearest enemy within `range` of `at` (its key), other than `but`.
+fn nearest(at: Vec3, range: f32, origin: [f32; 3], but: Option<u64>) -> Option<u64> {
+    let here = HavokPosition(at.x, at.y, at.z, 0.0);
+    combat::nearby(&here, range, origin)
+        .iter()
+        .filter(|t| t.shootable().is_some() && Some(t.key()) != but)
+        .min_by(|a, b| (chest(a, origin) - at).length_squared().total_cmp(&(chest(b, origin) - at).length_squared()))
+        .map(|t| t.key())
 }
 
 fn kind_index(kind: Kind, n: usize) -> usize {

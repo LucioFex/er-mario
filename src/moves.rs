@@ -286,7 +286,7 @@ impl Moves {
     /// riding or holding anyone). A tap takes the next weapon, held a moment the fists: the new one
     /// when it changes.
     pub fn switch_weapon(&mut self, lb: bool, allowed: bool, tick: u32) -> Option<u8> {
-        use crate::weapons::{COUNT, FISTS};
+        use crate::weapons::FISTS;
         let next = match (lb, self.lb_since) {
             (true, None) => {
                 self.lb_since = Some(tick);
@@ -299,7 +299,7 @@ impl Moves {
             }
             (false, Some(_)) => {
                 self.lb_since = None;
-                (!self.lb_long).then_some((self.weapon + 1) % COUNT)
+                (!self.lb_long).then_some(crate::weapons::next(self.weapon))
             }
             _ => None,
         };
