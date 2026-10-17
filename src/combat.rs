@@ -61,6 +61,8 @@ pub enum Attack {
     ChainEnd,
     Shell,
     AirHit,
+    /// the hammer's launcher (X, Y): whoever it catches flies high up (juggle.rs)
+    Launch,
 }
 
 impl Attack {
@@ -84,7 +86,7 @@ impl Attack {
             Attack::RushKick => Attack::GroundPound.spec(),
             Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::AirHit => Attack::Punch.spec(),
             Attack::Chain | Attack::Shell => Attack::Kick.spec(),
-            Attack::ChainEnd => Attack::Stomp.spec(),
+            Attack::ChainEnd | Attack::Launch => Attack::Stomp.spec(),
             Attack::Meteor => Attack::Stomp.spec(),
             Attack::Hammer | Attack::HammerAir | Attack::Giro | Attack::TornadoEnd => Attack::Sweep.spec(),
             Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
@@ -141,6 +143,8 @@ impl Attack {
             Attack::ChainEnd => (24.0, "damage_string_end"),
             Attack::Shell => (10.5, "damage_shell"),
             Attack::AirHit => (9.0, "damage_air"),
+            // (it sets up the air string: the blows up there are the damage)
+            Attack::Launch => (10.0, "damage_hammer_launch"),
         }
     }
 
@@ -168,7 +172,7 @@ impl Attack {
             Attack::GiroEnd => 1.6,
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
-            Attack::Shell | Attack::AirHit => 1.3,
+            Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
         }
     }
 
@@ -179,7 +183,7 @@ impl Attack {
             // one hit per blow: the flying kick and the string's blows land over up to 5 ticks (at
             // 3 the backfist, the whirlwind kick and the flying kick each hit twice, a flurry of
             // stagger the enemy couldn't get out of)
-            Attack::RushKick | Attack::Chain => 6,
+            Attack::RushKick | Attack::Chain | Attack::Launch => 6,
             // the flurry's blows come 3 ticks apart, the spins' every few
             Attack::Uppercut | Attack::Flurry | Attack::AirHit => 3,
             Attack::Shell => 5,
@@ -198,6 +202,7 @@ impl Attack {
         matches!(
             self,
             Attack::UppercutTop
+                | Attack::Launch
                 | Attack::MeteorLand
                 | Attack::TornadoEnd
                 | Attack::HammerSmash
@@ -996,6 +1001,9 @@ const TORNADO_RADIUS: f32 = 190.0;
 /// further; the shell all around him as he rolls
 const STRING_REACH: f32 = 170.0;
 const SHELL_RADIUS: f32 = 140.0;
+/// the launcher catches whoever is around a point this far in front of Mario
+const LAUNCH_AHEAD: f32 = 110.0;
+const LAUNCH_RADIUS: f32 = 150.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
@@ -1031,6 +1039,7 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::ChainEnd => (Attack::ChainEnd, Reach::Around(me, TORNADO_RADIUS + 30.0)),
         Hit::Shell => (Attack::Shell, Reach::Around(me, SHELL_RADIUS)),
         Hit::Air => (Attack::AirHit, Reach::Front(STRING_REACH)),
+        Hit::Launch => (Attack::Launch, Reach::Around(me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * LAUNCH_AHEAD, LAUNCH_RADIUS)),
     };
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
     let mut out = Vec::new();
@@ -1298,13 +1307,17 @@ impl Combat {
                 }
                 // the super jump punch lifts small enemies, and stunned strong ones not too big, up
                 // with Mario (juggle.rs); a blow on one up there keeps it up
-                if matches!(attack, Attack::Uppercut | Attack::UppercutTop) && !hands_off(handle) {
-                    let me = player.modules.physics.position;
+                // (the hammer's launcher sends them flying high up instead, for Mario to jump after)
+                let me = player.modules.physics.position;
+                let me = glam::Vec3::new(me.0, me.1, me.2);
+                if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
-                    crate::juggle::try_launch(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius / 100.0, target.height / 100.0, regular, stunned);
+                    let high = matches!(attack, Attack::Launch);
+                    crate::juggle::try_launch(handle, me, target.radius / 100.0, target.height / 100.0, regular, stunned, high);
+                } else {
+                    crate::juggle::hit(handle, me);
                 }
-                crate::juggle::hit(handle);
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
                 if !matches!(attack, Attack::Fire(_)) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius / 100.0) {

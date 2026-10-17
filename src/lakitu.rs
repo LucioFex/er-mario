@@ -467,6 +467,25 @@ pub fn update(
     write(render, fwd, cam.pos);
 }
 
+/// A heavy blow shakes Lakitu's camera: when, and how hard (~1 a big hit, 2 the giant hammer).
+static SHAKE: Mutex<Option<(std::time::Instant, f32)>> = Mutex::new(None);
+const SHAKE_TIME: f32 = 0.22;
+/// metres of shake per unit of strength
+const SHAKE_SIZE: f32 = 0.05;
+
+/// Shakes the camera (game thread, impact.rs); a weaker shake doesn't cut a stronger one short.
+pub fn shake(strength: f32) {
+    let mut s = SHAKE.lock().unwrap_or_else(|e| e.into_inner());
+    if s.is_none_or(|(t, k)| shake_left(t, k) < strength) {
+        *s = Some((std::time::Instant::now(), strength));
+    }
+}
+
+fn shake_left(since: std::time::Instant, strength: f32) -> f32 {
+    let p = 1.0 - since.elapsed().as_secs_f32() / (SHAKE_TIME * (1.0 + strength * 0.5));
+    if p > 0.0 { strength * p * p } else { 0.0 }
+}
+
 /// Writes the render camera: rows right, up, forward, position (keeping the game's handedness).
 fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
     let m = &render.matrix;
@@ -478,6 +497,14 @@ fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
         right = -right;
     }
     let up = if up.y < 0.0 { -up } else { up };
+    // (a shake: two quick wobbles, sideways and up, dying away)
+    let pos = match *SHAKE.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some((since, k)) => {
+            let (t, amp) = (since.elapsed().as_secs_f32(), shake_left(since, k) * SHAKE_SIZE);
+            pos + right * (t * 71.0).sin() * amp + up * (t * 53.0 + 1.3).sin() * amp
+        }
+        None => pos,
+    };
     let mm = &mut render.matrix;
     (mm.0.0, mm.0.1, mm.0.2) = (right.x, right.y, right.z);
     (mm.1.0, mm.1.1, mm.1.2) = (up.x, up.y, up.z);

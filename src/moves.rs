@@ -36,14 +36,15 @@ const ACT_ER_TORNADO: u32 = 0x0080_038F;
 const ACT_ER_METEOR_LAND: u32 = 0x0080_0393;
 const ACT_ER_CHAIN: u32 = 0x0080_0394;
 const ACT_ER_SHELL: u32 = 0x0080_0395;
+const ACT_ER_HAMMER_LAUNCH: u32 = 0x0080_0396;
 const ACT_ER_AIR_COMBO: u32 = 0x0080_08BF;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 12] = [
+const COMBO_ACTIONS: [u32; 13] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
-    ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO,
+    ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH,
 ];
 /// the hammer's moves on the ground: L1 waits for them to end
-const HAMMER_ACTIONS: [u32; 4] = [ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO];
+const HAMMER_ACTIONS: [u32; 5] = [ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO, ACT_ER_HAMMER_LAUNCH];
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
 /// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
@@ -111,6 +112,7 @@ pub enum Hit {
     ChainEnd,
     Shell,
     Air,
+    Launch,
 }
 
 impl Hit {
@@ -118,7 +120,7 @@ impl Hit {
         use Hit::*;
         [
             Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
-            ChainEnd, Shell, Air,
+            ChainEnd, Shell, Air, Launch,
         ]
             .get((v as usize).wrapping_sub(1))
             .copied()
@@ -382,9 +384,12 @@ impl Moves {
         if y_pressed && self.hammer {
             // (not out of the hammer's other moves, but out of its swings)
             if ground && (!combo(a) || a == ACT_ER_HAMMER) {
-                // X, X, Y: the flurry; otherwise the slam
+                // X, X, Y: the flurry; X, Y: the launcher; otherwise the slam
+                let x_once = self.x_chain == 1 && (in_chain || chain_window(self.chain_seen));
                 let (action, name) = if x_twice {
                     (ACT_ER_HAMMER_FLURRY, "Donkey Kong flurry (hammer X, X, Y)")
+                } else if x_once {
+                    (ACT_ER_HAMMER_LAUNCH, "launcher (hammer X, Y)")
                 } else {
                     (ACT_ER_HAMMER_SLAM, "hammer slam")
                 };

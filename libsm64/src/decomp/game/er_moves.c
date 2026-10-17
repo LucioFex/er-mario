@@ -47,6 +47,7 @@ enum ErHit {
     ER_HIT_CHAIN_END,
     ER_HIT_SHELL,
     ER_HIT_AIR,
+    ER_HIT_LAUNCH,
 };
 
 /* (same bits as moves.rs FX_*) */
@@ -289,6 +290,72 @@ s32 act_er_hammer_slam(struct MarioState *m) {
         return TRUE;
     }
     if (++m->actionTimer >= ER_SLAM_END) {
+        return set_mario_action(m, ACT_IDLE, 0);
+    }
+    return FALSE;
+}
+
+#define ER_LAUNCH_WIND 6
+#define ER_LAUNCH_SCRAPE 3
+#define ER_LAUNCH_LIFT 3
+#define ER_LAUNCH_END 23
+
+/**
+ * X, Y with the hammer: the launcher, a golf swing. Down low behind him on his right, scraped
+ * along the ground in front, then straight up: whoever it catches flies high into the air
+ * (juggle.rs), for Mario to jump after and go on with the air string. A or the stick soon after
+ * the blow: off after them.
+ */
+s32 act_er_hammer_launch(struct MarioState *m) {
+    s32 t = m->actionTimer;
+    s32 lift = ER_LAUNCH_WIND + ER_LAUNCH_SCRAPE;
+    f32 speed = 0.0f;
+    f32 p;
+
+    if (t == 0) {
+        er_aim_turn(m);
+        er_sound(m, SOUND_MARIO_HOOHOO);
+    }
+    if (t >= lift + 2 && (m->input & INPUT_A_PRESSED)) {
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+    if (t >= lift + 5 && (m->input & INPUT_NONZERO_ANALOG)) {
+        return set_mario_action(m, ACT_WALKING, 0);
+    }
+
+    set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, t < ER_LAUNCH_WIND ? 0x6000 : 0x10000);
+    if (t < ER_LAUNCH_WIND) {
+        // (taken back slowly: the wind-up tells it's coming)
+        p = (f32)(t + 1) / ER_LAUNCH_WIND;
+        er_hammer(er_lerp(-60.0f, -150.0f, er_ease_out(p)), er_lerp(10.0f, -35.0f, p), 1.1f);
+    } else if (t < lift) {
+        p = (f32)(t - ER_LAUNCH_WIND + 1) / ER_LAUNCH_SCRAPE;
+        er_hammer(er_lerp(-150.0f, 0.0f, p * p), -35.0f, 1.1f);
+        speed = 14.0f;
+        if (t == lift - 1) {
+            er_move_fx |= ER_FX_GROUND;
+            er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
+            play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
+        }
+    } else if (t < lift + ER_LAUNCH_LIFT) {
+        p = (f32)(t - lift + 1) / ER_LAUNCH_LIFT;
+        er_hammer(0.0f, er_lerp(-35.0f, 85.0f, er_ease_out(p)), 1.2f);
+        er_move_hit = ER_HIT_LAUNCH;
+        if (t == lift) {
+            er_move_fx |= ER_FX_LAUNCH | ER_FX_GROUND;
+            er_sound(m, SOUND_MARIO_YAHOO);
+            er_sound(m, SOUND_ACTION_SPIN);
+        }
+    } else {
+        p = (f32)(t - lift - ER_LAUNCH_LIFT) / (ER_LAUNCH_END - lift - ER_LAUNCH_LIFT);
+        er_hammer(0.0f, er_lerp(85.0f, 40.0f, p), er_lerp(1.2f, 1.0f, p));
+    }
+
+    if (!er_ground(m, speed)) {
+        return TRUE;
+    }
+    er_twist(m, er_hammer_yaw * 0.45f);
+    if (++m->actionTimer >= ER_LAUNCH_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;

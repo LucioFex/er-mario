@@ -69,7 +69,9 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 
 **Hammer mode (LB).** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
 moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air), a
-Donkey Kong flurry that ends with a giant hammer (X, X, Y) and a Bowser spin (Y, X). When he's
+Donkey Kong flurry that ends with a giant hammer (X, X, Y), a Bowser spin (Y, X) and a
+launcher (X, Y): a golf swing that sends enemies flying high, where they hang for a moment so
+Mario can jump after them and keep the combo going in the air. When he's
 not swinging it, the hammer hangs across his back and he grabs it for each attack.
 
 Hits come with hit-stop, star bursts, shockwave rings and a swing trail (`src/impact.rs`).

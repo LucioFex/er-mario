@@ -78,7 +78,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Meteor | Attack::HammerAir | Attack::Giro | Attack::Chain | Attack::AirHit => (2, 1.0, false),
         Attack::ChainEnd => (5, 1.4, true),
         Attack::Hammer => (3, 1.1, false),
-        Attack::UppercutTop | Attack::Quake => (5, 1.4, true),
+        Attack::UppercutTop | Attack::Quake | Attack::Launch => (5, 1.4, true),
         Attack::TornadoEnd => (4, 1.3, true),
         Attack::HammerSmash | Attack::GiroEnd => (5, 1.5, true),
         Attack::MeteorLand => (6, 1.6, true),
@@ -96,6 +96,9 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     };
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
+    if heavy {
+        crate::lakitu::shake(size - 0.4);
+    }
     worker::call("impact", move |_| unsafe {
         sm64::sm64_er_hitstop(stop);
         sm64::sm64_play_sound_global(SOUND_ACTION_HIT);
@@ -202,7 +205,11 @@ pub fn combo(fx: u32, feet: Vec3, head: Option<Vec3>) {
         puffs(ground, 6, 0.8);
         burst(ground + Vec3::Y * 0.3, 4, Bit::Star);
     }
+    if fx & (FX_QUAKE | FX_METEOR) != 0 {
+        crate::lakitu::shake(1.2);
+    }
     if fx & FX_GIANT != 0 {
+        crate::lakitu::shake(2.0);
         ring(ground + Vec3::Y * 0.05, 6.5, 0.7, DUST);
         ring(ground + Vec3::Y * 0.1, 4.0, 0.5, GOLD);
         puffs(ground, 8, 1.8);
@@ -229,6 +236,22 @@ pub fn combo(fx: u32, feet: Vec3, head: Option<Vec3>) {
             burst(h, 4, Bit::Star);
         }
     }
+}
+
+/// Game thread: an enemy the launcher sent flying (juggle.rs): dust where it left from; hanging up
+/// there for Mario, a twinkle now and then; caught by his blow up there, stars.
+pub fn launched(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.05, 1.6, 0.35, DUST);
+    puffs(feet, 4, 0.5);
+}
+
+pub fn waiting(at: Vec3) {
+    burst(at, 1, Bit::Star);
+}
+
+pub fn caught(at: Vec3) {
+    burst(at, 4, Bit::Star);
+    ring(at, 1.4, 0.25, GOLD);
 }
 
 /// Game thread, every SM64 tick a hammer swing hits: its head and handle's middle (the ribbon).
