@@ -60,11 +60,14 @@ pub const THROW_FIRE: u32 = 4;
 /// the hook's (hook.rs), and the pull along its line to what it caught
 pub const THROW_HOOK: u32 = 8;
 pub const ACT_ER_ZIP: u32 = 0x0080_0892;
+/// timing (timing.rs): the Mikiri stomp, the dash strike
+pub const ACT_ER_MIKIRI: u32 = 0x0082_0893;
+pub const ACT_ER_BONK: u32 = 0x0080_039A;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 18] = [
+const COMBO_ACTIONS: [u32; 20] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
-    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR,
+    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK,
 ];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
@@ -105,6 +108,7 @@ const ACT_SLIDE_KICK: u32 = 0x0180_08AA;
 const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 const ACT_TWIRLING: u32 = 0x1080_08A4;
 const ACT_FREEFALL: u32 = 0x0100_088C;
+const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
 /// SM64's punch sequence step for the breakdance sweep (crouch sliding + B)
 const BREAKDANCE: u32 = 9;
 /// SM64's animation: the combo's kick
@@ -131,6 +135,10 @@ const AIR_DASHES: u32 = 3;
 const MEGA_SLAM_COOLDOWN: u32 = 75;
 /// ticks between two dashes
 const DASH_COOLDOWN: u32 = 12;
+/// X this soon (ticks) after the dash ended: the dash strike, at most this often (as er_moves.c's
+/// ER_BONK_EVERY)
+const BONK_AFTER: u32 = 4;
+const BONK_EVERY: u32 = 36;
 /// running speed from which Y slide kicks
 const RUN_SPEED: f32 = 24.0;
 /// the twirl's upward pop, and how long it lasts before he just falls (ticks)
@@ -165,6 +173,8 @@ pub enum Hit {
     ChompEnd,
     ChompAir,
     ChompLaunch,
+    Mikiri,
+    Bonk,
 }
 
 impl Hit {
@@ -172,7 +182,7 @@ impl Hit {
         use Hit::*;
         [
             Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
-            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch,
+            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk,
         ]
             .get((v as usize).wrapping_sub(1))
             .copied()
@@ -206,6 +216,11 @@ pub enum Request {
     Action(u32, u32),
     /// the twirl: the action and an upward pop (keeping his horizontal speed)
     Twirl([f32; 3]),
+    /// the Mikiri (timing.rs): onto this head (SM64 units); whether it starts now or only moves
+    Mikiri([f32; 3], bool),
+    /// a bounce off something (the Bros. Jump off the partner's head): a double jump at this
+    /// velocity (SM64 units per tick)
+    Bounce([f32; 3]),
 }
 
 impl Request {
@@ -217,6 +232,11 @@ impl Request {
                 Request::Twirl(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TWIRLING);
                     sm64::sm64_set_mario_velocity(id, v[0], if crate::mega::active() { TWIRL_POP * 0.62 } else { TWIRL_POP }, v[2]);
+                }
+                Request::Mikiri([x, y, z], start) => sm64::sm64_er_mikiri(id, x, y, z, start as i32),
+                Request::Bounce(v) => {
+                    sm64::sm64_set_mario_action(id, ACT_DOUBLE_JUMP);
+                    sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
                 }
             }
         }
@@ -266,11 +286,27 @@ pub struct Moves {
     string_swaps: u32,
     /// a switch waiting for a weapon's move to end (the weapon, since when)
     pending: Option<(u8, u32)>,
+    /// in the dash strike (for its log line), and when the next one may come
+    bonk_seen: bool,
+    bonk_ready: u32,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
 pub fn dodging(action: u32) -> bool {
     action == ACT_ER_DASH || action == ACT_ER_AIR_DASH
+}
+
+/// Enemy blows go through him: the dash, the Mikiri's somersault over the blow.
+pub fn untouchable(action: u32) -> bool {
+    dodging(action) || action == ACT_ER_MIKIRI
+}
+
+/// On his feet and free to counter (the Mikiri, timing.rs): not in the air, not hurt or in a
+/// cutscene, not swimming or hanging.
+pub fn can_counter(action: u32) -> bool {
+    action & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES | ACT_FLAG_AIR) == 0
+        && action & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE
+        && action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0
 }
 
 impl Moves {
@@ -305,6 +341,8 @@ impl Moves {
             air_swaps: 0,
             string_swaps: 0,
             pending: None,
+            bonk_seen: false,
+            bonk_ready: 0,
         }
     }
 
@@ -555,6 +593,18 @@ impl Moves {
                 crate::log("moves: air dash");
                 return Some(Request::Action(ACT_ER_AIR_DASH, 0));
             }
+        }
+        // X just after the dash: the dash strike (Hades'; er_moves.c takes an X in its last ticks too)
+        if x_pressed && ground && !crate::mega::active() && tick >= self.bonk_ready && self.dash_seen.is_some_and(|t| tick.wrapping_sub(t) <= BONK_AFTER) {
+            self.dash_seen = None;
+            crate::log("moves: dash bonk (X after the dash)");
+            return Some(Request::Action(ACT_ER_BONK, 0));
+        }
+        if a == ACT_ER_BONK && !std::mem::replace(&mut self.bonk_seen, true) {
+            self.bonk_ready = tick + BONK_EVERY;
+            crate::log("moves: dash bonk (X at the dash's end)");
+        } else if a != ACT_ER_BONK {
+            self.bonk_seen = false;
         }
         // Y, X: the tornado out of the sweep; with the hammer, the Bowser spin out of the slam (once
         // its blow has landed)

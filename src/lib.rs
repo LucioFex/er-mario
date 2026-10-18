@@ -53,6 +53,7 @@ mod squish;
 mod status;
 mod swing;
 mod stats;
+mod timing;
 mod style;
 mod update;
 mod version;
@@ -2430,6 +2431,7 @@ fn frame(data: &FD4TaskData) {
     let st = stats::get();
     hud::set_counters(st.deaths, st.coins, st.stars);
     hud::set_tags(combat::tags());
+    hud::set_partners(coop::partners().into_iter().map(|p| hud::PartnerHud { head: p.head, wedges: (p.health >> 8).min(8) as u8, luigi: p.luigi }).collect());
     hud::set_bosses(combat::bosses());
     if gameover::update(!m.dead) {
         log("game over: Bowser laughs");
@@ -2523,6 +2525,7 @@ fn frame(data: &FD4TaskData) {
         knock::clear();
         juggle::clear();
         style::clear();
+        timing::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -2791,7 +2794,7 @@ fn frame(data: &FD4TaskData) {
             flags.player_no_dead = !m.dead;
             // the Vanish cap: enemy hits go through Mario
             // (and while he dashes)
-            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::dodging(m.state.action));
+            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::untouchable(m.state.action));
         }
         // Elden Ring's ailments and burns setting in on him (before his hurt: blood loss's wedge
         // costs no knockback)
@@ -2854,11 +2857,12 @@ fn frame(data: &FD4TaskData) {
         if matches!(hurt, Some(combat::Hurt::Hit(_))) && caps::active() == Some(caps::METAL) {
             worker::call("metal clang", |_| unsafe { sm64::sm64_play_sound_global(SOUND_METAL_BONK) });
         }
-        let hurt = hurt.filter(|_| !caps::shielded() && !moves::dodging(m.state.action));
+        let hurt = hurt.filter(|_| !caps::shielded() && !moves::untouchable(m.state.action));
         if matches!(hurt, Some(combat::Hurt::Hit(_))) {
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
             style::hurt();
+            timing::hurt();
             // (a blow puts out the fireball he was charging)
             m.fire.douse(&m.state, m.origin, m.ticks);
         }
@@ -2866,7 +2870,7 @@ fn frame(data: &FD4TaskData) {
         let shoved = {
             let p = player_ref.chr_ins.modules.physics.position;
             let nearest = targets.iter().filter(|t| !t.friendly() && !t.is_prop()).map(|t| glam::Vec3::new(t.er.0 - p.0, t.er.1 - p.1, t.er.2 - p.2).length()).min_by(f32::total_cmp);
-            let calm = hurt.is_none() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::dodging(m.state.action) && !mega::active() && !blown::flying();
+            let calm = hurt.is_none() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::untouchable(m.state.action) && !mega::active() && !blown::flying();
             let calm = calm && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             shove::check(current_anim(&player_ref.chr_ins), nearest, calm)
         };
@@ -2991,7 +2995,50 @@ fn frame(data: &FD4TaskData) {
         let rangs_ready = boomerang::ready() as i32;
         let juggling = juggle::active();
         let hold_y = y_move;
+        // timing (timing.rs): A and X as pressed; an X just after a blow landed is a "NICE!"
+        let a_pressed = timing::buttons(inputs.button_a != 0, inputs.button_b != 0, m.ticks);
+        if let Some((h, attack, extra)) = timing::late_nice(m.ticks) {
+            m.combat.extra_share(&h, attack, extra, m.ticks);
+        }
+        coop::set_own_health(m.state.health);
         let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
+        // A just before an enemy's blow lands: the Mikiri (and while it lasts, its target follows
+        // the enemy); A on nothing in particular stays SM64's jump
+        let request = request.or_else(|| {
+            let feet = to_er(m.origin, m.state.position);
+            let ok = fire_allowed
+                && !interacting
+                && !big
+                && !carry::holding()
+                && !swing::holding()
+                && !RIDING.load(Ordering::Relaxed)
+                && moves::can_counter(m.state.action);
+            timing::mikiri(a_pressed, ok, glam::Vec3::new(feet.0, feet.1, feet.2), m.origin).map(|head| moves::Request::Mikiri(head, true))
+        });
+        let request = request.or_else(|| {
+            (m.state.action == moves::ACT_ER_MIKIRI).then(|| timing::mikiri_target(m.origin)).flatten().map(|head| moves::Request::Mikiri(head, false))
+        });
+        // the Bros. Jump: falling onto the co-op partner's head, a high bounce off it
+        let request = request.or_else(|| {
+            const ACT_FLAG_AIR: u32 = 0x800;
+            static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+            if m.dead || m.state.action & ACT_FLAG_AIR == 0 || m.state.velocity[1] >= 0.0 || !coop::active() {
+                return None;
+            }
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|t| t.elapsed().as_secs_f32() < 0.6) {
+                return None;
+            }
+            let feet = to_er(m.origin, m.state.position);
+            let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+            let k = size_factor();
+            let on = coop::partners().into_iter().find(|p| (p.feet - feet).with_y(0.0).length() < 0.45 * k && feet.y <= p.head.y + 0.4 * k && feet.y >= p.head.y - 0.25 * k)?;
+            *last = Some(std::time::Instant::now());
+            log(format!("coop: Bros. Jump off the partner's head ({})", if on.luigi { "Luigi" } else { "Mario" }));
+            impact::bros_jump(on.head);
+            let v = m.state.velocity;
+            Some(moves::Request::Bounce([v[0] * 0.6, 62.0, v[2] * 0.6]))
+        });
         {
             let p = player_ref.chr_ins.modules.physics.position;
             dodge::tick(m.state.action, glam::Vec3::new(p.0, p.1, p.2), m.ticks);
@@ -3165,6 +3212,9 @@ fn frame(data: &FD4TaskData) {
                             state.action, state.forward_velocity, step.length(), wall.force
                         ));
                     }
+                }
+                if m.state.action == moves::ACT_ER_MIKIRI && state.action != moves::ACT_ER_MIKIRI {
+                    timing::mikiri_done();
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
                 // co-op host: the guest's blows (coop.rs)

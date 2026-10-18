@@ -1988,6 +1988,9 @@ s32 check_common_moving_cancels(struct MarioState *m) {
  * without it), leaning into it like a long jump, out of harm's way all along
  * (ACT_FLAG_INVULNERABLE). From its third frame B turns it into a punch and A into a jump, both
  * keeping its speed. */
+extern int er_mega;
+s32 er_bonk_ready(void);
+
 s32 act_er_dash(struct MarioState *m) {
     f32 speed;
 
@@ -2001,6 +2004,10 @@ s32 act_er_dash(struct MarioState *m) {
 
     // (out of it the dash's speed is cut: a punch kept it all and slid on, hitting all the way)
     if (m->actionTimer >= 3) {
+        // (X at its end: the dash strike, er_moves.c; earlier a plain punch)
+        if ((m->input & INPUT_B_PRESSED) && m->actionTimer >= 5 && !er_mega && er_bonk_ready()) {
+            return set_mario_action(m, ACT_ER_BONK, 0);
+        }
         if (m->input & INPUT_B_PRESSED) {
             mario_set_forward_vel(m, 12.0f);
             return set_mario_action(m, ACT_MOVE_PUNCHING, 0);

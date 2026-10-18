@@ -20,7 +20,8 @@ use crate::{explore, log, net};
 
 const MAGIC: [u8; 3] = *b"ERM";
 /// bumped when a packet changes: the other side's older ones are ignored (and logged)
-const VERSION: u8 = 1;
+/// (2: the pose carries the player's health and character, for the partner's HUD)
+const VERSION: u8 = 2;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
@@ -30,7 +31,9 @@ const KIND_HELLO: u8 = 4;
 const HEADER: usize = 5;
 /// one part: rotation i16 x4, position mm i16 x3, scale and stretch u16 /1000 x4
 const PART_BYTES: usize = 22;
-const POSE_BYTES: usize = HEADER + 4 + PARTS * PART_BYTES;
+/// seq u32, health u16 (SM64's: wedges in its high byte), character u8 (1 Luigi), then the parts
+const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
+const PARTS_AT: usize = HEADER + 7;
 const HIT_BYTES: usize = HEADER + 8 + 4 + 12 + 1 + 4;
 const SHOVE_BYTES: usize = HEADER + 8;
 
@@ -58,7 +61,7 @@ pub struct Hit {
 }
 
 pub enum Packet {
-    Pose { seq: u32, parts: Box<[PartPose; PARTS]> },
+    Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]> },
     Hit(Hit),
     Shove { dir: [f32; 2] },
     Hello,
@@ -82,9 +85,11 @@ fn u16k(v: f32) -> [u8; 2] {
 
 pub fn encode(p: &Packet) -> Vec<u8> {
     match p {
-        Packet::Pose { seq, parts } => {
+        Packet::Pose { seq, health, luigi, parts } => {
             let mut out = header(KIND_POSE, POSE_BYTES);
             out.extend_from_slice(&seq.to_le_bytes());
+            out.extend_from_slice(&health.to_le_bytes());
+            out.push(*luigi as u8);
             for part in parts.iter() {
                 let r = part.rot.normalize();
                 for v in [r.x, r.y, r.z, r.w] {
@@ -130,16 +135,18 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
     match b[4] {
         KIND_POSE if b.len() == POSE_BYTES => {
             let seq = u32::from_le_bytes([b[5], b[6], b[7], b[8]]);
+            let health = u16::from_le_bytes([b[9], b[10]]);
+            let luigi = b[11] == 1;
             let mut parts = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
             for (k, p) in parts.iter_mut().enumerate() {
-                let o = HEADER + 4 + k * PART_BYTES;
+                let o = PARTS_AT + k * PART_BYTES;
                 let q = Quat::from_xyzw(i16at(o), i16at(o + 2), i16at(o + 4), i16at(o + 6));
                 p.rot = if q.length_squared() > 0.0 { q.normalize() } else { Quat::IDENTITY };
                 p.pos = Vec3::new(i16at(o + 8), i16at(o + 10), i16at(o + 12)) / 1000.0;
                 p.scale = u16at(o + 14);
                 p.stretch = Vec3::new(u16at(o + 16), u16at(o + 18), u16at(o + 20));
             }
-            Some(Packet::Pose { seq, parts: Box::new(parts) })
+            Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts) })
         }
         KIND_HIT if b.len() == HIT_BYTES => {
             let key = u64::from_le_bytes(b[5..13].try_into().ok()?);
@@ -172,6 +179,8 @@ struct Remote {
     seq: u32,
     at: Instant,
     gap: f32,
+    health: u16,
+    luigi: bool,
 }
 
 impl Remote {
@@ -241,7 +250,7 @@ fn loopback() {
         if !t.seen.contains(&kind) {
             t.seen.push(kind);
             let what = match decode(data) {
-                Some(Packet::Pose { seq, parts }) => format!("pose seq {seq}, head at {:.2} m", parts[3].pos.length()),
+                Some(Packet::Pose { seq, health, luigi, parts }) => format!("pose seq {seq}, health {health:#x}, luigi {luigi}, head at {:.2} m", parts[3].pos.length()),
                 Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
                 Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
                 Some(Packet::Hello) => "hello".into(),
@@ -265,7 +274,7 @@ fn loopback() {
     let key = 0x0001_0002_0000_0003u64;
     let packets = [
         (encode(&Packet::Hello), false),
-        (encode(&Packet::Pose { seq: t.sent + 1, parts: Box::new(pose) }), false),
+        (encode(&Packet::Pose { seq: t.sent + 1, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(pose) }), false),
         (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
         (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
     ];
@@ -387,7 +396,7 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             continue;
         };
         match p {
-            Packet::Pose { seq, parts } => match s.remotes.iter_mut().find(|r| r.steam == from) {
+            Packet::Pose { seq, health, luigi, parts } => match s.remotes.iter_mut().find(|r| r.steam == from) {
                 // (an old one, out of order: dropped)
                 Some(r) if seq.wrapping_sub(r.seq) < u32::MAX / 2 && seq != r.seq => {
                     let gap = r.at.elapsed().as_secs_f32().clamp(0.02, 0.2);
@@ -396,11 +405,13 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
                     r.seq = seq;
                     r.at = Instant::now();
                     r.gap = gap;
+                    r.health = health;
+                    r.luigi = luigi;
                 }
                 Some(_) => {}
                 None => {
-                    log(format!("coop: pose from {from:x}"));
-                    s.remotes.push(Remote { steam: from, prev: None, last: *parts, seq, at: Instant::now(), gap: 0.033 });
+                    log(format!("coop: pose from {from:x} ({}, {} wedges): partner HUD on", if luigi { "Luigi" } else { "Mario" }, health >> 8));
+                    s.remotes.push(Remote { steam: from, prev: None, last: *parts, seq, at: Instant::now(), gap: 0.033, health, luigi });
                 }
             },
             Packet::Hit(h) if s.host => {
@@ -455,7 +466,7 @@ pub fn frame() {
         if let Some(parts) = pose.filter(|_| s.sent.is_none_or(|t| t.elapsed() >= POSE_EVERY)) {
             s.sent = Some(Instant::now());
             s.seq = s.seq.wrapping_add(1);
-            out.push(encode(&Packet::Pose { seq: s.seq, parts: Box::new(parts) }));
+            out.push(encode(&Packet::Pose { seq: s.seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts) }));
         }
         if s.hello.is_none_or(|t| t.elapsed() >= HELLO_EVERY) {
             s.hello = Some(Instant::now());
@@ -492,6 +503,52 @@ pub fn apply_remote() {
         let ins = unsafe { &(*(*chr as *const PlayerIns)).chr_ins } as *const _ as usize;
         crate::engine_mario::apply_remote(ins, pose);
     }
+}
+
+/// Our Mario's health (SM64's), for the partner's HUD (lib.rs sets it every tick).
+static OWN_HEALTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x880);
+
+pub fn set_own_health(health: i16) {
+    OWN_HEALTH.store(health.max(0) as u32, Ordering::Relaxed);
+}
+
+fn own_health() -> u16 {
+    OWN_HEALTH.load(Ordering::Relaxed).min(0x880) as u16
+}
+
+/// A partner as the HUD and the Bros. Jump see them.
+#[derive(Clone, Copy)]
+pub struct Partner {
+    /// their feet and the top of their head (Elden Ring)
+    pub feet: Vec3,
+    pub head: Vec3,
+    /// SM64's health (wedges in its high byte)
+    pub health: u16,
+    pub luigi: bool,
+}
+
+/// Game thread: the partners in Mario mode near us (their pose coming in), where they are.
+pub fn partners() -> Vec<Partner> {
+    if !active() {
+        return Vec::new();
+    }
+    let list: Vec<(usize, [PartPose; PARTS], u16, bool)> = {
+        let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = guard.as_ref() else { return Vec::new() };
+        s.remotes.iter().filter_map(|r| s.chrs.iter().find(|c| c.0 == r.steam).map(|c| (c.1, r.last, r.health, r.luigi))).collect()
+    };
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };
+    let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
+    list.into_iter()
+        .filter(|(chr, ..)| live.contains(chr))
+        .map(|(chr, parts, health, luigi)| {
+            let p = unsafe { &*(chr as *const PlayerIns) }.chr_ins.modules.physics.position;
+            let feet = Vec3::new(p.0, p.1, p.2);
+            // (the head part's centre, and a little over it: its top)
+            let head_y = parts[3].pos.y.clamp(0.4, 4.0) + 0.25 * parts[3].scale.clamp(0.5, 3.0);
+            Partner { feet, head: feet + Vec3::Y * head_y, health, luigi }
+        })
+        .collect()
 }
 
 /// Players in the session (1 out of one).
@@ -613,10 +670,10 @@ mod tests {
     #[test]
     fn pose_round_trip() {
         let a = pose();
-        let bytes = encode(&Packet::Pose { seq: 7, parts: Box::new(a) });
+        let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a) });
         assert_eq!(bytes.len(), POSE_BYTES);
-        let Some(Packet::Pose { seq, parts }) = decode(&bytes) else { panic!("no pose") };
-        assert_eq!(seq, 7);
+        let Some(Packet::Pose { seq, health, luigi, parts }) = decode(&bytes) else { panic!("no pose") };
+        assert_eq!((seq, health, luigi), (7, 0x580, true));
         for (x, y) in a.iter().zip(parts.iter()) {
             assert!(x.rot.angle_between(y.rot) < 0.001);
             assert!(x.pos.distance(y.pos) < 0.001);

@@ -87,11 +87,14 @@ pub enum Attack {
     Tongue,
     Egg,
     YoshiStomp,
+    /// the Mikiri stomp on an attacker's head (timing.rs), the dash strike (X at the dash's end)
+    Mikiri,
+    Bonk,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 44] = [
+const CODES: [Attack; 46] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -99,7 +102,7 @@ const CODES: [Attack; 44] = [
     Attack::HammerAir, Attack::Flurry, Attack::FlurryEnd, Attack::Giro, Attack::GiroEnd, Attack::Chain,
     Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
-    Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp,
+    Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -155,6 +158,9 @@ impl Attack {
             Attack::Chomp | Attack::ChompAir => Attack::Kick.spec(),
             Attack::RangUpper | Attack::ChompLaunch => Attack::Stomp.spec(),
             Attack::ChompEnd => Attack::GroundPound.spec(),
+            // (the Mikiri staggers like a ground pound: it's what it's for)
+            Attack::Mikiri => Attack::GroundPound.spec(),
+            Attack::Bonk => Attack::Stomp.spec(),
         }
     }
 
@@ -231,6 +237,10 @@ impl Attack {
             Attack::Tongue => (5.0, "damage_yoshi_tongue"),
             Attack::Egg => (8.0, "damage_yoshi_egg"),
             Attack::YoshiStomp => (15.0, "damage_yoshi_stomp"),
+            // timing: the Mikiri's worth is its stagger, the stance it cracks and the air string it
+            // opens, not its own damage; the dash strike a little over the dash's own
+            Attack::Mikiri => (12.0, "damage_mikiri"),
+            Attack::Bonk => (16.0, "damage_dash_bonk"),
         }
     }
 
@@ -271,6 +281,8 @@ impl Attack {
             Attack::YoshiStomp => 1.2,
             Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
             Attack::ChompEnd => 1.5,
+            Attack::Mikiri => 1.6,
+            Attack::Bonk => 1.3,
         }
     }
 
@@ -1438,6 +1450,9 @@ const LAUNCH_RADIUS: f32 = 150.0;
 // (x1.25 past its place by him, as its chain in er_moves.c ER_CHOMP_LONGER)
 const CHOMP_SPIN_RADIUS: f32 = 522.0;
 const CHOMP_CRASH_RADIUS: f32 = 347.0;
+/// the Mikiri's stomp around Mario, the dash strike's reach in front (SM64 units)
+const MIKIRI_RADIUS: f32 = 170.0;
+const BONK_REACH: f32 = 200.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
@@ -1482,6 +1497,9 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::ChompLaunch => (Attack::ChompLaunch, Reach::Sweep),
         Hit::ChompSpin => (Attack::ChompSpin, Reach::Ring(me, CHOMP_SPIN_RADIUS)),
         Hit::ChompEnd => (Attack::ChompEnd, Reach::Around(head, CHOMP_CRASH_RADIUS)),
+        // the Mikiri lands on whoever is under him; the dash strike in front, a bit past a punch
+        Hit::Mikiri => (Attack::Mikiri, Reach::Around(me, MIKIRI_RADIUS)),
+        Hit::Bonk => (Attack::Bonk, Reach::Front(BONK_REACH)),
     };
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
     let mut out = Vec::new();
@@ -1861,6 +1879,21 @@ impl Combat {
                     }
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
+                let chest = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                // the action command: X right on the blow (timing.rs)
+                if let Some(extra) = crate::timing::landed(handle, attack, chest, tick) {
+                    self.extra_share(handle, attack, extra * fade, tick);
+                }
+                // the Mikiri: the world slows a moment, and a boss's stance cracks (swing.rs: a
+                // few of them open him up for the tail grab)
+                if attack == Attack::Mikiri {
+                    crate::style::witch_time(crate::timing::MIKIRI_SLOW);
+                    crate::style::callout("MIKIRI!", Some(chest), [0.7, 0.9, 1.0], true, crate::style::MIKIRI_POINTS);
+                    crate::impact::mikiri(chest + glam::Vec3::Y * 0.4);
+                    if !liftable(handle) {
+                        crate::swing::add_stance(handle, crate::timing::MIKIRI_POSTURE);
+                    }
+                }
             }
             let (bullet, ..) = attack.spec();
             if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
@@ -1881,7 +1914,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..));
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -1892,6 +1925,24 @@ impl Combat {
             }
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
+        }
+    }
+}
+
+impl Combat {
+    /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
+    /// command's bonus, timing.rs), with its own kill if it's the one that ends him.
+    pub fn extra_share(&mut self, handle: &FieldInsHandle, attack: Attack, extra: f32, tick: u32) {
+        if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
+            return;
+        }
+        let key = handle_key(handle);
+        self.victims.insert(key, (*handle, tick));
+        if take_share(handle, attack, extra) && !crate::coop::guest() {
+            if !self.finishing.contains_key(&key) {
+                crate::style::kill(attack.finisher());
+            }
+            self.finishing.entry(key).or_insert((*handle, tick));
         }
     }
 }

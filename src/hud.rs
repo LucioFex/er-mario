@@ -137,6 +137,8 @@ const IMG_MUSHROOM: usize = 78;
 const IMG_CAPPY: usize = 79;
 /// a Yoshi egg (ride.rs)
 const IMG_EGG: usize = 80;
+/// the HUD's Mario head in Luigi's green (the co-op partner's panel)
+const IMG_LUIGI_HEAD: usize = 81;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -239,6 +241,12 @@ pub fn load(rom: &[u8]) {
         out.push(Image::new(32, 32, mushroom_pixel));
         out.push(Image::new(32, 32, cappy_pixel));
         out.push(Image::new(24, 32, egg_pixel));
+        // (Mario's red cap and shirt turned green: his reds have far more red than green)
+        let head = tex(&seg2, GLYPH_HEAD, 512)?;
+        out.push(Image::new(16, 16, |x, y| {
+            let [r, g, b, a] = rgba16_px(&head, y * 16 + x);
+            if r as u32 > g as u32 * 3 / 2 + 20 && r as u32 > b as u32 * 3 / 2 + 20 { [g / 2, r, b / 2, a] } else { [r, g, b, a] }
+        }));
         Some(out)
     };
     match load() {
@@ -336,6 +344,21 @@ pub fn set_bosses(bosses: Vec<BossBar>) {
 
 pub fn set_tags(tags: Vec<Tag>) {
     *TAGS.lock().unwrap_or_else(|e| e.into_inner()) = tags;
+}
+
+/// A co-op partner's little panel (coop.rs): the top of their head (Elden Ring), their wedges,
+/// Luigi or Mario.
+#[derive(Clone, Copy)]
+pub struct PartnerHud {
+    pub head: Vec3,
+    pub wedges: u8,
+    pub luigi: bool,
+}
+
+static PARTNERS: Mutex<Vec<PartnerHud>> = Mutex::new(Vec::new());
+
+pub fn set_partners(partners: Vec<PartnerHud>) {
+    *PARTNERS.lock().unwrap_or_else(|e| e.into_inner()) = partners;
 }
 
 // ---- the overlay ---------------------------------------------------------------------------------
@@ -521,7 +544,7 @@ impl ImguiRenderLoop for Overlay {
                     }
                 });
         }
-        if self.textures.len() < IMG_ORB + 4 {
+        if self.textures.len() <= IMG_LUIGI_HEAD {
             return;
         }
         let size = ui.io().display_size;
@@ -1123,6 +1146,47 @@ impl ImguiRenderLoop for Overlay {
             }
         }
 
+        // callouts (style.rs): words popping out of the blows ("NICE!", "MIKIRI!", the skillshots)
+        // over the enemy they landed on: in with an overshoot, rising, the letters riding a little
+        // wave, a drop shadow under them, fading out at the end
+        for c in crate::style::callouts() {
+            let p = c.age / crate::style::CALLOUT_TIME;
+            let anchor = match c.at {
+                Some(at) => project(at + Vec3::Y * 0.9, size).filter(|(_, z)| *z < 45.0).map(|(s, _)| s),
+                None => Some([size[0] * 0.5, size[1] * 0.33]),
+            };
+            let Some([cx, cy]) = anchor else { continue };
+            let pop = if c.age < 0.08 {
+                0.4 + 0.95 * (c.age / 0.08)
+            } else if c.age < 0.2 {
+                1.35 - 0.35 * ((c.age - 0.08) / 0.12)
+            } else {
+                1.0
+            };
+            let g = if c.big { 15.0 } else { 11.0 } * px * pop;
+            let rise = (1.0 - (1.0 - p.min(1.0)) * (1.0 - p.min(1.0))) * 22.0 * px;
+            let alpha = if p > 0.65 { 1.0 - (p - 0.65) / 0.35 } else { 1.0 };
+            let gap = 0.78;
+            let n = c.text.chars().count() as f32;
+            let left = cx - n * g * gap * 0.5;
+            let [r, gr, b] = c.tint;
+            for (k, ch) in c.text.chars().enumerate() {
+                let x = left + (k as f32 + 0.5) * g * gap;
+                let y = cy - rise - (c.age * 10.0 - k as f32 * 0.8).sin() * 1.5 * px;
+                let d = g * 0.07;
+                if ch == '!' {
+                    for (off, col) in [(d, [0.0, 0.0, 0.0, 0.6 * alpha]), (0.0, [r, gr, b, alpha])] {
+                        dl.add_rect([x - g * 0.1 + off, y - g * 0.42 + off], [x + g * 0.1 + off, y + g * 0.14 + off], col).filled(true).rounding(g * 0.08).build();
+                        dl.add_circle([x + off, y + g * 0.32 + off], g * 0.1, col).filled(true).build();
+                    }
+                    continue;
+                }
+                let Some(id) = glyph_for(ch) else { continue };
+                dl.add_image(textures[id], [x - g * 0.5 + d, y - g * 0.5 + d], [x + g * 0.5 + d, y + g * 0.5 + d]).col([0.0, 0.0, 0.0, 0.6 * alpha]).build();
+                dl.add_image(textures[id], [x - g * 0.5, y - g * 0.5], [x + g * 0.5, y + g * 0.5]).col([r, gr, b, alpha]).build();
+            }
+        }
+
         // the weapon just taken (L1, weapons.rs): its icon and name, low in the middle of the screen,
         // popping in and fading
         if let Some((w, age)) = crate::weapons::banner() {
@@ -1160,6 +1224,73 @@ impl ImguiRenderLoop for Overlay {
                 crate::lakitu::HudState::Far => image(IMG_ARROW_DOWN, x + 4.0 * px, y + 16.0 * px, 8.0 * px, 8.0 * px),
                 crate::lakitu::HudState::FirstPerson => image(IMG_ARROW_UP, x + 4.0 * px, y - 8.0 * px, 8.0 * px, 8.0 * px),
                 crate::lakitu::HudState::Near => {}
+            }
+        }
+
+        // the co-op partner (coop.rs), small, bottom left: their head, a little power pie with their
+        // wedges (red when low, blinking at one), and when they're off screen an arrow on the
+        // screen's edge pointing their way, with how far they are
+        {
+            let partners = PARTNERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let clock = T0.get_or_init(Instant::now).elapsed().as_secs_f32();
+            let me = crate::lakitu::position();
+            for (i, p) in partners.iter().enumerate() {
+                let s = 16.0 * px;
+                let (x0, y0) = (size[1] * 0.04, size[1] * 0.83 - i as f32 * s * 1.6);
+                let (head, tint) = if p.luigi { (IMG_LUIGI_HEAD, [0.35, 0.9, 0.4]) } else { (IMG_HEAD, [1.0, 0.35, 0.3]) };
+                dl.add_rect([x0 - px * 3.0, y0 - px * 3.0], [x0 + s * 2.4 + px * 3.0, y0 + s + px * 3.0], [0.0, 0.0, 0.0, 0.35]).filled(true).rounding(px * 4.0).build();
+                image(head, x0, y0, s, s);
+                let low = p.wedges <= 2;
+                let blink = p.wedges <= 1 && (clock * 6.0).sin() < 0.0;
+                let (cx, cy) = (x0 + s * 1.75, y0 + s * 0.5);
+                let r = s * 0.62;
+                if !blink {
+                    image(IMG_BASE, cx - r, cy - r, r * 2.0, r * 2.0);
+                    if p.wedges > 0 {
+                        let pie = r * 0.5;
+                        dl.add_image(textures[IMG_PIES + (p.wedges.min(8) - 1) as usize], [cx - pie, cy - pie], [cx + pie, cy + pie])
+                            .col(if low { [1.0, 0.6, 0.6, 1.0] } else { [1.0, 1.0, 1.0, 1.0] })
+                            .build();
+                    }
+                }
+                // off screen (or behind the camera): an arrow at the edge, and the distance in m
+                let on_screen = project(p.head, size).filter(|(c, _)| c[0] >= 0.0 && c[0] <= size[0] && c[1] >= 0.0 && c[1] <= size[1]);
+                if on_screen.is_none() {
+                    let Some(cam) = me else { continue };
+                    let fwd = crate::lakitu::forward().unwrap_or(Vec3::Z);
+                    let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
+                    let up = right.cross(fwd).normalize_or(Vec3::Y);
+                    let d = p.head - cam;
+                    // (behind the camera: straight to the side they're on)
+                    let side = d.dot(right);
+                    let dir = if d.dot(fwd) < 0.0 {
+                        glam::Vec2::new(if side < 0.0 { -1.0 } else { 1.0 }, 0.0)
+                    } else {
+                        glam::Vec2::new(side, -d.dot(up)).normalize_or(glam::Vec2::X)
+                    };
+                    let c = [size[0] * 0.5, size[1] * 0.5];
+                    let edge = [c[0] + dir.x * size[0] * 0.44, c[1] + dir.y * size[1] * 0.40];
+                    let (ax, ay) = (dir.x, dir.y);
+                    let tip = [edge[0] + ax * s * 0.7, edge[1] + ay * s * 0.7];
+                    let l = [edge[0] - ay * s * 0.45, edge[1] + ax * s * 0.45];
+                    let rr = [edge[0] + ay * s * 0.45, edge[1] - ax * s * 0.45];
+                    let pulse = 0.75 + 0.25 * (clock * 4.0).sin();
+                    let col = imgui::ImColor32::from_rgba_f32s(tint[0], tint[1], tint[2], 0.85 * pulse);
+                    dl.add_triangle(tip, l, rr, col).filled(true).build();
+                    dl.add_triangle(tip, l, rr, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.6)).thickness(px).build();
+                    let metres = (p.head - cam).length().round().min(999.0) as u32;
+                    let g = 8.0 * px;
+                    let text = format!("{metres}M");
+                    let n = text.len() as f32;
+                    for (k, ch) in text.chars().enumerate() {
+                        if let Some(id) = glyph_for(ch) {
+                            let x = edge[0] - ax * s * 0.9 - n * g * 0.4 + k as f32 * g * 0.8;
+                            let y = edge[1] - ay * s * 0.9 - g * 0.5;
+                            image(id, x, y, g, g);
+                        }
+                    }
+                }
             }
         }
 

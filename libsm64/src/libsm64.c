@@ -1081,6 +1081,23 @@ SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kin
         set_mario_action(gMarioState, ACT_ER_ZIP, (u32) kind);
 }
 
+/** er-mario: where the Mikiri stomp (timing.rs) lands, the attacker's head (SM64 units); `start`:
+ * the counter starts now (else only its target moves, the enemy on the move). */
+SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float z, int start)
+{
+    extern f32 er_mikiri_target[3];
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
+    er_mikiri_target[0] = x;
+    er_mikiri_target[1] = y;
+    er_mikiri_target[2] = z;
+    if (start && gMarioState->health >= 0x100 && gMarioState->heldObj == NULL
+        && !(gMarioState->action & (ACT_FLAG_INVULNERABLE | ACT_FLAG_INTANGIBLE))
+        && (gMarioState->action & ACT_GROUP_MASK) != ACT_GROUP_CUTSCENE)
+        set_mario_action(gMarioState, ACT_ER_MIKIRI, 0);
+}
+
 /** er-mario: Mario throws a fireball from Yoshi's saddle (ride.rs): his palm thrust */
 SM64_LIB_FN void sm64_er_ride_throw(void)
 {

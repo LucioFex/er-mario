@@ -194,6 +194,64 @@ pub fn finisher(at: Vec3) -> bool {
     true
 }
 
+/// A word that pops out of a blow, over the enemy it landed on ("NICE!", "MIKIRI!", the
+/// skillshots): its text, where (Elden Ring; none: the middle of the screen), its colour, big or not.
+#[derive(Clone)]
+pub struct Callout {
+    pub text: &'static str,
+    pub at: Option<Vec3>,
+    pub tint: [f32; 3],
+    pub big: bool,
+    pub age: f32,
+}
+
+/// how long a callout shows (s), how many at once
+pub const CALLOUT_TIME: f32 = 0.9;
+const CALLOUTS_MAX: usize = 4;
+static CALLOUTS: Mutex<Vec<(Instant, &'static str, Option<Vec3>, [f32; 3], bool)>> = Mutex::new(Vec::new());
+
+/// Game thread: a word pops out at `at` (style points with it).
+pub fn callout(text: &'static str, at: Option<Vec3>, tint: [f32; 3], big: bool, points: f32) {
+    {
+        let mut c = CALLOUTS.lock().unwrap_or_else(|e| e.into_inner());
+        c.retain(|(t, ..)| t.elapsed().as_secs_f32() < CALLOUT_TIME);
+        if c.len() >= CALLOUTS_MAX {
+            c.remove(0);
+        }
+        c.push((Instant::now(), text, at, tint, big));
+    }
+    if points > 0.0 {
+        let mut m = METER.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(m) = m.as_mut().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP) {
+            m.last = Instant::now();
+            add(m, points);
+        }
+    }
+}
+
+/// The callouts to draw now.
+pub fn callouts() -> Vec<Callout> {
+    let c = CALLOUTS.lock().unwrap_or_else(|e| e.into_inner());
+    c.iter()
+        .map(|(t, text, at, tint, big)| Callout { text, at: *at, tint: *tint, big: *big, age: t.elapsed().as_secs_f32() })
+        .filter(|c| c.age < CALLOUT_TIME)
+        .collect()
+}
+
+/// The action command landed (timing.rs): "NICE!" (or "GREAT!") over the enemy.
+pub fn nice(at: Vec3, great: bool) {
+    if great {
+        callout("GREAT!", Some(at), [1.0, 0.55, 0.2], true, NICE_POINTS * 2.0);
+    } else {
+        callout("NICE!", Some(at), [1.0, 0.9, 0.3], false, NICE_POINTS);
+    }
+    crate::impact::nice(at, great);
+}
+
+/// a "NICE!"'s style points, a Mikiri's
+const NICE_POINTS: f32 = 1.0;
+pub const MIKIRI_POINTS: f32 = 2.5;
+
 /// Game thread: Mario was hurt, the string is lost.
 pub fn hurt() {
     let lost = METER.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP).and_then(|m| m.rank);
@@ -291,6 +349,7 @@ pub fn mario_dt(game_dt: f32) -> f32 {
 
 pub fn clear() {
     *METER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    CALLOUTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *SLOW.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *STAR.lock().unwrap_or_else(|e| e.into_inner()) = None;

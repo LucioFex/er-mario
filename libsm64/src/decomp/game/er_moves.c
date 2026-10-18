@@ -53,6 +53,8 @@ enum ErHit {
     ER_HIT_CHOMP_END,
     ER_HIT_CHOMP_AIR,
     ER_HIT_CHOMP_LAUNCH,
+    ER_HIT_MIKIRI,
+    ER_HIT_BONK,
 };
 
 /* (same bits as moves.rs FX_*) */
@@ -118,6 +120,9 @@ static s32 sErSteps = 0;
 #define ER_AIR_THROWS 10
 
 static u32 er_air_attack(void);
+
+/** the dash strike's wait before the next one (ticks, act_er_bonk) */
+static s32 sErBonkWait = 0;
 
 /** the spin of the spinning moves (only one Mario) */
 static s16 sErSpin = 0;
@@ -2005,8 +2010,169 @@ void er_moves_begin_tick(int frozen) {
     er_move_hit = ER_HIT_NONE;
     er_move_fx = 0;
     er_move_throw = 0;
+    if (!frozen && sErBonkWait > 0) {
+        sErBonkWait--;
+    }
     if (!frozen) {
         er_hammer_scripted = 0;
         er_chomp_scripted = 0;
     }
+}
+
+/* ---- timing (timing.rs) ---------------------------------------------------------------------- */
+
+/** where the Mikiri stomp lands: the attacker's head (SM64 units), kept up to date by timing.rs */
+f32 er_mikiri_target[3] = { 0.0f, 0.0f, 0.0f };
+#define ER_MIKIRI_CROUCH 2
+#define ER_MIKIRI_MAX 34
+
+/**
+ * A just before an enemy's blow lands (timing.rs, Sekiro's Mikiri counter): a quick crouch, then a
+ * somersault up over the blow onto the attacker's head, a stomp there that staggers it, and a
+ * bounce off it (his air string ready). Invulnerable the whole way: the blow goes under him.
+ */
+s32 act_er_mikiri(struct MarioState *m) {
+    s32 t = m->actionTimer++;
+    f32 dx = er_mikiri_target[0] - m->pos[0];
+    f32 dz = er_mikiri_target[2] - m->pos[2];
+    f32 flat = sqrtf(dx * dx + dz * dz);
+
+    // the wind-up: down into a crouch (anticipation), turned to the enemy
+    if (t < ER_MIKIRI_CROUCH) {
+        if (t == 0) {
+            if (flat > 1.0f) {
+                m->faceAngle[1] = atan2s(dz, dx);
+            }
+            set_mario_animation(m, MARIO_ANIM_START_CROUCHING);
+            er_sound(m, SOUND_ACTION_SIDE_FLIP_UNK);
+        }
+        mario_set_forward_vel(m, 0.0f);
+        m->vel[1] = 0.0f;
+        vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+        vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+        return FALSE;
+    }
+    // the leap: up to just over the head, its peak right above it
+    if (t == ER_MIKIRI_CROUCH) {
+        f32 rise = er_mikiri_target[1] + 70.0f - m->pos[1];
+        f32 ticks, speed;
+        if (rise < 140.0f) {
+            rise = 140.0f;
+        }
+        if (rise > 900.0f) {
+            rise = 900.0f;
+        }
+        m->vel[1] = sqrtf(2.0f * 4.0f * rise);
+        ticks = m->vel[1] / 4.0f;
+        speed = flat / (ticks > 1.0f ? ticks : 1.0f);
+        mario_set_forward_vel(m, speed > 48.0f ? 48.0f : speed);
+        set_mario_animation(m, MARIO_ANIM_FORWARD_SPINNING);
+        set_anim_to_frame(m, 0);
+        er_sound(m, SOUND_MARIO_HOOHOO);
+        er_sound(m, SOUND_ACTION_SPIN);
+        er_move_fx |= ER_FX_LAUNCH;
+    }
+    // (on the way: still turned to the enemy, slowing as he gets over it)
+    if (flat > 20.0f) {
+        m->faceAngle[1] = approach_s32((s16) m->faceAngle[1], atan2s(dz, dx), 0x1000, 0x1000);
+    }
+    if (flat < 40.0f && m->forwardVel > 6.0f) {
+        mario_set_forward_vel(m, m->forwardVel * 0.6f);
+    }
+    // over the head, coming down: the stomp, and the bounce off it
+    if (t > ER_MIKIRI_CROUCH && m->vel[1] <= 4.0f && flat < 130.0f && m->pos[1] <= er_mikiri_target[1] + 90.0f
+        && m->pos[1] >= er_mikiri_target[1] - 120.0f) {
+        er_move_hit = ER_HIT_MIKIRI;
+        er_move_fx |= ER_FX_SPIN;
+        er_sound(m, SOUND_ACTION_BOUNCE_OFF_OBJECT);
+        er_sound(m, SOUND_ACTION_HIT_3);
+        er_cheer(m);
+        m->particleFlags |= PARTICLE_HORIZONTAL_STAR;
+        mario_set_forward_vel(m, 6.0f);
+        set_mario_action(m, ACT_DOUBLE_JUMP, 0);
+        m->vel[1] = 46.0f;
+        return TRUE;
+    }
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            // (he missed it: down on his feet)
+            if (t > ER_MIKIRI_CROUCH + 2) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            break;
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    if (t >= ER_MIKIRI_MAX) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
+/** the dash strike at most this often (ticks): dash, strike, dash, strike was a loop with the
+ * dash's invulnerability half the time */
+#define ER_BONK_EVERY 36
+
+/** The dash may end in its strike now (mario_actions_moving.c). */
+s32 er_bonk_ready(void) {
+    return sErBonkWait == 0;
+}
+
+#define ER_BONK_HIT_FROM 2
+#define ER_BONK_HIT_TO 5
+#define ER_BONK_END 16
+#define ER_BONK_CANCEL 9
+
+/**
+ * X at the end of the dash (Hades' dash strike): the dash's speed goes into a lunging straight
+ * punch, the body leaning into it and back up as it slows (follow-through), then he's free again.
+ */
+s32 act_er_bonk(struct MarioState *m) {
+    s32 t = m->actionTimer;
+    f32 lean, speed;
+
+    if (t == 0) {
+        sErBonkWait = ER_BONK_EVERY;
+        if (m->input & INPUT_NONZERO_ANALOG) {
+            m->faceAngle[1] = approach_s32((s16) m->faceAngle[1], m->intendedYaw, 0x2000, 0x2000);
+        }
+        er_aim_turn(m);
+        set_mario_animation(m, MARIO_ANIM_SECOND_PUNCH);
+        set_anim_to_frame(m, 1);
+        er_sound(m, SOUND_MARIO_PUNCH_HOO);
+        er_sound(m, SOUND_ACTION_THROW);
+        m->particleFlags |= PARTICLE_DUST;
+    }
+    if (t >= ER_BONK_HIT_FROM && t <= ER_BONK_HIT_TO) {
+        er_move_hit = ER_HIT_BONK;
+    }
+    if (t >= ER_BONK_CANCEL) {
+        if (m->input & INPUT_B_PRESSED) {
+            return set_mario_action(m, ACT_PUNCHING, 0);
+        }
+        if (m->input & INPUT_A_PRESSED) {
+            return set_jumping_action(m, ACT_JUMP, 0);
+        }
+    }
+    // fast out of the dash, slowing; leaning into the blow, then back up
+    speed = t < 4 ? 50.0f - 4.0f * t : 34.0f * (1.0f - (f32)(t - 4) / (ER_BONK_END - 4));
+    if (!er_ground(m, speed)) {
+        return TRUE;
+    }
+    lean = t < 4 ? er_ease_out((f32)(t + 1) / 4.0f) : 1.0f - er_ease_out((f32)(t - 4) / 8.0f);
+    m->marioObj->header.gfx.angle[0] = (s16)(0x0E00 * lean);
+    // (the punch held at its blow and let go slowly: a heavier follow-through)
+    if (t == 4) {
+        struct AnimInfo *anim = &m->marioObj->header.gfx.animInfo;
+        anim->animFrameAccelAssist = anim->animFrame << 16;
+        anim->animAccel = 0x6000;
+    }
+    if (++m->actionTimer >= ER_BONK_END) {
+        return set_mario_action(m, (m->input & INPUT_NONZERO_ANALOG) ? ACT_WALKING : ACT_IDLE, 0);
+    }
+    return FALSE;
 }

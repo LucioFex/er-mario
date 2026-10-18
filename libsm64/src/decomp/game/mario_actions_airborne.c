@@ -2130,6 +2130,7 @@ s32 act_er_air_combo(struct MarioState *m);
 s32 act_er_air_throw(struct MarioState *m);
 s32 act_er_chomp_air(struct MarioState *m);
 s32 act_er_zip(struct MarioState *m);
+s32 act_er_mikiri(struct MarioState *m);
 
 s32 mario_execute_airborne_action(struct MarioState *m) {
     u32 cancel;
@@ -2158,6 +2159,7 @@ s32 mario_execute_airborne_action(struct MarioState *m) {
         case ACT_ER_AIR_THROW:         cancel = act_er_air_throw(m);         break;
         case ACT_ER_CHOMP_AIR:         cancel = act_er_chomp_air(m);         break;
         case ACT_ER_ZIP:               cancel = act_er_zip(m);               break;
+        case ACT_ER_MIKIRI:            cancel = act_er_mikiri(m);            break;
         case ACT_WATER_JUMP:           cancel = act_water_jump(m);           break;
         case ACT_HOLD_WATER_JUMP:      cancel = act_hold_water_jump(m);      break;
         case ACT_STEEP_JUMP:           cancel = act_steep_jump(m);           break;

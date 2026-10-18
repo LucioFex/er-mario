@@ -113,6 +113,9 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::ChompSpin => (1, 0.8, false),
         Attack::ChompLaunch => (4, 1.3, true),
         Attack::ChompEnd => (5, 1.5, true),
+        // timing: the Mikiri lands hard (its own flash: impact::mikiri), the dash strike a solid one
+        Attack::Mikiri => (4, 1.3, true),
+        Attack::Bonk => (3, 1.1, false),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -443,6 +446,41 @@ pub fn perfect_dodge(feet: Vec3) {
     ring(feet + Vec3::Y * 0.1, 2.6, 0.5, [0.5, 0.75, 1.0, 1.0]);
     burst(feet + Vec3::Y * 1.0, 4, Bit::Star);
 }
+
+/// The action command (timing.rs): a gold burst on the blow, a quick ring, a few stars; a "GREAT!"
+/// bigger, with a little flash. `at`: the enemy's chest (Elden Ring).
+pub fn nice(at: Vec3, great: bool) {
+    spark(at, if great { 1.5 } else { 1.1 }, GOLD);
+    ring(at, if great { 1.6 } else { 1.0 }, 0.25, GOLD);
+    burst(at, if great { 4 } else { 2 }, Bit::Star);
+    if great {
+        flash([1.0, 0.8, 0.35], 0.12, 0.25);
+    }
+}
+
+/// The Mikiri (timing.rs): Mario landed on the attacker's head. A white-blue flash, a ring at
+/// his feet up there, stars. `at`: where he stomped (Elden Ring).
+pub fn mikiri(at: Vec3) {
+    flash([0.7, 0.85, 1.0], 0.3, 0.35);
+    spark(at, 1.6, WHITE);
+    ring(at, 1.4, 0.3, [0.75, 0.9, 1.0, 1.0]);
+    ring(at - Vec3::Y * 0.3, 2.4, 0.45, WHITE);
+    burst(at, 5, Bit::Star);
+    crate::lakitu::shake(0.6);
+}
+
+/// The Bros. Jump (co-op): off the partner's head, a puff and a ring there, SM64's bounce.
+pub fn bros_jump(head: Vec3) {
+    ring(head, 0.8, 0.25, WHITE);
+    puffs(head, 3, 0.25);
+    burst(head + Vec3::Y * 0.2, 2, Bit::Star);
+    worker::call("bros jump", |_| unsafe {
+        sm64::sm64_play_sound_global(SOUND_BOUNCE_OFF_OBJECT);
+        sm64::sm64_play_sound_global(SOUND_YAHOO);
+    });
+}
+const SOUND_BOUNCE_OFF_OBJECT: i32 = 0x0459_B081;
+const SOUND_YAHOO: i32 = 0x2404_8081;
 
 /// A weapon switched in the middle of a fight (moves.rs's swap strike): a golden ring round Mario
 /// and a flash of stars at his chest. `feet`: Elden Ring.
