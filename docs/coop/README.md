@@ -79,6 +79,10 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
      menú (`menu\hi\01_common.tpf.dcx`) y de la lista de materiales
      (`material\allmaterial.matbinbnd.dcx`). Con esto, ER Mario parte de las de Reforged en vez de las
      del juego y no le pisa los cambios.
+   - **Controles:** los dos con la configuración de botones de Elden Ring por defecto (Sistema >
+     Controles > Configuración de botones > restablecer). La flecha abajo del mando aprieta el botón
+     de interactuar del juego, que por defecto es Y. Si alguien lo cambió, poner `pad_interact = A`
+     (o B, Y, LB, RB, BACK, START) en su `er_mario.ini`.
 3. Abrir con el `.BAT` *Offline or Seamless* hasta el menú principal y cerrar. **La primera vez hacen
    falta dos arranques:** en el primero el mod arma los modelos a partir de la ROM; en el segundo
    me3 ya los carga.
@@ -155,6 +159,7 @@ a sí misma.
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
 | `coop: packets of version N` | Tienen versiones distintas de ER Mario (desde la 4 hace falta el mismo build en las dos PCs) |
 | `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
+| `coop: pose from ... with its place` | El otro se ve suave y en su lugar real. Si dice `no place`, se ve donde el juego tiene a su personaje (más tironeado) |
 | `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
 | `coop: partner ... is down` / `is back` | El compañero cayó / volvió |
 | `coop: partner's character paired by elimination` | Normal si hay un solo compañero: el personaje no traía el SteamID donde se esperaba |

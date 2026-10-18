@@ -397,6 +397,8 @@ pub struct PartnerHud {
     pub danger: bool,
     pub down: bool,
     pub bag: Option<(Vec3, u16)>,
+    /// their wing cap on: their head part's centre, which way they face, their size there
+    pub wings: Option<(Vec3, glam::Quat, f32)>,
 }
 
 /// (Seamless Co-op takes up to four players)
@@ -1682,6 +1684,30 @@ impl ImguiRenderLoop for Overlay {
                 }
                 cx - x
             };
+            // their wing cap's wings (their model is the plain one: the wings are drawn over it), in
+            // 3D: three white feathers a side, out of the cap's sides, sweeping back, beating softly
+            for (head, face, k) in partners.iter().flatten().filter_map(|p| p.wings) {
+                if project(head, size).is_none_or(|(_, z)| z > 60.0) {
+                    continue;
+                }
+                let (fwd, side, up) = (face * Vec3::new(0.0, 0.0, -1.0), face * Vec3::X, Vec3::Y);
+                let beat = (clock * 7.0).sin() * 0.18;
+                let mut mesh = Mesh::default();
+                for out in [-1.0f32, 1.0] {
+                    let root = head + up * 0.16 * k + side * out * 0.12 * k - fwd * 0.02 * k;
+                    for f in 0..3 {
+                        let fl = f as f32;
+                        let dir = (-fwd * (0.85 - 0.25 * fl) + up * (0.25 + 0.4 * fl + beat) + side * out * (0.45 + beat * 0.5)).normalize_or(up);
+                        let len = (0.11 - 0.015 * fl) * k;
+                        let normal = dir.cross(-fwd).normalize_or(side);
+                        let across = dir.cross(normal).normalize_or(up);
+                        let rot = glam::Quat::from_mat3(&glam::Mat3::from_cols(across, dir, normal)).normalize();
+                        let tint = if f == 0 { [0.86, 0.87, 0.93] } else { [0.98, 0.98, 1.0] };
+                        mesh.ellipsoid(root + dir * len * 0.9, rot, Vec3::new(0.035 * k, len, 0.008 * k), 0.35, 4, 8, &|_, _| tint);
+                    }
+                }
+                mesh.draw(&dl, size, 60.0, &[]);
+            }
             let mut row = 0.0;
             for p in partners.iter().flatten() {
                 let s = 16.0 * px;

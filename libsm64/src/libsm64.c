@@ -11,6 +11,7 @@
 #include <math.h>
 
 #include "decomp/audio/external.h"
+#include "play_sound.h"
 #include "decomp/include/PR/os_cont.h"
 #include "decomp/engine/math_util.h"
 #include "decomp/include/sm64.h"
@@ -273,6 +274,8 @@ SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs 
     gMarioState->marioObj->header.gfx.cameraToObject[0] = 0;
     gMarioState->marioObj->header.gfx.cameraToObject[1] = 0;
     gMarioState->marioObj->header.gfx.cameraToObject[2] = 0;
+    // (er-mario: his body's sounds are logged for the co-op partner)
+    g_er_body_pos = gMarioState->marioObj->header.gfx.cameraToObject;
 
     gMarioState->area->camera->yaw = atan2s( inputs->camLookZ, inputs->camLookX );
 
@@ -793,6 +796,34 @@ void er_play_sound_volume(int32_t soundBits, float volume)
 SM64_LIB_FN void sm64_play_sound_volume(int32_t soundBits, float volume)
 {
     er_play_sound_volume(soundBits, volume);
+}
+
+/* er-mario (co-op): a partner's sound at a share of its volume, from a spot of that partner's own
+ * (`slot` 0-3): SM64 tells a sound that goes on (a slide, the wind) by where it comes from, so
+ * each refresh of it must come from the same spot, and the others' sounds aren't moved by it */
+SM64_LIB_FN void sm64_er_play_partner(int32_t soundBits, uint32_t slot, float volume)
+{
+    static float spots[4][3];
+    u8 bank = (soundBits >> 28) & 0xF;
+    float reach = 20000.0f / (bank < 3 ? 2.0f : 3.0f);
+    float *pos = spots[slot & 3];
+    if (volume > 1.0f) volume = 1.0f;
+    if (volume < 0.05f) volume = 0.05f;
+    pos[0] = 0.0f;
+    pos[1] = 0.0f;
+    pos[2] = -(1.0f - volume) / 0.9f * reach;
+    play_sound(soundBits, pos);
+}
+
+/* er-mario (co-op): the sounds Mario's own body made since the last call (his voice, steps,
+ * blows), up to `max` into `out`; how many */
+SM64_LIB_FN uint32_t sm64_er_take_sounds(uint32_t *out, uint32_t max)
+{
+    uint32_t n = (uint32_t)g_er_sound_count < max ? (uint32_t)g_er_sound_count : max;
+    for (uint32_t i = 0; i < n; i++)
+        out[i] = g_er_sound_log[i];
+    g_er_sound_count = 0;
+    return n;
 }
 
 SM64_LIB_FN void sm64_set_sound_volume(float vol)

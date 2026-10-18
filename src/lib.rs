@@ -87,7 +87,7 @@ use fromsoftware_shared::{F32Vector4, FromStatic, SharedTaskImpExt};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::Input::XboxController::{
     XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_LEFT_THUMB, XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_RIGHT_THUMB,
-    XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
+    XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_BUTTON_FLAGS, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
     XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
     XINPUT_STATE,
 };
@@ -240,6 +240,34 @@ pub(crate) fn hidden_sticks() -> (bool, bool) {
     (!ON_LADDER.load(Ordering::Relaxed) && !RIDING.load(Ordering::Relaxed), lakitu::ON.load(Ordering::Relaxed))
 }
 
+/// The pad button Elden Ring interacts with (doors, items, graces): `pad_interact = Y` in
+/// er_mario.ini (A, B, Y, LB, RB, BACK, START; not X, the whistle's), for a player who moved it in
+/// the game's controls;
+/// Y, the game's own, if not set.
+fn interact_button() -> XINPUT_GAMEPAD_BUTTON_FLAGS {
+    static BUTTON: std::sync::OnceLock<XINPUT_GAMEPAD_BUTTON_FLAGS> = std::sync::OnceLock::new();
+    *BUTTON.get_or_init(|| {
+        let set = paths::config("pad_interact").unwrap_or_default().trim().to_ascii_uppercase();
+        let b = match set.as_str() {
+            "A" => XINPUT_GAMEPAD_A,
+            "B" => XINPUT_GAMEPAD_B,
+            "LB" => XINPUT_GAMEPAD_LEFT_SHOULDER,
+            "RB" => XINPUT_GAMEPAD_RIGHT_SHOULDER,
+            "BACK" | "SELECT" => XINPUT_GAMEPAD_BACK,
+            "START" => XINPUT_GAMEPAD_START,
+            "Y" | "" => XINPUT_GAMEPAD_Y,
+            other => {
+                log(format!("input: pad_interact = {other} isn't one it can be (A, B, Y, LB, RB, BACK, START): Y it is"));
+                XINPUT_GAMEPAD_Y
+            }
+        };
+        if b != XINPUT_GAMEPAD_Y {
+            log(format!("input: the game's interact is on {set} (pad_interact): D-pad down presses that"));
+        }
+        b
+    })
+}
+
 /// Real pad goes to Mario; the game gets an idle pad (right stick kept for the camera).
 fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     let rc = autopad::apply(index, state, rc);
@@ -284,13 +312,15 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         g.bRightTrigger = 0;
         // L1 brings out Mario's hammer (moves.rs), not the game's guard
         g.wButtons &= !XINPUT_GAMEPAD_LEFT_SHOULDER;
-        // Y is Mario's special moves; the game's interact (Y: doors, items, graces, NPCs) is on
-        // D-pad down instead, which only takes his cap off (Y's moves waited for the game to start
-        // an interaction, slow, and hit anyway)
+        // Y is Mario's special moves; the game's interact (doors, items, graces, NPCs: Y unless the
+        // player moved it, `pad_interact` in er_mario.ini) is on D-pad down instead, which only
+        // takes his cap off (Y's moves waited for the game to start an interaction, slow, and hit
+        // anyway)
         let interact = g.wButtons.contains(XINPUT_GAMEPAD_DPAD_DOWN);
-        g.wButtons &= !XINPUT_GAMEPAD_Y;
+        let button = interact_button();
+        g.wButtons &= !(XINPUT_GAMEPAD_Y | button);
         if interact {
-            g.wButtons |= XINPUT_GAMEPAD_Y;
+            g.wButtons |= button;
         }
         // the D-pad changes Mario's caps (caps.rs), not the game's items and spells
         g.wButtons &= !(XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT);
@@ -3511,6 +3541,12 @@ fn frame(data: &FD4TaskData) {
                 let mut buffers = ctx.geo.buffers();
                 unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
             }
+            // the sounds his body made (voice, steps, blows): the co-op partner hears them too
+            {
+                let mut sounds = [0u32; 32];
+                let n = unsafe { sm64::sm64_er_take_sounds(sounds.as_mut_ptr(), sounds.len() as u32) } as usize;
+                coop::own_sounds(&sounds[..n.min(sounds.len())]);
+            }
             let mario_ms = job_start.elapsed().as_secs_f32() * 1000.0;
             // SM64's sound engine runs at the same 30 Hz as Mario
             let mut buf = [0i16; 544 * 2 * 2];
@@ -4208,6 +4244,12 @@ fn frame(data: &FD4TaskData) {
                     {
                         let mut buffers = ctx.geo.buffers();
                         unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
+                    }
+                    // (his body's sounds, for the co-op partner, as after the main tick)
+                    {
+                        let mut sounds = [0u32; 32];
+                        let n = unsafe { sm64::sm64_er_take_sounds(sounds.as_mut_ptr(), sounds.len() as u32) } as usize;
+                        coop::own_sounds(&sounds[..n.min(sounds.len())]);
                     }
                     unsafe { sm64::sm64_set_mario_position(id, sm[0], sm[1], sm[2]) };
                     let mut mats = vec![0f32; 64 * 16];

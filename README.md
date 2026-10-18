@@ -425,7 +425,7 @@ replaces this fork's DLL with the original one.
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
-| D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom) |
+| D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom). It presses the game's own interact button, Y; if you moved it in the game's controls, set `pad_interact = A` (B, Y, LB, RB, BACK, START) in `er_mario.ini` |
 | L3 (left stick click) | R | Whistle for Yoshi |
 | Menu > Inventory > Use | same | Any item used from the inventory (Seamless Co-op's Tiny Great Pot and Effigy of Malenia, too): the game gets its use-item request while the menu is up and a second after it closes. A button still held from confirming in a menu (or ending a talk) doesn't make Mario jump: it's ignored until let go |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
@@ -442,8 +442,14 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   rebuild the model). Mario wears the Vagabond chest piece, Luigi its Altered version, and every
   install also builds the other brother, so each player sees the other as who they play.
 - Each player's Mario pose goes to the other over Steam (the game's own `steam_api64`,
-  SteamNetworkingMessages on a channel of the mod's), ~30 times a second, and is put on their
-  character there.
+  SteamNetworkingMessages on a channel of the mod's), ~30 times a second, with where they are (map
+  chunk coordinates) and their clock. The other game shows them a moment back in time, between the
+  two poses around then (snapshot interpolation, 50 ms or more if packets come unevenly), at their
+  own place, not where the game's slower updates have their Tarnished: no stutter or lag.
+- Each one's Mario sounds (voice, steps, blows) go to the other too, always softer than your own
+  and fading with the distance (none past 50 m).
+- The partner's wing cap shows its wings (drawn over their model), the Vanish cap makes them
+  see-through, the Mega Mushroom makes them big.
 - The host owns the enemies: the guest's blows are sent to the host, who takes them off and deals
   the final blow. As the guest you can't grab enemies or launch them (they'd jump back to where
   the host has them), but every blow counts.
@@ -470,7 +476,7 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   `er_mario.ini` add exceptions, should a team come out wrong.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
-- Not synced yet: caps' looks and sounds of the other player, Yoshi.
+- Not synced yet: the Metal cap's look, Yoshi, sounds the mod adds itself (weapons, callouts).
 
 
 Co-op touches (nothing of this shows alone):

@@ -34,12 +34,19 @@ const KIND_SHOVE: u8 = 3;
 const KIND_HELLO: u8 = 4;
 /// how the player is doing (Status), a few times a second and when it changes
 const KIND_STATUS: u8 = 5;
+/// the sounds Mario's body made (his voice, steps, blows), for the partner to hear
+const KIND_SOUNDS: u8 = 6;
+/// at most this many sounds in one packet
+const SOUNDS_MAX: usize = 32;
 const HEADER: usize = 5;
 /// one part: rotation i16 x4, position mm i16 x3, scale and stretch u16 /1000 x4
 const PART_BYTES: usize = 22;
 /// seq u32, health u16 (SM64's: wedges in its high byte), character u8 (1 Luigi), then the parts
 const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
 const PARTS_AT: usize = HEADER + 7;
+/// after the parts (a later 4's): the sender's clock (ms), whether the place is there (u8), then
+/// the place: origin block i32, chunk position f32 x3, yaw f32
+const POSE_EXT_BYTES: usize = 4 + 1 + 4 + 12 + 4;
 const HIT_BYTES: usize = HEADER + 8 + 4 + 12 + 1 + 4;
 const SHOVE_BYTES: usize = HEADER + 8;
 /// seq u16, health u16, character u8, coins u16, power u8, weapon u8, rank u8 (0xFF none), hits
@@ -47,8 +54,30 @@ const SHOVE_BYTES: usize = HEADER + 8;
 /// u16 (0 none), its origin block i32, its chunk position f32 x3
 const STATUS_BYTES: usize = HEADER + 2 + 2 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 12;
 
-/// how often the pose goes out
+/// how often the pose goes out (a frame early is close enough: at 60 fps every second frame, not
+/// now two and now three)
 const POSE_EVERY: Duration = Duration::from_millis(33);
+const POSE_SLACK: Duration = Duration::from_millis(5);
+/// the partner is shown this far back in time (s), so there are always two poses to go between:
+/// at least INTERP_BASE, more the more their packets' trips vary, at most INTERP_MAX; past the
+/// last pose they're carried on along their way for at most EXTRAPOLATE (s)
+const INTERP_BASE: f64 = 0.05;
+const INTERP_MAX: f64 = 0.25;
+const EXTRAPOLATE: f64 = 0.1;
+/// how quickly the clocks' difference creeps up to a slower trip (per pose: they drift apart a
+/// little), and a jump this big (s) means they restarted
+const OFFSET_DRIFT: f64 = 0.002;
+const OFFSET_RESET: f64 = 2.0;
+/// poses kept
+const SAMPLES: usize = 12;
+/// their own place is trusted within this far (m) of where the game has their Tarnished
+const PLACE_TRUST: f32 = 12.0;
+/// their sounds: at most this loud next to us (ours are 1: theirs never drown ours out), fading
+/// with the distance at this rate (per m past PARTNER_NEAR), none past PARTNER_FAR (m)
+const PARTNER_LOUD: f32 = 0.55;
+const PARTNER_NEAR: f32 = 2.0;
+const PARTNER_FADE: f32 = 0.15;
+const PARTNER_FAR: f32 = 50.0;
 /// how often the session is looked at
 const SESSION_EVERY: Duration = Duration::from_millis(500);
 /// a blow pushes the partner this close (m, times Mario's size), at most this often
@@ -109,8 +138,31 @@ pub struct Status {
     pub bag: Option<(u16, i32, [f32; 3])>,
 }
 
+/// Where a player's Tarnished is and faces (the pose's parts are around it), in map chunk
+/// coordinates (the same on both games, physics positions aren't): its origin block, its chunk
+/// position, its yaw (radians).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Place {
+    pub origin: i32,
+    pub chunk: Vec3,
+    pub yaw: f32,
+}
+
+impl Place {
+    /// Between `self` and `b` (`t` 0-1): the shorter way round for the yaw; another block, `b`.
+    fn lerp(&self, b: &Place, t: f32) -> Place {
+        if self.origin != b.origin {
+            return *b;
+        }
+        let turn = (b.yaw - self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        Place { origin: b.origin, chunk: self.chunk.lerp(b.chunk, t), yaw: self.yaw + turn * t }
+    }
+}
+
 pub enum Packet {
-    Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]> },
+    /// `ms`: the sender's clock; `place`: where its parts are (both from a later 4, else None)
+    Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]>, ms: Option<u32>, place: Option<Place> },
+    Sounds(Vec<u32>),
     Hit(Hit),
     Shove { dir: [f32; 2] },
     Hello,
@@ -135,8 +187,8 @@ fn u16k(v: f32) -> [u8; 2] {
 
 pub fn encode(p: &Packet) -> Vec<u8> {
     match p {
-        Packet::Pose { seq, health, luigi, parts } => {
-            let mut out = header(KIND_POSE, POSE_BYTES);
+        Packet::Pose { seq, health, luigi, parts, ms, place } => {
+            let mut out = header(KIND_POSE, POSE_BYTES + POSE_EXT_BYTES);
             out.extend_from_slice(&seq.to_le_bytes());
             out.extend_from_slice(&health.to_le_bytes());
             out.push(*luigi as u8);
@@ -151,6 +203,22 @@ pub fn encode(p: &Packet) -> Vec<u8> {
                 for v in [part.scale, part.stretch.x, part.stretch.y, part.stretch.z] {
                     out.extend_from_slice(&u16k(v));
                 }
+            }
+            out.extend_from_slice(&ms.unwrap_or(0).to_le_bytes());
+            let p = place.unwrap_or(Place { origin: 0, chunk: Vec3::ZERO, yaw: 0.0 });
+            out.push(place.is_some() as u8);
+            out.extend_from_slice(&p.origin.to_le_bytes());
+            for v in [p.chunk.x, p.chunk.y, p.chunk.z, p.yaw] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out
+        }
+        Packet::Sounds(ids) => {
+            let ids = &ids[..ids.len().min(SOUNDS_MAX)];
+            let mut out = header(KIND_SOUNDS, HEADER + 1 + ids.len() * 4);
+            out.push(ids.len() as u8);
+            for id in ids {
+                out.extend_from_slice(&id.to_le_bytes());
             }
             out
         }
@@ -219,7 +287,22 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 p.scale = u16at(o + 14);
                 p.stretch = Vec3::new(u16at(o + 16), u16at(o + 18), u16at(o + 20));
             }
-            Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts) })
+            // (a later 4's: the clock and the place)
+            let (ms, place) = if b.len() >= POSE_BYTES + POSE_EXT_BYTES {
+                let o = POSE_BYTES;
+                let ms = u32::from_le_bytes(b[o..o + 4].try_into().ok()?);
+                let chunk = Vec3::new(f32at(o + 9), f32at(o + 13), f32at(o + 17));
+                let yaw = f32at(o + 21);
+                let ok = b[o + 4] == 1 && chunk.is_finite() && yaw.is_finite();
+                (Some(ms), ok.then(|| Place { origin: i32::from_le_bytes([b[o + 5], b[o + 6], b[o + 7], b[o + 8]]), chunk, yaw }))
+            } else {
+                (None, None)
+            };
+            Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts), ms, place })
+        }
+        KIND_SOUNDS if b.len() > HEADER => {
+            let n = (b[HEADER] as usize).min(SOUNDS_MAX);
+            (b.len() >= HEADER + 1 + n * 4).then(|| Packet::Sounds((0..n).map(|k| u32::from_le_bytes([b[HEADER + 1 + k * 4], b[HEADER + 2 + k * 4], b[HEADER + 3 + k * 4], b[HEADER + 4 + k * 4]])).collect()))
         }
         KIND_HIT if b.len() >= HIT_BYTES => {
             let key = u64::from_le_bytes(b[5..13].try_into().ok()?);
@@ -265,25 +348,148 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
     }
 }
 
-/// A partner's pose as it comes in: the last two, blended over the time between them.
+/// One pose of a partner's: their clock's time for it (s), the parts, where they are.
+struct Sample {
+    t: f64,
+    parts: [PartPose; PARTS],
+    place: Option<Place>,
+}
+
+/// A partner's poses as they come in, shown a little back in time between the two around it
+/// (snapshot interpolation): packets arriving unevenly no longer make them stutter.
 struct Remote {
     steam: u64,
-    prev: Option<[PartPose; PARTS]>,
-    last: [PartPose; PARTS],
+    samples: std::collections::VecDeque<Sample>,
     seq: u32,
+    /// when the last one came in (ours)
     at: Instant,
-    gap: f32,
     health: u16,
     luigi: bool,
+    /// our clock minus theirs (s: the smallest seen, the quickest trip), how much the trips vary (s)
+    offset: Option<f64>,
+    jitter: f64,
+}
+
+/// Our clock (s, since the mod started).
+fn clock() -> f64 {
+    static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+    T0.elapsed().as_secs_f64()
+}
+
+fn clock_ms() -> u32 {
+    (clock() * 1000.0) as u64 as u32
 }
 
 impl Remote {
-    fn now(&self) -> [PartPose; PARTS] {
-        match &self.prev {
-            Some(prev) => crate::engine_mario::blend(prev, &self.last, (self.at.elapsed().as_secs_f32() / self.gap).min(1.0)),
-            None => self.last,
+    fn new(steam: u64, seq: u32, health: u16, luigi: bool) -> Self {
+        Remote { steam, samples: std::collections::VecDeque::with_capacity(SAMPLES + 1), seq, at: Instant::now(), health, luigi, offset: None, jitter: 0.01 }
+    }
+
+    /// A pose came in: `t` their clock's time for it (s; None, an older build's: when it came).
+    fn add(&mut self, t: Option<f64>, parts: [PartPose; PARTS], place: Option<Place>) {
+        let local = clock();
+        let t = t.unwrap_or(local);
+        let d = local - t;
+        match self.offset {
+            // (a jump: they restarted; or the first)
+            Some(o) if (d - o).abs() < OFFSET_RESET => {
+                let o = if d < o { d } else { o + (d - o) * OFFSET_DRIFT };
+                self.jitter += ((d - o).abs() - self.jitter) * 0.05;
+                self.offset = Some(o);
+            }
+            _ => {
+                self.offset = Some(d);
+                self.samples.clear();
+            }
+        }
+        let at = self.samples.iter().position(|s| s.t > t).unwrap_or(self.samples.len());
+        self.samples.insert(at, Sample { t, parts, place });
+        while self.samples.len() > SAMPLES {
+            self.samples.pop_front();
+        }
+        self.at = Instant::now();
+    }
+
+    /// How far back they're shown (s).
+    fn delay(&self) -> f64 {
+        (INTERP_BASE + 2.5 * self.jitter).clamp(INTERP_BASE, INTERP_MAX)
+    }
+
+    /// Their pose and place now.
+    fn now(&self) -> ([PartPose; PARTS], Option<Place>) {
+        let target = clock() - self.offset.unwrap_or(0.0) - self.delay();
+        sample_at(&self.samples, target)
+    }
+}
+
+/// The pose at time `t` (their clock) from poses in order: between the two around it, the first
+/// before them all, the last after them (its place carried on its way a little).
+fn sample_at(s: &std::collections::VecDeque<Sample>, t: f64) -> ([PartPose; PARTS], Option<Place>) {
+    let (Some(first), Some(last)) = (s.front(), s.back()) else {
+        return ([PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS], None);
+    };
+    if t <= first.t {
+        return (first.parts, first.place);
+    }
+    for (a, b) in s.iter().zip(s.iter().skip(1)) {
+        if t < b.t {
+            let u = ((t - a.t) / (b.t - a.t).max(1e-6)) as f32;
+            let place = match (a.place, b.place) {
+                (Some(pa), Some(pb)) => Some(pa.lerp(&pb, u)),
+                (_, p) => p,
+            };
+            return (crate::engine_mario::blend(&a.parts, &b.parts, u), place);
         }
     }
+    // past the last: on along the way it was going, briefly
+    let place = match (s.len().checked_sub(2).and_then(|i| s.get(i)), last.place) {
+        (Some(prev), Some(pl)) if prev.place.is_some_and(|pp| pp.origin == pl.origin) && last.t > prev.t => {
+            let pp = prev.place.unwrap_or(pl);
+            let v = (pl.chunk - pp.chunk) / (last.t - prev.t) as f32;
+            Some(Place { chunk: pl.chunk + v * (t - last.t).min(EXTRAPOLATE) as f32, ..pl })
+        }
+        (_, p) => p,
+    };
+    (last.parts, place)
+}
+
+/// Their pose put where they really are (their own place, smoothed), not where the game shows
+/// their Tarnished (its own updates come slower and jerkier, and Mario moves faster than it):
+/// the parts turned and moved from that Tarnished's place to theirs. Also where their feet are
+/// shown (Elden Ring), and which way they face.
+fn placed(chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<Place>) -> ([PartPose; PARTS], Vec3, Quat) {
+    let c = &chr.chr_ins;
+    let ph = &c.modules.physics;
+    let here = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
+    let o = ph.orientation;
+    let rot = Quat::from_xyzw(o.0, o.1, o.2, o.3).normalize();
+    // (no orientation yet, a character still loading: as the game has it)
+    if !rot.is_finite() || !here.is_finite() {
+        return (*parts, here, Quat::IDENTITY);
+    }
+    let Some(pl) = place else { return (*parts, here, rot) };
+    // (their chunk position into our physics position: by their Tarnished's own on our game, else
+    // by ours)
+    let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
+    let at = if i32::from(c.block_origin) == pl.origin && ck.length_squared() > 1e-6 { Some(pl.chunk - (ck - here)) } else { crate::coins::place(pl.origin, pl.chunk) };
+    let Some(at) = at.filter(|a| a.is_finite() && a.distance(here) < PLACE_TRUST) else { return (*parts, here, rot) };
+    let face = Quat::from_rotation_y(pl.yaw);
+    let turn = (rot.inverse() * face).normalize();
+    let shift = rot.inverse() * (at - here);
+    (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + shift, ..p }), at, face)
+}
+
+/// Where our Tarnished is and faces (the pose's parts are around it), for the partner.
+fn own_place() -> Option<Place> {
+    let wcm = unsafe { WorldChrMan::instance() }.ok()?;
+    let c = &wcm.main_player.as_ref()?.chr_ins;
+    let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
+    if ck.length_squared() < 1e-6 || !ck.is_finite() {
+        return None;
+    }
+    let o = c.modules.physics.orientation;
+    let (yaw, _, _) = Quat::from_xyzw(o.0, o.1, o.2, o.3).normalize().to_euler(glam::EulerRot::YXZ);
+    Some(Place { origin: i32::from(c.block_origin), chunk: ck, yaw })
 }
 
 #[derive(Default)]
@@ -309,6 +515,8 @@ struct State {
     /// our status: last sent (what, when), its seq
     status_sent: Option<(Status, Instant)>,
     status_seq: u16,
+    /// the partners' sounds come in, to play (who, which)
+    sounds_in: Vec<(u64, u32)>,
 }
 
 /// A partner's status, and what their HUD card makes of it.
@@ -366,7 +574,8 @@ fn loopback() {
         if !t.seen.contains(&kind) {
             t.seen.push(kind);
             let what = match decode(data) {
-                Some(Packet::Pose { seq, health, luigi, parts }) => format!("pose seq {seq}, health {health:#x}, luigi {luigi}, head at {:.2} m", parts[3].pos.length()),
+                Some(Packet::Pose { seq, health, luigi, parts, ms, place }) => format!("pose seq {seq}, health {health:#x}, luigi {luigi}, head at {:.2} m, clock {ms:?}, place {place:?}", parts[3].pos.length()),
+                Some(Packet::Sounds(ids)) => format!("{} sounds", ids.len()),
                 Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
                 Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
                 Some(Packet::Hello) => "hello".into(),
@@ -391,7 +600,8 @@ fn loopback() {
     let key = 0x0001_0002_0000_0003u64;
     let packets = [
         (encode(&Packet::Hello), false),
-        (encode(&Packet::Pose { seq: t.sent + 1, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(pose) }), false),
+        (encode(&Packet::Pose { seq: t.sent + 1, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(pose), ms: Some(clock_ms()), place: own_place() }), false),
+        (encode(&Packet::Sounds(vec![0x2404_8081])), false),
         (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
         (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
         (encode(&Packet::Status { seq: t.sent as u16, status: own_status() }), false),
@@ -516,24 +726,37 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             continue;
         };
         match p {
-            Packet::Pose { seq, health, luigi, parts } => match s.remotes.iter_mut().find(|r| r.steam == from) {
-                // (an old one, out of order: dropped)
-                Some(r) if seq.wrapping_sub(r.seq) < u32::MAX / 2 && seq != r.seq => {
-                    let gap = r.at.elapsed().as_secs_f32().clamp(0.02, 0.2);
-                    r.prev = Some(r.now());
-                    r.last = *parts;
-                    r.seq = seq;
-                    r.at = Instant::now();
-                    r.gap = gap;
-                    r.health = health;
-                    r.luigi = luigi;
+            Packet::Pose { seq, health, luigi, parts, ms, place } => {
+                let r = match s.remotes.iter().position(|r| r.steam == from) {
+                    Some(i) => &mut s.remotes[i],
+                    None => {
+                        log(format!(
+                            "coop: pose from {from:x} ({}, {} wedges, {}): partner HUD on",
+                            if luigi { "Luigi" } else { "Mario" },
+                            health >> 8,
+                            if place.is_some() { "with its place" } else { "no place: shown where the game has them" }
+                        ));
+                        s.remotes.push(Remote::new(from, seq.wrapping_sub(1), health, luigi));
+                        s.remotes.last_mut().expect("just pushed")
+                    }
+                };
+                // (one seen already: dropped; an older one, out of order, still goes in its place)
+                if seq != r.seq && seq.wrapping_sub(r.seq).min(r.seq.wrapping_sub(seq)) < 1000 {
+                    if seq.wrapping_sub(r.seq) < u32::MAX / 2 {
+                        r.seq = seq;
+                        r.health = health;
+                        r.luigi = luigi;
+                    }
+                    r.add(ms.map(|m| m as f64 / 1000.0), *parts, place);
                 }
-                Some(_) => {}
-                None => {
-                    log(format!("coop: pose from {from:x} ({}, {} wedges): partner HUD on", if luigi { "Luigi" } else { "Mario" }, health >> 8));
-                    s.remotes.push(Remote { steam: from, prev: None, last: *parts, seq, at: Instant::now(), gap: 0.033, health, luigi });
+            }
+            Packet::Sounds(ids) => {
+                for id in ids {
+                    if s.sounds_in.len() < SOUNDS_MAX * 2 {
+                        s.sounds_in.push((from, id));
+                    }
                 }
-            },
+            }
             Packet::Hit(h) if s.host => {
                 if s.hits.len() < 64 {
                     s.hits.push((Instant::now(), h));
@@ -585,15 +808,20 @@ pub fn frame() {
     });
     let pose = *crate::engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner());
     let status = own_status();
+    let place = own_place();
+    let sounds: Vec<u32> = OUT_SOUNDS.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
     let out = {
         let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_mut() else { return };
         take_in(s, batch);
         let mut out = Vec::new();
-        if let Some(parts) = pose.filter(|_| s.sent.is_none_or(|t| t.elapsed() >= POSE_EVERY)) {
+        if let Some(parts) = pose.filter(|_| s.sent.is_none_or(|t| t.elapsed() + POSE_SLACK >= POSE_EVERY)) {
             s.sent = Some(Instant::now());
             s.seq = s.seq.wrapping_add(1);
-            out.push(encode(&Packet::Pose { seq: s.seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts) }));
+            out.push(encode(&Packet::Pose { seq: s.seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts), ms: Some(clock_ms()), place }));
+        }
+        if !sounds.is_empty() && pose.is_some() {
+            out.push(encode(&Packet::Sounds(sounds)));
         }
         // the status: a few times a second, sooner when something changed (a blow landed since)
         let due = match &s.status_sent {
@@ -621,6 +849,7 @@ pub fn frame() {
             net::send(peer, &bytes, false);
         }
     }
+    play_partner_sounds();
     if CHIME.swap(false, Ordering::Relaxed) {
         crate::worker::call("bros chime", |_| unsafe { crate::sm64::sm64_play_sound_volume(SOUND_BROS, 0.09) });
     }
@@ -634,20 +863,60 @@ pub fn apply_remote() {
     // (only while the partner row has the other character's model: out of Mario mode their
     // Tarnished is left alone)
     if !crate::equip::partner_row_on() {
+        unfade(&[]);
         return;
     }
-    let poses: Vec<(usize, [PartPose; PARTS])> = {
+    let poses: Vec<(usize, [PartPose; PARTS], Option<Place>, bool)> = {
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_ref() else { return };
-        s.remotes.iter().filter_map(|r| s.chrs.iter().find(|c| c.0 == r.steam).map(|c| (c.1, r.now()))).collect()
+        s.remotes
+            .iter()
+            .filter_map(|r| {
+                let vanish = s.mates.iter().any(|m| m.steam == r.steam && m.st.power == POWER_VANISH);
+                s.chrs.iter().find(|c| c.0 == r.steam).map(|c| {
+                    let (parts, place) = r.now();
+                    (c.1, parts, place, vanish)
+                })
+            })
+            .collect()
     };
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     // (only characters still there: one may have left since the session was looked at)
     let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
-    for (chr, pose) in poses.iter().filter(|p| live.contains(&p.0)) {
-        let ins = unsafe { &(*(*chr as *const PlayerIns)).chr_ins } as *const _ as usize;
-        crate::engine_mario::apply_remote(ins, pose);
+    let mut vanished = Vec::new();
+    for (chr, parts, place, vanish) in poses.iter().filter(|p| live.contains(&p.0)) {
+        let player = unsafe { &mut *(*chr as *mut PlayerIns) };
+        let (pose, ..) = placed(player, parts, *place);
+        // the Vanish cap: see-through, as they see themselves
+        if *vanish {
+            let c = &mut player.chr_ins;
+            c.opacity_keyframes_multiplier = crate::caps::VANISH_OPACITY;
+            c.opacity_keyframes_multiplier_previous = crate::caps::VANISH_OPACITY;
+            vanished.push(*chr);
+        }
+        let ins = &player.chr_ins as *const _ as usize;
+        crate::engine_mario::apply_remote(ins, &pose);
     }
+    unfade(&vanished);
+}
+
+/// The partners made see-through by their Vanish cap (PlayerIns addresses).
+static FADED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Every partner see-through before and not in `now` back to full (the cap off, their pose
+/// stopped, out of Mario mode: the game never puts it back itself), if still there.
+fn unfade(now: &[usize]) {
+    let mut faded = FADED.lock().unwrap_or_else(|e| e.into_inner());
+    if faded.is_empty() && now.is_empty() {
+        return;
+    }
+    let live: Vec<usize> = unsafe { WorldChrMan::instance() }.map(|w| w.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect()).unwrap_or_default();
+    for &chr in faded.iter().filter(|c| !now.contains(c) && live.contains(c)) {
+        let c = unsafe { &mut (*(chr as *mut PlayerIns)).chr_ins };
+        c.opacity_keyframes_multiplier = 1.0;
+        c.opacity_keyframes_multiplier_previous = 1.0;
+    }
+    *faded = now.to_vec();
 }
 
 /// Our Mario's health (SM64's), for the partner's HUD (lib.rs sets it every tick).
@@ -933,6 +1202,8 @@ pub fn hud(me: Vec3, dt: f32) -> Vec<crate::hud::PartnerHud> {
             danger: !m.down && (wedges <= LOW_WEDGES || hurt < 2.0),
             down: m.down,
             bag,
+            // (their wing cap's wings: their model has none, they're drawn over it)
+            wings: p.filter(|_| m.st.power == POWER_WING).map(|p| (p.head_part, p.face, p.size)),
         });
     }
     out
@@ -946,10 +1217,14 @@ fn own_health() -> u16 {
 #[derive(Clone, Copy)]
 pub struct Partner {
     pub steam: u64,
-    /// their feet and the top of their head (Elden Ring)
+    /// their feet and the top of their head (Elden Ring), where they're shown
     pub feet: Vec3,
     pub head: Vec3,
     pub luigi: bool,
+    /// their head part (Elden Ring: its centre), which way they face, their size there
+    pub head_part: Vec3,
+    pub face: Quat,
+    pub size: f32,
 }
 
 /// Game thread: the partners in Mario mode near us (their pose coming in), where they are.
@@ -957,23 +1232,92 @@ pub fn partners() -> Vec<Partner> {
     if !active() {
         return Vec::new();
     }
-    let list: Vec<(u64, usize, [PartPose; PARTS], bool)> = {
+    let list: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool)> = {
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_ref() else { return Vec::new() };
-        s.remotes.iter().filter_map(|r| s.chrs.iter().find(|c| c.0 == r.steam).map(|c| (r.steam, c.1, r.last, r.luigi))).collect()
+        s.remotes
+            .iter()
+            .filter_map(|r| {
+                s.chrs.iter().find(|c| c.0 == r.steam).map(|c| {
+                    let (parts, place) = r.now();
+                    (r.steam, c.1, parts, place, r.luigi)
+                })
+            })
+            .collect()
     };
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };
     let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
     list.into_iter()
         .filter(|(_, chr, ..)| live.contains(chr))
-        .map(|(steam, chr, parts, luigi)| {
-            let p = unsafe { &*(chr as *const PlayerIns) }.chr_ins.modules.physics.position;
-            let feet = Vec3::new(p.0, p.1, p.2);
+        .map(|(steam, chr, parts, place, luigi)| {
+            let player = unsafe { &*(chr as *const PlayerIns) };
+            let (_, feet, face) = placed(player, &parts, place);
             // (the head part's centre, and a little over it: its top)
-            let head_y = parts[3].pos.y.clamp(0.4, 4.0) + 0.25 * parts[3].scale.clamp(0.5, 3.0);
-            Partner { steam, feet, head: feet + Vec3::Y * head_y, luigi }
+            let head = parts[3];
+            let head_y = head.pos.y.clamp(0.4, 4.0) + 0.25 * head.scale.clamp(0.5, 3.0);
+            Partner { steam, feet, head: feet + Vec3::Y * head_y, luigi, head_part: feet + face * head.pos, face, size: head.scale.clamp(0.3, 4.0) }
         })
         .collect()
+}
+
+/// Our Mario's body's sounds this tick (lib.rs, after his tick), to go out with the next frame.
+static OUT_SOUNDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// The SM64 thread, each tick: the sounds our Mario's body made (only in a session).
+pub fn own_sounds(ids: &[u32]) {
+    if ids.is_empty() || !active() {
+        return;
+    }
+    let mut out = OUT_SOUNDS.lock().unwrap_or_else(|e| e.into_inner());
+    for &id in ids {
+        if out.len() < SOUNDS_MAX {
+            out.push(id);
+        }
+    }
+}
+
+/// How loud a partner's sound is `d` m from us: always under ours, softer the farther (0: not at all).
+fn partner_volume(d: f32) -> f32 {
+    if !d.is_finite() || d > PARTNER_FAR {
+        return 0.0;
+    }
+    let v = PARTNER_LOUD / (1.0 + (d - PARTNER_NEAR).max(0.0) * PARTNER_FADE);
+    // (and fading out to nothing towards PARTNER_FAR, no cut)
+    v * (1.0 - (d / PARTNER_FAR).powi(2)).max(0.0)
+}
+
+/// Game thread: the partners' sounds that came in, played as far as they are from the camera.
+fn play_partner_sounds() {
+    let sounds = {
+        let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
+            Some(s) if !s.sounds_in.is_empty() => std::mem::take(&mut s.sounds_in),
+            _ => return,
+        }
+    };
+    let near = partners();
+    let ear = crate::lakitu::position().or_else(|| {
+        let wcm = unsafe { WorldChrMan::instance() }.ok()?;
+        let p = wcm.main_player.as_ref()?.chr_ins.modules.physics.position;
+        Some(Vec3::new(p.0, p.1, p.2))
+    });
+    let Some(ear) = ear else { return };
+    // (each partner's from a spot of their own; under SM64's quietest, not at all)
+    let play: Vec<(u32, u32, f32)> = sounds
+        .into_iter()
+        .filter_map(|(from, id)| {
+            let slot = near.iter().position(|p| p.steam == from)?;
+            let v = partner_volume(near[slot].head_part.distance(ear));
+            (v >= 0.05).then_some((id, slot as u32, v))
+        })
+        .collect();
+    if !play.is_empty() {
+        crate::worker::call("partner sounds", move |_| {
+            for (id, slot, v) in play {
+                unsafe { crate::sm64::sm64_er_play_partner(id as i32, slot, v) };
+            }
+        });
+    }
 }
 
 /// Players in the session (1 out of one).
@@ -1095,10 +1439,14 @@ mod tests {
     #[test]
     fn pose_round_trip() {
         let a = pose();
-        let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a) });
-        assert_eq!(bytes.len(), POSE_BYTES);
-        let Some(Packet::Pose { seq, health, luigi, parts }) = decode(&bytes) else { panic!("no pose") };
-        assert_eq!((seq, health, luigi), (7, 0x580, true));
+        let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(-1234.5, 88.25, 4096.0), yaw: -2.5 };
+        let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(123_456), place: Some(place) });
+        assert_eq!(bytes.len(), POSE_BYTES + POSE_EXT_BYTES);
+        let Some(Packet::Pose { seq, health, luigi, parts, ms, place: got }) = decode(&bytes) else { panic!("no pose") };
+        assert_eq!((seq, health, luigi, ms, got), (7, 0x580, true, Some(123_456), Some(place)));
+        // an earlier 4's pose (no clock, no place) still reads
+        let Some(Packet::Pose { ms, place, .. }) = decode(&bytes[..POSE_BYTES]) else { panic!("no short pose") };
+        assert_eq!((ms, place), (None, None));
         for (x, y) in a.iter().zip(parts.iter()) {
             assert!(x.rot.angle_between(y.rot) < 0.001);
             assert!(x.pos.distance(y.pos) < 0.001);
@@ -1205,6 +1553,64 @@ mod tests {
         assert!(!status_changed(&a, &Status { hit: Some((5, 300)), ..a }));
         assert!(status_changed(&a, &Status { hit: Some((6, 0)), ..a }));
         assert!(status_changed(&a, &Status { health: 0x780, ..a }));
+    }
+
+    #[test]
+    fn sounds_round_trip() {
+        let ids = vec![0x2404_8081, 0x0442_A081, 7];
+        let Some(Packet::Sounds(got)) = decode(&encode(&Packet::Sounds(ids.clone()))) else { panic!("no sounds") };
+        assert_eq!(got, ids);
+        let mut short = encode(&Packet::Sounds(ids));
+        short.pop();
+        assert!(decode(&short).is_none());
+    }
+
+    #[test]
+    fn partner_sounds_softer_and_fading() {
+        // never as loud as ours, loudest close by, softer farther, nothing far off
+        assert!(partner_volume(0.0) <= PARTNER_LOUD && partner_volume(0.0) > 0.5);
+        assert!(partner_volume(5.0) < partner_volume(1.0));
+        assert!(partner_volume(20.0) < partner_volume(5.0));
+        assert!(partner_volume(20.0) > 0.05);
+        assert_eq!(partner_volume(60.0), 0.0);
+        assert_eq!(partner_volume(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn poses_shown_between_the_two_around_now() {
+        let mut s = std::collections::VecDeque::new();
+        let pose = |x: f32| [PartPose { rot: Quat::IDENTITY, pos: Vec3::new(x, 1.0, 0.0), scale: 1.0, stretch: Vec3::ONE }; PARTS];
+        let at = |x: f32, yaw: f32| Some(Place { origin: 5, chunk: Vec3::new(x, 0.0, 0.0), yaw });
+        s.push_back(Sample { t: 1.0, parts: pose(0.0), place: at(0.0, 3.0) });
+        s.push_back(Sample { t: 1.1, parts: pose(0.1), place: at(1.0, -3.0) });
+        // halfway: halfway there, the yaw the short way round (across +-pi)
+        let (parts, place) = sample_at(&s, 1.05);
+        assert!((parts[0].pos.x - 0.05).abs() < 1e-4);
+        let p = place.expect("a place");
+        assert!((p.chunk.x - 0.5).abs() < 1e-4);
+        assert!(p.yaw.abs() > 3.0, "yaw {}", p.yaw);
+        // before them: the first; after: the last, carried on a little (at most EXTRAPOLATE)
+        assert_eq!(sample_at(&s, 0.5).1.expect("first").chunk.x, 0.0);
+        let ahead = sample_at(&s, 5.0).1.expect("last").chunk.x;
+        assert!((ahead - (1.0 + 10.0 * EXTRAPOLATE as f32)).abs() < 1e-3, "ahead {ahead}");
+    }
+
+    #[test]
+    fn uneven_packets_still_play_smoothly() {
+        // their clock 0.033 s apart, arriving bunched and late: shown from their own times
+        let mut r = Remote::new(1, 0, 0x880, false);
+        let pose = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
+        for k in 0..6 {
+            r.add(Some(100.0 + k as f64 * 0.033), pose, None);
+        }
+        assert_eq!(r.samples.len(), 6);
+        assert!(r.samples.iter().zip(r.samples.iter().skip(1)).all(|(a, b)| a.t < b.t));
+        // one out of order goes in its place
+        r.add(Some(100.05), pose, None);
+        assert!(r.samples.iter().zip(r.samples.iter().skip(1)).all(|(a, b)| a.t <= b.t));
+        // they restarted (their clock jumped back): started over
+        r.add(Some(1.0), pose, None);
+        assert_eq!(r.samples.len(), 1);
     }
 
     #[test]

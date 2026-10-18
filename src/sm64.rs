@@ -158,6 +158,11 @@ unsafe extern "C" {
     pub fn sm64_play_sound_global(sound_bits: i32);
     /// a sound at a share of its volume (0-1)
     pub fn sm64_play_sound_volume(sound_bits: i32, volume: f32);
+    /// co-op: the sounds Mario's own body made since the last call (voice, steps, blows), up to
+    /// `max` into `out`; how many
+    pub fn sm64_er_take_sounds(out: *mut u32, max: u32) -> u32;
+    /// co-op: a partner's sound at a share of its volume (0-1), from that partner's own spot (0-3)
+    pub fn sm64_er_play_partner(sound_bits: i32, slot: u32, volume: f32);
     pub fn sm64_set_mario_action(id: i32, action: u32);
     pub fn sm64_set_mario_action_arg(id: i32, action: u32, action_arg: u32);
     pub fn sm64_set_mario_velocity(id: i32, x: f32, y: f32, z: f32);
