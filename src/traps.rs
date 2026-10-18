@@ -338,7 +338,7 @@ impl Traps {
                     it.squash += it.squash_vel * DT;
                     if it.state == State::Down {
                         let top = it.pos + Vec3::Y * crate::assets::kit::SPRING_H;
-                        // Mario coming down on it (or walking onto it): up he goes
+                        // Mario coming down on it out of a jump or a fall: up he goes
                         let d = (feet - it.pos).with_y(0.0).length();
                         let falling = state.velocity[1] <= 0.0 && can_bounce;
                         if d < 0.45 && feet.y > it.pos.y - 0.1 && feet.y < top.y + 0.35 && falling && now - self.bounced_at > 0.5 {

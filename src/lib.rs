@@ -2045,6 +2045,7 @@ fn frame(data: &FD4TaskData) {
                 *PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), saved));
             }
             let id = m.id;
+            rock::clear(id);
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
             mega::clear();
             set_scale(BASE_SCALE);
@@ -2544,7 +2545,7 @@ fn frame(data: &FD4TaskData) {
         style::clear();
         timing::clear();
         m.traps.clear();
-        rock::clear();
+        rock::clear(m.id);
         bat::clear();
         maxfin::clear();
         skillshot::clear();
@@ -2559,6 +2560,7 @@ fn frame(data: &FD4TaskData) {
         log("respawned: recreating Mario");
         m.moving.clear(&mut m.havok);
         let id = m.id;
+        rock::clear(id);
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;

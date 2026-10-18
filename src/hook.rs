@@ -83,6 +83,8 @@ pub struct Hook {
     /// X held last tick (the home run); the next pole swing allowed from this tick
     x_held: bool,
     swing_ready: u32,
+    /// Mario's libsm64 id (to let go of a swing when the hook is dropped)
+    id: i32,
 }
 
 /// What hud.rs draws: his hand, the cap's spot, its spin (radians).
@@ -136,11 +138,16 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 
 impl Hook {
     pub fn new() -> Self {
-        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0 }
+        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0, id: -1 }
     }
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
     pub fn drop(&mut self) {
+        // (mid-swing: libsm64 lets go too, or he'd go round the spot where it was)
+        if matches!(self.phase, Some(Phase::Swinging(_))) {
+            let id = self.id;
+            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+        }
         if self.phase.take().is_some() {
             clear();
         }
@@ -166,6 +173,7 @@ impl Hook {
         ray: impl Fn(Vec3, Vec3) -> Option<Vec3>,
     ) {
         const DT: f32 = 1.0 / 30.0;
+        self.id = id;
         let pressed = button && !self.pressed;
         self.pressed = button;
         let x_pressed = x && !self.x_held;
@@ -240,7 +248,7 @@ impl Hook {
             }
             Phase::Pulling => {
                 // X as it comes in, on his feet: the home run (er_moves.c's swing, bat.rs's flight)
-                if x_pressed && !air && allowed {
+                if x_pressed && !air && allowed && state.action & ACT_FLAG_INVULNERABLE == 0 {
                     log("hook: home run swing");
                     worker::call("home run", move |_| unsafe { sm64::sm64_set_mario_action(id, moves::ACT_ER_HOME_RUN) });
                 }
@@ -254,7 +262,14 @@ impl Hook {
                 }
             }
             // R2 still held a moment after it caught a big one: he swings round it instead
-            Phase::Zipping(since) if button && allowed && tick.wrapping_sub(since) == SWING_HOLD && tick >= self.swing_ready && matches!(self.aim, Aim::Enemy { .. }) => {
+            Phase::Zipping(since)
+                if button
+                    && allowed
+                    && tick.wrapping_sub(since) >= SWING_HOLD
+                    && tick >= self.swing_ready
+                    && state.action == moves::ACT_ER_ZIP
+                    && matches!(self.aim, Aim::Enemy { mob, radius, height, .. } if chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
+            {
                 if let Aim::Enemy { mob, height, .. } = self.aim {
                     match chest(&mob, height) {
                         Some((c, _)) => {
@@ -284,6 +299,8 @@ impl Hook {
                         }
                     }
                     None => {
+                        // (it's gone, or he's out of the swing: libsm64 lets go too)
+                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
                         self.swing_ready = tick + SWING_COOLDOWN;
                         next = Some(Phase::Back);
                     }
@@ -461,6 +478,8 @@ impl Hook {
 
 /// R2 held this many ticks after the hook caught a big one: the pole swing; at most one this often
 const SWING_HOLD: u32 = 6;
+/// ...once he's this close to its body (m): from farther the swing's circle would be a jump
+const SWING_NEAR: f32 = 3.0;
 const SWING_COOLDOWN: u32 = 90;
 /// the tether's second enemy within this far of the first (m)
 const TETHER_RANGE: f32 = 15.0;

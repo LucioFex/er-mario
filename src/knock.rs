@@ -44,7 +44,7 @@ pub fn launch(h: &FieldInsHandle, dir: Vec3) -> bool {
         return false;
     }
     let mut flying = FLYING.lock().unwrap_or_else(|e| e.into_inner());
-    if flying.iter().any(|f| key(&f.mob) == key(h)) {
+    if flying.iter().any(|f| key(&f.mob) == key(h)) || crate::bat::is_flying(h) {
         return false;
     }
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return false };

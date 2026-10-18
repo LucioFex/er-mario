@@ -490,6 +490,11 @@ const BOSS_FACTOR: f32 = 0.065;
 const DAMAGE_FACTOR: f32 = 0.75;
 /// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
 const BULLET_EVERY: u32 = 30;
+/// the per-enemy cooldowns are kept this long (ticks: the longest of Attack::cooldown)
+const COOLDOWN_KEEP: u32 = 32;
+/// the same enemy knocked down at most this often (ticks): in between it only staggers (no knocking
+/// one down again and again with the trap kit, the boulder, the hook's crashes)
+const KNOCK_EVERY: u32 = 105;
 /// Mega Mario's steps hurt the same enemy at most this often (ticks)
 const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
@@ -626,6 +631,8 @@ pub struct Combat {
     max: Option<(Attack, glam::Vec3)>,
     /// the last blow on each enemy and how it was then (its kill's skillshot, skillshot.rs)
     last_blow: HashMap<u64, (Attack, crate::skillshot::How)>,
+    /// when each enemy was last knocked down (KNOCK_EVERY)
+    knocked: HashMap<u64, u32>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -638,7 +645,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new(), knocked: HashMap::new() }
     }
 }
 
@@ -1223,6 +1230,20 @@ pub fn impact(combat: &mut Combat, handle: &FieldInsHandle, pct: f32, tick: u32)
     combat.victims.insert(handle_key(handle), (*handle, tick));
     if !is_boss(handle) {
         pass_to_bar(wcm, dealt);
+    }
+}
+
+/// A thrown enemy's landing that doesn't kill (the hook's home run, bat.rs): `pct` of its max HP,
+/// never its last point (a launch never ends one by itself).
+pub fn impact_soft(combat: &mut Combat, handle: &FieldInsHandle, pct: f32, tick: u32) {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
+    let Some(chr) = wcm.chr_ins_by_handle(handle) else { return };
+    let (hp, max) = (chr.modules.data.hp, chr.modules.data.max_hp.max(1));
+    // (as a share of what's left over 1 HP: whatever it is, he gets up from it)
+    let room = ((hp - 1).max(0) as f32 / max as f32 * 100.0).max(0.0);
+    let pct = pct.min(room * 0.9);
+    if pct > 0.0 {
+        impact(combat, handle, pct, tick);
     }
 }
 
@@ -1857,7 +1878,8 @@ impl Combat {
                 return;
             }
         }
-        self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < 12);
+        // (kept as long as the longest one, the boulder's)
+        self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < COOLDOWN_KEEP);
         {
             let mut until = FINISHER_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
             if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
@@ -2008,7 +2030,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !attack.ranged() && !matches!(attack, Attack::Trample | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !attack.ranged() && !matches!(attack, Attack::Trample | Attack::YoshiStomp | Attack::Rock | Attack::RockSlam) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
@@ -2123,7 +2145,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Rock | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -2134,7 +2156,15 @@ impl Combat {
             }
             // the banana, the shells, the boulder, the hook's crashes knock a regular enemy down
             // (the game's own knockdown: a bullet of its own)
-            let knock = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock | Attack::Bowled | Attack::Tether) && target.handle.as_ref().is_some_and(liftable);
+            let knock = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock | Attack::Bowled | Attack::Tether)
+                && target.handle.as_ref().is_some_and(liftable)
+                && self.knocked.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= KNOCK_EVERY);
+            if knock {
+                if self.knocked.len() > 64 {
+                    self.knocked.retain(|_, t| tick.wrapping_sub(*t) < KNOCK_EVERY);
+                }
+                self.knocked.insert(target.key, tick);
+            }
             let bullet = if knock { KNOCK_BULLET.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(bullet) } else { bullet };
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));

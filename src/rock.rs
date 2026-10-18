@@ -202,8 +202,10 @@ pub fn pose(parts: &mut [PartPose; PARTS], feet: Vec3, face_angle: f32) {
     }
 }
 
-pub fn clear() {
-    ON.store(false, Ordering::Relaxed);
+pub fn clear(id: i32) {
+    if ON.swap(false, Ordering::Relaxed) {
+        worker::call("rock off", move |_| unsafe { sm64::sm64_er_rock(id, 0) });
+    }
     let mut s = state();
     s.since = None;
     s.last = None;

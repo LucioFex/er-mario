@@ -90,7 +90,14 @@ pub fn tether(a: &FieldInsHandle, b: &FieldInsHandle) -> bool {
         return false;
     }
     let (Some(pa), Some(pb)) = (feet_of(a), feet_of(b)) else { return false };
-    let can = |h: &FieldInsHandle| combat::liftable(h) && !combat::hands_off(h) && !combat::is_boss_now(h);
+    // (what the hook itself would drag: a regular enemy no bigger than juggle.rs lifts)
+    let can = |h: &FieldInsHandle| {
+        let size = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(h)).map(|c| {
+            let ph = &c.modules.physics;
+            (ph.hit_radius.max(ph.chr_hit_radius), ph.hit_height.max(ph.chr_hit_height))
+        });
+        size.is_some_and(|(r, ht)| crate::juggle::draggable(h, r, ht)) && !combat::is_boss_now(h)
+    };
     let (ma, mb) = (can(a), can(b));
     let flights: Vec<(FieldInsHandle, Vec3, u64)> = match (ma, mb) {
         (true, true) => {
@@ -101,9 +108,12 @@ pub fn tether(a: &FieldInsHandle, b: &FieldInsHandle) -> bool {
         (false, true) => vec![(*b, pa, key(a))],
         (false, false) => return false,
     };
+    // (out of the juggle first, then ours: one lock at a time)
+    for (mob, ..) in &flights {
+        crate::juggle::release(mob);
+    }
     let mut flying = FLYING.lock().unwrap_or_else(|e| e.into_inner());
     for (mob, to, other) in flights {
-        crate::juggle::release(&mob);
         let pos = if key(&mob) == key(a) { pa } else { pb };
         flying.push(Flight { mob, pos, since: Instant::now(), kind: Kind::Yank { to, other } });
     }
@@ -136,6 +146,9 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
     let positions: Vec<(u64, Vec3)> = flying.iter().map(|f| (key(&f.mob), f.pos)).collect();
     flying.retain_mut(|f| {
         if feet_of(&f.mob).is_none() {
+            if let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(&f.mob)) {
+                chr.modules.physics.gravity_disabled = false;
+            }
             return false;
         }
         let age = f.since.elapsed().as_secs_f32();
@@ -163,11 +176,17 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
                     }
                 }
                 // into the map: down it comes there
-                match ray(f.pos + Vec3::Y * 0.6, next + Vec3::Y * 0.6).or_else(|| ray(f.pos + Vec3::Y * 0.3, next - Vec3::Y * 0.05)) {
-                    Some(hit) => {
+                // (into a wall: down at its foot, short of it; onto the floor: on it)
+                let back = vel.with_y(0.0).normalize_or_zero() * 0.4;
+                let landing = match ray(f.pos + Vec3::Y * 0.6, next + Vec3::Y * 0.6) {
+                    Some(wall) => Some(ray(wall - back + Vec3::Y * 0.5, wall - back - Vec3::Y * 3.0).unwrap_or(f.pos)),
+                    None => ray(f.pos + Vec3::Y * 0.3, next - Vec3::Y * 0.05),
+                };
+                match landing {
+                    Some(at) => {
                         landed.push((f.mob, LANDING_PCT));
-                        crate::impact::thud(hit);
-                        (Vec3::new(hit.x, hit.y.min(next.y), hit.z) - vel.with_y(0.0).normalize_or_zero() * 0.3, false)
+                        crate::impact::thud(at);
+                        (at, false)
                     }
                     None => (next, age < BAT_MAX),
                 }
@@ -180,19 +199,30 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
                     None => feet_of_key(*other).unwrap_or(*to),
                 };
                 *to = goal;
-                let d = goal - f.pos;
+                let d = (goal - f.pos).with_y(0.0);
                 let step = YANK_SPEED * dt;
-                let next = if d.length() <= step { goal } else { f.pos + d / d.length() * step };
-                let met = (next - goal).length() < MEET * 0.5 || other_now.is_some_and(|p| (p - next).length() < MEET) || feet_of_key(*other).is_some_and(|p| (p - next).with_y(0.0).length() < MEET + 0.4);
+                let flat = if d.length() <= step { f.pos + d } else { f.pos + d / d.length() * step };
+                // (along the ground: the floor under where it goes, a step up or down)
+                let next = match ray(flat + Vec3::Y * 1.0, flat - Vec3::Y * 1.5) {
+                    Some(g) => g,
+                    None => flat,
+                };
+                let blocked = ray(f.pos + Vec3::Y * 0.6, next + Vec3::Y * 0.6).is_some();
+                let next = if blocked { f.pos } else { next };
+                // (met at the edge of the other's body, not inside it)
+                let reach = MEET + radius_of_key(*other);
+                let met = (next - goal).with_y(0.0).length() < MEET * 0.5
+                    || other_now.is_some_and(|p| (p - next).with_y(0.0).length() < MEET)
+                    || feet_of_key(*other).is_some_and(|p| (p - next).with_y(0.0).length() < reach);
                 if met && !crashed.contains(&key(&f.mob)) {
                     crashed.push(key(&f.mob));
                     crashed.push(*other);
                     crash(f.mob, *other, next, origin, player, combat, tick);
                     (next, false)
-                } else if met {
+                } else if met || blocked {
                     (next, false)
                 } else {
-                    (next, age < YANK_MAX && ray(f.pos + Vec3::Y * 0.6, next + Vec3::Y * 0.6).is_none())
+                    (next, age < YANK_MAX)
                 }
             }
         };
@@ -216,8 +246,20 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
         *guard = flying;
     }
     for (mob, pct) in landed {
-        combat::impact(combat, &mob, pct, tick);
+        combat::impact_soft(combat, &mob, pct, tick);
     }
+}
+
+/// An enemy's body radius (m), by its key.
+fn radius_of_key(k: u64) -> f32 {
+    let h = unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&k) };
+    unsafe { WorldChrMan::instance() }
+        .ok()
+        .and_then(|w| w.chr_ins_by_handle(&h))
+        .map(|c| c.modules.physics.hit_radius.max(c.modules.physics.chr_hit_radius))
+        .filter(|r| r.is_finite())
+        .unwrap_or(0.4)
+        .clamp(0.2, 4.0)
 }
 
 fn is_flying_in(positions: &[(u64, Vec3)], k: u64) -> bool {
