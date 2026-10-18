@@ -21,7 +21,7 @@ const PART_BONES: [&str; HAMMER] = [
 /// SM64's body parts (0..16) plus the eye variants (16..20), the peace sign (20), the hammer (21)
 /// and the gear (assets/gear.rs): three boomerangs, the Chain Chomp, its jaw, its chain's links.
 pub const SM64_PARTS: usize = 16;
-pub const PARTS: usize = 31;
+pub const PARTS: usize = 38;
 /// Mario's hammer (hammer.rs), hidden in his hand unless it's out
 pub const HAMMER: usize = 21;
 /// the boomerangs (boomerang.rs), one part each
@@ -32,10 +32,21 @@ pub const CHOMP: usize = 25;
 pub const JAW: usize = 26;
 pub const CHAIN: usize = 27;
 pub const CHAIN_LINKS: usize = 4;
+/// the trap kit (assets/kit.rs, in the gauntlets; traps.rs, rock.rs): two bananas, the green and
+/// the red shell, the Bob-omb, the spring, the Rock Mushroom's boulder
+pub const KIT: usize = 31;
+pub const KIT_PARTS: usize = 7;
+pub const KIT_BANANA: usize = KIT;
+pub const KIT_GREEN_SHELL: usize = KIT + 2;
+pub const KIT_RED_SHELL: usize = KIT + 3;
+pub const KIT_BOMB: usize = KIT + 4;
+pub const KIT_SPRING: usize = KIT + 5;
+pub const KIT_ROCK: usize = KIT + 6;
+const _: () = assert!(KIT + KIT_PARTS == PARTS);
 /// The bones the gear goes on, part by part from RANG: the chest piece skins them all, and none
 /// is above another bone of Mario's (map_bones checks) or carries much below it (a calf would have
 /// dragged the Tarnished's feet, and their footsteps, along)
-pub const GEAR_BONES: [&str; PARTS - RANG] = [
+pub const GEAR_BONES: [&str; KIT - RANG] = [
     "R_ForeArmTwist1", "R_UpArmTwist", "R_UpArmTwist1",
     "L_UpArmTwist1", "R_ThighTwist",
     "L_Hand", "R_Hand", "L_Thigh_Skirt", "R_Thigh_Skirt",
@@ -239,6 +250,28 @@ fn map_bones(skeleton: usize) -> Option<BoneMap> {
             continue;
         }
         bones[RANG + k] = b;
+    }
+    // the trap kit's bones (in the gauntlets, assets::KIT_FILE), by the same rule
+    let kit: Vec<String> = std::fs::read_to_string(crate::paths::file(crate::assets::KIT_FILE)).unwrap_or_default().lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    for (k, name) in kit.iter().enumerate().take(KIT_PARTS) {
+        let Some(b) = all.iter().position(|n| n == name) else { continue };
+        let above_mario = bones[1..RANG].iter().filter(|&&m| m < count).any(|&m| {
+            let mut p = parent_of(m);
+            let mut steps = 0;
+            while p >= 0 && steps < 64 {
+                if p as usize == b {
+                    return true;
+                }
+                p = parent_of(p as usize);
+                steps += 1;
+            }
+            false
+        });
+        if above_mario || parents.is_none() || bones[..KIT].contains(&b) {
+            log(format!("engine mario: kit bone {name} skipped (above a bone of Mario's, or taken)"));
+            continue;
+        }
+        bones[KIT + k] = b;
     }
     log(format!("engine mario: skeleton {skeleton:#x} ({count} bones), part bones {:?}", &bones[1..]));
     Some(BoneMap { skeleton, bones })

@@ -59,6 +59,11 @@ pub const THROW_BIG: u32 = 3;
 pub const THROW_FIRE: u32 = 4;
 /// the hook's (hook.rs), and the pull along its line to what it caught
 pub const THROW_HOOK: u32 = 8;
+/// the trap kit's (traps.rs): a banana tossed, a shell kicked, a Bob-omb lobbed, a spring set down
+pub const THROW_BANANA: u32 = 9;
+pub const THROW_SHELL: u32 = 10;
+pub const THROW_BOMB: u32 = 11;
+pub const THROW_SPRING: u32 = 12;
 pub const ACT_ER_ZIP: u32 = 0x0080_0892;
 /// timing (timing.rs): the Mikiri stomp, the dash strike
 pub const ACT_ER_MIKIRI: u32 = 0x0082_0893;
@@ -109,6 +114,7 @@ const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 const ACT_TWIRLING: u32 = 0x1080_08A4;
 const ACT_FREEFALL: u32 = 0x0100_088C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
+const ACT_TRIPLE_JUMP: u32 = 0x0100_0882;
 /// SM64's punch sequence step for the breakdance sweep (crouch sliding + B)
 const BREAKDANCE: u32 = 9;
 /// SM64's animation: the combo's kick
@@ -221,6 +227,8 @@ pub enum Request {
     /// a bounce off something (the Bros. Jump off the partner's head): a double jump at this
     /// velocity (SM64 units per tick)
     Bounce([f32; 3]),
+    /// off the spring (traps.rs): a triple jump's flip at this velocity
+    Spring([f32; 3]),
 }
 
 impl Request {
@@ -236,6 +244,10 @@ impl Request {
                 Request::Mikiri([x, y, z], start) => sm64::sm64_er_mikiri(id, x, y, z, start as i32),
                 Request::Bounce(v) => {
                     sm64::sm64_set_mario_action(id, ACT_DOUBLE_JUMP);
+                    sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
+                }
+                Request::Spring(v) => {
+                    sm64::sm64_set_mario_action(id, ACT_TRIPLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
                 }
             }

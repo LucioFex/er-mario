@@ -12,6 +12,7 @@ pub mod dcx;
 pub mod flver;
 pub mod gear;
 pub mod icons;
+pub mod kit;
 pub mod matbin;
 pub mod model;
 pub mod tex;
@@ -23,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 13";
+const VERSION: &str = "er-mario assets 14";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -40,6 +41,9 @@ const QUALITIES: [&str; 2] = ["hi", "low"];
 pub const HAMMER_BONE_FILE: &str = "package/hammer_bone.txt";
 /// "1" when the build put the gear (boomerangs, Chain Chomp) into Mario's model (engine_mario reads it)
 pub const GEAR_FILE: &str = "package/gear.txt";
+/// The bones the build put the trap kit on (kit.rs, in the gauntlets), one per line in the kit's
+/// part order; empty when it isn't there (engine_mario reads it)
+pub const KIT_FILE: &str = "package/kit.txt";
 
 /// The package files were complete when the game started (so me3 serves them this session).
 static READY: AtomicBool = AtomicBool::new(false);
@@ -225,6 +229,11 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     let mut done = 0.0;
     let total = (PIECES.len() + looks.len() - 1) * 2;
     let mut all_gear = true;
+    // the trap kit in the gauntlets (both LODs), its bones; and the gauntlets' material, which
+    // gets a copy of its own (renamed like the chest piece's) when the kit is in
+    let kit = kit::build();
+    let mut kit_bones: Option<Vec<String>> = None;
+    let mut kit_ok = true;
     for piece in PIECES {
         for (look, mesh, albedo, metal) in &looks {
             if piece != "bd" && *look != MODEL_MARIO {
@@ -236,9 +245,49 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                 done += 1.0;
                 let src = dcx::decompress(&archives.read(&format!("/parts/{piece}_m_1280{suffix}.partsbnd.dcx"))?)?;
                 let mut files = bnd4::read(&src)?;
+                // the gauntlets: the kit into their FLVER first (their textures follow it)
+                let mut kit_in = false;
+                if piece == "am" && *look == MODEL_MARIO {
+                    if let Some(f) = files.iter_mut().find(|f| f.name.to_lowercase().ends_with(".flver")) {
+                        let data = std::mem::take(&mut f.data);
+                        let fl = flver::Flver::new(data.clone())?;
+                        let (bones, info) = flver::kit_bones(&fl, crate::engine_mario::KIT_PARTS);
+                        if suffix.is_empty() {
+                            log(format!("assets: the gauntlets ({}): {info}; their own names {:?}", f.name, tex::utf16_with(&data, "AM_M_1280")));
+                        }
+                        let fit = bones.len() == crate::engine_mario::KIT_PARTS && kit_bones.as_ref().is_none_or(|b| *b == bones);
+                        let built = if fit {
+                            flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + crate::engine_mario::KIT_PARTS, &bones)
+                        } else {
+                            Err(format!("only {} finger bones for {} things ({bones:?})", bones.len(), crate::engine_mario::KIT_PARTS))
+                        };
+                        match built {
+                            Ok(mut d) => {
+                                tex::rename(&mut d, "AM_M_1280", &format!("AM_M_{id}"));
+                                f.data = d;
+                                kit_in = true;
+                                kit_bones = Some(bones);
+                            }
+                            Err(e) => {
+                                log(format!("assets: no trap kit in the gauntlets{suffix} ({e})"));
+                                // (only the far LOD without it: the kit just isn't seen from afar)
+                                kit_ok &= !suffix.is_empty();
+                                f.data = flver::Flver::new(data)?.empty();
+                            }
+                        }
+                    }
+                }
                 for f in &mut files {
                     let lower = f.name.to_lowercase();
-                    if lower.ends_with(".flver") {
+                    if lower.ends_with(".flver") && kit_in {
+                        // (done above)
+                    } else if lower.ends_with(".tpf") && kit_in {
+                        if suffix.is_empty() {
+                            log(format!("assets: the gauntlets' textures {:?}", tex::tpf_names(&f.data)));
+                        }
+                        f.data = tex::build_tpf(&f.data, &tex::kit_albedo(), false)?;
+                        tex::rename(&mut f.data, "AM_M_1280", &format!("AM_M_{id}"));
+                    } else if lower.ends_with(".flver") {
                         let fl = flver::Flver::new(std::mem::take(&mut f.data))?;
                         f.data = if piece == "bd" {
                             if *look == MODEL_MARIO && suffix.is_empty() {
@@ -272,6 +321,18 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     let mut files = bnd4::read(&mat)?;
     let src = files.iter().find(|f| f.name.ends_with("P[BD_M_1280]_Fabric.matbin")).ok_or("Vagabond material not found")?;
     let (name, data) = (src.name.clone(), src.data.clone());
+    // the gauntlets' own materials, for the kit's copy of them (its textures renamed)
+    let gauntlets: Vec<(String, Vec<u8>)> = files.iter().filter(|f| f.name.contains("AM_M_1280")).map(|f| (f.name.clone(), f.data.clone())).collect();
+    log(format!("assets: the gauntlets' materials {:?}", gauntlets.iter().map(|g| g.0.rsplit(['\\', '/']).next().unwrap_or("")).collect::<Vec<_>>()));
+    if kit_ok && kit_bones.is_some() {
+        for (gname, gdata) in &gauntlets {
+            let mut data = gdata.clone();
+            tex::rename(&mut data, "AM_M_1280", "AM_M_0999");
+            matbin::clear_detail(&mut data);
+            let new = bnd4::File { id: files.iter().map(|f| f.id).max().unwrap_or(0) + 1, name: gname.replace("AM_M_1280", "AM_M_0999"), data };
+            files.push(new);
+        }
+    }
     for look in LOOKS {
         let id = format!("BD_M_{look:04}");
         let mut data = data.clone();
@@ -306,6 +367,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
         write(&format!("package/menu/{q}/01_common.tpf.dcx"), &dcx::compress(&tpf)?)?;
     }
     write(GEAR_FILE, if all_gear { b"1" } else { b"0" })?;
+    write(KIT_FILE, kit_bones.filter(|_| kit_ok).map(|b| b.join("\n")).unwrap_or_default().as_bytes())?;
     step(0.95, "Building Yoshi");
     if let Err(e) = build_yoshi(&archives) {
         // (Torrent stays Torrent then: none of his files may be left half done)

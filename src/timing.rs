@@ -40,6 +40,12 @@ const NICE_LATE: u32 = 3;
 const NICE_CLEAN: u32 = 8;
 const NICE_EVERY: u32 = 10;
 const NICE_STREAK: f32 = 2.0;
+/// mashing: more than this many presses in the last MASH_TICKS, or one a little too late after a
+/// blow (up to MISS_LATE ticks), and there's no "NICE!" for MISS_LOCK ticks
+const MASH_PRESSES: usize = 4;
+const MASH_TICKS: u32 = 30;
+const MISS_LATE: u32 = 10;
+const MISS_LOCK: u32 = 20;
 /// the blow's extra share: a "NICE!", a "GREAT!" (the third and on)
 pub const NICE: f32 = 0.3;
 pub const GREAT: f32 = 0.5;
@@ -50,9 +56,11 @@ const SOUND_RED_COIN: i32 = 0x7828_9081;
 struct State {
     a_held: bool,
     x_held: bool,
-    /// the last two X presses (ticks)
+    /// the last two X presses (ticks), the recent ones, and no "NICE!" until this tick
     x_at: Option<u32>,
     x_before: Option<u32>,
+    presses: Vec<u32>,
+    locked_until: u32,
     /// the last blow that landed: on whom, what, when, where (Elden Ring), and whether it already
     /// got its "NICE!"
     landed: Option<(FieldInsHandle, Attack, u32, Vec3, bool)>,
@@ -62,8 +70,9 @@ struct State {
     /// the Mikiri: the next one allowed, the enemy it's on (its key) while it lasts
     mikiri_last: Option<Instant>,
     mikiri_on: Option<u64>,
-    /// where Mario started it (Elden Ring feet)
+    /// where Mario started it (Elden Ring feet), and whether its stomp has landed already
     mikiri_from: Vec3,
+    mikiri_hit: bool,
     misses: u32,
 }
 
@@ -72,6 +81,8 @@ static STATE: Mutex<State> = Mutex::new(State {
     x_held: false,
     x_at: None,
     x_before: None,
+    presses: Vec::new(),
+    locked_until: 0,
     landed: None,
     nice_at: None,
     streak: 0,
@@ -79,6 +90,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     mikiri_last: None,
     mikiri_on: None,
     mikiri_from: Vec3::ZERO,
+    mikiri_hit: false,
     misses: 0,
 });
 
@@ -96,13 +108,20 @@ pub fn buttons(a: bool, x: bool, tick: u32) -> bool {
     if x_pressed {
         s.x_before = s.x_at;
         s.x_at = Some(tick);
+        s.presses.retain(|&p| tick.wrapping_sub(p) < MASH_TICKS);
+        s.presses.push(tick);
+        // (mashing, or a press a little too late after the last blow: locked out a moment)
+        let late = s.landed.as_ref().map(|l| tick.wrapping_sub(l.2)).is_some_and(|d| d > NICE_LATE && d <= MISS_LATE && !s.landed.as_ref().is_some_and(|l| l.4));
+        if s.presses.len() > MASH_PRESSES || late {
+            s.locked_until = tick + MISS_LOCK;
+        }
     }
     a_pressed
 }
 
-/// The press at `at` came after a moment without one (not mashing).
+/// The press at `at` came after a moment without one (not mashing, not locked out).
 fn clean(s: &State, at: u32) -> bool {
-    s.x_before.is_none_or(|b| at.wrapping_sub(b) >= NICE_CLEAN)
+    s.x_before.is_none_or(|b| at.wrapping_sub(b) >= NICE_CLEAN) && at >= s.locked_until
 }
 
 /// A "NICE!" now: its share, the streak counted. None if it's too soon after the last.
@@ -116,13 +135,23 @@ fn nice_now(s: &mut State, tick: u32) -> Option<f32> {
     }
     s.streak += 1;
     s.streak_at = Some(Instant::now());
-    Some(if s.streak >= 3 { GREAT } else { NICE })
+    // (NICE, NICE, GREAT, and round again)
+    if s.streak >= 3 {
+        s.streak = 0;
+        return Some(GREAT);
+    }
+    Some(NICE)
 }
 
-/// Blows the action command counts: Mario's own up close (no shots from afar, no burn, no steps,
-/// no hook, no cyclone's many little hits).
+/// Blows the action command counts: Mario's own up close, one blow at a time (no shots from afar,
+/// no burn, no steps, no hook, and none of the spins' and flurries' many quick hits: tapping along
+/// with those was a sure thing).
 fn counts(attack: Attack) -> bool {
-    !attack.ranged() && !matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri)
+    !attack.ranged()
+        && !matches!(
+            attack,
+            Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri | Attack::Tornado | Attack::Flurry | Attack::Giro | Attack::Rush | Attack::Uppercut | Attack::Shockwave | Attack::Shell
+        )
 }
 
 /// Game thread (combat.rs): one of Mario's blows landed on `handle` (its chest `at`). Its extra
@@ -197,6 +226,10 @@ pub fn mikiri(a_pressed: bool, allowed: bool, feet: Vec3, origin: [f32; 3]) -> O
     let mut early = None;
     let found = crate::combat::in_the_way(feet, MIKIRI_NEAR).into_iter().find_map(|(handle, key, _)| {
         let chr = wcm.chr_ins_by_handle(&handle)?;
+        // (enemies only: a merchant or an animal playing an attack animation isn't one)
+        if !crate::combat::hostile(chr) {
+            return None;
+        }
         let t = &chr.modules.time_act;
         let a = &t.anim_queue[(t.read_idx % 10) as usize];
         let anim = a.anim_id % 1_000_000;
@@ -228,6 +261,7 @@ pub fn mikiri(a_pressed: bool, allowed: bool, feet: Vec3, origin: [f32; 3]) -> O
     s.mikiri_last = Some(Instant::now());
     s.mikiri_on = Some(key);
     s.mikiri_from = feet;
+    s.mikiri_hit = false;
     log(format!("timing: Mikiri on c{id:04} (attack {anim} at {at:.2} s)"));
     Some(head)
 }
@@ -262,6 +296,12 @@ fn landing(chr: &eldenring::cs::ChrIns, from: Vec3) -> eldenring::position::Havo
 }
 /// wider than this (m), the Mikiri lands on its near side
 const BIG_BODY: f32 = 0.8;
+
+/// The Mikiri's stomp landed on someone (combat.rs): true the first time for this Mikiri (its
+/// slow-down, flash and callout once, however many it lands on).
+pub fn mikiri_landed() -> bool {
+    !std::mem::replace(&mut state().mikiri_hit, true)
+}
 
 /// The Mikiri is over (Mario out of it).
 pub fn mikiri_done() {

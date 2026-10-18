@@ -54,6 +54,7 @@ mod status;
 mod swing;
 mod stats;
 mod timing;
+mod traps;
 mod style;
 mod update;
 mod version;
@@ -421,6 +422,8 @@ struct MarioState {
     hook: hook::Hook,
     /// the dash (B) and the special moves (Y)
     moves: moves::Moves,
+    /// the trap kit's things out there (LT + X / Y / B / RB)
+    traps: traps::Traps,
     /// what the combos' moves did on the last tick
     combo: sm64::SM64ErMove,
     /// the Tarnished died: Mario plays SM64's death until the game respawns the player
@@ -2199,6 +2202,7 @@ fn frame(data: &FD4TaskData) {
                 hook::Hook::new()
             },
             moves: moves::Moves::new(),
+            traps: traps::Traps::new(),
             combo: sm64::SM64ErMove::default(),
             dead: false,
             moving,
@@ -2526,6 +2530,7 @@ fn frame(data: &FD4TaskData) {
         juggle::clear();
         style::clear();
         timing::clear();
+        m.traps.clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -2994,6 +2999,15 @@ fn frame(data: &FD4TaskData) {
         let weapon_on = if hands_free { m.moves.weapon } else { weapons::FISTS };
         let rangs_ready = boomerang::ready() as i32;
         let juggling = juggle::active();
+        // the trap kit: LT held while he crouches, plus X / Y / B / RB (traps.rs); those buttons are
+        // the kit's alone then (no breakdance, dash, special or fireball)
+        let kit_on = inputs.button_z != 0 && traps::crouching(m.state.action) && fire_allowed && !interacting && !big && !carry::holding() && !swing::holding() && !RIDING.load(Ordering::Relaxed);
+        let kit_request = m.traps.input(kit_on, [x_move, y_move, b_dash, b_fire], m.ticks);
+        hud::set_kit(kit_on.then(|| m.traps.ready()));
+        if kit_on {
+            (x_move, y_move, b_dash, b_fire) = (false, false, false, false);
+            inputs.button_b = 0;
+        }
         let hold_y = y_move;
         // timing (timing.rs): A and X as pressed; an X just after a blow landed is a "NICE!"
         let a_pressed = timing::buttons(inputs.button_a != 0, inputs.button_b != 0, m.ticks);
@@ -3001,7 +3015,13 @@ fn frame(data: &FD4TaskData) {
             m.combat.extra_share(&h, attack, extra, m.ticks);
         }
         coop::set_own_health(m.state.health);
-        let request = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
+        let request = kit_request.or_else(|| m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks));
+        // off the spring: up, higher than any jump
+        let request = request.or_else(|| {
+            let up = m.traps.take_bounce()?;
+            let v = m.state.velocity;
+            Some(moves::Request::Spring([v[0] * 0.5, up, v[2] * 0.5]))
+        });
         // A just before an enemy's blow lands: the Mikiri (and while it lasts, its target follows
         // the enemy); A on nothing in particular stays SM64's jump
         let request = request.or_else(|| {
@@ -3012,6 +3032,7 @@ fn frame(data: &FD4TaskData) {
                 && !carry::holding()
                 && !swing::holding()
                 && !RIDING.load(Ordering::Relaxed)
+                && hurt.is_none()
                 && moves::can_counter(m.state.action);
             timing::mikiri(a_pressed, ok, glam::Vec3::new(feet.0, feet.1, feet.2), m.origin).map(|head| moves::Request::Mikiri(head, true))
         });
@@ -3020,9 +3041,11 @@ fn frame(data: &FD4TaskData) {
         });
         // the Bros. Jump: falling onto the co-op partner's head, a high bounce off it
         let request = request.or_else(|| {
-            const ACT_FLAG_AIR: u32 = 0x800;
             static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-            if m.dead || m.state.action & ACT_FLAG_AIR == 0 || m.state.velocity[1] >= 0.0 || !coop::active() {
+            // (only out of a jump or a fall: not a ground pound, an air combo, a knockback, holding
+            // anyone, on Yoshi)
+            const JUMPS: [u32; 8] = [0x0300_0880, 0x0300_0881, 0x0100_0882, 0x0100_0883, 0x0100_0887, 0x0300_0888, 0x0300_0886, 0x0100_088C];
+            if m.dead || !JUMPS.contains(&m.state.action) || m.state.velocity[1] >= 0.0 || !coop::active() || big || RIDING.load(Ordering::Relaxed) || carry::holding() || swing::holding() {
                 return None;
             }
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
@@ -3283,6 +3306,11 @@ fn frame(data: &FD4TaskData) {
                         // (none in his hand while he swims or is in a cutscene)
                         let busy = matches!(state.action & 0x1C0, 0x0C0 | 0x100);
                         m.rang.pose(p, feet, state.face_angle, weapon_on == weapons::RANG && hands_free && !busy, &combo, state.action);
+                    }
+                    // the trap kit's things, out there on their own
+                    m.traps.tick(&combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    if let Some(p) = parts.as_mut() {
+                        m.traps.pose(p, feet);
                     }
                     // the hook: out of the same hand
                     m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);

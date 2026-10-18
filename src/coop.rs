@@ -20,8 +20,8 @@ use crate::{explore, log, net};
 
 const MAGIC: [u8; 3] = *b"ERM";
 /// bumped when a packet changes: the other side's older ones are ignored (and logged)
-/// (2: the pose carries the player's health and character, for the partner's HUD)
-const VERSION: u8 = 2;
+/// (2: the pose carries the player's health and character, for the partner's HUD; 3: the trap kit's parts)
+const VERSION: u8 = 3;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;

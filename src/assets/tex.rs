@@ -218,6 +218,55 @@ pub fn mario_albedo_as(model: &MarioModel, luigi: bool) -> Image {
     img
 }
 
+/// The trap kit's albedo (kit.rs): its palette as a 4 x 4 grid of flat swatches.
+pub fn kit_albedo() -> Image {
+    let mut img = Image::new(SIZE, SIZE, [0.5, 0.5, 0.5, 1.0]);
+    let cell = SIZE / 4;
+    for (k, c) in super::kit::KIT_PALETTE.iter().enumerate() {
+        let (cx, cy) = ((k % 4) * cell, (k / 4) * cell);
+        for y in cy..cy + cell {
+            for x in cx..cx + cell {
+                img.px[y * SIZE + x] = [c[0], c[1], c[2], 1.0];
+            }
+        }
+    }
+    img
+}
+
+/// Every UTF-16 string in `blob` containing `needle` (for the logs: what a file calls itself).
+pub fn utf16_with(blob: &[u8], needle: &str) -> Vec<String> {
+    let n = u16s(needle);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + n.len() <= blob.len() {
+        if blob[i..i + n.len()] == n[..] {
+            // back to the string's start (a zero char before it), then to its end
+            let mut a = i;
+            while a >= 2 && !(blob[a - 2] == 0 && blob[a - 1] == 0) && i - a < 400 {
+                a -= 2;
+            }
+            let mut e = i;
+            while e + 1 < blob.len() && !(blob[e] == 0 && blob[e + 1] == 0) && e - a < 600 {
+                e += 2;
+            }
+            let s: Vec<u16> = blob[a..e].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let s = String::from_utf16_lossy(&s);
+            if !out.contains(&s) {
+                out.push(s);
+            }
+            i = e;
+        } else {
+            i += 2;
+        }
+    }
+    out
+}
+
+/// A TPF's texture names.
+pub fn tpf_names(tpf: &[u8]) -> Vec<String> {
+    tpf_textures(tpf).into_iter().map(|t| t.name).collect()
+}
+
 /// BC1 with a full mip chain (box-filtered), as stored in a DDS body.
 fn bc1_mips(img: &Image, mips: usize) -> Vec<u8> {
     let mut out = Vec::new();

@@ -90,11 +90,17 @@ pub enum Attack {
     /// the Mikiri stomp on an attacker's head (timing.rs), the dash strike (X at the dash's end)
     Mikiri,
     Bonk,
+    /// the trap kit (traps.rs): an enemy down on the banana, a shell's hit, the Bob-omb's blast,
+    /// the spring sending one up
+    Slip,
+    ShellHit,
+    Bomb,
+    Boing,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 46] = [
+const CODES: [Attack; 50] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -103,6 +109,7 @@ const CODES: [Attack; 46] = [
     Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
+    Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -161,6 +168,11 @@ impl Attack {
             // (the Mikiri staggers like a ground pound: it's what it's for)
             Attack::Mikiri => Attack::GroundPound.spec(),
             Attack::Bonk => Attack::Stomp.spec(),
+            // (the banana and the shells on the sweep's bullet: the one knockdown() turns into a
+            // knockdown for a moment)
+            Attack::Slip | Attack::ShellHit => Attack::Sweep.spec(),
+            Attack::Bomb => Attack::GroundPound.spec(),
+            Attack::Boing => Attack::Punch.spec(),
         }
     }
 
@@ -241,12 +253,33 @@ impl Attack {
             // opens, not its own damage; the dash strike a little over the dash's own
             Attack::Mikiri => (12.0, "damage_mikiri"),
             Attack::Bonk => (16.0, "damage_dash_bonk"),
+            // the trap kit: the worth of a banana or a spring is what they set up (an enemy on the
+            // ground, up in the air), the shell's in its bounces, the Bob-omb's in its blast
+            Attack::Slip => (8.0, "damage_banana"),
+            Attack::ShellHit => (10.0, "damage_shell_hit"),
+            Attack::Bomb => (28.0, "damage_bobomb"),
+            Attack::Boing => (3.0, "damage_spring"),
         }
     }
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
-        matches!(self, Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
+        matches!(
+            self,
+            Attack::Fire(_)
+                | Attack::FireSweep
+                | Attack::Ember
+                | Attack::Rang
+                | Attack::RangBig
+                | Attack::RangUpper
+                | Attack::Egg
+                | Attack::Hook
+                | Attack::Tongue
+                | Attack::Slip
+                | Attack::ShellHit
+                | Attack::Bomb
+                | Attack::Boing
+        )
     }
 
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
@@ -283,6 +316,8 @@ impl Attack {
             Attack::ChompEnd => 1.5,
             Attack::Mikiri => 1.6,
             Attack::Bonk => 1.3,
+            Attack::Slip | Attack::ShellHit | Attack::Boing => 1.0,
+            Attack::Bomb => 1.2,
         }
     }
 
@@ -611,6 +646,13 @@ pub fn handle_key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
 
+/// An enemy (not a friendly or neutral NPC): the enemies' teams, the invaders.
+pub fn hostile(chr: &ChrIns) -> bool {
+    matches!(chr.team_type, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE)
+        || chr.team_type >= TEAM_ENEMY_GROUPS
+        || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc)
+}
+
 /// Enemies and NPCs, the red NPC invaders included; some bosses (Margit) are type 7. Never the
 /// player, phantoms or the ghost kinds (bloodstains, messages, graces).
 pub fn hittable(t: ChrType) -> bool {
@@ -806,9 +848,7 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
                 // the bullet spawns 1 m above this: 0.4 m above the feet reaches sheep and dogs too
                 er: HavokPosition(p.0, p.1 - 0.6, p.2, 0.0),
                 sm: crate::collision::er_to_sm(origin, &p),
-                hostile: matches!(chr.team_type, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE)
-                    || chr.team_type >= TEAM_ENEMY_GROUPS
-                    || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc),
+                hostile: hostile(chr),
             });
         }
     }
@@ -951,6 +991,26 @@ fn finisher(player: &ChrIns, at: &HavokPosition, tick: u32) -> String {
     strike(player, at, bullet)
 }
 
+/// The sweep's bullet knocks down for a few ticks (the banana, the shells): its hit reaction the
+/// game's knockdown (`knockdown_level` in er_mario.ini: AtkParam's dmgLevel, 4 "blown away" by
+/// default) and poise damage enough to break any regular enemy's.
+static KNOCK_UNTIL: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+const KNOCK_TICKS: u32 = 8;
+
+fn knockdown(tick: u32) {
+    static LEVEL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    let level = *LEVEL.get_or_init(|| {
+        let l = crate::paths::config("knockdown_level").and_then(|v| v.parse().ok()).unwrap_or(4u8);
+        log(format!("combat: the trap kit's knockdown is hit reaction level {l}"));
+        l
+    });
+    let (_, atk, ..) = Attack::Sweep.spec();
+    let Some(a) = (unsafe { SoloParamRepository::instance_mut() }).ok().and_then(|r| r.get_mut::<AtkParam_Pc>(atk)) else { return };
+    a.set_dmg_level(level);
+    a.set_atk_super_armor(400.0);
+    *KNOCK_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) = Some(tick.wrapping_add(KNOCK_TICKS));
+}
+
 /// Bosses whose script took over at their last point: Mario's hits do nothing more to them.
 static SCRIPTED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
@@ -976,6 +1036,10 @@ pub fn hands_off(handle: &FieldInsHandle) -> bool {
 }
 
 /// Whether a character is a boss right now (its health bar is on screen).
+pub fn is_boss_now(handle: &FieldInsHandle) -> bool {
+    is_boss(handle)
+}
+
 fn is_boss(handle: &FieldInsHandle) -> bool {
     let key = handle_key(handle);
     unsafe { eldenring::cs::CSFeManImp::instance() }
@@ -1566,6 +1630,10 @@ pub fn hits(
     if crate::moves::combo(state.action) {
         return crate::moves::Hit::from(combo.hit).map_or_else(Vec::new, |hit| combo_hits(state, targets, hit, swing));
     }
+    // (the Mikiri's stomp comes on its last tick: whatever he's doing after it)
+    if crate::moves::Hit::from(combo.hit) == Some(crate::moves::Hit::Mikiri) {
+        return combo_hits(state, targets, crate::moves::Hit::Mikiri, swing);
+    }
     // diving (SM64's dive or its belly slide): kept with each hit, a dive into an enemy's back
     // picks it up like diving into a Bob-omb
     const ACT_FLAG_DIVING: u32 = 0x0008_0000;
@@ -1681,6 +1749,18 @@ impl Combat {
             }
         }
         self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < 12);
+        // (the knockdown back to the sweep's own stagger once its bullet is gone)
+        {
+            let mut until = KNOCK_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
+            if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
+                let (_, atk, _, poise, level, _) = Attack::Sweep.spec();
+                if let Some(a) = (unsafe { SoloParamRepository::instance_mut() }).ok().and_then(|r| r.get_mut::<AtkParam_Pc>(atk)) {
+                    a.set_dmg_level(level);
+                    a.set_atk_super_armor(poise * 0.8);
+                }
+                *until = None;
+            }
+        }
         {
             let mut until = FINISHER_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
             if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
@@ -1820,7 +1900,7 @@ impl Combat {
                     }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -1828,7 +1908,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !attack.ranged() && !matches!(attack, Attack::Trample | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
@@ -1886,7 +1966,7 @@ impl Combat {
                 }
                 // the Mikiri: the world slows a moment, and a boss's stance cracks (swing.rs: a
                 // few of them open him up for the tail grab)
-                if attack == Attack::Mikiri {
+                if attack == Attack::Mikiri && crate::timing::mikiri_landed() {
                     crate::style::witch_time(crate::timing::MIKIRI_SLOW);
                     crate::style::callout("MIKIRI!", Some(chest), [0.7, 0.9, 1.0], true, crate::style::MIKIRI_POINTS);
                     crate::impact::mikiri(chest + glam::Vec3::Y * 0.4);
@@ -1914,7 +1994,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -1922,6 +2002,10 @@ impl Combat {
             self.bullet_at.insert(target.key, tick);
             if self.bullet_at.len() > 64 {
                 self.bullet_at.retain(|_, t| tick.wrapping_sub(*t) < BULLET_EVERY);
+            }
+            // the banana and the shells knock a regular enemy down (the game's own knockdown)
+            if matches!(attack, Attack::Slip | Attack::ShellHit) && target.handle.as_ref().is_some_and(liftable) {
+                knockdown(tick);
             }
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
@@ -1937,6 +2021,10 @@ impl Combat {
             return;
         }
         let key = handle_key(handle);
+        // (already at his last point: the blow that ends him is coming, nothing to add)
+        if self.finishing.contains_key(&key) {
+            return;
+        }
         self.victims.insert(key, (*handle, tick));
         if take_share(handle, attack, extra) && !crate::coop::guest() {
             if !self.finishing.contains_key(&key) {

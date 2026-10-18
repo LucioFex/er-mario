@@ -402,10 +402,22 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<(V
     if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) || verts.len() > vb.vcount {
         return Err("the chest piece's vertex layout is not the expected one".into());
     }
+    let (vb, facesets, full) = (vb, mesh.facesets.clone(), full);
+    write_mesh(&mut f, &vb, &facesets, full, &verts, &tris, &bone_ids)?;
+    crate::log(format!("assets: Mario mesh {} vertices, {} triangles{}", verts.len(), tris.len(), if gear { ", with the gear" } else { "" }));
+    Ok((f.d, gear))
+}
+
+/// The mesh's vertices (`verts`, each on its part's bone in `bone_ids`) and triangles into the
+/// vertex buffer `vb` and the biggest faceset `full` of a mesh's `facesets` (the others, its
+/// lower LODs, point at the same triangles).
+fn write_mesh(f: &mut Flver, vb: &VertexBuffer, facesets: &[usize], full: usize, verts: &[Vertex], tris: &[[u16; 3]], bone_ids: &[usize]) -> Result<(), String> {
+    let fsets = f.facesets();
+    let mut tris = tris.to_vec();
+
     // every triangle faces the way the game's front faces do (SM64's are mirrored on X), so back
     // faces can be culled like on the armour itself
-    let winding = mesh.facesets.first().and_then(|&fi| front_winding(&f, &vb, &fsets[fi]));
-    let mut tris = tris;
+    let winding = facesets.first().and_then(|&fi| front_winding(f, vb, &fsets[fi]));
     if let Some(w) = winding {
         for t in &mut tris {
             let [a, b, c] = t.map(|i| &verts[i as usize]);
@@ -417,7 +429,7 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<(V
         }
     }
     let mut buf = Vec::with_capacity(vb.vcount * 40);
-    for v in &verts {
+    for v in verts {
         let n = normalize(v.normal);
         let t = normalize(if n[1].abs() < 0.9 { cross(n, [0.0, 1.0, 0.0]) } else { cross(n, [1.0, 0.0, 0.0]) });
         for p in v.pos {
@@ -455,16 +467,116 @@ pub fn build_mario(mut f: Flver, model: &MarioModel, target: usize) -> Result<(V
     f.d[fs.offset..fs.offset + idx.len()].copy_from_slice(&idx);
     f.d[fs.offset + idx.len()..fs.offset + fs.length].fill(0);
     let (count, offset) = ((idx.len() / 2) as i32, i32_at(&f.d, fs.header + 12));
-    for &fi in &mesh.facesets {
+    for &fi in facesets {
         let h = fsets[fi].header;
         f.d[h + 5] = if winding.is_some() { 1 } else { 0 }; // cull back faces (unknown winding: both sides)
         f.d[h + 8..h + 12].copy_from_slice(&count.to_le_bytes());
         f.d[h + 12..h + 16].copy_from_slice(&offset.to_le_bytes());
         f.d[h + 16..h + 20].copy_from_slice(&(fs.length as i32).to_le_bytes());
     }
-    crate::log(format!("assets: Mario mesh {} vertices, {} triangles{}", verts.len(), tris.len(), if gear { ", with the gear" } else { "" }));
-    Ok((f.d, gear))
+    Ok(())
 }
+
+/// The trap kit (kit.rs) into mesh `target` of an armour FLVER (the gauntlets), every other mesh
+/// emptied: each part on a finger bone of its own (`bones`, skinned by this piece, not a parent of
+/// another bone). The kit's colours are swatches of its own albedo (tex::kit_albedo).
+pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones: &[String]) -> Result<Vec<u8>, String> {
+    let names = f.bone_names();
+    let bone_ids: Vec<usize> = bones.iter().map(|n| names.iter().position(|b| b == n).ok_or(format!("no bone {n} in the piece"))).collect::<Result<_, _>>()?;
+    // (a vertex holds its bone in a byte)
+    if bone_ids.iter().any(|&b| b >= 256) {
+        return Err(format!("a finger bone past the 256th ({bone_ids:?})"));
+    }
+    for b in 0..f.bones {
+        let a = f.bone_off + b * 0x80;
+        put_f32s(&mut f.d, a, &[0.0; 3]);
+        put_f32s(&mut f.d, a + 0x10, &[0.0; 3]);
+        put_f32s(&mut f.d, a + 0x20, &[1.0; 3]);
+    }
+    for &b in &bone_ids {
+        let a = f.bone_off + b * 0x80;
+        put_f32s(&mut f.d, a + 0x30, &[-1.0; 3]);
+        put_f32s(&mut f.d, a + 0x40, &[1.0; 3]);
+    }
+    // (the things lie on the ground metres away from the character)
+    put_f32s(&mut f.d, 0x28, &[-20.0, -2.0, -20.0, 20.0, 12.0, 20.0]);
+    let (meshes, fsets) = (f.meshes(), f.facesets());
+    // the mesh with the most room
+    let target = (0..meshes.len()).max_by_key(|&m| meshes[m].vbufs.first().map_or(0, |&v| f.vertex_buffers(v).vcount)).ok_or("the piece has no mesh")?;
+    for (mi, m) in meshes.iter().enumerate() {
+        if mi != target {
+            for &fi in &m.facesets {
+                f.clear_faceset(&fsets[fi]);
+            }
+        }
+    }
+    let mesh = &meshes[target];
+    let vb = f.vertex_buffers(*mesh.vbufs.first().ok_or("the piece's mesh has no vertices")?);
+    let members = f.layout_members(vb.layout);
+    const EXPECTED: [(i32, i32, i32); 7] = [(0, 2, 0), (12, 17, 3), (16, 17, 6), (20, 17, 2), (24, 19, 1), (28, 19, 10), (32, 22, 5)];
+    let full = *mesh.facesets.iter().max_by_key(|&&fi| fsets[fi].count).ok_or("the piece's mesh has no facesets")?;
+    // its vertices: one per point, colour and (rough) normal, so a flat cap doesn't round off the
+    // side it meets
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut index: HashMap<(usize, [i64; 3], usize, [i64; 3]), usize> = HashMap::new();
+    let mut tris = Vec::new();
+    for t in kit {
+        let part = t.part as usize;
+        if !parts.contains(&part) {
+            continue;
+        }
+        let swatch = super::kit::KIT_PALETTE.iter().position(|c| color_key(*c) == color_key(t.color[0])).unwrap_or(0);
+        let uv = kit_uv(swatch);
+        let mut tri = [0u16; 3];
+        for k in 0..3 {
+            let l = t.local[k];
+            let p = [-(l[0] as f64) * UNIT, l[1] as f64 * UNIT, l[2] as f64 * UNIT];
+            let n = [-(t.normal[k][0] as f64), t.normal[k][1] as f64, t.normal[k][2] as f64];
+            let key = (part, p.map(|v| round_even(v * 1e5) as i64), swatch, n.map(|v| round_even(v * 3.0) as i64));
+            let i = *index.entry(key).or_insert_with(|| {
+                verts.push(Vertex { pos: p, normal: [0.0; 3], uv, part: part - parts.start });
+                verts.len() - 1
+            });
+            for c in 0..3 {
+                verts[i].normal[c] += n[c];
+            }
+            tri[k] = i as u16;
+        }
+        tris.push(tri);
+    }
+    if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) {
+        return Err(format!("the piece's vertex layout is not the expected one ({} bytes, {:?})", vb.vsize, members));
+    }
+    if verts.len() > vb.vcount || tris.len() * 6 > fsets[full].length {
+        return Err(format!("no room for the kit: {} vertices ({} fit), {} triangles ({} fit)", verts.len(), vb.vcount, tris.len(), fsets[full].length / 6));
+    }
+    write_mesh(&mut f, &vb, &mesh.facesets.clone(), full, &verts, &tris, &bone_ids)?;
+    crate::log(format!("assets: the kit {} vertices, {} triangles (room for {}, {}), on {:?}", verts.len(), tris.len(), vb.vcount, fsets[full].length / 6, bones));
+    Ok(f.d)
+}
+
+/// The kit albedo's swatches: a 4 x 4 grid, each colour's UV at its middle.
+pub fn kit_uv(swatch: usize) -> [f64; 2] {
+    [((swatch % 4) as f64 + 0.5) / 4.0, ((swatch / 4) as f64 + 0.5) / 4.0]
+}
+
+/// The finger bones the kit can go on in an armour FLVER (the gauntlets): skinned by it, with no
+/// bone under them. Up to `n`, in the skeleton's order. Also what the piece holds, for the log.
+pub fn kit_bones(f: &Flver, n: usize) -> (Vec<String>, String) {
+    let names = f.bone_names();
+    let parent = |b: usize| i16::from_le_bytes([f.d[f.bone_off + b * 0x80 + 0x1C], f.d[f.bone_off + b * 0x80 + 0x1D]]);
+    let leaf = |b: usize| !(0..f.bones).any(|c| parent(c) as i32 == b as i32);
+    let skinned = |b: usize| i32_at(&f.d, f.bone_off + b * 0x80 + 0x3C) == 8;
+    let picked: Vec<String> = (0..f.bones).filter(|&b| names[b].contains("Finger") && skinned(b) && leaf(b)).map(|b| names[b].clone()).take(n).collect();
+    let meshes = f.meshes();
+    let room: Vec<String> = meshes.iter().map(|m| m.vbufs.first().map_or("none".to_string(), |&v| {
+        let vb = f.vertex_buffers(v);
+        format!("{} x {} B", vb.vcount, vb.vsize)
+    })).collect();
+    let skinned_names: Vec<&String> = (0..f.bones).filter(|&b| skinned(b)).map(|b| &names[b]).collect();
+    (picked, format!("{} bones ({} skinned: {:?}), meshes {:?}", f.bones, skinned_names.len(), skinned_names, room))
+}
+
 
 // ---- a mount's stand-in ------------------------------------------------------------------------
 

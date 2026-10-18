@@ -116,6 +116,11 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         // timing: the Mikiri lands hard (its own flash: impact::mikiri), the dash strike a solid one
         Attack::Mikiri => (4, 1.3, true),
         Attack::Bonk => (3, 1.1, false),
+        // the trap kit hits on its own, away from Mario: no hold for him
+        Attack::Slip => (0, 0.9, false),
+        Attack::ShellHit => (0, 1.0, false),
+        Attack::Bomb => (0, 1.5, true),
+        Attack::Boing => (0, 0.7, false),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -467,6 +472,54 @@ pub fn mikiri(at: Vec3) {
     ring(at - Vec3::Y * 0.3, 2.4, 0.45, WHITE);
     burst(at, 5, Bit::Star);
     crate::lakitu::shake(0.6);
+}
+
+/// The trap kit (traps.rs): a thing comes out of Mario's hand, a sparkle and a puff.
+pub fn kit_out(at: Vec3) {
+    puffs(at, 2, 0.15);
+    burst(at + Vec3::Y * 0.1, 1, Bit::Star);
+}
+
+/// A trap's thing gone (its time up): a puff of smoke.
+pub fn poof(at: Vec3) {
+    puffs(at, 4, 0.3);
+}
+
+/// A trap's thing landing, a shell off a wall: a little dust.
+pub fn thud_small(at: Vec3) {
+    puffs(at + Vec3::Y * 0.05, 2, 0.2);
+}
+
+/// Someone slipped on a banana: dust where they fell, stars over them.
+pub fn slip(feet: Vec3) {
+    puffs(feet + Vec3::Y * 0.1, 5, 0.5);
+    ring(feet + Vec3::Y * 0.05, 1.2, 0.3, DUST);
+    burst(feet + Vec3::Y * 1.2, 3, Bit::Star);
+}
+
+/// A shell's last hit: it bursts into bits (its colour's ring).
+pub fn shell_break(at: Vec3, red: bool) {
+    let tint = if red { [1.0, 0.3, 0.25, 1.0] } else { [0.4, 1.0, 0.45, 1.0] };
+    ring(at, 1.0, 0.3, tint);
+    puffs(at, 4, 0.35);
+    burst(at, 4, Bit::Star);
+}
+
+/// The spring: a ring off its top.
+pub fn boing(top: Vec3) {
+    ring(top, 0.9, 0.25, WHITE);
+    puffs(top, 2, 0.2);
+}
+
+/// The Bob-omb's blast: a fiery flash, wide rings, smoke, stars, the camera shaken.
+pub fn bomb(at: Vec3) {
+    flash([1.0, 0.65, 0.3], 0.3, 0.35);
+    spark(at, 2.6, [1.0, 0.7, 0.3, 1.0]);
+    ring(at - Vec3::Y * 0.2, 3.6, 0.45, [1.0, 0.6, 0.25, 1.0]);
+    ring(at, 2.2, 0.3, WHITE);
+    puffs(at, 10, 1.4);
+    burst(at, 6, Bit::Star);
+    crate::lakitu::shake(1.2);
 }
 
 /// The Bros. Jump (co-op): off the partner's head, a puff and a ring there, SM64's bounce.

@@ -139,6 +139,8 @@ const IMG_CAPPY: usize = 79;
 const IMG_EGG: usize = 80;
 /// the HUD's Mario head in Luigi's green (the co-op partner's panel)
 const IMG_LUIGI_HEAD: usize = 81;
+/// the trap kit (traps.rs): banana, shell, Bob-omb, spring
+const IMG_KIT: usize = 82; // 4
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -247,6 +249,9 @@ pub fn load(rom: &[u8]) {
             let [r, g, b, a] = rgba16_px(&head, y * 16 + x);
             if r as u32 > g as u32 * 3 / 2 + 20 && r as u32 > b as u32 * 3 / 2 + 20 { [g / 2, r, b / 2, a] } else { [r, g, b, a] }
         }));
+        for k in 0..4 {
+            out.push(Image::new(32, 32, |x, y| kit_pixel(k, x, y)));
+        }
         Some(out)
     };
     match load() {
@@ -356,6 +361,19 @@ pub struct PartnerHud {
 }
 
 static PARTNERS: Mutex<Vec<PartnerHud>> = Mutex::new(Vec::new());
+
+/// The trap kit while it's up (LT held, crouching): how ready each of its buttons' things is
+/// (X, Y, B, RB; 1 ready), and since when it's up.
+static KIT: Mutex<Option<([f32; 4], Instant)>> = Mutex::new(None);
+
+pub fn set_kit(ready: Option<[f32; 4]>) {
+    let mut k = KIT.lock().unwrap_or_else(|e| e.into_inner());
+    *k = match (ready, k.take()) {
+        (Some(r), Some((_, since))) => Some((r, since)),
+        (Some(r), None) => Some((r, Instant::now())),
+        (None, _) => None,
+    };
+}
 
 pub fn set_partners(partners: Vec<PartnerHud>) {
     *PARTNERS.lock().unwrap_or_else(|e| e.into_inner()) = partners;
@@ -544,7 +562,7 @@ impl ImguiRenderLoop for Overlay {
                     }
                 });
         }
-        if self.textures.len() <= IMG_LUIGI_HEAD {
+        if self.textures.len() < IMG_KIT + 4 {
             return;
         }
         let size = ui.io().display_size;
@@ -1227,6 +1245,47 @@ impl ImguiRenderLoop for Overlay {
             }
         }
 
+        // the trap kit (LT held while crouching): its four things in a diamond like the pad's buttons
+        // (X left, Y up, B right, RB below), popping in, bright when ready, a filling ring while not
+        if let Some((ready, since)) = *KIT.lock().unwrap_or_else(|e| e.into_inner()) {
+            let t = since.elapsed().as_secs_f32();
+            let pop = (t / 0.15).min(1.0);
+            let pop = 1.0 - (1.0 - pop) * (1.0 - pop);
+            let (cx, cy) = (size[0] * 0.5, size[1] * 0.72);
+            let s = 22.0 * px * (0.6 + 0.4 * pop);
+            let gap = 26.0 * px * pop;
+            let spots = [(-gap, 0.0), (0.0, -gap), (gap, 0.0), (0.0, gap)];
+            let names = ["X", "Y", "B", "RB"];
+            for k in 0..4 {
+                let (x, y) = (cx + spots[k].0, cy + spots[k].1);
+                let on = ready[k] >= 1.0;
+                dl.add_circle([x, y], s * 0.72, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * pop)).filled(true).build();
+                if !on {
+                    // (the wait: an arc filling round it)
+                    let n = (24.0 * ready[k].clamp(0.0, 1.0)) as usize;
+                    let pts: Vec<[f32; 2]> = (0..=n).map(|i| {
+                        let a = -std::f32::consts::FRAC_PI_2 + i as f32 / 24.0 * std::f32::consts::TAU;
+                        [x + a.cos() * s * 0.72, y + a.sin() * s * 0.72]
+                    }).collect();
+                    if pts.len() > 1 {
+                        dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.85, 0.3, 0.8 * pop)).thickness(px * 1.5).build();
+                    }
+                }
+                let alpha = if on { pop } else { 0.35 * pop };
+                let bob = if on { (t * 4.0 + k as f32).sin() * px * 0.8 } else { 0.0 };
+                dl.add_image(textures[IMG_KIT + k], [x - s * 0.5, y - s * 0.5 + bob], [x + s * 0.5, y + s * 0.5 + bob]).col([1.0, 1.0, 1.0, alpha]).build();
+                // (its button under it, small)
+                let g = 6.0 * px;
+                let label = names[k];
+                for (i, ch) in label.chars().enumerate() {
+                    if let Some(id) = glyph_for(ch) {
+                        let lx = x - label.len() as f32 * g * 0.4 + i as f32 * g * 0.8;
+                        dl.add_image(textures[id], [lx, y + s * 0.55], [lx + g, y + s * 0.55 + g]).col([1.0, 1.0, 1.0, 0.8 * pop]).build();
+                    }
+                }
+            }
+        }
+
         // the co-op partner (coop.rs), small, bottom left: their head, a little power pie with their
         // wedges (red when low, blinking at one), and when they're off screen an arrow on the
         // screen's edge pointing their way, with how far they are
@@ -1234,7 +1293,12 @@ impl ImguiRenderLoop for Overlay {
             let partners = PARTNERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
             static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let clock = T0.get_or_init(Instant::now).elapsed().as_secs_f32();
-            let me = crate::lakitu::position();
+            let cam = unsafe { CSCamera::instance() }.ok().map(|c| {
+                let pers = &c.pers_cam_1;
+                let v = |d: eldenring::position::PositionDelta| Vec3::new(d.0, d.1, d.2).normalize_or_zero();
+                let p = pers.position();
+                (Vec3::new(p.0, p.1, p.2), v(pers.right()), v(pers.up()), v(pers.forward()))
+            });
             for (i, p) in partners.iter().enumerate() {
                 let s = 16.0 * px;
                 let (x0, y0) = (size[1] * 0.04, size[1] * 0.83 - i as f32 * s * 1.6);
@@ -1257,10 +1321,7 @@ impl ImguiRenderLoop for Overlay {
                 // off screen (or behind the camera): an arrow at the edge, and the distance in m
                 let on_screen = project(p.head, size).filter(|(c, _)| c[0] >= 0.0 && c[0] <= size[0] && c[1] >= 0.0 && c[1] <= size[1]);
                 if on_screen.is_none() {
-                    let Some(cam) = me else { continue };
-                    let fwd = crate::lakitu::forward().unwrap_or(Vec3::Z);
-                    let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
-                    let up = right.cross(fwd).normalize_or(Vec3::Y);
+                    let Some((cam, right, up, fwd)) = cam else { continue };
                     let d = p.head - cam;
                     // (behind the camera: straight to the side they're on)
                     let side = d.dot(right);
@@ -1315,6 +1376,65 @@ fn seg_dist(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
 }
 
 /// The Boomerang Bros.' boomerang: a fat white chevron with red tips and a dark outline.
+/// The trap kit's icons, 32 x 32: a banana, a green shell, a Bob-omb, a spring.
+fn kit_pixel(k: usize, x: usize, y: usize) -> [u8; 4] {
+    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+    let outline = [24, 20, 16, 255];
+    match k {
+        0 => {
+            // a crescent: inside a circle, outside a smaller one shifted up
+            let d1 = ((fx - 16.0).powi(2) + (fy - 12.0).powi(2)).sqrt();
+            let d2 = ((fx - 16.0).powi(2) + (fy - 5.0).powi(2)).sqrt();
+            if d1 < 13.0 && d2 > 11.5 {
+                let tip = !(7.0..=25.0).contains(&fx);
+                if d1 > 11.5 || d2 < 13.0 { outline } else if tip { [110, 70, 25, 255] } else { [255, 220, 50, 255] }
+            } else {
+                [0; 4]
+            }
+        }
+        1 => {
+            // a dome, a cream rim, darker plates
+            let (dx, dy) = ((fx - 16.0) / 13.0, (fy - 20.0) / 13.0);
+            let r = (dx * dx + dy * dy).sqrt();
+            if fy > 20.0 && fy < 24.0 && (fx - 16.0).abs() < 14.0 {
+                if fy > 23.0 || (fx - 16.0).abs() > 13.0 { outline } else { [245, 235, 185, 255] }
+            } else if fy <= 20.0 && r < 1.0 {
+                if r > 0.9 { outline } else if ((fx / 5.0).floor() as i32 + (fy / 5.0).floor() as i32) % 2 == 0 { [30, 170, 45, 255] } else { [15, 110, 25, 255] }
+            } else {
+                [0; 4]
+            }
+        }
+        2 => {
+            // a black ball, white eyes, a fuse with a spark
+            let d = ((fx - 15.0).powi(2) + (fy - 18.0).powi(2)).sqrt();
+            let eye = |ex: f32| ((fx - ex) / 2.0).powi(2) + ((fy - 15.0) / 3.5).powi(2) < 1.0;
+            if (fx - 22.0).abs() < 2.5 && (fy - 6.0).abs() < 2.5 {
+                [255, 200, 60, 255]
+            } else if (fx - 20.0).abs() < 1.5 && (6.0..=9.0).contains(&fy) {
+                [210, 160, 100, 255]
+            } else if d < 11.0 {
+                if eye(11.5) || eye(17.5) { [255, 255, 255, 255] } else if d > 10.0 { outline } else { [30, 30, 38, 255] }
+            } else {
+                [0; 4]
+            }
+        }
+        _ => {
+            // a red top, a zigzag coil, a dark base
+            if (6.0..=26.0).contains(&fx) && (4.0..=9.0).contains(&fy) {
+                if fy < 5.0 || fy > 8.0 || fx < 7.0 || fx > 25.0 { outline } else { [225, 40, 30, 255] }
+            } else if (8.0..=24.0).contains(&fx) && (24.0..=28.0).contains(&fy) {
+                [70, 70, 80, 255]
+            } else if (9.0..24.0).contains(&fy) {
+                let phase = ((fy - 9.0) / 5.0).fract();
+                let want = 9.0 + 14.0 * if phase < 0.5 { phase * 2.0 } else { 2.0 - phase * 2.0 };
+                if (fx - want).abs() < 1.8 { [190, 195, 205, 255] } else { [0; 4] }
+            } else {
+                [0; 4]
+            }
+        }
+    }
+}
+
 fn rang_pixel(x: usize, y: usize) -> [u8; 4] {
     let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
     let (c, l, r) = ((16.0, 21.0), (4.5, 8.0), (27.5, 8.0));
