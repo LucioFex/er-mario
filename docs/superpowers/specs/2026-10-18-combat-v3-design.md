@@ -1,0 +1,100 @@
+# Combat v3 — design (approved 2026-10-18)
+
+Goal: take ER Mario's combat to GoW / DMC level while staying 100% Mario. Single player first;
+co-op only gets two subtle touches. Fun over power: Mario must not become OP.
+
+## Ground rules
+
+- Weapons, items and thrown objects are **real 3D** (gear parts like the hammer). 2D sprites only
+  for particles; prefer 3D effects (rings, ribbons, licks) where it is affordable.
+- Sounds only from the SM64 ROM, soft when repeated (`sm64_play_sound_volume` ~0.1-0.3), varied.
+- Enemies are never melted or stunlocked: cooldowns, per-target fades, bosses immune to cheap
+  tricks, ragdoll launches never kill by themselves. Enemy damage unchanged.
+- Vanilla Elden Ring, solo Reforged and Seamless co-op keep working. Every batch: build, install
+  (C:\ER-Mario and `<ERR>\dll\offline`), clear log lines to verify, review subagent.
+- Never fight with or move Mario in the user's save without asking; ask for a click when the game
+  window needs focus.
+- Feel free to correct an idea below if the code or the game shows a better way; note why.
+
+## Controls changes
+
+- **LT held on the ground (crouching, not running) + button = trap kit.** Running LT+X stays the
+  SM64 slide kick; LT in the air stays ground pound; LT+A long jump/backflip unchanged.
+- **D-pad left: metal cap removed** (user dislikes the invulnerability; Mega already covers
+  "powered-up"). Replace with a new power-up that surprises visually, is very fun and **uses the
+  map's properties** (terrain, height, water, walls, physics props...). To be designed at the start
+  of the implementation session (propose 2-3 options, pick the best, explain).
+- R3: Star Rush (batch 7). Everything else as today.
+
+## Features (numbered as in the approved list)
+
+### A. Trap kit (LT + button, 3D items, cooldowns)
+1. **Banana** (LT+X): commons stepping on it slip (short ragdoll / fall, ~2 s down), mediums
+   stagger, bosses ignore it. Max 2 on the floor, ~10 s cooldown.
+2. **Green shell** (LT+Y, user's idea): kicked along the floor, bounces off walls and enemies,
+   gone after **4 hits**; each hit damages and knocks commons down. Hold Y = **red shell**: fewer
+   bounces, homes on the nearest enemy.
+3. **Bob-omb** (LT+B): thrown, bounces/rolls, fuse ~2 s, AoE blast (Combat::blast), flings smalls.
+4. **Spring** (LT+RB): planted; an enemy stepping on it is launched up ready for a juggle; Mario
+   gets a super jump.
+   (POW block dropped: overlaps ground pound / Mega.) Existing B,Y Mario-shell slide stays.
+   Risk: chest vertex buffer nearly full (754 Mario + 396 gear of 1184): items likely go on another
+   armour piece (gloves/legs row) — verify first.
+
+### B. Hook (RT)
+5. **Home run**: X while a small enemy is being pulled bats it toward the camera direction;
+   it bowls over enemies it hits.
+6. **Tether** (Just Cause): with one enemy hooked, RT on another slams both together (stun).
+7. **Pole swing** (SM64 poles): hold RT on an enemy = Mario swings round it; release = flying kick
+   with the momentum.
+8. **Boss ride** (Monster Hunter wirebug): hook a big one, hold RT and steer; slammed into a wall
+   it is left open. Long cooldown.
+
+### C. Timing and defence
+9. **Mikiri stomp** (Sekiro): A just before an enemy blow lands (dodge.rs detection) = Mario lands
+   on the weapon/head, enemy staggered, posture build-up toward finishers. Early = plain jump.
+10. **Action command** (Paper Mario): X on the impact frame = "Nice!", more damage + style.
+11. **Dash Bonk** (Hades): X at the end of the dash = thrust.
+
+### D. Combos
+12. **Directional variants** (DMC): back + X = launcher for every weapon; forward + Y = gap-closer.
+13. **MAX finishers**: 12+ hits without taking damage -> weapon glows, next finisher is MAX. Hit =
+    streak lost. **Chomp Cyclone MAX** (user's idea): wide spin that flings smalls and some
+    mediums in semi-ragdoll (they get up). Hammer: cross-shaped quake. Boomerang: three at once.
+    Fists: flurry + uppercut.
+14. **Fluidity and look & feel (rigorous)**: smooth blends between moves (no pops), anticipation
+    and follow-through, squash & stretch, hit freeze + camera punch on finishers, per-weapon trail
+    colour, enemy flash on impact. **Chomp spin on held Y**: keep it (user liked it) but give it
+    the *Blades of Exile* feel — wide chain arcs with momentum, fire ribbon along the chain, chain
+    clinks, wind-up and recovery, the ball trailing behind Mario's hand. Review every existing move
+    for stiffness/pops and fix what feels off.
+
+### E. Systems
+15. **Skillshots** (Bulletstorm): named style bonuses for creative kills: "Slip!", "Strike!",
+    "Home Run", "Carom" (shell knocks 3)...
+16. **Freeflow** (Arkham): B toward another enemy mid-combo = leap to it, string kept.
+17. **Star Rush** (DMC Devil Trigger): style fills a star meter; R3 = 10 s super armour, a bit
+    faster, star sparks, power-up music quiet.
+18. **Stopwatch** (BotW Stasis + SMB2): freeze an enemy 3 s, blows store momentum, it flies off
+    when time resumes. Riskiest (needs a way to freeze enemy animation).
+
+### F. Co-op (subtle)
+19. **Bros. Jump**: landing on the partner's head = high bounce (local only, no new packets).
+20. **Partner HUD**: when a second player is connected, a small thematic readout of the partner
+    (Luigi/Mario head icon + SM64-style power pie or small bar with their HP, maybe distance arrow
+    when off screen). Small, unobtrusive, hidden alone. Needs partner HP in the pose packet (bump
+    packet VERSION; old peers must not crash).
+
+## Batches
+
+1. 9, 10, 11, 19 (timing) + 20 (partner HUD)
+2. Vertex-budget check, then 1, 2 (banana, shell)
+3. 3, 4 (Bob-omb, spring) + new D-pad-left power-up
+4. 5, 6, 7 (hook)
+5. 12, 13, 14 (combos, MAX, fluidity incl. Blades-of-Exile Chomp)
+6. 15, 16 (skillshots, freeflow)
+7. 17, 18, 8 (Star Rush, stopwatch, boss ride)
+
+End: build, install in C:\ER-Mario and Reforged, commit + push with README updated, upload the DLL
+to pre-release `coop-2026-10-17` (ER-Mario-coop.zip, `--clobber`, new SHA256 in the notes),
+update memory, summary of what to test + prompt for the partner's notebook.
