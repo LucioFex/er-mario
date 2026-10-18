@@ -17,9 +17,10 @@ use crate::log;
 const STATUS_MESSAGE_YOU_DIED: i32 = 5;
 /// "DEMIGOD FELLED", "LEGEND FELLED", "GREAT ENEMY FELLED"
 const FELLED: [i32; 3] = [1, 2, 3];
-const IRIS_SECONDS: f32 = 1.3;
-/// Mario's own death animation plays before Bowser shows up
-const DELAY_SECONDS: f32 = 3.0;
+const IRIS_SECONDS: f32 = 1.0;
+/// Mario's own death animation plays before Bowser shows up (it started before the banner: the
+/// game shows "YOU DIED" a while after the death; at 3 s the wait felt long)
+const DELAY_SECONDS: f32 = 1.6;
 /// SOUND_MENU_BOWSER_LAUGH
 pub const BOWSER_LAUGH: i32 = 0x7018_8081;
 
@@ -31,6 +32,8 @@ pub static BOSS_FELLED: AtomicBool = AtomicBool::new(false);
 pub static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 static STATE: Mutex<Option<Instant>> = Mutex::new(None);
+/// When the player last died (`update` saw him dead), for the timeline in the log
+static DIED_AT: Mutex<Option<Instant>> = Mutex::new(None);
 static LAUGHED: AtomicBool = AtomicBool::new(false);
 /// The Bowser mask as opaque runs (row, first column, last column + 1) on a 64x64 grid.
 static RUNS: Mutex<Vec<(u8, u8, u8)>> = Mutex::new(Vec::new());
@@ -145,8 +148,19 @@ pub unsafe fn install_hook() {
 pub fn update(alive: bool) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let mut started = false;
+    {
+        let mut died = DIED_AT.lock().unwrap_or_else(|e| e.into_inner());
+        if !alive && died.is_none() {
+            *died = Some(Instant::now());
+        } else if alive && state.is_none() {
+            *died = None;
+        }
+    }
     if STARTED.swap(false, Ordering::Relaxed) && state.is_none() {
         *state = Some(Instant::now());
+        if let Some(d) = *DIED_AT.lock().unwrap_or_else(|e| e.into_inner()) {
+            log(format!("gameover: the banner came {:.1} s after the death, Bowser in {DELAY_SECONDS} s", d.elapsed().as_secs_f32()));
+        }
     }
     let Some(t0) = *state else { return false };
     // never keep the player behind a black screen: if the game hasn't respawned them by now,
@@ -166,6 +180,12 @@ pub fn update(alive: bool) -> bool {
         started = true;
     }
     if alive && t > IRIS_SECONDS {
+        let died = DIED_AT.lock().unwrap_or_else(|e| e.into_inner()).take();
+        log(format!(
+            "gameover: respawned {:.1} s after the banner{}",
+            t0.elapsed().as_secs_f32(),
+            died.map_or(String::new(), |d| format!(", {:.1} s after the death", d.elapsed().as_secs_f32()))
+        ));
         *state = None; // respawned
         LAUGHED.store(false, Ordering::Relaxed);
         return started;
@@ -181,6 +201,7 @@ pub fn showing() -> bool {
 
 pub fn reset() {
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *DIED_AT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     LAUGHED.store(false, Ordering::Relaxed);
     STARTED.store(false, Ordering::Relaxed);
 }
