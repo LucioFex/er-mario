@@ -39,6 +39,10 @@ fn key(h: &FieldInsHandle) -> u64 {
 
 /// Sends `h` flying along `dir` (horizontal). False if it can't go (gone, dead, already flying).
 pub fn launch(h: &FieldInsHandle, dir: Vec3) -> bool {
+    // (co-op guest: the host owns the enemies, moving one here would only make it jump)
+    if crate::coop::guest() {
+        return false;
+    }
     let mut flying = FLYING.lock().unwrap_or_else(|e| e.into_inner());
     if flying.iter().any(|f| key(&f.mob) == key(h)) {
         return false;

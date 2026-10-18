@@ -59,7 +59,8 @@ pub fn update(combat: &mut Combat, tick: u32, dt: f32, charge: Option<(Vec3, Vec
             combat::impact(combat, &handle, if strong { HIT_STRONG } else { HIT }, tick);
             crate::worker::call("trample sound", |_| unsafe { crate::sm64::sm64_play_sound_global(SOUND_BUMP) });
             log(format!("trample: ran into {} at {:.1} m/s", if strong { "a big or strong enemy" } else { "an enemy" }, vel.length()));
-            if !strong {
+            // (co-op guest: not flung, the host owns the enemies)
+            if !strong && !crate::coop::guest() {
                 flung.push(Flung { handle, vel: vel * CARRY + Vec3::Y * LIFT, since: Instant::now(), limp: false });
             }
         }

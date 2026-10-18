@@ -213,6 +213,14 @@ impl Archives {
 
     /// The raw (usually DCX compressed) bytes of a game file, e.g. "/parts/bd_m_1280.partsbnd.dcx".
     pub fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        // another mod's copy first (base_assets, e.g. Reforged's)
+        if let Some(base) = crate::paths::base_assets() {
+            let file = base.join(path.trim_start_matches('/'));
+            if file.is_file() {
+                crate::log(format!("assets: {path} from {}", base.display()));
+                return std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()));
+            }
+        }
         let e = self.entries.get(&path_hash(path)).ok_or(format!("{path} not in the game archives"))?;
         let mut f = std::fs::File::open(&e.bdt).map_err(|err| format!("{}: {err}", e.bdt.display()))?;
         let mut data = vec![0u8; e.padded];

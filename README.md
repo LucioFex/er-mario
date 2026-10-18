@@ -361,13 +361,27 @@ replaces this fork's DLL with the original one.
 
 ## Luigi and co-op (experimental)
 
-`character = luigi` in `er_mario.ini` builds the model as Luigi, in green and navy (the next two
-launches rebuild it). `docs/coop/er-mario-coop.me3` is a me3 profile that loads
-[Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510) (its `SeamlessCoop` folder next to
-the profile) together with ER Mario. This is groundwork, **not real co-op yet**: each player sees
-themselves as Mario or Luigi, but the other player isn't animated as Mario on your screen, and as
-the guest Mario's blows don't stick (the host's game owns the enemies). Syncing Mario's pose and
-the guest's blows over the network is the next step.
+Play [Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510) as Mario and Luigi, also on
+top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step-by-step setup
+(in Spanish): [docs/coop/README.md](docs/coop/README.md).
+
+- `character = luigi` in `er_mario.ini` makes you Luigi, in green and navy (the next two launches
+  rebuild the model). Mario wears the Vagabond chest piece, Luigi its Altered version, and every
+  install also builds the other brother, so each player sees the other as who they play.
+- Each player's Mario pose goes to the other over Steam (the game's own `steam_api64`,
+  SteamNetworkingMessages on a channel of the mod's), ~30 times a second, and is put on their
+  character there.
+- The host owns the enemies: the guest's blows are sent to the host, who takes them off and deals
+  the final blow. As the guest you can't grab enemies or launch them (they'd jump back to where
+  the host has them), but every blow counts.
+- A blow on your partner only pushes them.
+- With Reforged, put `er_mario.dll`, `er_mario.ini` and your ROM in Reforged's `dll\offline`:
+  the mod then builds its models into Reforged's `addons\er-mario`, which Reforged's launcher
+  loads (`package_dir = ...` in `er_mario.ini` overrides it). `base_assets = ...` makes the build
+  start from another mod's menu, material or Torrent files instead of the game's.
+- Both players need the same ER Mario build, the same Seamless version and the same regulation
+  (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
+- Not synced yet: caps' looks and sounds of the other player, Yoshi.
 
 ## Building
 

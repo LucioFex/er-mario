@@ -33,8 +33,47 @@ pub fn mod_dir() -> &'static Path {
     })
 }
 
+/// A file of the mod's: next to the DLL, the package's ("package/...") in package_dir.
 pub fn file(name: &str) -> PathBuf {
-    mod_dir().join(name)
+    match name.strip_prefix("package") {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => package_dir().join(rest.trim_start_matches('/')),
+        _ => mod_dir().join(name),
+    }
+}
+
+/// Where the built model files go, for me3 to serve: `package_dir = ...` from er_mario.ini
+/// (absolute, or relative to the mod folder); with the DLL in Elden Ring Reforged's dll\offline,
+/// Reforged's addons\er-mario (its launcher loads the asset mods there); else `package` next to
+/// the DLL.
+pub fn package_dir() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        if let Some(p) = config("package_dir").filter(|p| !p.is_empty()) {
+            let p = PathBuf::from(p);
+            return if p.is_absolute() { p } else { mod_dir().join(p) };
+        }
+        // (an install that already built its package next to the DLL keeps it there: its own
+        // profile serves it)
+        let own = mod_dir().join("package");
+        reforged_addons(mod_dir()).filter(|_| !own.join(".built").is_file()).unwrap_or(own)
+    })
+}
+
+/// `<Reforged>/addons/er-mario` when `dir` is `<Reforged>/dll/offline` and the addons folder is there.
+fn reforged_addons(dir: &Path) -> Option<PathBuf> {
+    let named = |p: &Path, n: &str| p.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.eq_ignore_ascii_case(n));
+    let dll = dir.parent().filter(|_| named(dir, "offline"))?;
+    let root = dll.parent().filter(|_| named(dll, "dll"))?;
+    let addons = root.join("addons");
+    addons.is_dir().then(|| addons.join("er-mario"))
+}
+
+/// `base_assets = ...` from er_mario.ini: a folder of another mod's game files (e.g. Reforged's)
+/// that the asset build starts from instead of the game's own where it has them (the menu
+/// textures, the material list, Torrent), so the mod's copies keep that mod's changes.
+pub fn base_assets() -> Option<PathBuf> {
+    let p = PathBuf::from(config("base_assets").filter(|p| !p.is_empty())?);
+    Some(if p.is_absolute() { p } else { mod_dir().join(p) })
 }
 
 /// `key = value` from er_mario.ini (lines starting with # or ; are comments).
@@ -88,4 +127,23 @@ pub fn read_rom() -> Result<Vec<u8>, String> {
         return Err(format!("{} is not the US Super Mario 64 ROM ({name:?})", path.display()));
     }
     Ok(rom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reforged_addons;
+
+    #[test]
+    fn finds_reforged_addons() {
+        let root = std::env::temp_dir().join(format!("er_mario_paths_{}", std::process::id()));
+        let offline = root.join("dll").join("offline");
+        std::fs::create_dir_all(&offline).unwrap();
+        // no addons folder: not Reforged
+        assert_eq!(reforged_addons(&offline), None);
+        std::fs::create_dir_all(root.join("addons")).unwrap();
+        assert_eq!(reforged_addons(&offline), Some(root.join("addons").join("er-mario")));
+        // the DLL elsewhere
+        assert_eq!(reforged_addons(&root.join("dll")), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -258,7 +258,12 @@ static LAYOUT: Mutex<Option<(usize, PoseLayout)>> = Mutex::new(None);
 
 /// The player's pose buffers, validated once per change of any pointer.
 fn pose_layout(chr: usize, raw: impl Fn(usize) -> usize) -> Option<PoseLayout> {
-    let mut cached = LAYOUT.lock().unwrap_or_else(|e| e.into_inner());
+    pose_layout_in(chr, raw, &mut LAYOUT.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// pose_layout with its own cache slot (the co-op partners' are apart from the player's: the
+/// animation hook checks the player's).
+fn pose_layout_in(chr: usize, raw: impl Fn(usize) -> usize, cached: &mut Option<(usize, PoseLayout)>) -> Option<PoseLayout> {
     if let Some((c, l)) = *cached {
         // cheap check: same character, same importer, same buffers
         if c == chr && raw(chr + 0x398) == l.imp && raw(l.imp + 0x60) == l.model && raw(l.imp + 0x50) == l.local {
@@ -363,8 +368,44 @@ pub fn apply(chr: usize) {
         }
         return;
     };
-    if let Some(head) = write_pose(&layout, &map.bones, &pose, false) {
+    if let Some(head) = write_pose(&layout, &map.bones, &pose, false, true) {
         *LAST_HEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(head);
+    }
+}
+
+/// A co-op partner's layouts and bone maps (coop.rs), apart from the player's.
+static REMOTE_LAYOUTS: Mutex<Vec<(usize, Option<(usize, PoseLayout)>)>> = Mutex::new(Vec::new());
+static REMOTE_BONES: Mutex<Vec<(usize, Option<[usize; PARTS]>)>> = Mutex::new(Vec::new());
+
+/// Writes a co-op partner's Mario pose (character space, as they sent it) into their character.
+pub fn apply_remote(chr: usize, pose: &[PartPose; PARTS]) {
+    let raw = |a: usize| unsafe { *(a as *const usize) };
+    let layout = {
+        let mut slots = REMOTE_LAYOUTS.lock().unwrap_or_else(|e| e.into_inner());
+        if !slots.iter().any(|s| s.0 == chr) {
+            if slots.len() >= 8 {
+                slots.remove(0);
+            }
+            slots.push((chr, None));
+        }
+        let Some(slot) = slots.iter_mut().find(|s| s.0 == chr) else { return };
+        pose_layout_in(chr, raw, &mut slot.1)
+    };
+    let Some(layout) = layout else { return };
+    let mut maps = REMOTE_BONES.lock().unwrap_or_else(|e| e.into_inner());
+    let bones = match maps.iter().find(|m| m.0 == layout.skeleton) {
+        Some(m) => m.1,
+        None => {
+            let b = map_bones(layout.skeleton).map(|m| m.bones);
+            if maps.len() >= 8 {
+                maps.remove(0);
+            }
+            maps.push((layout.skeleton, b));
+            b
+        }
+    };
+    if let Some(bones) = bones {
+        write_pose(&layout, &bones, pose, false, false);
     }
 }
 
@@ -517,7 +558,7 @@ pub fn menu_models() -> bool {
 /// only lives for a moment).
 fn find_models(now: bool) -> bool {
     use std::sync::atomic::Ordering;
-    let chest = crate::equip::MARIO_CHEST;
+    let chests = crate::equip::mario_chests();
     // (a model can be updated once and then sit there while its parts load: it's kept for a
     // while after its last update. Reading one that's gone is harmless, only poses the game
     // itself syncs are written to)
@@ -577,7 +618,7 @@ fn find_models(now: bool) -> bool {
     for rend in rends {
         // renderer +0x1ac the armour ids of its ChrAsm (head, chest, arms, legs from +0x1dc),
         // +0x770 the body's model, +0x778 the armour's (its parts are models of their own)
-        if explore::read_u64(rend + 0x1e0).map(|v| v as u32 as i32) != Some(chest) {
+        if !explore::read_u64(rend + 0x1e0).is_some_and(|v| chests.contains(&(v as u32 as i32))) {
             continue;
         }
         // the body's pose importer: model +0x18 display entity, its +0x210 exporter, that one's
@@ -658,15 +699,15 @@ fn menu_pose(pose: usize) {
         }
     };
     if let Some(bones) = bones {
-        write_pose(&layout, &bones, &stand, true);
+        write_pose(&layout, &bones, &stand, true, false);
     }
 }
 
 /// Puts the part poses on their bones and hides the rest; returns where the head bone went.
 /// `away`: hidden bones also go far below, each hidden branch by its first bone (in the menus the
 /// weapons hang on theirs and don't shrink with them; in the world the game aims the camera at
-/// some, so they stay put there).
-fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PARTS], away: bool) -> Option<[f32; 3]> {
+/// some, so they stay put there). `root`: the player's own pose, which follows a grab's root bone.
+fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PARTS], away: bool, root: bool) -> Option<[f32; 3]> {
     let PoseLayout { model, local, parents, count, .. } = *layout;
     type Qs = (Vec3, Quat);
     let read = |base: usize, b: usize| -> Qs {
@@ -699,7 +740,7 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
     }
     // the root bone a grab moves (the parent of Mario's pelvis bone), followed while ROOT_FOLLOW
     // is on (only for the live pose, not the menus'): its rest is kept up while it's off
-    let root_bone = (!away && bones[1] < n).then(|| parent_of(bones[1])).filter(|&p| p >= 0).map(|p| p as usize);
+    let root_bone = (root && bones[1] < n).then(|| parent_of(bones[1])).filter(|&p| p >= 0).map(|p| p as usize);
     let follow_on = root_bone.is_some() && ROOT_FOLLOW.load(std::sync::atomic::Ordering::Relaxed);
     let mut follow: Option<((Vec3, Quat), (Vec3, Quat), f32)> = None;
     let mut world: Vec<Qs> = Vec::with_capacity(n);

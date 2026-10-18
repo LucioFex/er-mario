@@ -107,6 +107,10 @@ fn launched(pos: Vec3, mario: Vec3, height: f32) -> Phase {
 /// enemy that's stunned (a regular one is `regular`); `high`: the hammer's launcher, sending it
 /// flying high up. True if it's up now.
 pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32, regular: bool, stunned: bool, high: bool) -> bool {
+    // (co-op guest: the host owns the enemies, moving one here would only make it jump)
+    if crate::coop::guest() {
+        return false;
+    }
     let (max_r, max_h) = if regular { (MAX_RADIUS, MAX_HEIGHT) } else { (MAX_RADIUS_STUNNED, MAX_HEIGHT_STUNNED) };
     if !(regular || stunned) || radius_m > max_r || height_m > max_h {
         return false;
@@ -145,12 +149,17 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
 
 /// An enemy the hook may drag in (m): a regular one not too big (the others: Mario goes to them).
 pub fn draggable(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> bool {
-    radius_m <= MAX_RADIUS && height_m <= MAX_HEIGHT && crate::combat::liftable(h) && !crate::combat::hands_off(h)
+    // (co-op guest: Mario flies to it instead, the host owns the enemies)
+    !crate::coop::guest() && radius_m <= MAX_RADIUS && height_m <= MAX_HEIGHT && crate::combat::liftable(h) && !crate::combat::hands_off(h)
 }
 
 /// The hook caught `h` (hook.rs): dragged in to Mario, `air`: he's in the air.
 /// True if it's coming.
 pub fn pull(h: &FieldInsHandle, air: bool) -> bool {
+    // (co-op guest: the host owns the enemies, moving one here would only make it jump)
+    if crate::coop::guest() {
+        return false;
+    }
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     let phase = Phase::Pulled { since: Instant::now(), air };
     if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {

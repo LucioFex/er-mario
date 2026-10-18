@@ -179,8 +179,12 @@ fn luigi_color(c: [f32; 3]) -> [f32; 3] {
 }
 
 pub fn mario_albedo(model: &MarioModel) -> Image {
+    mario_albedo_as(model, luigi())
+}
+
+/// Mario's albedo in Mario's colours or Luigi's (the co-op partner's model is the other one).
+pub fn mario_albedo_as(model: &MarioModel, luigi: bool) -> Image {
     let mut img = Image::new(SIZE, SIZE, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
-    let luigi = luigi();
     let mut cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
     if luigi {
         for p in cells.iter_mut().flatten() {

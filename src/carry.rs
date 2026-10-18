@@ -53,6 +53,10 @@ fn key(h: &FieldInsHandle) -> u64 {
 /// Mario's punch landed on `h` (a regular enemy): lifts it if Mario is behind it and it isn't too
 /// big. True: picked up (no normal damage).
 pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32) -> bool {
+    // (co-op guest: no grabs, the host owns the enemies)
+    if crate::coop::guest() {
+        return false;
+    }
     let mut phase = PHASE.lock().unwrap_or_else(|e| e.into_inner());
     if !matches!(*phase, Phase::Idle) || radius_m > MAX_RADIUS || height_m > MAX_HEIGHT {
         return false;

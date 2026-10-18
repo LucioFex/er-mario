@@ -23,14 +23,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 12";
+const VERSION: &str = "er-mario assets 13";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
 pub const MODEL_MARIO: u16 = 999;
 pub const MODEL_METAL: u16 = 998;
 pub const MODEL_WING: u16 = 997;
-const LOOKS: [u16; 3] = [MODEL_MARIO, MODEL_METAL, MODEL_WING];
+/// the other character (co-op): Luigi on Mario's PC, Mario on Luigi's (equip.rs puts it on the
+/// partner's chest row)
+pub const MODEL_PARTNER: u16 = 996;
+const LOOKS: [u16; 4] = [MODEL_MARIO, MODEL_METAL, MODEL_WING, MODEL_PARTNER];
 const QUALITIES: [&str; 2] = ["hi", "low"];
 
 /// The bone the build put Mario's hammer on (engine_mario reads it), next to the package files.
@@ -214,6 +217,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
         (MODEL_MARIO, model, tex::mario_albedo(model), false),
         (MODEL_METAL, model, tex::metal_albedo(model), true),
         (MODEL_WING, &winged, tex::wing_albedo(&winged), false),
+        (MODEL_PARTNER, model, tex::mario_albedo_as(model, !tex::luigi()), false),
     ];
 
     // the armour set, as its own model 999: Mario in the chest piece, the rest empty; and the

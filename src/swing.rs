@@ -344,6 +344,10 @@ pub fn toughness_of(h: &FieldInsHandle) -> Option<(f32, f32)> {
 
 /// A hit landed on `h`: if its stance is broken, Mario grabs it (returns true: no normal damage).
 pub fn try_grab(h: &FieldInsHandle, radius_m: f32) -> bool {
+    // (co-op guest: no grabs, the host owns the enemies)
+    if crate::coop::guest() {
+        return false;
+    }
     let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if !matches!(st.phase, Phase::Idle) {
         return false;

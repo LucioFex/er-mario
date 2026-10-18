@@ -487,7 +487,8 @@ impl Fire {
                 self.bursts.push(Burst { pos: er(origin, at), level: shot.level, born: tick });
                 if shot.level >= 3 {
                     sound(SOUND_BOMB);
-                    if let Some(h) = t.shootable().filter(|_| !blown) {
+                    // (co-op guest: no push, the host owns the enemies)
+                    if let Some(h) = t.shootable().filter(|_| !blown && !crate::coop::guest()) {
                         self.pushes.push(Push { handle: *h, dir: Vec3::new(v.x, 0.0, v.z).normalize_or_zero(), left: PUSH_TICKS });
                     }
                 } else {
@@ -548,7 +549,7 @@ impl Fire {
                 shot.hit.push(t.key());
                 worker::call("fireball sweep", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BOMB, 0.4) });
                 self.bursts.push(Burst { pos: center, level: 3, born: tick });
-                if combat::blowable(&h) {
+                if combat::blowable(&h) && !crate::coop::guest() {
                     shot.swept.push(h);
                 } else {
                     log(format!("fireball: the giant one clings to a big one ({} carried)", shot.swept.len()));

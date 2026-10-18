@@ -14,9 +14,36 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use crate::log;
 
 const PROTECTOR: u32 = 0x1000_0000;
-/// Mario set: (ChrAsm slot, item id)
-pub const MARIO_SET: [(usize, u32); 4] =
-    [(12, 660000 | PROTECTOR), (13, 660100 | PROTECTOR), (14, 660200 | PROTECTOR), (15, 660300 | PROTECTOR)];
+/// Mario set: (ChrAsm slot, item id); Luigi's chest piece is his own (see LUIGI_CHEST)
+pub fn mario_set() -> [(usize, u32); 4] {
+    [(12, 660000 | PROTECTOR), (13, own_chest() | PROTECTOR), (14, 660200 | PROTECTOR), (15, 660300 | PROTECTOR)]
+}
+
+/// `character = luigi` (read once: a change needs a restart for the model anyway)
+pub fn luigi() -> bool {
+    static LUIGI: OnceLock<bool> = OnceLock::new();
+    *LUIGI.get_or_init(crate::assets::tex::luigi)
+}
+
+/// Luigi wears the Vagabond's altered armour, Mario the Vagabond's: on each PC the player's own
+/// row shows their own model (999, and the caps' looks) and the other row the other character
+/// (MODEL_PARTNER), so in co-op each sees the other as who they play.
+const LUIGI_CHEST: u32 = 661100;
+
+fn own_chest() -> u32 {
+    if luigi() { LUIGI_CHEST } else { VAGABOND[1] }
+}
+
+fn partner_chest() -> u32 {
+    if luigi() { VAGABOND[1] } else { LUIGI_CHEST }
+}
+
+/// The rows have Mario's and the partner's models now (coop.rs poses a partner only then).
+static ROWS_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn partner_row_on() -> bool {
+    ROWS_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
 const UNARMED: u32 = 110000;
 const WEAPON_SLOTS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
@@ -107,36 +134,61 @@ const BARE: [(usize, u32); 4] = [(12, 10000 | PROTECTOR), (13, 10100 | PROTECTOR
 const VAGABOND_ICONS: [u16; 4] = [14010, 14011, 14012, 14013];
 const MARIO_ICONS: [u16; 4] = [13580, 13581, 13582, 13583];
 
-/// The Vagabond rows' own hide flags (saved the first time Mario's model goes on).
-static VAGABOND_HIDE: std::sync::Mutex<Option<[[u8; 96]; 4]>> = std::sync::Mutex::new(None);
+/// The rows' own model, icons and hide flags (saved the first time Mario's model goes on).
+struct Saved {
+    id: u32,
+    model: u16,
+    icon_m: u16,
+    icon_f: u16,
+    hide: [u8; 96],
+}
+static VAGABOND_HIDE: std::sync::Mutex<Vec<Saved>> = std::sync::Mutex::new(Vec::new());
 
 /// Switches the Vagabond set's model and menu icons to Mario's (or back). With Mario's model every
 /// part of the Tarnished is hidden too: face, beard and hair are skinned to bones Mario's parts
-/// ride on (Neck...), so they would otherwise poke out of Mario.
+/// ride on (Neck...), so they would otherwise poke out of Mario. The other character's chest row
+/// (co-op partner) gets their model, if the regulation has it.
 fn set_vagabond_model(model: u16) -> bool {
+    use eldenring::cs::EquipParamProtector;
     let Ok(repo) = (unsafe { eldenring::cs::SoloParamRepository::instance_mut() }) else { return false };
     let mario = model == MARIO_MODEL;
-    let icons = if mario { MARIO_ICONS } else { VAGABOND_ICONS };
+    let mut rows: Vec<(u32, u16, u16)> = VAGABOND.into_iter().enumerate().map(|(k, id)| (id, model, if mario { MARIO_ICONS[k] } else { VAGABOND_ICONS[k] })).collect();
+    if let Some(r) = rows.iter_mut().find(|r| r.0 == VAGABOND[1]) {
+        r.0 = own_chest();
+    }
+    if repo.get::<EquipParamProtector>(partner_chest()).is_some() {
+        rows.push((partner_chest(), crate::assets::MODEL_PARTNER, MARIO_ICONS[1]));
+    }
     let mut saved = VAGABOND_HIDE.lock().unwrap_or_else(|e| e.into_inner());
-    if mario && saved.is_none() {
-        let mut own = [[0; 96]; 4];
-        for (k, id) in VAGABOND.into_iter().enumerate() {
-            let Some(row) = repo.get::<eldenring::cs::EquipParamProtector>(id) else { return false };
-            own[k] = get_hide(row);
+    if mario && saved.is_empty() {
+        for &(id, ..) in &rows {
+            let Some(row) = repo.get::<EquipParamProtector>(id) else {
+                saved.clear();
+                return false;
+            };
+            saved.push(Saved { id, model: row.equip_model_id(), icon_m: row.icon_id_m(), icon_f: row.icon_id_f(), hide: get_hide(row) });
         }
-        *saved = Some(own);
+        log(format!("equip: armour rows as found (id, model, icon): {:?}", saved.iter().map(|s| (s.id, s.model, s.icon_m)).collect::<Vec<_>>()));
     }
-    for (k, id) in VAGABOND.into_iter().enumerate() {
-        let Some(row) = repo.get_mut::<eldenring::cs::EquipParamProtector>(id) else { return false };
-        row.set_equip_model_id(model);
-        row.set_icon_id_m(icons[k]);
-        row.set_icon_id_f(icons[k]);
-        match (mario, *saved) {
-            (true, _) => set_hide(row, [1; 96]),
-            (false, Some(own)) => set_hide(row, own[k]),
-            (false, None) => {}
+    for (id, model, icon) in rows {
+        let Some(row) = repo.get_mut::<EquipParamProtector>(id) else { return false };
+        if mario {
+            row.set_equip_model_id(model);
+            row.set_icon_id_m(icon);
+            row.set_icon_id_f(icon);
+            set_hide(row, [1; 96]);
+        } else if let Some(s) = saved.iter().find(|s| s.id == id) {
+            row.set_equip_model_id(s.model);
+            row.set_icon_id_m(s.icon_m);
+            row.set_icon_id_f(s.icon_f);
+            set_hide(row, s.hide);
+        } else if id != partner_chest() {
+            row.set_equip_model_id(model);
+            row.set_icon_id_m(icon);
+            row.set_icon_id_f(icon);
         }
     }
+    ROWS_ON.store(mario, std::sync::atomic::Ordering::Relaxed);
     true
 }
 
@@ -148,7 +200,7 @@ static LOOK_RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 pub fn set_look(model: u16) {
     use crate::assets::{MODEL_MARIO, MODEL_METAL, MODEL_WING};
     let Ok(repo) = (unsafe { eldenring::cs::SoloParamRepository::instance_mut() }) else { return };
-    let Some(row) = repo.get_mut::<eldenring::cs::EquipParamProtector>(VAGABOND[1]) else { return };
+    let Some(row) = repo.get_mut::<eldenring::cs::EquipParamProtector>(own_chest()) else { return };
     let now = row.equip_model_id();
     // (only in Mario mode, and only a change)
     if now == model || ![MODEL_MARIO, MODEL_METAL, MODEL_WING].contains(&now) {
@@ -165,7 +217,7 @@ pub fn set_look(model: u16) {
 pub fn look_tick(player: &PlayerIns) {
     if LOOK_RELOAD.load(std::sync::atomic::Ordering::Relaxed) && equipped(player, BARE[1].0) == BARE[1].1 {
         LOOK_RELOAD.store(false, std::sync::atomic::Ordering::Relaxed);
-        equip(MARIO_SET[1].0, MARIO_SET[1].1);
+        equip(mario_set()[1].0, mario_set()[1].1);
     }
 }
 
@@ -210,7 +262,7 @@ pub fn menu_mario() -> bool {
     if repo.solo_param_holders[1].get_res_cap(0).is_none() {
         return false;
     }
-    if repo.get::<EquipParamProtector>(VAGABOND[1]).is_none_or(|row| row.equip_model_id() != MARIO_MODEL) {
+    if repo.get::<EquipParamProtector>(own_chest()).is_none_or(|row| row.equip_model_id() != MARIO_MODEL) {
         if !set_vagabond_model(MARIO_MODEL) {
             return false;
         }
@@ -220,8 +272,10 @@ pub fn menu_mario() -> bool {
     true
 }
 
-/// The Mario set's chest piece, as a ChrAsm has it.
-pub const MARIO_CHEST: i32 = VAGABOND[1] as i32;
+/// The chest pieces that carry a Mario model (own and partner's), as a ChrAsm has them.
+pub fn mario_chests() -> [i32; 2] {
+    [own_chest() as i32, partner_chest() as i32]
+}
 
 /// Set while the armour slots are being emptied (so that equipping the set afterwards loads the
 /// model that was just switched); the game applies equips a little later, so this is a phase the
@@ -348,7 +402,7 @@ pub fn enter(player: &PlayerIns) -> Option<Loadout> {
         let game_idx = gdm.main_player_game_data.equipment.equipment_item_idx_list[13];
         log(format!("equip: chest {:#x}: our index {:?}, game's {game_idx}", equipped(player, 13), inventory_index(equipped(player, 13))));
     }
-    let missing: Vec<u32> = MARIO_SET.iter().map(|&(_, i)| i).filter(|&i| inventory_index(i).is_none()).collect();
+    let missing: Vec<u32> = mario_set().iter().map(|&(_, i)| i).filter(|&i| inventory_index(i).is_none()).collect();
     if !missing.is_empty() {
         log(format!("equip: giving the Mario set {missing:x?}"));
         give(&missing);
@@ -370,7 +424,7 @@ pub fn enforce(player: &PlayerIns) -> bool {
         BARING.store(false, std::sync::atomic::Ordering::Relaxed);
         log("equip: armour emptied, putting the Mario set on");
     }
-    let armour = if BARING.load(std::sync::atomic::Ordering::Relaxed) { BARE } else { MARIO_SET };
+    let armour = if BARING.load(std::sync::atomic::Ordering::Relaxed) { BARE } else { mario_set() };
     let wanted = armour.iter().copied().chain(WEAPON_SLOTS.iter().map(|&s| (s, UNARMED)));
     for (slot, item) in wanted {
         let now = equipped(player, slot);

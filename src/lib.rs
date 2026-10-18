@@ -16,6 +16,7 @@ mod chomp;
 mod collision;
 mod coins;
 mod combat;
+mod coop;
 mod dodge;
 mod engine_mario;
 mod fireball;
@@ -40,6 +41,7 @@ mod collision_geometry;
 mod throw_collision;
 mod trample;
 mod names;
+mod net;
 mod notes;
 mod pads;
 mod save_backup;
@@ -771,6 +773,7 @@ fn init_sm64(export: bool) -> Option<Option<assets::model::MarioModel>> {
 fn startup() {
     let build = assets::check();
     log(format!("mod folder {}", paths::mod_dir().display()));
+    log(format!("package folder {}", paths::package_dir().display()));
     update::start();
     // (not on the setup launch: the game is closed right after it)
     if !build {
@@ -1275,6 +1278,8 @@ fn pose_task() {
     } else if !f11 {
         WAS.store(false, Ordering::Relaxed);
     }
+    // co-op partners as Mario or Luigi (coop.rs)
+    coop::apply_remote();
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -1320,6 +1325,8 @@ fn pose_task_late() {
             }
         }
     }
+    // co-op partners as Mario or Luigi (coop.rs)
+    coop::apply_remote();
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -1728,6 +1735,8 @@ fn frame(data: &FD4TaskData) {
         perf::frame_start();
     }
     let _span = perf::span(perf::FRAME);
+    // co-op (Seamless): the session, the partners' poses, blows and shoves (nothing out of one)
+    coop::frame();
     // the style meter's slow motion (the game's speed back to normal after it, in or out of Mario mode)
     style::update();
     // outside Mario mode the Tarnished dies like anyone (the flag is set further down, while
@@ -2887,6 +2896,11 @@ fn frame(data: &FD4TaskData) {
             })
             .map(|t| t.sm)
             .unwrap_or(m.state.position);
+        // a co-op partner's blow (coop.rs): pushed away from them, no wedge (SM64's X is ER's mirrored)
+        let pushed = coop::take_shove().filter(|_| alive).map(|d| {
+            let p = m.state.position;
+            [p[0] + d.x * 100.0, p[1], p[2] - d.z * 100.0]
+        });
         // stuck inside something (e.g. a lift that stopped around him): pushing the stick but not moving
         // (pushing against a wall is fine: SM64 plays its push / sidestep animation then), or hanging
         // in mid-air without moving
@@ -3014,6 +3028,10 @@ fn frame(data: &FD4TaskData) {
                 Some(combat::Hurt::Drain) => unsafe { sm64::sm64_set_mario_health(id, (health_before - 0x100).max(0xFF) as u16) },
                 // (a shove: SM64's soft knockback, no wedge)
                 None if shoved => unsafe { sm64::sm64_mario_take_damage(id, 0, 0, hurt_from[0], hurt_from[1], hurt_from[2]) },
+                None if pushed.is_some() => {
+                    let [x, y, z] = pushed.unwrap_or_default();
+                    unsafe { sm64::sm64_mario_take_damage(id, 0, 0, x, y, z) }
+                }
                 None => {}
             }
             if kills > 0 {
@@ -3120,6 +3138,8 @@ fn frame(data: &FD4TaskData) {
                     }
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                // co-op host: the guest's blows (coop.rs)
+                m.combat.remote_hits(m.ticks);
                 {
                     let p = to_er(m.origin, state.position);
                     blown::tick(id, &state, glam::Vec3::new(p.0, p.1, p.2));
@@ -3134,6 +3154,9 @@ fn frame(data: &FD4TaskData) {
                     if attacking {
                         lakitu::blow();
                     }
+                    // a co-op partner in the way of a blow is pushed (no damage)
+                    let me = player_ref.chr_ins.modules.physics.position;
+                    coop::shove_partners(glam::Vec3::new(me.0, me.1, me.2), attacking && !m.dead);
                 }
                 // the dash's streaks (hud.rs), the meteor dive's too
                 let streak = |a: u32| moves::dodging(a) || moves::streaking(a);

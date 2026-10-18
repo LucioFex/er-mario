@@ -89,7 +89,39 @@ pub enum Attack {
     YoshiStomp,
 }
 
+/// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
+/// Only ever add at the end (both players need the same build anyway).
+const CODES: [Attack; 44] = [
+    Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
+    Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
+    Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
+    Attack::Tornado, Attack::TornadoEnd, Attack::Hammer, Attack::HammerSmash, Attack::Quake,
+    Attack::HammerAir, Attack::Flurry, Attack::FlurryEnd, Attack::Giro, Attack::GiroEnd, Attack::Chain,
+    Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
+    Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
+    Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp,
+];
+/// the fireball's levels: this plus the level
+const FIRE_CODE: u8 = 200;
+const FIRE_MAX: u8 = FIRE_CODE + 5;
+/// not an attack: an impact's flat share (`impact`), the share as the hit's scale
+pub const IMPACT_CODE: u8 = 199;
+
 impl Attack {
+    pub fn code(self) -> u8 {
+        match self {
+            Attack::Fire(level) => FIRE_CODE.saturating_add(level),
+            a => CODES.iter().position(|&c| c == a).map_or(u8::MAX, |i| i as u8),
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Attack> {
+        match code {
+            FIRE_CODE..=FIRE_MAX => Some(Attack::Fire(code - FIRE_CODE)),
+            _ => CODES.get(code as usize).copied(),
+        }
+    }
+
     fn spec(self) -> (i32, u32, u16, f32, u8, f32) {
         match self {
             // damage: % of the (fist) weapon's attack rating, flat value too
@@ -429,6 +461,16 @@ fn patch_params() -> bool {
         b.set_is_penetrate_map(true);
         b.set_is_hit_both_team(false);
         let Some(a) = repo.get_mut::<AtkParam_Pc>(atk) else { return false };
+        // (another mod's regulation, e.g. Reforged, may use these rows: in the game's own they're
+        // unused, so a damage or sound here means the row is someone's and gets broken)
+        log(format!(
+            "combat: attack {atk} as found: phys {} / correction {}, AI sound {} / {}{}",
+            a.atk_phys(),
+            a.atk_phys_correction(),
+            a.appear_ai_sound_id(),
+            a.hit_ai_sound_id(),
+            if a.atk_phys() > 0 && a.atk_phys() != BULLET_DAMAGE as u16 { " (LOOKS USED by the regulation)" } else { "" }
+        ));
         // The damage that counts is a share of the target's max HP (Combat::deal). On top, the
         // bullet is a real hit with the Tarnished's bare fist. As a flat number alone it took
         // nothing off a boss, whatever the number, so no blow was ever the game's own: a boss
@@ -882,6 +924,9 @@ pub fn tags() -> Vec<crate::hud::Tag> {
 
 /// A thrown character hit something: `pct` of its max HP, lethal if that's all it had left.
 pub fn impact(combat: &mut Combat, handle: &FieldInsHandle, pct: f32, tick: u32) {
+    // co-op guest: the host takes it off, here only a preview that never ends him
+    let guest = crate::coop::guest();
+    crate::coop::send_hit(handle, IMPACT_CODE, pct);
     let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
     let Some(chr) = wcm.chr_ins_by_handle_mut(handle) else { return };
     let data = &mut chr.modules.data;
@@ -889,7 +934,11 @@ pub fn impact(combat: &mut Combat, handle: &FieldInsHandle, pct: f32, tick: u32)
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     // (throws kill right there when the impact takes the rest of his HP; a boss with a health
     // bar keeps his last point for a moment, in case his script wants him at it)
-    data.hp = (hp - dmg).max(if is_boss(handle) { 1 } else { 0 });
+    data.hp = (hp - dmg).max(if is_boss(handle) || guest { 1 } else { 0 });
+    if guest {
+        show_damage(handle, hp, hp - data.hp, true);
+        return;
+    }
     let dealt = hp - data.hp;
     show_damage(handle, hp, dealt, true);
     if data.hp == 1 {
@@ -1029,12 +1078,28 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if !boss && matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc) {
         pct *= config_f32("invader_damage_factor", INVADER_FACTOR);
     }
+    // co-op guest: the host takes it off (here only a preview of it, see take_pct)
+    crate::coop::send_hit(handle, attack.code(), pct);
+    take_pct(handle, pct, &format!("{attack:?}"))
+}
+
+/// Takes `pct` of the character's max HP (never the last point). Returns true if it's down to
+/// that last point. `what`: for the log.
+fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return false };
+    let bar = is_boss(handle);
+    let Some(chr) = wcm.chr_ins_by_handle_mut(handle) else { return false };
+    let team = chr.team_type;
+    if own_side(team) {
+        return false;
+    }
+    let boss = bar || boss_class(handle, chr);
     let data = &mut chr.modules.data;
     let (hp, max) = (data.hp, data.max_hp.max(1));
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     data.hp = (hp - dmg).max(1);
     show_damage(handle, hp, hp - data.hp, bar);
-    log(format!("combat: {:?} on team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", attack, if boss { " boss" } else { "" }, data.hp));
+    log(format!("combat: {what} on team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", if boss { " boss" } else { "" }, data.hp));
     let (last, dealt) = (data.hp == 1, hp - data.hp);
     if boss && !bar {
         pass_to_bar(wcm, dealt);
@@ -1457,6 +1522,34 @@ pub fn hits(
 }
 
 impl Combat {
+    /// Game thread, co-op host: the guests' blows (coop.rs), taken off like Mario's own; the host
+    /// ends the enemy as for his own (`finishing`).
+    pub fn remote_hits(&mut self, tick: u32) {
+        for h in crate::coop::take_hits() {
+            if h.attack == IMPACT_CODE {
+                if unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&h.handle)).is_some_and(|c| c.character_id == h.chr_id) {
+                    impact(self, &h.handle, h.pct.clamp(0.0, 100.0), tick);
+                }
+                continue;
+            }
+            let what = Attack::from_code(h.attack).map_or(format!("code {}", h.attack), |a| format!("partner's {a:?}"));
+            let found = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&h.handle)).map(|c| c.character_id);
+            if found != Some(h.chr_id) {
+                log(format!("combat: a {what} on c{:04} ({}), not here as {found:?}", h.chr_id, h.handle));
+                continue;
+            }
+            // (thrown or lying limp, or a real blow finding out whether he can die: as for Mario's)
+            if crate::swing::is_down(&h.handle) || hands_off(&h.handle) {
+                continue;
+            }
+            let key = handle_key(&h.handle);
+            self.victims.insert(key, (h.handle, tick));
+            if take_pct(&h.handle, h.pct.clamp(0.0, 100.0), &what) {
+                self.finishing.entry(key).or_insert((h.handle, tick));
+            }
+        }
+    }
+
     /// Game thread: deals the damage for libsm64's hits. `tick` is the SM64 tick counter.
     pub fn deal(&mut self, player: &ChrIns, targets: &[Target], hits: &[(usize, Attack, bool)], tick: u32) {
         if !self.patched {
@@ -1653,7 +1746,9 @@ impl Combat {
                 if fade < 1.0 && run.0 % 5 == 0 {
                     log(format!("combat: string of {} on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
                 }
-                if take_share(handle, attack, scale * fade) {
+                // (co-op guest: the health here is only a preview, never the last point: the host
+                // takes it off and ends the enemy)
+                if take_share(handle, attack, scale * fade) && !crate::coop::guest() {
                     if !self.finishing.contains_key(&target.key) {
                         crate::style::kill(attack.finisher());
                     }
@@ -1844,5 +1939,19 @@ impl Combat {
             None => false,
         });
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Attack, CODES};
+
+    #[test]
+    fn attack_codes_round_trip() {
+        for a in CODES.iter().copied().chain((0..=5).map(Attack::Fire)) {
+            assert_eq!(Attack::from_code(a.code()), Some(a), "{a:?}");
+        }
+        assert_eq!(Attack::from_code(u8::MAX), None);
+        assert_eq!(Attack::from_code(CODES.len() as u8), None);
     }
 }
