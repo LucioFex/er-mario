@@ -9,6 +9,7 @@ mod audio;
 mod blown;
 mod boomerang;
 mod hook;
+mod parry;
 mod ride;
 mod caps;
 mod carry;
@@ -425,6 +426,7 @@ struct MarioState {
     combat: combat::Combat,
     /// Mario's fireball (RB)
     fire: fireball::Fire,
+    parry: parry::Parry,
     rang: boomerang::Boomerang,
     hook: hook::Hook,
     /// the dash (B) and the special moves (Y)
@@ -2210,6 +2212,7 @@ fn frame(data: &FD4TaskData) {
             parts: None,
             combat: combat::Combat::new(),
             fire: fireball::Fire::new(),
+            parry: parry::Parry::new(),
             rang: {
                 // (a new Mario starts bare-handed)
                 weapons::clear();
@@ -2658,6 +2661,7 @@ fn frame(data: &FD4TaskData) {
         let (mut b_fire, mut b_dash, mut y_move, mut x_move, mut l_hammer) = (false, false, false, false, false);
         let mut dpad = [false; 4];
         // R2 (the middle mouse button): the hook (hook.rs)
+        let mut r3 = false;
         let mut b_hook = kbd::focused() && unsafe { GetAsyncKeyState(0x04) } as u16 & 0x8000 != 0;
         if let Some(p) = pad.filter(|_| !m.dead) {
             let g = p.Gamepad;
@@ -2677,6 +2681,7 @@ fn frame(data: &FD4TaskData) {
             // (L1 is the hammer, L2 SM64's Z)
             l_hammer = g.wButtons.contains(XINPUT_GAMEPAD_LEFT_SHOULDER);
             inputs.button_z = (g.bLeftTrigger > 100) as u8;
+            r3 = g.wButtons.contains(XINPUT_GAMEPAD_RIGHT_THUMB);
             b_hook |= g.bRightTrigger > 100;
         }
         // SM64's first-person view: Mario stands still, the stick looks around
@@ -3262,6 +3267,12 @@ fn frame(data: &FD4TaskData) {
         let bled = status::just_set_in();
         // (the boulder: hits cost half, no knockback)
         let rocking = rock::active();
+        // (L2 held: the grab and the hook's pull)
+        let l2_held = inputs.button_z != 0;
+        // (in the air L2 is SM64's ground pound: not while the hook or R3 is being used with it)
+        if l2_held && (b_hook || r3) && m.state.action & 0x800 != 0 {
+            inputs.button_z = 0;
+        }
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -3528,6 +3539,23 @@ fn frame(data: &FD4TaskData) {
                         m.fire.douse(&state, m.origin, m.ticks);
                     }
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                    // R3: the parry (parry.rs); with L2 held, the grab (carry.rs: a small enemy, or a big one
+                    // with its stance broken)
+                    {
+                        static PREV_R3: AtomicBool = AtomicBool::new(false);
+                        let r3_press = r3 && !PREV_R3.swap(r3, Ordering::Relaxed);
+                        PREV_R3.store(r3, Ordering::Relaxed);
+                        let feet = to_er(m.origin, state.position);
+                        let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+                        let free = fire_allowed && !m.dead && state.action & 0x0002_0000 == 0 && !mega::active() && !bossride::active() && !swing::holding() && !carry::holding();
+                        if r3_press && l2_held && free {
+                            let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
+                            if !carry::grab_nearest(feet, face, m.origin) {
+                                worker::call("grab buzz", |_| unsafe { sm64::sm64_play_sound_volume(0x700E_0081, 0.35) });
+                            }
+                        }
+                        m.parry.tick(id, r3, free && !l2_held, &state, feet, m.origin, m.ticks, &player_ref.chr_ins, &mut m.fire);
+                    }
                     // the boomerangs: thrown when a throw lets go, from his right hand
                     let feet = to_er(m.origin, state.position);
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
@@ -3548,7 +3576,7 @@ fn frame(data: &FD4TaskData) {
                         rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
-                    m.hook.tick(id, b_hook, x_move, a_pressed, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, l2_held, x_move, a_pressed, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));

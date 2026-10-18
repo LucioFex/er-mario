@@ -150,6 +150,8 @@ struct Shot {
     last_burn: u32,
     /// the enemy it homes in on (its key)
     homing: Option<u64>,
+    /// an enemy's projectile sent back (parry.rs): drawn blue-white
+    reflected: bool,
 }
 
 struct Burst {
@@ -259,6 +261,18 @@ impl Fire {
     /// A charge is going on in his hand (RB held, not put out).
     pub fn charging(&self) -> bool {
         self.held_since.is_some()
+    }
+
+    /// A projectile turned back (parry.rs): a level-3 shot from `from` (Elden Ring) along `aim`,
+    /// homing on the one who fired it (`target`, its key).
+    pub fn reflect(&mut self, from: Vec3, aim: Vec3, target: Option<u64>, origin: [f32; 3], tick: u32) {
+        let a = crate::collision::er_to_sm(origin, &HavokPosition(from.x, from.y, from.z, 0.0));
+        let tip = from + aim;
+        let b = crate::collision::er_to_sm(origin, &HavokPosition(tip.x, tip.y, tip.z, 0.0));
+        let dir = Vec3::new(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize_or(Vec3::Z);
+        let level = 3u8;
+        self.shots.push(Shot { pos: a, vel: (dir * SPEED[level as usize]).to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: target, reflected: true });
+        self.bursts.push(Burst { pos: from, level: 0, born: tick });
     }
 
     /// Mario was hit (lib.rs): a charge in his hand goes out with a fizzle.
@@ -427,7 +441,7 @@ impl Fire {
         let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
         let (dir, aimed) = self.aim(state, origin, level);
         let vel = dir * SPEED[level as usize];
-        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None });
+        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false });
         log(format!("fireball: level {level} shot{}", if aimed { ", aimed" } else { "" }));
         // a puff of flame at his hand as it leaves
         self.bursts.push(Burst { pos: er(origin, hand), level: 0, born: tick });
@@ -795,7 +809,14 @@ impl Fire {
                 giant(&mut out, pos, vel, size, shot.age, tick);
                 continue;
             }
+            let first = out.len();
             ball(&mut out, pos, vel, size, shot.level, shot.age, tick, (-vel).normalize_or(Vec3::Y));
+            // (a deflected one: the flame's colours turned to blue, its white core stays)
+            if shot.reflected {
+                for s in &mut out[first..] {
+                    s.tint = [s.tint[2], s.tint[1] * 0.95, s.tint[0], s.tint[3]];
+                }
+            }
         }
         for b in &self.bursts {
             if b.born > tick || !seen(b.pos, SIZE[b.level as usize]) {

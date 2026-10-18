@@ -68,7 +68,7 @@ enum Phase {
     Bounce { vel: Vec3 },
     /// dragged in by the hook: hung in front of him once there if he's in the air (`air`), set down
     /// otherwise
-    Pulled { since: Instant, air: bool },
+    Pulled { since: Instant, air: bool, near: f32 },
 }
 
 struct Juggled {
@@ -168,19 +168,43 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
 
 /// An enemy the hook may drag in (m): a regular one not too big (the others: Mario goes to them).
 pub fn draggable(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> bool {
-    // (co-op guest: Mario flies to it instead, the host owns the enemies)
-    !crate::coop::guest() && radius_m <= MAX_RADIUS && height_m <= MAX_HEIGHT && crate::combat::liftable(h) && !crate::combat::hands_off(h)
+    pull_size(h, radius_m, height_m) != PullSize::Big
+}
+
+/// How the hook (with L2) treats an enemy: a small one, a medium one (a stronger or wider regular
+/// enemy), a big one (a boss, anything too big to drag).
+#[derive(Clone, Copy, PartialEq)]
+pub enum PullSize {
+    Small,
+    Medium,
+    Big,
+}
+
+const MEDIUM_RADIUS: f32 = 1.4;
+const MEDIUM_HEIGHT: f32 = 3.4;
+
+pub fn pull_size(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> PullSize {
+    if crate::coop::guest() || !crate::combat::liftable(h) || crate::combat::hands_off(h) {
+        PullSize::Big
+    } else if radius_m <= MAX_RADIUS && height_m <= MAX_HEIGHT {
+        PullSize::Small
+    } else if radius_m <= MEDIUM_RADIUS && height_m <= MEDIUM_HEIGHT {
+        PullSize::Medium
+    } else {
+        PullSize::Big
+    }
 }
 
 /// The hook caught `h` (hook.rs): dragged in to Mario, `air`: he's in the air.
 /// True if it's coming.
-pub fn pull(h: &FieldInsHandle, air: bool) -> bool {
+pub fn pull(h: &FieldInsHandle, air: bool, radius_m: f32) -> bool {
     // (co-op guest: the host owns the enemies, moving one here would only make it jump)
     if crate::coop::guest() {
         return false;
     }
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
-    let phase = Phase::Pulled { since: Instant::now(), air };
+    // (a wider body stops farther off, not inside him)
+    let phase = Phase::Pulled { since: Instant::now(), air, near: PULL_NEAR + (radius_m - MAX_RADIUS).max(0.0) };
     if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
         j.phase = phase;
         return true;
@@ -305,17 +329,17 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
                 let want = mario + dir * dist + Vec3::Y * 0.15;
                 (j.pos.lerp(want, 1.0 - (-FOLLOW * dt).exp()), true)
             }
-            Phase::Pulled { since, air } => {
+            Phase::Pulled { since, air, near } => {
                 // straight to just in front of him, stopped by the map on the way
                 let dir = Vec3::new(j.pos.x - mario.x, 0.0, j.pos.z - mario.z).normalize_or(Vec3::Z);
-                let want = mario + dir * PULL_NEAR + Vec3::Y * if air { 0.15 } else { 0.0 };
+                let want = mario + dir * near + Vec3::Y * if air { 0.15 } else { 0.0 };
                 let to = want - j.pos;
                 let step = PULL_SPEED * dt;
                 let next = if to.length() <= step { want } else { j.pos + to / to.length() * step };
                 let blocked = hit(j.pos + Vec3::Y * 0.5, next + Vec3::Y * 0.5).is_some();
                 if to.length() <= step || blocked || since.elapsed().as_secs_f32() > PULL_MAX {
                     let now = Instant::now();
-                    j.phase = if air && !blocked { Phase::Up { dir, dist: PULL_NEAR, last_hit: now } } else { Phase::Falling { vel: Vec3::ZERO, since: now } };
+                    j.phase = if air && !blocked { Phase::Up { dir, dist: near, last_hit: now } } else { Phase::Falling { vel: Vec3::ZERO, since: now } };
                     (if blocked { j.pos } else { next }, true)
                 } else {
                     (next, true)

@@ -1,10 +1,16 @@
 //! The hook (R2, the middle mouse button), Devil May Cry's Snatch with a Mario touch: Mario flings it out
 //! of his hand (er_moves.c's ER_THROW_HOOK), it flies to the enemy he looks at (the nearest one in
 //! front of the camera) or, with none there, to the spot of the map the camera looks at:
-//! - a small enemy: pulled in to him (juggle.rs), hung in front of him if he's in the air, ready for
-//!   the next blow
-//! - a big one (a boss, a strong enemy, anything too big to drag): Mario flies to it instead,
-//!   popping up in front of it for an air string (er_moves.c act_er_zip)
+//! - an enemy of any size: Mario flies to it, popping up in front of it for an air string
+//!   (er_moves.c act_er_zip)
+//! - with L2 held (any time, on the ground or in the air) it's the other way round: a small enemy
+//!   is pulled in to him (juggle.rs), hung in front of him if he's in the air, ready for the next
+//!   blow; a medium one too, but the same one only every MEDIUM_EVERY seconds; a big one (a boss, a
+//!   strong enemy) only gets the little hit: it doesn't come and Mario doesn't go. L2 never takes
+//!   the map
+//! - R2 held after it took Mario to a medium or big enemy: he swings round it for 4 s, faster and
+//!   faster; let go and he's flung off along the swing with its inertia into a flying kick (from
+//!   one big enemy to the next, or to get away); held to the end, he lands on its back (Capture)
 //! - a wall: he flies to it and clings to it a moment (A: a wall kick off it); a floor or a ledge:
 //!   he lands there
 //! It finds enemies on its own: the near ones all around him (the nearest first, those in front of
@@ -50,7 +56,7 @@ const SOUND_BUZZ: i32 = 0x700E_0081;
 #[derive(Clone, Copy)]
 enum Aim {
     /// an enemy: its handle, body (m: radius, height), and whether it's small enough to drag in
-    Enemy { mob: FieldInsHandle, radius: f32, height: f32, drag: bool },
+    Enemy { mob: FieldInsHandle, radius: f32, height: f32, drag: bool, medium: bool },
     /// a spot on the map (Elden Ring), and whether it's a floor (aimed down at it)
     Map { at: Vec3, floor: bool },
     /// nothing there: out to its reach, then back; or the map when it isn't fair game (a clink there)
@@ -85,6 +91,8 @@ pub struct Hook {
     swing_ready: u32,
     /// Mario's libsm64 id (to let go of a swing when the hook is dropped)
     id: i32,
+    /// L2 was held when it was thrown: it pulls the enemy in instead of taking Mario there
+    pull: bool,
 }
 
 /// What hud.rs draws: his hand, the cap's spot, its spin (radians).
@@ -138,7 +146,7 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 
 impl Hook {
     pub fn new() -> Self {
-        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0, id: -1 }
+        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0, id: -1, pull: false }
     }
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
@@ -160,6 +168,7 @@ impl Hook {
         &mut self,
         id: i32,
         button: bool,
+        l2: bool,
         x: bool,
         a_pressed: bool,
         allowed: bool,
@@ -207,6 +216,7 @@ impl Hook {
                     sound(SOUND_BUZZ, 0.4);
                 }
             } else {
+                self.pull = l2;
                 self.throw(id, state, feet, hand, origin, tick, air, &ray);
             }
         }
@@ -269,7 +279,7 @@ impl Hook {
                     && tick.wrapping_sub(since) >= SWING_HOLD
                     && tick >= self.swing_ready
                     && state.action == moves::ACT_ER_ZIP
-                    && matches!(self.aim, Aim::Enemy { mob, radius, height, .. } if chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
+                    && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {
                 if let Aim::Enemy { mob, radius, height, .. } = self.aim {
                     match chest(&mob, height) {
@@ -290,7 +300,7 @@ impl Hook {
                 if a_pressed
                     && button
                     && allowed
-                    && matches!(self.aim, Aim::Enemy { drag: false, mob, radius, height } if chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
+                    && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {
                 if let Aim::Enemy { mob, .. } = self.aim {
                     if crate::bossride::mount(&mob, id) {
@@ -305,6 +315,12 @@ impl Hook {
             Phase::Swinging(since) => {
                 let Aim::Enemy { mob, height, .. } = self.aim else { return };
                 let swinging = state.action == moves::ACT_ER_POLE_SWING || tick.wrapping_sub(since) < 2;
+                // (R2 held through the whole swing: he lands on its back, if it can be ridden)
+                if swinging && button && allowed && tick.wrapping_sub(since) == SWING_TICKS && crate::bossride::mount(&mob, id) {
+                    log("hook: up on its back (R2 held to the end of the swing)");
+                    worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
+                    next = Some(Phase::Back);
+                } else {
                 match chest(&mob, height).filter(|_| swinging) {
                     Some((c, _)) => {
                         self.pos = c;
@@ -324,6 +340,7 @@ impl Hook {
                         self.swing_ready = tick + SWING_COOLDOWN;
                         next = Some(Phase::Back);
                     }
+                }
                 }
             }
             Phase::Zipping(since) => {
@@ -391,10 +408,11 @@ impl Hook {
                     return None;
                 }
                 let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
-                let drag = crate::juggle::draggable(&mob, radius, height);
+                let size = crate::juggle::pull_size(&mob, radius, height);
+                let (drag, medium) = (size != crate::juggle::PullSize::Big, size == crate::juggle::PullSize::Medium);
                 // (the edge of a big one's body counts, not its centre)
                 let gap = (dist - radius * 0.7).max(0.5);
-                Some((gap * (1.8 - cos), Aim::Enemy { mob, radius, height, drag }, c))
+                Some((gap * (1.8 - cos), Aim::Enemy { mob, radius, height, drag, medium }, c))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let (aim, at) = match enemy {
@@ -404,6 +422,8 @@ impl Hook {
                 let dir = look.unwrap_or((face + Vec3::Y * 0.2).normalize());
                 let from = feet + Vec3::Y * CHEST;
                 match ray(from, from + dir * RANGE) {
+                    // (L2 only takes enemies: it flies out and back)
+                    Some(_) if self.pull => (Aim::Miss { at: from + dir * RANGE, clink: false }, from + dir * RANGE),
                     // (once an airtime: then it only clinks off)
                     Some(p) if self.map_used => (Aim::Miss { at: p, clink: true }, p),
                     Some(p) => {
@@ -419,8 +439,9 @@ impl Hook {
         log(format!(
             "hook: {}",
             match aim {
-                Aim::Enemy { drag: true, .. } => "an enemy, to pull in",
-                Aim::Enemy { .. } => "a big enemy, to fly to",
+                Aim::Enemy { drag: true, .. } if self.pull => "an enemy, to pull in",
+                Aim::Enemy { .. } if self.pull => "a big enemy (L2: only a tap)",
+                Aim::Enemy { .. } => "an enemy, to fly to",
                 Aim::Map { floor: true, .. } => "a floor",
                 Aim::Map { .. } => "a wall",
                 Aim::Miss { clink: true, .. } => "the map again this airtime (clinks off)",
@@ -448,7 +469,7 @@ impl Hook {
     #[allow(clippy::too_many_arguments)]
     fn latch(&mut self, id: i32, feet: Vec3, origin: [f32; 3], tick: u32, air: bool, player: &ChrIns, combat: &mut Combat) -> Option<Phase> {
         match self.aim {
-            Aim::Enemy { mob, radius, height, drag } => {
+            Aim::Enemy { mob, radius, height, drag, medium } => {
                 // its little hit (a flinch, a point of style), then in it comes, or he goes
                 let here = HavokPosition(self.pos.x, self.pos.y, self.pos.z, 0.0);
                 let near = combat::nearby(&here, 4.0 + radius, origin);
@@ -459,9 +480,19 @@ impl Hook {
                 crate::impact::hook_latch(self.pos);
                 // (an enemy gives the wall back)
                 self.map_used = false;
-                if drag && crate::juggle::pull(&mob, air) {
-                    log("hook: pulling an enemy in");
-                    return Some(Phase::Pulling);
+                // (L2: the enemy comes, if it's small or medium; a big one, or a medium one pulled
+                // not long ago, only gets the tap)
+                if self.pull {
+                    if drag && !(medium && medium_waits(&mob)) && crate::juggle::pull(&mob, air, radius) {
+                        if medium {
+                            medium_pulled(&mob);
+                        }
+                        log(format!("hook: pulling {} enemy in", if medium { "a medium" } else { "a small" }));
+                        return Some(Phase::Pulling);
+                    }
+                    log(if drag { "hook: a medium enemy, not again yet (a tap)" } else { "hook: a big enemy: a tap, nothing moves" });
+                    sound(SOUND_BUZZ, 0.35);
+                    return Some(Phase::Back);
                 }
                 let Some((_, f)) = chest(&mob, height) else { return Some(Phase::Back) };
                 let to = zip_to_enemy(feet, f, radius, height);
@@ -496,11 +527,27 @@ impl Hook {
     }
 }
 
+/// a medium enemy pulled in with L2 can't be again for this long (s)
+const MEDIUM_EVERY: f32 = 5.0;
+static MEDIUM_PULLED: Mutex<Vec<(u64, Instant)>> = Mutex::new(Vec::new());
+
+fn medium_waits(mob: &FieldInsHandle) -> bool {
+    MEDIUM_PULLED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(k, t)| *k == key(mob) && t.elapsed().as_secs_f32() < MEDIUM_EVERY)
+}
+
+fn medium_pulled(mob: &FieldInsHandle) {
+    let mut list = MEDIUM_PULLED.lock().unwrap_or_else(|e| e.into_inner());
+    list.retain(|(k, t)| *k != key(mob) && t.elapsed().as_secs_f32() < MEDIUM_EVERY);
+    list.push((key(mob), Instant::now()));
+}
+
 /// R2 held this many ticks after the hook caught a big one: the pole swing; at most one this often
 const SWING_HOLD: u32 = 6;
 /// ...once he's this close to its body (m): from farther the swing's circle would be a jump
 const SWING_NEAR: f32 = 3.0;
 const SWING_COOLDOWN: u32 = 90;
+/// the swing lasts 4 s (er_moves.c ER_POLE_MAX, 120 ticks): R2 held to this tick, he mounts it
+const SWING_TICKS: u32 = 116;
 /// the tether's second enemy within this far of the first (m)
 const TETHER_RANGE: f32 = 15.0;
 

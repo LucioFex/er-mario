@@ -52,7 +52,7 @@ fn key(h: &FieldInsHandle) -> u64 {
 
 /// Mario's punch landed on `h` (a regular enemy): lifts it if Mario is behind it and it isn't too
 /// big. True: picked up (no normal damage).
-pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32) -> bool {
+pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32, any_side: bool) -> bool {
     // (co-op guest: no grabs, the host owns the enemies)
     if crate::coop::guest() {
         return false;
@@ -74,7 +74,7 @@ pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32
     // not in front of it: Mario anywhere outside its ~70° front cone (behind or beside it). Only
     // right behind (±60°) was too hard to hit, enemies turn to face Mario quickly.
     let behind = fwd.dot(to_mario);
-    if behind > 0.35 {
+    if behind > 0.35 && !any_side {
         if crate::debug() {
             log(format!("carry: no pickup, Mario is in front of it (facing {behind:.2})"));
         }
@@ -85,6 +85,31 @@ pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32
     START.store(true, Ordering::Relaxed);
     true
 }
+
+/// L2 + R3: Mario grabs the nearest enemy in front of him within arm's reach: a small one (carried,
+/// B throws it) from any side, or a big one whose stance is broken (by the tail: swing.rs, spin
+/// and B). `feet`, `face`: his place and the way he looks (Elden Ring). True if he took one.
+pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3]) -> bool {
+    let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
+    let found = crate::combat::nearby(&here, 4.5, origin)
+        .iter()
+        .filter_map(|t| {
+            let h = *t.shootable()?;
+            let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
+            let d = Vec3::new(t.er.0 - feet.x, 0.0, t.er.2 - feet.z);
+            let gap = (d.length() - radius).max(0.0);
+            (gap <= REACH && (gap < 0.8 || d.normalize_or(face).dot(face) >= 0.3)).then_some((gap, h, radius, height))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    let Some((_, h, radius, height)) = found else { return false };
+    if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, feet, radius, height, true) {
+        return true;
+    }
+    crate::swing::try_grab(&h, radius)
+}
+
+/// how far (m, from its body) Mario's grab reaches
+const REACH: f32 = 1.8;
 
 /// SM64 tick: whether to start SM64's pickup now.
 pub fn take_start() -> bool {

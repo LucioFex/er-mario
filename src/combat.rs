@@ -2013,7 +2013,7 @@ impl Combat {
                 // Bob-omb (carry.rs)
                 if grab && liftable(handle) {
                     let me = player.modules.physics.position;
-                    if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius * crate::scale(), target.height * crate::scale()) {
+                    if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius * crate::scale(), target.height * crate::scale(), false) {
                         self.victims.insert(target.key, (*handle, tick));
                         continue;
                     }

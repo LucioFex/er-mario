@@ -114,9 +114,9 @@ louder or softer each time, and the boomerangs whir one at a time.
 
 | Input | Move |
 |---|---|
-| X | Throw one, from one hand then the other (it flies up to 18 m). It curves out, hits on the way out and again on the way back. Up to three in the air |
+| X | Throw one, from one hand then the other (it flies up to 22 m). It curves out, hits on the way out and again on the way back. Up to three in the air |
 | Y | Three at once in a fan |
-| Y (hold) | The big boomerang: Mario whirls round on the spot with it held out (like swinging Bowser by the tail), faster and faster as it grows in his hand, then lets fly. It flies far (up to 36 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
+| Y (hold) | The big boomerang: Mario whirls round on the spot with it held out (like swinging Bowser by the tail), faster and faster as it grows in his hand, then lets fly. It flies far (up to 43 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
 | X, X, Y | Boomerang launcher: thrown up in an arc, it sends enemies flying up |
 | X / Y in the air | Throws in the air; the first few hold Mario up, Devil May Cry style |
 
@@ -156,10 +156,12 @@ the camera looks at (up to 20 m):
 
 | It catches | What happens |
 |---|---|
-| A small enemy | Dragged in to Mario; in the air it hangs in front of him, ready for the air string |
-| A big enemy (a boss, a strong one) | Mario flies to it and pops up in front of it for an air combo |
+| An enemy of any size | Mario flies to it and pops up in front of it for an air combo |
 | A wall | Mario flies to it and clings to it a moment: A wall kicks off it, LT lets go |
 | A floor or a ledge | Mario flies there and lands |
+| **LT held** (any time, ground or air) + RT: a small enemy | Dragged in to Mario; in the air it hangs in front of him, ready for the air string |
+| LT + RT: a medium enemy (a stronger or wider regular one, up to 1.4 m wide and 3.4 m tall) | Dragged in too, but the same one only every 5 s |
+| LT + RT: a big enemy (a boss, a strong one) | Only a tiny hit: it doesn't come and Mario doesn't go |
 
 Walls and ledges are good for **one hook per jump**: after that it only clinks off them until
 Mario lands, so there's no climbing forever. Enemies can be hooked any number of times, and each
@@ -252,9 +254,11 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | LT crouched + RB | **Spring** | Enemies stepping on it fly up; Mario jumping onto it goes higher than any jump. 15 s |
 | LT crouched + LB | **Stopwatch** | The enemy in front stops in time (3 s, bosses 1.2 s); blows on it build up momentum and it flies off when time runs again (bosses stagger). 25 s |
 | D-pad left | **Rock Mushroom** | 12 s as a boulder: down slopes faster, off walls, a slam after a drop; bowls regular enemies over (3 at once: STRIKE!), bounces off bosses; A hops, X rams; hits cost half. 75 s |
+| R3 as a projectile comes | **Parry** (Sekiro / Hollow Knight) | A palm thrust opens a 0.45 s window: an enemy's arrow or spell that reaches Mario (3.8 m) is turned back as a blue-white fireball with a level-3 charge's strength (about 20% on a regular enemy), homing on whoever fired it; up to 3 per press. A press that deflects nothing waits 1.6 s, a deflect 0.6 s. PARRY! (3 style points) |
+| LT held + R3 | **Grab** | The nearest enemy in front within arm's reach: a small one is carried like a Bob-omb (B throws it), from any side now; a big one whose stance is broken (Mikiri, a wall slam) by the tail: spin the stick, B lets go |
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
-| RT held on a big enemy | **Pole swing** | Mario swings round it; let go for a flying kick |
+| RT held on a medium or big enemy (after Mario flew to it) | **Pole swing** | Mario swings round it for 4 s, faster and faster. Let go and he's flung off along the swing with its inertia into a flying kick: swing between big enemies, or get away. Held to the end, he lands on its back (Capture) |
 | RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 10 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 45 s |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
@@ -399,7 +403,8 @@ replaces this fork's DLL with the original one.
 | A just before an enemy's blow | | Mikiri stomp |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools |
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
-| RT | Middle mouse button | The hook (see above). Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: capture |
+| R3 | | Parry; with LT held, the grab |
+| RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: capture |
 | LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |

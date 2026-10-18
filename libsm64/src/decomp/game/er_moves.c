@@ -2951,13 +2951,13 @@ s32 er_pole_release = 0;
 /** how far out he swings (SM64 units: the enemy's body and a bit, hook.rs) */
 f32 er_pole_radius = 190.0f;
 /** the fastest he goes along the circle (units a tick): round a big body the swing turns slower */
-#define ER_POLE_STEP 110.0f
+#define ER_POLE_STEP 135.0f
 static f32 sErPoleAngle = 0.0f;
 static f32 sErPoleSpin = 0.0f;
 static f32 sErPoleRadius = 0.0f;
-#define ER_POLE_MAX 90
+#define ER_POLE_MAX 120
 #define ER_POLE_SPIN_FROM 0.12f
-#define ER_POLE_SPIN_TO 0.42f
+#define ER_POLE_SPIN_TO 0.5f
 /* lying out along the line: his pitch, and the lean drawn last (the swing kick straightens up
  * from them, keeping this much of them each tick: it stood up at once) */
 #define ER_POLE_PITCH 0x0C00
@@ -2992,13 +2992,13 @@ s32 act_er_pole_swing(struct MarioState *m) {
         // off along the tangent, with the speed of the swing
         f32 speed = sErPoleSpin * sErPoleRadius;
         f32 tx = -sinf(sErPoleAngle), tz = cosf(sErPoleAngle);
-        if (speed > 70.0f) {
-            speed = 70.0f;
+        if (speed > 92.0f) {
+            speed = 92.0f;
         }
         er_pole_release = 0;
         m->faceAngle[1] = atan2s(tz, tx);
         mario_set_forward_vel(m, speed);
-        m->vel[1] = 22.0f;
+        m->vel[1] = 26.0f;
         return set_mario_action(m, ACT_ER_SWING_KICK, 0);
     }
     // round and round, faster; the line shortening a little (pulled in)

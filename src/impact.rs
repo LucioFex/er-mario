@@ -409,6 +409,13 @@ pub fn hook_latch(at: Vec3) {
     burst(at, 3, Bit::Star);
 }
 
+/// A projectile turned back (parry.rs): a blue-white ring, a flash of stars where it was.
+pub fn parry(at: Vec3) {
+    ring(at, 1.8, 0.3, [0.55, 0.85, 1.0, 0.95]);
+    ring(at, 1.0, 0.22, WHITE);
+    burst(at, 5, Bit::Star);
+}
+
 /// The Mega Mushroom (mega.rs): a burst of puffs all over him, golden rings, stars, as he grows
 /// (`grow`) or shrinks back. `feet`: Elden Ring.
 pub fn mega_change(feet: Vec3, grow: bool) {
