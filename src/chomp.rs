@@ -174,7 +174,11 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         _ => 0.0,
     };
     s.round = Some(round);
-    s.spin += (turn.to_degrees() - s.spin) * SPIN_EASE;
+    // (a hit-stop holds the ball where it is: its swing goes on after it, no squash, no slowing)
+    let held = scripted && hooked.is_none() && s.last_centre.is_some_and(|c| (centre - c).length() < 1e-4);
+    if !held {
+        s.spin += (turn.to_degrees() - s.spin) * SPIN_EASE;
+    }
     let (speed, sense) = (s.spin.abs(), s.spin.signum());
     let swung = ((speed - SPIN_FROM) / (SPIN_FULL - SPIN_FROM)).clamp(0.0, 1.0);
     let lead = ((speed - LEAD_FROM) / LEAD_FROM).clamp(0.0, 1.0);
@@ -204,11 +208,13 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     // squash and stretch (its own axes: Z the way it looks)
     let step = s.last_centre.map_or(0.0, |c| (centre - c).length());
     s.last_centre = Some(centre);
-    if s.step > STRETCH_SPEED * 0.6 && step < s.step * 0.3 && step < JUMP {
-        s.squash = SQUASH_TICKS;
+    if !held {
+        if s.step > STRETCH_SPEED * 0.6 && step < s.step * 0.3 && step < JUMP {
+            s.squash = SQUASH_TICKS;
+        }
+        // (a jump of metres is the hook letting go, not flight)
+        s.step = if step < JUMP { step } else { 0.0 };
     }
-    // (a jump of metres is the hook letting go, not flight)
-    s.step = if step < JUMP { step } else { 0.0 };
     let stretch = if s.squash > 0 {
         s.squash -= 1;
         let p = s.squash as f32 / SQUASH_TICKS as f32;

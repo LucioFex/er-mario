@@ -1641,7 +1641,7 @@ const LAUNCH_AHEAD: f32 = 110.0;
 const LAUNCH_RADIUS: f32 = 150.0;
 /// the Chain Chomp's cyclone reaches all around Mario out to its chain, and its crash's shockwave
 // (x1.25 past its place by him, as its chain in er_moves.c ER_CHOMP_LONGER)
-const CHOMP_SPIN_RADIUS: f32 = 522.0;
+const CHOMP_SPIN_RADIUS: f32 = 505.0;
 const CHOMP_CRASH_RADIUS: f32 = 347.0;
 /// the Mikiri's stomp around Mario, the dash strike's reach in front (SM64 units)
 const MIKIRI_RADIUS: f32 = 170.0;

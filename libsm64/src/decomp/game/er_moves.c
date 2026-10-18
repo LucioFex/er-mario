@@ -210,6 +210,18 @@ static s32 sErActionTwisted = 0;
 /** the twist drawn last (degrees from his facing), for a move to face that way as it ends */
 static f32 sErTwistDeg = 0.0f;
 
+/** A new Mario (libsm64.c): no lag or twist left over from another one. */
+void er_moves_reset(void) {
+    sErLagAim = 0;
+    sErLagCarry = 0;
+    sErShownYaw = 0;
+    sErShownLag = 0;
+    sErShownChanges = er_action_changes;
+    sErTwistTick = 0;
+    sErActionTwisted = 0;
+    sErTwistDeg = 0.0f;
+}
+
 /** An aimed turn of his facing (`from` was where he faced): drawn over a few ticks. */
 void er_turn_lag(struct MarioState *m, s16 from) {
     sErLagAim += (s16)(from - m->faceAngle[1]);
@@ -2938,8 +2950,8 @@ f32 er_pole_centre[3] = { 0.0f, 0.0f, 0.0f };
 s32 er_pole_release = 0;
 /** how far out he swings (SM64 units: the enemy's body and a bit, hook.rs) */
 f32 er_pole_radius = 190.0f;
-/** the most he moves a tick getting onto the circle (no jump through a wall) */
-#define ER_POLE_STEP 70.0f
+/** the fastest he goes along the circle (units a tick): round a big body the swing turns slower */
+#define ER_POLE_STEP 110.0f
 static f32 sErPoleAngle = 0.0f;
 static f32 sErPoleSpin = 0.0f;
 static f32 sErPoleRadius = 0.0f;
@@ -2991,6 +3003,10 @@ s32 act_er_pole_swing(struct MarioState *m) {
     }
     // round and round, faster; the line shortening a little (pulled in)
     sErPoleSpin = er_lerp(sErPoleSpin, ER_POLE_SPIN_TO, 0.06f);
+    // (round a big body the turn is slower: his speed along the circle at most ER_POLE_STEP)
+    if (sErPoleSpin * sErPoleRadius > ER_POLE_STEP) {
+        sErPoleSpin = ER_POLE_STEP / sErPoleRadius;
+    }
     sErPoleAngle += sErPoleSpin;
     sErPoleRadius = er_lerp(sErPoleRadius, er_pole_radius, 0.04f);
     want[0] = er_pole_centre[0] + cosf(sErPoleAngle) * sErPoleRadius;
@@ -2999,13 +3015,7 @@ s32 act_er_pole_swing(struct MarioState *m) {
     m->vel[0] = want[0] - m->pos[0];
     m->vel[1] = (want[1] - m->pos[1]) * 0.5f;
     m->vel[2] = want[2] - m->pos[2];
-    {
-        f32 step = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
-        if (step > ER_POLE_STEP) {
-            m->vel[0] *= ER_POLE_STEP / step;
-            m->vel[2] *= ER_POLE_STEP / step;
-        }
-    }
+
     m->forwardVel = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
     nx = -sinf(sErPoleAngle);
     nz = cosf(sErPoleAngle);

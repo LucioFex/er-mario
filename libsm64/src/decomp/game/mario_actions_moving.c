@@ -2050,7 +2050,9 @@ s32 act_er_dash(struct MarioState *m) {
             mario_set_forward_vel(m, 26.0f);
             return set_mario_action(m, ACT_WALKING, 0);
         }
-        return set_mario_action(m, ACT_ER_DASH_END, 0);
+        // (its first tick next tick: run now it doubled the step)
+        set_mario_action(m, ACT_ER_DASH_END, 0);
+        return FALSE;
     }
     return FALSE;
 }

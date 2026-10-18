@@ -179,6 +179,10 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
 
     newInstance->globalState = global_state_create();
     global_state_bind( newInstance->globalState );
+    {
+        extern void er_moves_reset(void);
+        er_moves_reset();
+    }
 
     if( !s_init_one_mario )
     {
