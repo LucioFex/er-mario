@@ -974,6 +974,21 @@ impl ImguiRenderLoop for Overlay {
                     dl.add_rect(bar, [x + s * ready.clamp(0.0, 1.0), bar[1] + px * 2.0], [1.0, 0.85, 0.2, 0.9]).filled(true).build();
                 }
             }
+            // Star Rush's star (R3): filling as the style comes, pulsing when full, draining while on
+            {
+                let (fill, left) = crate::starrush::hud();
+                let x = x0 + caps.len() as f32 * s * 1.25 + s * 1.9;
+                let on = left.is_some();
+                let full = fill >= 1.0;
+                let grow = if on || full { s * 0.1 * (1.0 + (t * 7.0).sin()) } else { 0.0 };
+                dl.add_image(textures[IMG_STAR], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow]).col([1.0, 1.0, 1.0, if on || full { 1.0 } else { 0.3 }]).build();
+                let share = left.unwrap_or(fill).clamp(0.0, 1.0);
+                if share < 1.0 || on {
+                    let bar = [x, y0 + s + px * 2.0];
+                    dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
+                    dl.add_rect(bar, [x + s * share, bar[1] + px * 2.0], [1.0, 0.9, 0.35, 0.95]).filled(true).build();
+                }
+            }
             // on Yoshi: his eggs in stock, a row under the caps
             let ride = crate::ride::sprites();
             if ride.riding {
@@ -1292,6 +1307,25 @@ impl ImguiRenderLoop for Overlay {
             let gap = 26.0 * px * pop;
             let spots = [(-gap, 0.0), (0.0, -gap), (gap, 0.0), (0.0, gap)];
             let names = ["X", "Y", "B", "RB"];
+            // (the stopwatch in its middle: LT + L1)
+            {
+                let r = crate::stopwatch::ready();
+                let on = r >= 1.0;
+                let rr = s * 0.42;
+                let col = |a: f32| imgui::ImColor32::from_rgba_f32s(0.75, 0.88, 1.0, a * pop);
+                dl.add_circle([cx, cy], rr, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * pop)).filled(true).build();
+                dl.add_circle([cx, cy], rr, col(if on { 0.95 } else { 0.35 })).thickness(px * 1.6).build();
+                let hand = -std::f32::consts::FRAC_PI_2 + r.clamp(0.0, 1.0) * std::f32::consts::TAU;
+                dl.add_line([cx, cy], [cx + hand.cos() * rr * 0.75, cy + hand.sin() * rr * 0.75], col(1.0)).thickness(px * 1.4).build();
+                dl.add_line([cx, cy], [cx, cy - rr * 0.5], col(1.0)).thickness(px * 1.4).build();
+                let g = 5.0 * px;
+                for (i, ch) in "LB".chars().enumerate() {
+                    if let Some(id) = glyph_for(ch) {
+                        let lx = cx - g * 0.8 + i as f32 * g * 0.8;
+                        dl.add_image(textures[id], [lx, cy + rr + px], [lx + g, cy + rr + px + g]).col([1.0, 1.0, 1.0, 0.8 * pop]).build();
+                    }
+                }
+            }
             for k in 0..4 {
                 let (x, y) = (cx + spots[k].0, cy + spots[k].1);
                 let on = ready[k] >= 1.0;

@@ -1121,6 +1121,15 @@ SM64_LIB_FN void sm64_er_pole(int32_t marioId, float x, float y, float z, int mo
     }
 }
 
+/** er-mario: Star Rush (starrush.rs): SM64's power-up music on or off */
+SM64_LIB_FN void sm64_er_star_music(int on)
+{
+    if (on)
+        play_cap_music(SEQUENCE_ARGS(4, SEQ_EVENT_POWERUP));
+    else
+        stop_cap_music();
+}
+
 /** er-mario: the Rock Mushroom (rock.rs): Mario rolls as a boulder while `on` */
 SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on)
 {

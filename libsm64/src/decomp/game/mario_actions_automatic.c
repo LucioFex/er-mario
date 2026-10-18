@@ -919,6 +919,22 @@ s32 act_er_ride(struct MarioState *m) {
     return FALSE;
 }
 
+// er-mario: up on a big enemy's back (bossride.rs moves him with it every tick): crouched as if
+// riding a Koopa shell, holding on
+s32 act_er_boss_ride(struct MarioState *m) {
+    mario_set_forward_vel(m, 0.0f);
+    vec3f_set(m->vel, 0.0f, 0.0f, 0.0f);
+    if (m->actionTimer == 0) {
+        set_mario_animation(m, MARIO_ANIM_START_RIDING_SHELL);
+    } else if (is_anim_at_end(m)) {
+        set_mario_animation(m, MARIO_ANIM_RIDING_SHELL);
+    }
+    m->actionTimer++;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    return FALSE;
+}
+
 s32 mario_execute_automatic_action(struct MarioState *m) {
     s32 cancel;
 
@@ -949,6 +965,7 @@ s32 mario_execute_automatic_action(struct MarioState *m) {
         case ACT_TORNADO_TWIRLING:       cancel = act_tornado_twirling(m);       break;
         case ACT_ER_LADDER:              cancel = act_er_ladder(m);              break;
         case ACT_ER_RIDE:                cancel = act_er_ride(m);                break;
+        case ACT_ER_BOSS_RIDE:           cancel = act_er_boss_ride(m);           break;
         case ACT_ER_GRABBED:             cancel = act_er_grabbed(m);             break;
     }
     /* clang-format on */

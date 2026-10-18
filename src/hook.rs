@@ -161,6 +161,7 @@ impl Hook {
         id: i32,
         button: bool,
         x: bool,
+        a_pressed: bool,
         allowed: bool,
         mv: &sm64::SM64ErMove,
         state: &sm64::SM64MarioState,
@@ -281,6 +282,18 @@ impl Hook {
                         None => next = Some(Phase::Back),
                     }
                 }
+            }
+            // A on a big one with R2 held (zipping to it or swinging round it): up on its back
+            Phase::Zipping(_) | Phase::Swinging(_) if a_pressed && button && allowed && matches!(self.aim, Aim::Enemy { drag: false, .. }) => {
+                if let Aim::Enemy { mob, .. } = self.aim {
+                    if matches!(phase, Phase::Swinging(_)) {
+                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+                    }
+                    if crate::bossride::mount(&mob, id) {
+                        log("hook: up on its back");
+                    }
+                }
+                next = Some(Phase::Back);
             }
             Phase::Swinging(since) => {
                 let Aim::Enemy { mob, height, .. } = self.aim else { return };

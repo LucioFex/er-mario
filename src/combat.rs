@@ -111,11 +111,13 @@ pub enum Attack {
     MaxUpper,
     MaxQuake,
     MaxCyclone,
+    /// the boss ride's crash into a wall (bossride.rs)
+    RideCrash,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 60] = [
+const CODES: [Attack; 61] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -126,7 +128,7 @@ const CODES: [Attack; 60] = [
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
-    Attack::MaxQuake, Attack::MaxCyclone,
+    Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -197,7 +199,7 @@ impl Attack {
             Attack::Bowled => Attack::Sweep.spec(),
             Attack::Tether => Attack::GroundPound.spec(),
             Attack::MaxFlurry => Attack::Punch.spec(),
-            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => Attack::GroundPound.spec(),
+            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash => Attack::GroundPound.spec(),
         }
     }
 
@@ -298,6 +300,8 @@ impl Attack {
             Attack::MaxUpper => (10.0, "damage_max_upper"),
             Attack::MaxQuake => (9.0, "damage_max_quake"),
             Attack::MaxCyclone => (14.0, "damage_max_cyclone"),
+            // the boss ride's crash: its worth is the open stance it leaves
+            Attack::RideCrash => (15.0, "damage_ride_crash"),
         }
     }
 
@@ -364,6 +368,7 @@ impl Attack {
             Attack::HomeRun | Attack::Bowled | Attack::Tether => 1.0,
             Attack::SwingKick => 1.3,
             Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
+            Attack::RideCrash => 1.5,
         }
     }
 
@@ -1359,9 +1364,12 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if crate::dodge::countering() && !attack.ranged() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
-    // Mega Mario's blows are a giant's
+    // Mega Mario's blows are a giant's; in a Star Rush a little harder
     if crate::mega::active() {
         pct *= crate::mega::DAMAGE;
+    }
+    if crate::starrush::active() {
+        pct *= crate::starrush::DAMAGE;
     }
     // Metal Mario hits harder (his fireballs too)
     if crate::caps::active() == Some(crate::caps::METAL) {
@@ -1894,6 +1902,11 @@ impl Combat {
         // them after 0.5 s
         self.finishing.retain(|key, (handle, t)| {
             let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(handle)) else { return false };
+            // (stopped in time: it's finished once time runs again)
+            if crate::stopwatch::frozen(handle) {
+                *t = tick;
+                return true;
+            }
             // (2 only while a real blow is on its way, see below)
             let probing = PROBES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|p| p.get(key).is_some_and(|p| p.fired.is_some()));
             if chr.modules.data.hp != 1 && !(probing && chr.modules.data.hp == 2) {
@@ -2012,7 +2025,12 @@ impl Combat {
                 // (the hammer's launcher sends them flying high up instead, for Mario to jump after)
                 let me = player.modules.physics.position;
                 let me = glam::Vec3::new(me.0, me.1, me.2);
-                if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch) && !hands_off(handle) {
+                // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
+                let stopped = crate::stopwatch::frozen(handle);
+                if stopped {
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Bonk | Attack::SwingKick);
+                    crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
+                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
@@ -2145,7 +2163,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;

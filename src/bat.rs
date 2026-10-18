@@ -83,6 +83,24 @@ pub fn home_run(h: &FieldInsHandle, dir: Vec3) -> bool {
     true
 }
 
+/// The stopwatch's release (stopwatch.rs): `h` flies off along `dir` at `speed` (m/s), bowling over
+/// whoever it meets like the home run.
+pub fn launch(h: &FieldInsHandle, dir: Vec3, speed: f32) -> bool {
+    if crate::coop::guest() || is_flying(h) || !combat::liftable(h) {
+        return false;
+    }
+    let Some(pos) = feet_of(h) else { return false };
+    crate::juggle::release(h);
+    let dir = dir.with_y(0.0).normalize_or(Vec3::Z);
+    FLYING.lock().unwrap_or_else(|e| e.into_inner()).push(Flight {
+        mob: *h,
+        pos,
+        since: Instant::now(),
+        kind: Kind::HomeRun { vel: dir * speed + Vec3::Y * (BAT_UP * speed / BAT_SPEED).min(BAT_UP * 1.3), bowled: vec![key(h)] },
+    });
+    true
+}
+
 /// The tether: `a` (hooked) and `b` (hooked next) yanked into each other. The draggable ones fly:
 /// both to the middle, or the small one into the big one. False if neither can.
 pub fn tether(a: &FieldInsHandle, b: &FieldInsHandle) -> bool {

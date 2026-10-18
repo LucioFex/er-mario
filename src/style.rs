@@ -158,6 +158,7 @@ pub fn rank() -> Option<usize> {
 
 fn add(m: &mut Meter, points: f32) {
     m.points += points;
+    crate::starrush::feed(points);
     let rank = rank_of(m.points);
     if rank > m.rank {
         m.rank = rank;
