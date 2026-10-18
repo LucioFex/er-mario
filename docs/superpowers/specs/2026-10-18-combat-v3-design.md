@@ -85,6 +85,19 @@ co-op only gets two subtle touches. Fun over power: Mario must not become OP.
     when off screen). Small, unobtrusive, hidden alone. Needs partner HP in the pose packet (bump
     packet VERSION; old peers must not crash).
 
+### G. Balance and edge cases (every batch + a final pass)
+21. For each feature, walk the cases: enemy types (commons, shielded, mediums, big bodies,
+    flying, mounted, packs, invisible/helpers, NPCs/friendlies), bosses (multi-phase, huge,
+    grab bosses, Reforged HP scaling), terrain (slopes, ledges, water, narrow rooms, stairs, lethal
+    falls), states (Mega, Yoshi, hooked, grabbed, status ailments, slow-mo, menus/interact,
+    death mid-move), solo vs co-op (host/guest guards, Seamless scaling). Nerf/buff numbers so
+    every tool has a use and none trivializes a fight; log the tuning decisions in the spec.
+    Single player is the main mode; co-op only has to stay correct.
+
+### H. Quality of life
+22. **Shorter game over**: the wait from Mario's death to Bowser's face and the restart is too
+    long (gameover.rs): trim it a bit, keep the sequence readable.
+
 ## Batches
 
 1. 9, 10, 11, 19 (timing) + 20 (partner HUD)
