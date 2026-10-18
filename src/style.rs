@@ -52,7 +52,7 @@ const SLOW_EASE: f32 = 0.4;
 pub const LOST_TIME: f32 = 1.1;
 pub const STAR_TIME: f32 = 1.2;
 /// the rank-up chime's volume (it was loud over a fight)
-const CHIME_VOLUME: f32 = 0.22;
+const CHIME_VOLUME: f32 = 0.15;
 
 /// SM64 sounds: the red coin chime (its ID goes up a note per coin), the cheers, a kill's poof
 const SOUND_RED_COIN: i32 = 0x7828_9081;

@@ -3019,7 +3019,7 @@ fn frame(data: &FD4TaskData) {
             if kills > 0 {
                 // (a wedge and a half each)
                 unsafe { sm64::sm64_mario_heal(id, (6 * kills).min(32) as u8) };
-                unsafe { sm64::sm64_play_sound_global(SOUND_COIN) };
+                unsafe { sm64::sm64_play_sound_volume(SOUND_COIN, 0.5) };
             }
             // Bowser's tail swing: Mario grabs the boss (SM64's pickup, swing and throw follow)
             if grab {

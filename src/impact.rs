@@ -150,7 +150,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
             sm64::sm64_play_sound_global(SOUND_GENERAL_POUND_WOOD_POST);
         }
         if coins > 0 {
-            sm64::sm64_play_sound_global(SOUND_GENERAL_COIN);
+            sm64::sm64_play_sound_volume(SOUND_GENERAL_COIN, 0.45);
         }
     });
 }
@@ -613,7 +613,7 @@ pub fn star_finish(at: Vec3, rank: usize) {
     puffs(ground, 6, 1.0);
     worker::call("star finish", |_| unsafe {
         sm64::sm64_er_hitstop(4);
-        sm64::sm64_play_sound_global(SOUND_GENERAL_COIN);
+        sm64::sm64_play_sound_volume(SOUND_GENERAL_COIN, 0.45);
     });
 }
 
