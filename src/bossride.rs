@@ -247,8 +247,9 @@ pub fn pre_behavior() {
         r.attacking = None;
     }
     let Some(ask) = r.ask.as_mut() else {
-        // (nothing asked: its own attacks stay held back)
+        // (nothing asked: its own attacks and its walking stay held back)
         chr.debug_flags.set_disabled_secondary_actions(true);
+        chr.debug_flags.set_disabled_movement(true);
         return;
     };
     let start_anim = *ask.start_anim.get_or_insert(anim);
@@ -258,6 +259,7 @@ pub fn pre_behavior() {
         r.attacking = Some((anim, Instant::now()));
         r.ask = None;
         chr.debug_flags.set_disabled_secondary_actions(true);
+        chr.modules.action_request.npc_action_id = -1;
         if anim == id && s.works.entry(kind).or_default().insert(id) {
             log(format!("boss ride: c{kind:04} attacks with {id}"));
         }
@@ -266,6 +268,7 @@ pub fn pre_behavior() {
     if ask.since.elapsed().as_secs_f32() < START_WITHIN || ask.frames < START_FRAMES {
         ask.frames += 1;
         chr.debug_flags.set_disabled_secondary_actions(false);
+        chr.debug_flags.set_disabled_movement(true);
         chr.modules.action_request.npc_action_id = ask.id;
         return;
     }
@@ -273,7 +276,8 @@ pub fn pre_behavior() {
     // attack, staggered, turning, it couldn't take a new one) and more than once; the next one
     // tried (a few a press)
     let (id, heavy, tries, kind) = (ask.id, ask.heavy, ask.tries, r.kind);
-    let idle = anim == start_anim && !is_attack(anim);
+    // (a step from walking to standing as the stick came up isn't a reason to give up)
+    let idle = !is_attack(anim);
     if idle && !s.works.get(&kind).is_some_and(|w| w.contains(&id)) {
         let n = s.misses.entry((kind, id)).or_default();
         *n += 1;
@@ -282,8 +286,9 @@ pub fn pre_behavior() {
         }
     }
     let next = if idle && tries < TRIES { pick(s, kind, heavy) } else { None };
-    let r = s.ride.as_mut().unwrap();
+    let Some(r) = s.ride.as_mut() else { return };
     r.ask = next.map(|id| Ask::new(id, heavy, tries + 1));
+    chr.modules.action_request.npc_action_id = -1;
     if r.ask.is_none() {
         chr.debug_flags.set_disabled_secondary_actions(true);
         if idle {

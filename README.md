@@ -179,8 +179,14 @@ own moves (his mouth opens for the tongue, he nods with each egg and on a stomp)
 | LB | Burst of speed for 2.5 s, dust behind him (fast enough to run enemies over), then 6 s of rest |
 
 **Style meter.** Devil May Cry's: every hit in a row scores style points (finishers more, and a
-hit of a different kind than the last one a bonus, so varied strings climb faster), and the string
-earns a rank: D DANDY, C COOL, B BONKERS, A AWESOME, S SUPER, SS SUPER STAR, SSS WAHOO. A new rank
+hit of a kind not used in the last four a bonus), and the string earns a rank: D DANDY, C COOL,
+B BONKERS, A AWESOME, S SUPER, SS SUPER STAR, SSS WAHOO. It's meant to be earned: the same kind of
+blow again within 6 s is worth 20% less each time (down to 30%), a long string on one enemy fades,
+the points drain away faster the higher the rank (A 1 point a second, S 2.2, SS 3.6, SSS 5.5) so a
+rank is only held by keeping up variety, finishers, skillshots and timing, and being hurt costs the
+string and halves the next seconds' points. Star Rush (faster blows) and the MAX shows' knock-on
+blows score less per blow. Marks: A 30, S 56, SS 88, SSS 130 points; mashing one button tops out
+around C, a varied fight reaches A or S, SS and SSS want a fast, varied, skilful one. A new rank
 slams in with its word, a soft red coin chime a note higher each time and Mario cheering from S up;
 a bar shows the time left before the string drops. Getting hurt ends it ("MAMMA MIA"). From rank
 S, a combo's finisher is a **Star Finish**: a golden flash, stars and coins flying out, a banner
@@ -251,7 +257,7 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a big enemy | **Pole swing** | Mario swings round it; let go for a flying kick |
 | RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 10 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 45 s |
-| R3 once the star is full | **Star Rush** | Style fills the star; 10 s of super armour (hits cost half, no knockback), 15% faster and harder |
+| R3 once the star is full | **Star Rush** | Style points fill the star (more from rank A up, so a good string fills it faster than mashing); 10 s of super armour (hits cost half, no knockback), 15% faster and harder |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
 FRIENDLY FIRE, OUT OF THE PARK, KABOOM, BANANA SPLIT, SHELL SHOCK, PARRY THIS, MAXED OUT, and

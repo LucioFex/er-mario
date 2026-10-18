@@ -2147,7 +2147,7 @@ impl Combat {
             }
             let (bullet, ..) = attack.spec();
             if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
-                crate::style::hit(attack);
+                crate::style::hit(attack, target.key);
             }
             // (breaking a jar or a crate is no blow to stop for)
             if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember) && !target.is_prop() {

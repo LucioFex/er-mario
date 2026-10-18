@@ -12,7 +12,7 @@ use crate::{log, sm64, worker};
 
 /// how long it lasts (s), the style points that fill it, how much faster and harder Mario is
 pub const TIME: f32 = 10.0;
-const FULL: f32 = 110.0;
+const FULL: f32 = 80.0;
 pub const SPEED: f32 = 1.15;
 pub const DAMAGE: f32 = 1.15;
 

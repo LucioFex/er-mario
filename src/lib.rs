@@ -3379,9 +3379,20 @@ fn frame(data: &FD4TaskData) {
                 unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
             }
             let mario_ms = job_start.elapsed().as_secs_f32() * 1000.0;
-            // SM64's sound engine runs at the same 30 Hz as Mario
+            // SM64's sound engine runs at the same 30 Hz as Mario (when he runs faster, the Star
+            // Rush, it skips the ticks he has extra: the ring filled up and dropped chunks, clicks)
+            static AUDIO_DUE: Mutex<f32> = Mutex::new(0.0);
+            let due = {
+                let mut d = AUDIO_DUE.lock().unwrap_or_else(|e| e.into_inner());
+                *d = (*d + 1.0 / titan.max(1.0)).min(2.0);
+                let due = *d >= 1.0;
+                if due {
+                    *d -= 1.0;
+                }
+                due
+            };
             let mut buf = [0i16; 544 * 2 * 2];
-            let frames = unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) } as usize;
+            let frames = if due { (unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) }) as usize } else { 0 };
             audio::push(&buf[..(frames * 2 * 2).min(buf.len())]);
             let sound_ms = job_start.elapsed().as_secs_f32() * 1000.0 - mario_ms;
             let n = ctx.geo.used() * 9;
