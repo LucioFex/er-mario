@@ -47,6 +47,13 @@ const SQUASH_TICKS: u32 = 5;
 /// it pops out, and shrinks away (s)
 const POP_TIME: f32 = 0.22;
 const AWAY_TIME: f32 = 0.12;
+/// a new move that points it this far (degrees) from where it was: it gets there over a few
+/// ticks, this share of the way each (it jumped across in one); and the head's face turns at most
+/// this much a tick (it flipped over at once when the swing turned back)
+const JUMP_ANGLE: f32 = 50.0;
+const JUMP_TICKS: u32 = 2;
+const JUMP_SHARE: f32 = 0.6;
+const ACROSS_TURN: f32 = 60.0;
 
 struct State {
     out: bool,
@@ -63,6 +70,9 @@ struct State {
     /// ticks of squash left (a heavy blow), and the stretch now (eased)
     squash: u32,
     stretch: Vec3,
+    /// Mario's action last tick, and the ticks left easing a jump in where it points
+    action: u32,
+    easing: u32,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -71,7 +81,7 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     // (put away long ago: it doesn't shrink away on the first tick)
     let since = Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap_or_else(Instant::now);
-    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y, in_hand: 0.0, idle: HOLD, squash: 0, stretch: Vec3::ONE }))
+    f(s.get_or_insert_with(|| State { out: false, since, across: Vec3::Z, head: None, dir: Vec3::Y, in_hand: 0.0, idle: HOLD, squash: 0, stretch: Vec3::ONE, action: 0, easing: 0 }))
 }
 
 /// L1: the hammer comes out or goes away.
@@ -150,6 +160,20 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let dir = with(|s| s.dir.lerp(ready, READY_SETTLE).normalize_or(ready));
         (dir, hand.pos)
     };
+    // (a new move pointing it far from where it was: eased there)
+    let dir = with(|s| {
+        if state.action != s.action && scripted && s.dir.angle_between(dir).to_degrees() > JUMP_ANGLE {
+            s.easing = JUMP_TICKS;
+        }
+        s.action = state.action;
+        if s.easing > 0 && scripted {
+            s.easing -= 1;
+            Quat::IDENTITY.slerp(Quat::from_rotation_arc(s.dir, dir), JUMP_SHARE) * s.dir
+        } else {
+            s.easing = 0;
+            dir
+        }
+    });
     with(|s| s.dir = dir);
     let scale = size * if scripted { mv.hammer_scale.max(0.1) } else { 1.0 };
     // the head faces where it moves (its flat ends strike), kept across the handle
@@ -157,10 +181,18 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     let across = with(|s| {
         let moved = s.head.map_or(Vec3::ZERO, |h| mirror(head_now - h) * crate::scale());
         let want = s.across + moved * 6.0;
-        (want - dir * want.dot(dir)).try_normalize().unwrap_or_else(|| {
+        let across = (want - dir * want.dot(dir)).try_normalize().unwrap_or_else(|| {
             let fallback = fwd.cross(up).cross(dir);
             fallback.try_normalize().unwrap_or(Vec3::X)
-        })
+        });
+        // (turned over at most so far a tick, still across the handle)
+        let turned = s.across.angle_between(across).to_degrees();
+        if turned > ACROSS_TURN && turned.is_finite() {
+            let toward = Quat::IDENTITY.slerp(Quat::from_rotation_arc(s.across, across), ACROSS_TURN / turned) * s.across;
+            (toward - dir * toward.dot(dir)).try_normalize().unwrap_or(across)
+        } else {
+            across
+        }
     });
     let held = Quat::from_mat3(&Mat3::from_cols(dir.cross(across), dir, across)).normalize();
     // on his back, following his body (pelvis to head, shoulder to shoulder): the head behind his
