@@ -108,6 +108,16 @@ mundo es del anfitrión.
    - `coop: session [...] , host ... (us)` en la PC de Mario y `(them)` en la de Luigi
    - `coop: pose from ...` cuando llega la pose del otro
 
+## Prueba rápida del canal de Steam (una sola PC)
+
+Antes de jugar se puede comprobar en cada PC que el canal de Steam funciona. Poné
+`coop_test = loopback` en `er_mario.ini` y arrancá hasta el menú principal. La PC se manda paquetes
+a sí misma.
+- ✔ En el log aparecen `coop test: loopback got hello`, `got pose`, `got hit`, `got shove` y
+  `loopback to ...: N sent, M received`.
+- Después **borrá esa línea**. `coop_test = guest` hace jugar como invitado (sin agarres y con los
+  enemigos clavados en 1 de vida); solo sirve para pruebas.
+
 ## Qué mirar en el log si algo falla
 
 | Línea del log | Qué significa |

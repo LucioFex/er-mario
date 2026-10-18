@@ -207,6 +207,79 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static GUEST: AtomicBool = AtomicBool::new(false);
 
+/// `coop_test = ...` in er_mario.ini (developer tests with one PC): `loopback` sends every kind of
+/// packet to ourselves over Steam and logs what comes back; `guest` plays as a guest would (no
+/// grabs or moving enemies, their health never below 1).
+fn test_mode(what: &str) -> bool {
+    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODE.get_or_init(|| {
+        let mode = crate::paths::config("coop_test").unwrap_or_default().to_ascii_lowercase();
+        if !mode.is_empty() {
+            log(format!("coop: test mode '{mode}'"));
+        }
+        mode
+    })
+    .contains(what)
+}
+
+/// The loopback test: sent and received counts, when last sent, kinds seen.
+struct Loopback {
+    sent: u32,
+    got: u32,
+    at: Option<Instant>,
+    summary: Option<Instant>,
+    seen: Vec<u8>,
+    no_id: bool,
+}
+static LOOPBACK: Mutex<Loopback> = Mutex::new(Loopback { sent: 0, got: 0, at: None, summary: None, seen: Vec::new(), no_id: false });
+
+fn loopback() {
+    let mut t = LOOPBACK.lock().unwrap_or_else(|e| e.into_inner());
+    net::receive(|from, data| {
+        t.got += 1;
+        let kind = data.get(4).copied().unwrap_or(0);
+        if !t.seen.contains(&kind) {
+            t.seen.push(kind);
+            let what = match decode(data) {
+                Some(Packet::Pose { seq, parts }) => format!("pose seq {seq}, head at {:.2} m", parts[3].pos.length()),
+                Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
+                Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
+                Some(Packet::Hello) => "hello".into(),
+                None => "UNREADABLE".into(),
+            };
+            log(format!("coop test: loopback got {what} from {from:x} ({} B)", data.len()));
+        }
+    });
+    if t.at.is_some_and(|a| a.elapsed() < Duration::from_secs(1)) {
+        return;
+    }
+    t.at = Some(Instant::now());
+    let Some(me) = net::my_id() else {
+        if !std::mem::replace(&mut t.no_id, true) {
+            log("coop test: no Steam id of our own");
+        }
+        return;
+    };
+    let pose = (*crate::engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner()))
+        .unwrap_or([PartPose { rot: Quat::IDENTITY, pos: Vec3::Y, scale: 1.0, stretch: Vec3::ONE }; PARTS]);
+    let key = 0x0001_0002_0000_0003u64;
+    let packets = [
+        (encode(&Packet::Hello), false),
+        (encode(&Packet::Pose { seq: t.sent + 1, parts: Box::new(pose) }), false),
+        (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
+        (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
+    ];
+    for (bytes, reliable) in packets {
+        if net::send(me, &bytes, reliable) {
+            t.sent += 1;
+        }
+    }
+    if t.summary.is_none_or(|s| s.elapsed() >= Duration::from_secs(10)) {
+        t.summary = Some(Instant::now());
+        log(format!("coop test: loopback to {me:x}: {} sent, {} received", t.sent, t.got));
+    }
+}
+
 /// In a session with someone.
 pub fn active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
@@ -297,7 +370,7 @@ fn refresh(s: &mut State) {
     // (who's who changes rarely: looked up with the session, checked for life where used)
     s.chrs = if s.peers.is_empty() { Vec::new() } else { partner_chrs(&s.peers, &mut s.unpaired) };
     ACTIVE.store(!s.peers.is_empty(), Ordering::Relaxed);
-    GUEST.store(!s.peers.is_empty() && !s.host, Ordering::Relaxed);
+    GUEST.store((!s.peers.is_empty() && !s.host) || test_mode("guest"), Ordering::Relaxed);
 }
 
 /// The packets that came in (sender, bytes), into the state.
@@ -362,6 +435,9 @@ pub fn frame() {
         s.peers.clone()
     };
     if peers.is_empty() {
+        if test_mode("loopback") {
+            loopback();
+        }
         return;
     }
     let mut batch = Vec::new();

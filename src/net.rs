@@ -79,6 +79,17 @@ fn api() -> Option<(&'static Api, usize)> {
     })
 }
 
+/// Our own Steam id (the co-op self test sends to it).
+pub fn my_id() -> Option<u64> {
+    type User = unsafe extern "C" fn() -> usize;
+    type GetSteamId = unsafe extern "C" fn(usize) -> u64;
+    let module = unsafe { GetModuleHandleW(w!("steam_api64.dll")) }.ok()?;
+    let user = unsafe { GetProcAddress(module, PCSTR(c"SteamAPI_SteamUser_v021".as_ptr() as *const u8)) }?;
+    let get = unsafe { GetProcAddress(module, PCSTR(c"SteamAPI_ISteamUser_GetSteamID".as_ptr() as *const u8)) }?;
+    let u = unsafe { std::mem::transmute::<_, User>(user)() };
+    (u != 0).then(|| unsafe { std::mem::transmute::<_, GetSteamId>(get)(u) }).filter(|&id| id != 0)
+}
+
 /// Sends `data` to the player with this Steam id. False if Steam refused it.
 pub fn send(peer: u64, data: &[u8], reliable: bool) -> bool {
     let Some((a, messages)) = api() else { return false };
