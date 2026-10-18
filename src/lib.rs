@@ -1419,6 +1419,8 @@ fn input_task() {
         MENU_OPEN.store(false, Ordering::Relaxed);
         return;
     }
+    // (a captured enemy's attack goes in now: after its AI, before its behaviour)
+    bossride::pre_behavior();
     let Some(player) = (unsafe { WorldChrMan::instance_mut() }).ok().and_then(|w| w.main_player.as_mut()) else { return };
     let pad = PAD.lock().unwrap_or_else(|e| e.into_inner()).filter(|(_, t)| t.elapsed().as_secs_f32() < 0.25).map(|(p, _)| p);
     // getting on or off Torrent, or whistling for him (the whistle's animations)
@@ -2909,6 +2911,15 @@ fn frame(data: &FD4TaskData) {
             worker::call("metal clang", |_| unsafe { sm64::sm64_play_sound_global(SOUND_METAL_BONK) });
         }
         let hurt = hurt.filter(|_| !caps::shielded() && !moves::untouchable(m.state.action));
+        // (up on a captured enemy: its back takes the blow, not him)
+        let hurt = match hurt {
+            Some(combat::Hurt::Hit(w)) if bossride::active() => {
+                bossride::shield(w);
+                None
+            }
+            Some(_) if bossride::active() => None,
+            h => h,
+        };
         if matches!(hurt, Some(combat::Hurt::Hit(_))) {
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
@@ -2921,7 +2932,7 @@ fn frame(data: &FD4TaskData) {
         let shoved = {
             let p = player_ref.chr_ins.modules.physics.position;
             let nearest = targets.iter().filter(|t| !t.friendly() && !t.is_prop()).map(|t| glam::Vec3::new(t.er.0 - p.0, t.er.1 - p.1, t.er.2 - p.2).length()).min_by(f32::total_cmp);
-            let calm = hurt.is_none() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::untouchable(m.state.action) && !mega::active() && !blown::flying();
+            let calm = hurt.is_none() && !bossride::active() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::untouchable(m.state.action) && !mega::active() && !blown::flying();
             let calm = calm && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             shove::check(current_anim(&player_ref.chr_ins), nearest, calm)
         };
@@ -3072,6 +3083,8 @@ fn frame(data: &FD4TaskData) {
             let a = inputs.button_a != 0;
             a && !A_HELD.swap(a, Ordering::Relaxed)
         };
+        // (up on a captured enemy, X, Y and B are its attacks and its charge)
+        let ride_keys = [x_move, y_move, b_dash];
         if rock::active() || bossride::active() {
             (x_move, y_move, b_dash, b_fire) = (false, false, false, false);
             if rock::active() {
@@ -3133,7 +3146,7 @@ fn frame(data: &FD4TaskData) {
             let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
             let steer = if mag > 0.2 { glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * mag } else { glam::Vec3::ZERO };
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
-            bossride::update(1.0 / 30.0, steer, b_hook, ride_jump, m.state.action, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
+            bossride::update(1.0 / 30.0, steer, b_hook, ride_jump, ride_keys, m.state.action, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
                 let d = to - from;
                 havok?
                     .phys_world

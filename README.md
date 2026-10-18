@@ -250,7 +250,7 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a big enemy | **Pole swing** | Mario swings round it; let go for a flying kick |
-| RT held on a big enemy, then A | **Ride** | Up on its back (RT can be let go), the stick steers it; A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 40 s |
+| RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 10 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 45 s |
 | R3 once the star is full | **Star Rush** | Style fills the star; 10 s of super armour (hits cost half, no knockback), 15% faster and harder |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
@@ -298,7 +298,7 @@ close and risky hits.
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
 | Star Rush | — | Blows **×1.15**, hits on Mario **half** |
-| Ride wall slam | — | **11%** and the stance broken |
+| Capture: charge **6%** each, wall slam | — | **11%** and the stance broken |
 
 (Shares already include the 0.75 damage factor; bosses take about 6.5% of them, more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
@@ -396,7 +396,7 @@ replaces this fork's DLL with the original one.
 | A just before an enemy's blow | | Mikiri stomp |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools |
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
-| RT | Middle mouse button | The hook (see above). Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: ride |
+| RT | Middle mouse button | The hook (see above). Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: capture |
 | LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
 | R3 (right stick click) | | Star Rush, once the star is full |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |

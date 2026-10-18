@@ -1365,6 +1365,45 @@ impl ImguiRenderLoop for Overlay {
             }
         }
 
+        // a captured enemy (bossride.rs): a ring for the time left round its health, low in the
+        // middle, with the buttons it answers to
+        if let Some((time, hp)) = crate::bossride::hud() {
+            let (cx, cy) = (size[0] * 0.5, size[1] * 0.8);
+            let rr = 15.0 * px;
+            dl.add_circle([cx, cy], rr + 3.0 * px, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45)).filled(true).build();
+            let n = (40.0 * time.clamp(0.0, 1.0)) as usize;
+            let pts: Vec<[f32; 2]> = (0..=n)
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2 + i as f32 / 40.0 * std::f32::consts::TAU;
+                    [cx + a.cos() * rr, cy + a.sin() * rr]
+                })
+                .collect();
+            if pts.len() > 1 {
+                let blink = time < 0.25 && (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f32() % 60.0) * 6.0).sin() > 0.0;
+                dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.82, 0.3, if blink { 0.45 } else { 0.95 })).thickness(px * 2.5).build();
+            }
+            // (its health: an inner ring, green to red)
+            let h = hp.clamp(0.0, 1.0);
+            let col = imgui::ImColor32::from_rgba_f32s(1.0 - h * 0.7, 0.35 + h * 0.55, 0.3, 0.9);
+            let m = (32.0 * h) as usize;
+            let inner: Vec<[f32; 2]> = (0..=m)
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2 + i as f32 / 32.0 * std::f32::consts::TAU;
+                    [cx + a.cos() * rr * 0.55, cy + a.sin() * rr * 0.55]
+                })
+                .collect();
+            if inner.len() > 1 {
+                dl.add_polyline(inner, col).thickness(px * 4.0).build();
+            }
+            let g = 6.0 * px;
+            for (k, label) in ["X", "Y", "B", "A"].iter().enumerate() {
+                if let Some(id) = label.chars().next().and_then(glyph_for) {
+                    let lx = cx + (k as f32 - 1.5) * g * 1.7 - g * 0.5;
+                    dl.add_image(textures[id], [lx, cy + rr + 5.0 * px], [lx + g, cy + rr + 5.0 * px + g]).col([1.0, 1.0, 1.0, 0.8]).build();
+                }
+            }
+        }
+
         // the co-op partner (coop.rs), small, bottom left: their head, a little power pie with their
         // wedges (red when low, blinking at one), and when they're off screen an arrow on the
         // screen's edge pointing their way, with how far they are
