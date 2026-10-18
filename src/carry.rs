@@ -126,7 +126,7 @@ pub fn harmless(mario: Vec3) -> bool {
     for set in wcm.chr_sets.iter().flatten() {
         for chr in set.characters() {
             let chr: &eldenring::cs::ChrIns = chr;
-            if chr.modules.data.hp <= 0 || crate::combat::own_side(chr.team_type) {
+            if chr.modules.data.hp <= 0 || crate::combat::own_side(chr.team_type) || crate::combat::helper(chr) {
                 continue;
             }
             let q = chr.modules.physics.position;
@@ -176,6 +176,7 @@ fn bumped(mob: &FieldInsHandle, p: Vec3) -> Option<FieldInsHandle> {
                 || chr.modules.data.hp <= 0
                 || crate::combat::own_side(chr.team_type)
                 || crate::combat::is_torrent(chr)
+                || crate::combat::helper(chr)
             {
                 continue;
             }

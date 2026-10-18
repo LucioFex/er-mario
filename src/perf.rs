@@ -26,7 +26,9 @@ pub const CLASS_NAME: usize = 14;
 pub const HAVOK_QUERY: usize = 15;
 pub const TRIANGLES: usize = 16;
 pub const FLOOR_PATCHES: usize = 17;
-const NAMES: [&str; 18] = [
+// inside reading Havok: the triangles of the bodies near Mario
+pub const HAVOK_PICK: usize = 18;
+const NAMES: [&str; 19] = [
     "frame task",
     "HUD task",
     "input task",
@@ -45,11 +47,12 @@ const NAMES: [&str; 18] = [
     "reading Havok",
     "turning triangles",
     "floor patches",
+    "picking triangles",
 ];
 
 /// per part: slowest run and all runs together since the last report (ns)
-static WORST: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
-static TOTAL: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
+static WORST: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
+static TOTAL: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
 /// A run this long is worth a line (ms): a quarter of a frame at 60 fps.
 const SLOW_MS: f32 = 4.0;
 /// So are many short runs that add up to this over the 2 s (ms): 5% of the time.
@@ -71,7 +74,7 @@ impl Drop for Span {
 }
 
 /// What each part took since the frame task last started (ns).
-static NOW: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
+static NOW: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
 /// The parts that run by themselves, not inside another one: together they're all the mod does
 /// on the game's threads in a frame.
 const OWN: [usize; 8] = [FRAME, HUD, INPUT, POSE, POSE_LATE, MENU_MODEL, OVERLAY, LAKITU];

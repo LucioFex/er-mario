@@ -51,8 +51,8 @@ const SLOW_EASE: f32 = 0.4;
 /// how long the "MAMMA MIA" and the star finish's banner show (s)
 pub const LOST_TIME: f32 = 1.1;
 pub const STAR_TIME: f32 = 1.2;
-/// the rank-up chime's volume (it was loud over a fight)
-const CHIME_VOLUME: f32 = 0.15;
+/// the rank-up chime's volume (it was loud over a fight; 0.15 still a bit loud, 2026-10-18)
+const CHIME_VOLUME: f32 = 0.09;
 
 /// SM64 sounds: the red coin chime (its ID goes up a note per coin), the cheers, a kill's poof
 const SOUND_RED_COIN: i32 = 0x7828_9081;
@@ -126,7 +126,7 @@ fn add(m: &mut Meter, points: f32) {
         match r {
             4 => list.push((SOUND_YAHOO_WAHA_YIPPEE, 1.0)),
             5 => list.push((SOUND_YAHOO_WAHA_YIPPEE + (2 << 16), 1.0)),
-            6 => list.extend([(SOUND_HERE_WE_GO, 1.0), (SOUND_STAR, 0.5)]),
+            6 => list.extend([(SOUND_HERE_WE_GO, 1.0), (SOUND_STAR, 0.3)]),
             _ => {}
         }
         crate::log(format!("style: {} {} ({} hits, {:.1} points)", RANKS[r].1, RANKS[r].2, m.count, m.points));

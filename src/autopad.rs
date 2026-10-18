@@ -256,7 +256,7 @@ pub fn report(player: &eldenring::cs::ChrIns) {
     for set in wcm.chr_sets.iter().flatten() {
         for chr in set.characters() {
             let chr: &eldenring::cs::ChrIns = chr;
-            if chr.modules.data.hp <= 0 || chr.team_type == 0 || crate::combat::own_side(chr.team_type) || !crate::combat::hittable(chr.chr_type) {
+            if chr.modules.data.hp <= 0 || chr.team_type == 0 || crate::combat::own_side(chr.team_type) || !crate::combat::hittable(chr.chr_type) || crate::combat::helper(chr) {
                 continue;
             }
             let q = chr.modules.physics.position;
@@ -324,7 +324,7 @@ fn seek(player: &eldenring::cs::ChrIns, wcm: &eldenring::cs::WorldChrMan) {
         .iter()
         .flatten()
         .flat_map(|set| set.characters())
-        .filter(|c| c.modules.data.hp > 0 && c.team_type != 0 && !crate::combat::own_side(c.team_type) && crate::combat::hittable(c.chr_type))
+        .filter(|c| c.modules.data.hp > 0 && c.team_type != 0 && !crate::combat::own_side(c.team_type) && crate::combat::hittable(c.chr_type) && !crate::combat::helper(c))
         .map(|c| glam::Vec3::new(c.modules.physics.position.0, c.modules.physics.position.1, c.modules.physics.position.2) - me)
         .filter(|d| d.length() < 60.0)
         .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()));

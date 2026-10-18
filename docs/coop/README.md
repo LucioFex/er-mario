@@ -92,6 +92,10 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
      Reforged comprime su lista de materiales con DEFLATE y los builds anteriores al 18/10 no la leían.
      Bajá el zip de nuevo, reemplazá `er_mario.dll` y arrancá dos veces más. El build que falló no
      deja nada a medias: se rehace solo.
+   - ✔ Ya en el mundo aparece `combat: enemies count as bosses from 5000 HP (x2, Reforged)`. Reforged
+     les da a los enemigos ~1,7 veces la vida de vanilla; sin esto, los soldados comunes contaban como
+     jefes (el uppercut no los levantaba y los golpes les sacaban muy poco). Si hace falta, se ajusta
+     con `enemy_hp_scale = 2` en `er_mario.ini`.
 
 ### 4. Una sola partida para solo y coop (PC de Mario, el anfitrión)
 
@@ -150,6 +154,9 @@ a sí misma.
 | `combat: a partner's ... not here` | Un golpe del invitado sobre un enemigo que el anfitrión no tiene cargado (se ignora) |
 | `combat: attack 99X as found: ... LOOKS USED` | Reforged usa esa fila de ataque: avisar, porque hay que mover las filas del mod |
 | `equip: armour rows as found` | Modelos originales de las pecheras 660100 y 661100 en Reforged |
+| `juggle: cXXXX not lifted: ...` | Por qué el uppercut (X, X, Y) no levantó a ese enemigo (jefe, muy grande, etc.) |
+| `combat: left out cXXXX, invisible (...)` | Un personaje invisible que Mario ignora (ayudantes de las gracias, enemigos que el juego no dibuja) |
+| `perf: slow ... \| havok: ...` | Un tirón del mod; la parte final dice cuántos cuerpos de colisión miró |
 
 ## Perfil de me3 sin Reforged
 

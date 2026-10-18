@@ -151,7 +151,7 @@ pub fn harmless(mario: Vec3) -> bool {
             if key(&chr.field_ins_handle) == key(&boss) || chr.modules.data.hp <= 0 || crate::combat::own_side(chr.team_type) {
                 continue;
             }
-            if !crate::combat::hittable(chr.chr_type) {
+            if !crate::combat::hittable(chr.chr_type) || crate::combat::helper(chr) {
                 continue;
             }
             let q = chr.modules.physics.position;

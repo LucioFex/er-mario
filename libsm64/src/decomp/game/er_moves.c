@@ -768,7 +768,8 @@ s32 act_er_air_combo(struct MarioState *m) {
             er_sound(m, blow == 2 ? SOUND_MARIO_PUNCH_HOO : blow == 0 ? SOUND_MARIO_PUNCH_YAH : SOUND_MARIO_PUNCH_WAH);
         }
         m->vel[1] = er_juggle ? 14.0f : 6.0f;
-        mario_set_forward_vel(m, 6.0f);
+        // (with an enemy up there: a smaller step forward, a long string carried him past it)
+        mario_set_forward_vel(m, er_juggle ? 3.0f : 6.0f);
     }
     if (t >= 2 && (m->input & INPUT_B_PRESSED)) {
         m->actionState = 1;

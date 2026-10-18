@@ -1014,22 +1014,28 @@ fn havok_surfaces(h: &mut havok_col::HavokCollision, origin: [f32; 3], mario: [f
             log(format!("CSHavokMan at {:#x}", h as *const _ as usize));
         }
     }
-    let mut centers = std::collections::HashMap::new();
+    // per body, worked out once (it was per triangle: a few lookups each, and a small mesh's
+    // closed-shape test built its edge table again for every one of its triangles): whether it's
+    // convex or boxed, and its middle (SM64) if it has an inside
+    let mut bodies: std::collections::HashMap<u32, (bool, Option<[f32; 3]>)> = std::collections::HashMap::new();
     let triangles = perf::span(perf::TRIANGLES);
     for (t, layer, body) in &tris {
-        let mid = if h.is_convex(*body) || h.is_boxed(*body) || h.mesh_of(*body).is_some_and(|m| m.small_closed()) {
-            *centers.entry(*body).or_insert_with(|| {
-                let mesh = h.mesh_of(*body)?;
+        let (solid, mid) = *bodies.entry(*body).or_insert_with(|| {
+            let solid = h.is_convex(*body) || h.is_boxed(*body);
+            let mesh = h.mesh_of(*body);
+            let mid = (solid || mesh.as_ref().is_some_and(|m| m.small_closed())).then(|| {
+                let mesh = mesh.as_ref()?;
                 let (p, q) = h.transform(*body)?;
                 let local = mesh.tris().iter().flatten().copied().sum::<glam::Vec3>() / (mesh.tris().len() * 3) as f32;
                 let world = q * local + p;
                 Some(collision::er_to_sm(origin, &HavokPosition(world.x, world.y, world.z, 0.0)))
-            })
-        } else { None };
+            }).flatten();
+            (solid, mid)
+        });
         let v = t.map(|p| {
             collision::er_to_sm(origin, &HavokPosition(p.x, p.y, p.z, 0.0)).map(|x| x.round() as i32)
         });
-        let Some(v) = collision_geometry::body_surface_vertices(v, mid, mario, h.is_convex(*body) || h.is_boxed(*body)) else { continue };
+        let Some(v) = collision_geometry::body_surface_vertices(v, mid, mario, solid) else { continue };
         let mut surf = sm64::SM64Surface::grass(v);
         surf.force = *layer as i16;
         out.push(surf);
@@ -1735,6 +1741,15 @@ fn frame(data: &FD4TaskData) {
         perf::frame_start();
     }
     let _span = perf::span(perf::FRAME);
+    // once, a few seconds in (every mod's DLL loaded by then): what a memory check costs here
+    {
+        static BENCHED: AtomicBool = AtomicBool::new(false);
+        static FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if FRAMES.fetch_add(1, Ordering::Relaxed) == 600 && !BENCHED.swap(true, Ordering::Relaxed) {
+            let (ok, bad) = explore::bench();
+            log(format!("memory check: {ok:.2} us when the memory is there, {bad:.2} us when not (a caught fault)"));
+        }
+    }
     // co-op (Seamless): the session, the partners' poses, blows and shoves (nothing out of one)
     coop::frame();
     // the style meter's slow motion (the game's speed back to normal after it, in or out of Mario mode)
@@ -1758,8 +1773,21 @@ fn frame(data: &FD4TaskData) {
                 log(format!("perf: pacing, mario {}: {}", if ENABLED.load(Ordering::Relaxed) { "on" } else { "off" }, perf::pacing()));
             }
             if let Some(slow) = perf::report() {
-                log(format!("perf: slow in the last 2 s: {slow}"));
+                use std::sync::atomic::Ordering::Relaxed;
+                let havok = if slow.contains("Havok") {
+                    format!(
+                        " | havok: {} bodies, at most {} looked at and {} decoded in a query",
+                        havok_col::BODIES.load(Relaxed),
+                        havok_col::MOST_LOOKED_AT.load(Relaxed),
+                        havok_col::MOST_DECODED.load(Relaxed)
+                    )
+                } else {
+                    String::new()
+                };
+                log(format!("perf: slow in the last 2 s: {slow}{havok}"));
             }
+            havok_col::MOST_DECODED.store(0, std::sync::atomic::Ordering::Relaxed);
+            havok_col::MOST_LOOKED_AT.store(0, std::sync::atomic::Ordering::Relaxed);
         }
         if p.time >= 2.0 && !debug() {
             *p = Perf::new();
@@ -1798,8 +1826,9 @@ fn frame(data: &FD4TaskData) {
             {
                 use std::sync::atomic::Ordering::Relaxed;
                 let (checks, failed) = (explore::CHECKS.swap(0, Relaxed), explore::FAILED.swap(0, Relaxed));
+                let failed_ms = explore::FAILED_NS.swap(0, Relaxed) as f64 / 1e6;
                 let frames = p.frames.max(1) as f64;
-                log(format!("perf: memory checks {:.0}/frame, {failed} said no in the last 2 s", checks as f64 / frames));
+                log(format!("perf: memory checks {:.0}/frame, {failed} said no in the last 2 s ({failed_ms:.1} ms)", checks as f64 / frames));
             }
             if p.scans > 0 {
                 let per_frame = |ms: f32| ms / p.frames as f32;
@@ -2378,7 +2407,7 @@ fn frame(data: &FD4TaskData) {
         // enemies up in the air with Mario (the air combos), or falling back down
         {
             let me = to_er(m.origin, m.state.position);
-            juggle::update(data.delta_time.time, glam::Vec3::new(me.0, me.1, me.2), |from, to| {
+            juggle::update(data.delta_time.time, glam::Vec3::new(me.0, me.1, me.2), m.state.face_angle, |from, to| {
                 let h = havok?;
                 let d = to - from;
                 h.phys_world

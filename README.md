@@ -383,6 +383,11 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   the mod then builds its models into Reforged's `addons\er-mario`, which Reforged's launcher
   loads (`package_dir = ...` in `er_mario.ini` overrides it). `base_assets = ...` makes the build
   start from another mod's menu, material or Torrent files instead of the game's.
+- On Reforged, enemies have about 1.7 times vanilla's health, so the line where an enemy counts as
+  a boss (smaller damage share, never lifted by the uppercut) doubles to 5000 HP when Reforged's
+  DLL is loaded (`enemy_hp_scale` in `er_mario.ini`). Reforged's one-off health drains no longer
+  set Mario on fire, and invisible characters (the helpers by graces, enemies the game isn't
+  drawing) are left alone.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - Not synced yet: caps' looks and sounds of the other player, Yoshi.

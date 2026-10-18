@@ -7,6 +7,34 @@ use windows::Win32::System::Memory::IsBadReadPtr;
 /// Memory check statistics (perf log): checks, and how many said no.
 pub static CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Time the checks that said no took (ns): each is a fault Windows catches.
+pub static FAILED_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What one check costs here (µs) on memory that's there and on memory that isn't, timed over
+/// a couple of hundred tries: a fault goes through every exception handler other mods put in.
+pub fn bench() -> (f64, f64) {
+    use windows::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS};
+    const N: u32 = 200;
+    let there = [0u64; 4];
+    let t = std::time::Instant::now();
+    for _ in 0..N {
+        let _ = std::hint::black_box(unsafe { IsBadReadPtr(Some(there.as_ptr().cast()), 8) });
+    }
+    let ok = t.elapsed().as_secs_f64() * 1e6 / N as f64;
+    let page = unsafe { VirtualAlloc(None, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS) };
+    if page.is_null() {
+        return (ok, -1.0);
+    }
+    let t = std::time::Instant::now();
+    for _ in 0..N {
+        let _ = std::hint::black_box(unsafe { IsBadReadPtr(Some(page.cast_const()), 8) });
+    }
+    let bad = t.elapsed().as_secs_f64() * 1e6 / N as f64;
+    unsafe {
+        let _ = VirtualFree(page, 0, MEM_RELEASE);
+    }
+    (ok, bad)
+}
 
 /// True if `len` bytes at `addr` can be read.
 ///
@@ -24,6 +52,7 @@ pub fn readable(addr: usize, len: usize) -> bool {
         return false;
     }
     CHECKS.fetch_add(1, Relaxed);
+    let t = std::time::Instant::now();
     let probe = |at: usize, n: usize| !unsafe { IsBadReadPtr(Some(at as *const std::ffi::c_void), n) }.as_bool();
     // A big range (the body table is 5 MB, asked about on every collision query) is tried at
     // its ends and every 64 KB between, the size Windows hands memory out in: every page of it
@@ -37,6 +66,7 @@ pub fn readable(addr: usize, len: usize) -> bool {
     };
     if !ok {
         FAILED.fetch_add(1, Relaxed);
+        FAILED_NS.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
     }
     ok
 }

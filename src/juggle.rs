@@ -29,7 +29,10 @@ const HANG: f32 = 0.9;
 /// how far in front of Mario it hangs (m), and how fast it gets there
 const NEAR: f32 = 0.6;
 const FAR: f32 = 1.3;
-const FOLLOW: f32 = 14.0;
+const FOLLOW: f32 = 20.0;
+/// how fast it swings round to where Mario faces (1/s): it hung where it was caught, and once he
+/// turned or drifted on his blows went past it
+const FACE: f32 = 6.0;
 /// falling back down (m/s²), and the longest fall before the game takes over
 const GRAVITY: f32 = 16.0;
 const MAX_FALL: f32 = 3.0;
@@ -103,6 +106,23 @@ fn launched(pos: Vec3, mario: Vec3, height: f32) -> Phase {
     Phase::Flying { vel: away + Vec3::Y * up, since: Instant::now() }
 }
 
+/// `refusal` for a boss or strong enemy that isn't stunned
+pub const NOT_STUNNED: &str = "a boss, not stunned";
+
+/// Why an enemy this big (m) can't be lifted, if it can't: `regular`, `stunned` as in `try_launch`
+pub fn refusal(radius_m: f32, height_m: f32, regular: bool, stunned: bool) -> Option<&'static str> {
+    let (max_r, max_h) = if regular { (MAX_RADIUS, MAX_HEIGHT) } else { (MAX_RADIUS_STUNNED, MAX_HEIGHT_STUNNED) };
+    if !(regular || stunned) {
+        Some(NOT_STUNNED)
+    } else if radius_m > max_r {
+        Some("too wide")
+    } else if height_m > max_h {
+        Some("too tall")
+    } else {
+        None
+    }
+}
+
 /// The super jump punch hit `h` (combat.rs): lifts it if it may go. `stunned`: a boss or strong
 /// enemy that's stunned (a regular one is `regular`); `high`: the hammer's launcher, sending it
 /// flying high up. True if it's up now.
@@ -111,8 +131,7 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if crate::coop::guest() {
         return false;
     }
-    let (max_r, max_h) = if regular { (MAX_RADIUS, MAX_HEIGHT) } else { (MAX_RADIUS_STUNNED, MAX_HEIGHT_STUNNED) };
-    if !(regular || stunned) || radius_m > max_r || height_m > max_h {
+    if refusal(radius_m, height_m, regular, stunned).is_some() {
         return false;
     }
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
@@ -249,7 +268,8 @@ pub fn clear() {
 
 /// Game thread, every frame: the lifted ones follow Mario (his feet `mario`, Elden Ring), or fall.
 /// `hit` casts a ray (from, to) against the map.
-pub fn update(dt: f32, mario: Vec3, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+    let facing = Vec3::new(-face_angle.sin(), 0.0, face_angle.cos());
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     if up.is_empty() {
         return;
@@ -264,9 +284,12 @@ pub fn update(dt: f32, mario: Vec3, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         }
         let (next, keep) = match j.phase {
             Phase::Up { dir, dist, last_hit } => {
-                if last_hit.elapsed().as_secs_f32() > HANG {
-                    j.phase = Phase::Falling { vel: Vec3::ZERO, since: Instant::now() };
-                }
+                let dir = dir.lerp(facing, 1.0 - (-FACE * dt).exp()).normalize_or(facing);
+                j.phase = if last_hit.elapsed().as_secs_f32() > HANG {
+                    Phase::Falling { vel: Vec3::ZERO, since: Instant::now() }
+                } else {
+                    Phase::Up { dir, dist, last_hit }
+                };
                 // in front of Mario, its feet a little above his
                 let want = mario + dir * dist + Vec3::Y * 0.15;
                 (j.pos.lerp(want, 1.0 - (-FOLLOW * dt).exp()), true)

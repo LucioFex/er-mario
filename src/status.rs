@@ -320,7 +320,7 @@ fn flair(feet: Vec3, calm: bool) {
 fn burns(player: &ChrIns) {
     let mut log_lines = Vec::new();
     with(|s| {
-        let mut fresh_dot = false;
+        let (mut fresh_dot, mut fire) = (false, false);
         let mut now_ids = std::mem::take(&mut s.effects);
         let before = now_ids.clone();
         now_ids.clear();
@@ -345,19 +345,28 @@ fn burns(player: &ChrIns) {
             }
             if hurts && life > 0.0 && life <= BURN_MAX_LIFE && !LAVA_BURNS.contains(&e.param_id) {
                 fresh_dot = true;
+                fire |= looks_like_fire(p.vfx_id(), p.state_info());
             }
         }
         s.effects = now_ids;
         if fresh_dot {
             s.new_dot = Some(Instant::now());
-            if s.burn.is_none() {
-                s.burn = Some(Instant::now());
-            }
+        }
+        if fire && s.burn.is_none() {
+            s.burn = Some(Instant::now());
         }
     });
     for l in log_lines {
         log(l);
     }
+}
+
+/// Whether a new effect that hurts is something burning on him: it shows (an effect on the body)
+/// or has a state of its own. Reforged takes HP off in one go with effects that have neither
+/// (5002351/5002352: 4.5% and 6% once, no vfx, state 0, on some of its hits): each one set Mario
+/// off on SM64's burning run, out of control for 1.5 s in the middle of a fight.
+fn looks_like_fire(vfx: i32, state: u16) -> bool {
+    vfx > 0 || state != 0
 }
 
 /// A draining effect that no ailment came with, a moment later: Mario's on fire.
@@ -387,6 +396,16 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
     use super::sets_in;
+
+    #[test]
+    fn reforged_one_off_drain_is_no_fire() {
+        // Reforged's 5002351 / 5002352: no vfx, state 0
+        assert!(!super::looks_like_fire(-1, 0));
+        // a burn with flames on the body, or a state of its own
+        assert!(super::looks_like_fire(6, 6));
+        assert!(super::looks_like_fire(-1, 6));
+        assert!(super::looks_like_fire(8640, 0));
+    }
 
     #[test]
     fn ailment_sets_in() {

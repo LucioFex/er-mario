@@ -28,6 +28,12 @@ pub const COLUMN: f32 = 1.5; // floor column half-width (m)
 pub const ABOVE: f32 = 3.0;
 const MAX_TRIS: usize = 8000;
 
+/// For the perf log: bodies in the world at the last query, and the most meshes one query
+/// decoded / bodies it looked at closely since the last report.
+pub static BODIES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub static MOST_DECODED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub static MOST_LOOKED_AT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 pub type Tri = [Vec3; 3];
 
 /// A decoded mesh in shape-local space, bucketed into cells for quick queries.
@@ -35,6 +41,9 @@ pub struct Mesh {
     tris: Vec<Tri>,
     cells: HashMap<(i32, i32, i32), Vec<u32>>,
     radius: f32,
+    /// the cells it has triangles in lie within these (inclusive)
+    cell_lo: [i32; 3],
+    cell_hi: [i32; 3],
 }
 
 impl Mesh {
@@ -68,6 +77,7 @@ impl Mesh {
     fn new(tris: Vec<Tri>) -> Self {
         let mut cells: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
         let mut radius: f32 = 0.0;
+        let (mut cell_lo, mut cell_hi) = ([i32::MAX; 3], [i32::MIN; 3]);
         for (i, t) in tris.iter().enumerate() {
             if !t.iter().all(|v| v.is_finite() && v.abs().max_element() < 20_000.0) {
                 continue;
@@ -87,8 +97,12 @@ impl Mesh {
                     }
                 }
             }
+            for (k, (l, h)) in [(c(lo.x), c(hi.x)), (c(lo.y), c(hi.y)), (c(lo.z), c(hi.z))].into_iter().enumerate() {
+                cell_lo[k] = cell_lo[k].min(l);
+                cell_hi[k] = cell_hi[k].max(h);
+            }
         }
-        Self { tris, cells, radius }
+        Self { tris, cells, radius, cell_lo, cell_hi }
     }
 }
 
@@ -1032,9 +1046,15 @@ impl HavokCollision {
                 (center - Vec3::new(RADIUS, BOX_DOWN, RADIUS), center + Vec3::new(RADIUS, ABOVE * crate::size_factor(), RADIUS)),
                 (center - Vec3::new(COLUMN, BELOW, COLUMN), center + Vec3::new(COLUMN, 0.0, COLUMN)),
             ];
+            let _pick = crate::perf::span(crate::perf::HAVOK_PICK);
+            if mesh.cells.is_empty() {
+                continue;
+            }
             let inv = q.inverse();
-            let c = |v: f32| (v / CELL).floor() as i32;
-            let mut picked = std::collections::HashSet::new();
+            // (cells past the mesh's own are empty: a small prop looked up the whole box's worth,
+            // dozens of hash lookups per body, every query)
+            let c = |v: f32, k: usize| ((v / CELL).floor() as i32).clamp(mesh.cell_lo[k], mesh.cell_hi[k]);
+            let mut picked: Vec<u32> = Vec::new();
             for (wlo, whi) in boxes {
                 let (mut llo, mut lhi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
                 for k in 0..8 {
@@ -1047,9 +1067,15 @@ impl HavokCollision {
                     llo = llo.min(l);
                     lhi = lhi.max(l);
                 }
-                for x in c(llo.x)..=c(lhi.x) {
-                    for y in c(llo.y)..=c(lhi.y) {
-                        for z in c(llo.z)..=c(lhi.z) {
+                // the box misses the mesh's cells altogether
+                let (cl, ch) = (mesh.cell_lo, mesh.cell_hi);
+                let f = |v: f32| (v / CELL).floor() as i32;
+                if f(lhi.x) < cl[0] || f(llo.x) > ch[0] || f(lhi.y) < cl[1] || f(llo.y) > ch[1] || f(lhi.z) < cl[2] || f(llo.z) > ch[2] {
+                    continue;
+                }
+                for x in c(llo.x, 0)..=c(lhi.x, 0) {
+                    for y in c(llo.y, 1)..=c(lhi.y, 1) {
+                        for z in c(llo.z, 2)..=c(lhi.z, 2) {
                             if let Some(list) = mesh.cells.get(&(x, y, z)) {
                                 picked.extend(list.iter().copied());
                             }
@@ -1057,6 +1083,8 @@ impl HavokCollision {
                     }
                 }
             }
+            picked.sort_unstable();
+            picked.dedup();
             n_near += 1;
             n_picked += picked.len();
             for ti in picked {
@@ -1074,6 +1102,12 @@ impl HavokCollision {
         }
         self.last_bodies = out.iter().map(|t| t.2).collect();
         self.queries += 1;
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            BODIES.store(count as u32, Relaxed);
+            MOST_DECODED.fetch_max(n_decoded, Relaxed);
+            MOST_LOOKED_AT.fetch_max(n_layer_ok - n_passed, Relaxed);
+        }
         if self.queries % 10 == 1 {
             crate::dlog(format!(
                 "havok query: {:.1} ms, bodies {count}, layer ok {n_layer_ok}, passed by slot {n_passed}, waiting {n_waiting}, decoded {n_decoded}, near {n_near}, picked {n_picked}, out {}",
@@ -1104,6 +1138,17 @@ impl HavokCollision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mesh_knows_the_cells_it_fills() {
+        let t = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| [Vec3::from(a), Vec3::from(b), Vec3::from(c)];
+        let m = Mesh::new(vec![t([-5.0, 0.0, 0.5], [5.0, 0.0, 0.5], [0.0, 3.0, 0.5]), t([0.0, 0.0, 9.0], [1.0, 0.0, 9.0], [0.0, 1.0, 9.0])]);
+        assert_eq!(m.cell_lo, [-2, 0, 0]);
+        assert_eq!(m.cell_hi, [1, 0, 2]);
+        // nothing usable: no cells (the query skips it before using the bounds)
+        let empty = Mesh::new(vec![t([f32::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])]);
+        assert!(empty.cells.is_empty());
+    }
 
     #[test]
     fn tracked_body_reads_reject_removed_and_reused_slots() {

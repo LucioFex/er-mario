@@ -605,6 +605,34 @@ pub fn hittable(t: ChrType) -> bool {
     matches!(t, ChrType::Npc | ChrType::Unk6 | ChrType::Unk7 | ChrType::Unk9 | ChrType::Unk12 | ChrType::BloodyFingerNpc | ChrType::RecusantNpc)
 }
 
+/// One of the game's invisible helpers: a body far smaller than any creature (0.1 m wide, 0.3 m
+/// tall), e.g. one at every grace with ~1900 HP. Vanilla puts them on team 0 (left alone by the
+/// team check), Reforged on the enemies' team 6: Mario punched "nothing" by graces, bumped into it
+/// and the fight camera framed it.
+/// Also anything the game doesn't draw (rendering off, or a MapStudio draw group that isn't shown)
+/// and c1000, the invisible stand-in events use: by Reforged's graces Mario still punched and
+/// bumped into things of a normal size there.
+pub fn helper(chr: &ChrIns) -> bool {
+    helper_why(chr).is_some()
+}
+
+fn helper_why(chr: &ChrIns) -> Option<&'static str> {
+    let ph = &chr.modules.physics;
+    if ph.hit_radius.max(ph.chr_hit_radius) <= 0.11 && ph.hit_height.max(ph.chr_hit_height) <= 0.31 {
+        Some("tiny body")
+    } else if chr.character_id == 1000 {
+        Some("c1000")
+    } else if !chr.chr_flags1c5.enable_render() {
+        Some("not drawn")
+    } else if !chr.chr_flags1c4.is_render_group_enabled() {
+        // (Reforged leaves enemies loaded in draw groups that aren't shown, c4373 by a grace:
+        // Mario punched one 43 times and nobody saw it)
+        Some("outside the shown draw groups")
+    } else {
+        None
+    }
+}
+
 /// Torrent: the mount the game has down for the player (his model id is no help, c8002 here
 /// where c8000 was expected).
 pub fn is_torrent(chr: &ChrIns) -> bool {
@@ -624,7 +652,7 @@ pub fn in_the_way(at: glam::Vec3, reach: f32) -> Vec<(FieldInsHandle, u64, bool)
     for set in wcm.chr_sets.iter().flatten() {
         for chr in set.characters() {
             let chr: &ChrIns = chr;
-            if !hittable(chr.chr_type) || chr.modules.data.hp <= 0 || chr.team_type == 0 || own_side(chr.team_type) {
+            if !hittable(chr.chr_type) || chr.modules.data.hp <= 0 || chr.team_type == 0 || own_side(chr.team_type) || helper(chr) {
                 continue;
             }
             let (p, ph) = (chr.modules.physics.position, &chr.modules.physics);
@@ -717,6 +745,19 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
             if dx * dx + dz * dz > range * range || dy.abs() > range {
                 continue;
             }
+            if let Some(why) = helper_why(chr) {
+                static HELPERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+                let key = handle_key(&chr.field_ins_handle);
+                let mut helpers = HELPERS.lock().unwrap_or_else(|e| e.into_inner());
+                if !helpers.contains(&key) {
+                    helpers.push(key);
+                    if helpers.len() > 512 {
+                        helpers.remove(0);
+                    }
+                    log(format!("combat: left out c{:04}, invisible ({why}; team {}, {} HP)", chr.character_id, chr.team_type, chr.modules.data.max_hp));
+                }
+                continue;
+            }
             // the character's own body size (bosses like Margit are far bigger than a human)
             let ph = &chr.modules.physics;
             let r = ph.hit_radius.max(ph.chr_hit_radius);
@@ -734,7 +775,15 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
                     if seen.len() > 512 {
                         seen.remove(0);
                     }
-                    log(format!("combat: target size {radius:.0} x {height:.0} units (hit {r:.2}/{h:.2} m)"));
+                    log(format!(
+                        "combat: target size {radius:.0} x {height:.0} units (hit {r:.2}/{h:.2} m), c{:04} team {}, render group {}, opacity {:.2}/{:.2}/{:.2}",
+                        chr.character_id,
+                        chr.team_type,
+                        chr.chr_flags1c4.is_render_group_enabled(),
+                        chr.base_transparency,
+                        chr.camouflage_transparency,
+                        chr.tint_alpha_multiplier
+                    ));
                 }
             }
             out.push(Target {
@@ -793,16 +842,66 @@ pub(crate) fn liftable(handle: &FieldInsHandle) -> bool {
 static SEEN_BOSSES: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 /// Big or tough characters count as bosses for damage even before (or without) a boss bar.
 const BOSS_RADIUS: f32 = 1.5;
-const BOSS_MAX_HP: i32 = 2500;
+const BOSS_MAX_HP: f32 = 2500.0;
+
+/// Reforged gives enemies more health (its NpcParam HP is 1.7 times vanilla's at the median, 2.6
+/// at the top decile): its regular soldiers, 2800-3100 HP, passed BOSS_MAX_HP, took a boss's
+/// share of the damage and were never lifted by the super jump punch. The line moves up with it:
+/// ini `enemy_hp_scale`, else 2 with Reforged's DLL loaded, 1 without.
+fn hp_scale() -> f32 {
+    static SCALE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let reforged = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("reforged.dll")) }.is_ok();
+        let scale = config_f32("enemy_hp_scale", if reforged { 2.0 } else { 1.0 }).clamp(0.5, 10.0);
+        log(format!("combat: enemies count as bosses from {:.0} HP (x{scale}{})", BOSS_MAX_HP * scale, if reforged { ", Reforged" } else { "" }));
+        scale
+    })
+}
 
 /// Whether a character takes boss damage: a boss bar now or before, the strong-enemy team, or
 /// big / tough enough (a field boss hit before his bar showed took a regular enemy's 50%).
 pub fn boss_class(handle: &FieldInsHandle, chr: &ChrIns) -> bool {
-    is_boss(handle)
-        || chr.team_type == TEAM_STRONG_ENEMY
-        || SEEN_BOSSES.lock().unwrap_or_else(|e| e.into_inner()).contains(&handle_key(handle))
-        || chr.modules.physics.hit_radius >= BOSS_RADIUS
-        || chr.modules.data.max_hp >= BOSS_MAX_HP
+    boss_why(handle, chr).is_some()
+}
+
+/// What makes a character a boss for Mario (`boss_class`), None if it's a regular enemy.
+pub fn boss_why(handle: &FieldInsHandle, chr: &ChrIns) -> Option<String> {
+    if is_boss(handle) {
+        Some("boss bar".into())
+    } else if chr.team_type == TEAM_STRONG_ENEMY {
+        Some("strong-enemy team".into())
+    } else if SEEN_BOSSES.lock().unwrap_or_else(|e| e.into_inner()).contains(&handle_key(handle)) {
+        Some("had a boss bar".into())
+    } else if chr.modules.physics.hit_radius >= BOSS_RADIUS {
+        Some(format!("body {:.1} m wide", chr.modules.physics.hit_radius))
+    } else if chr.modules.data.max_hp as f32 >= BOSS_MAX_HP * hp_scale() {
+        Some(format!("{} HP", chr.modules.data.max_hp))
+    } else {
+        None
+    }
+}
+
+/// Logs why the super jump punch left `handle` on the ground (once in a while per enemy).
+fn log_not_lifted(handle: &FieldInsHandle, radius_m: f32, height_m: f32, stunned: bool) {
+    static LOGGED: std::sync::Mutex<Vec<(u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
+    let key = handle_key(handle);
+    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    logged.retain(|(_, at)| at.elapsed().as_secs_f32() < 5.0);
+    if logged.iter().any(|(k, _)| *k == key) {
+        return;
+    }
+    logged.push((key, std::time::Instant::now()));
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
+    let Some(chr) = wcm.chr_ins_by_handle(handle) else { return };
+    let why = match crate::juggle::refusal(radius_m, height_m, liftable(handle), stunned) {
+        Some(crate::juggle::NOT_STUNNED) => match boss_why(handle, chr) {
+            Some(why) => format!("a boss ({why}), not stunned"),
+            None => "on Mario's side".into(),
+        },
+        Some(why) => why.to_string(),
+        None => "too many up already, or down".into(),
+    };
+    log(format!("juggle: c{:04} not lifted: {why} (team {}, {:.1} x {:.1} m, {} HP)", chr.character_id, chr.team_type, radius_m, height_m, chr.modules.data.max_hp));
 }
 
 /// How long a boss at his last point is left to his script before he's finished by hand (SM64
@@ -1096,6 +1195,7 @@ fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
         return false;
     }
     let boss = bar || boss_class(handle, chr);
+    let cid = chr.character_id;
     let data = &mut chr.modules.data;
     let (hp, max) = (data.hp, data.max_hp.max(1));
     // (co-op: Seamless's extra health per player counts, coop::share_factor)
@@ -1103,7 +1203,7 @@ fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     data.hp = (hp - dmg).max(1);
     show_damage(handle, hp, hp - data.hp, bar);
-    log(format!("combat: {what} on team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", if boss { " boss" } else { "" }, data.hp));
+    log(format!("combat: {what} on c{cid:04} team {team}{}: {dmg} of {max} HP ({pct:.1}%), {} left", if boss { " boss" } else { "" }, data.hp));
     let (last, dealt) = (data.hp == 1, hp - data.hp);
     if boss && !bar {
         pass_to_bar(wcm, dealt);
@@ -1696,7 +1796,10 @@ impl Combat {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
-                    crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
+                    let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
+                    if !crate::juggle::try_launch(handle, me, radius_m, height_m, regular, stunned, high) && !crate::coop::guest() {
+                        log_not_lifted(handle, radius_m, height_m, stunned);
+                    }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
                 } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue) {
