@@ -188,6 +188,21 @@ fn domain_bound(md: usize) -> Option<f32> {
 /// One body in this many gets the full look every query whatever its slot says, so a slot
 /// that went stale (its shape's memory reused for another, in the same place) is put right.
 const RECHECK: usize = 16;
+/// New terrain streaming in near Mario: several big meshes decoded in one query held the whole
+/// game up 100-280 ms (the log's "reading Havok"). Past this much decoding in a query (ms), the
+/// meshes that can't matter yet wait for the next one...
+const DECODE_BUDGET_MS: f32 = 4.0;
+/// ...unless they could be under or around Mario within this (m) of their reach.
+const URGENT: f32 = 6.0;
+/// One mesh this slow to decode (ms) is worth a line.
+const SLOW_DECODE_MS: f32 = 12.0;
+
+fn slow_decode(cls: &str, tris: usize, away: f32, ms: f32) {
+    static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+        log(format!("perf: decoding one collision mesh took {ms:.1} ms ({cls}, {tris} triangles, {away:.0} m away)"));
+    }
+}
 
 
 fn u32_at(a: usize) -> u32 {
@@ -872,6 +887,7 @@ impl HavokCollision {
         self.body_count = count;
         let t_start = std::time::Instant::now();
         let (mut n_layer_ok, mut n_decoded, mut n_near, mut n_picked, mut n_passed, mut n_waiting) = (0u32, 0u32, 0u32, 0usize, 0u32, 0u32);
+        let (mut decode_ms, mut n_deferred) = (0f32, 0u32);
         if self.slots.len() != count {
             self.slots = vec![Slot { shape: 0, at: Vec3::ZERO, reach: 0.0 }; count];
         }
@@ -972,6 +988,15 @@ impl HavokCollision {
                         }
                     }
                     let cls = if self.waiting.remove(&shape).is_some() { class_of(shape).unwrap_or_default() } else { cls };
+                    // (over the budget: one that can't be under or around him yet is looked at
+                    // again next query, its slot left unknown)
+                    let near_now = !cls.contains("CompressedMeshShape") || domain_bound(md).is_none_or(|b| (t - center).length() <= b + RADIUS + BELOW + URGENT);
+                    if self.queries > 0 && decode_ms > DECODE_BUDGET_MS && !near_now {
+                        self.slots[i] = Slot { shape: 0, at: t, reach: 0.0 };
+                        n_deferred += 1;
+                        continue;
+                    }
+                    let decode_start = std::time::Instant::now();
                     n_decoded += 1;
                     if self.queries == 0 {
                         crate::dlog(format!("  decoding body {i} layer {layer:#x} shape {shape:#x} md {md:#x} class {cls:?}"));
@@ -980,6 +1005,7 @@ impl HavokCollision {
                         let m = decode_convex(shape).filter(|t| !t.is_empty()).map(|t| Arc::new(Mesh::new(t)));
                         self.meshes.remove(&shape);
                         self.convex.insert(shape, (vtable, m.clone()));
+                        decode_ms += decode_start.elapsed().as_secs_f32() * 1000.0;
                         m
                     } else {
                     let tris = if cls.contains("CompressedMeshShape") {
@@ -1021,6 +1047,11 @@ impl HavokCollision {
                     }
                     let n = if md != 0 && readable(md + 0x70, 16) { u32_at(md + 0x78) } else { 0 };
                     self.meshes.insert(shape, (md, n, m.clone()));
+                    let ms = decode_start.elapsed().as_secs_f32() * 1000.0;
+                    decode_ms += ms;
+                    if ms > SLOW_DECODE_MS {
+                        slow_decode(&cls, m.as_ref().map_or(0, |m| m.tris.len()), (t - center).length(), ms);
+                    }
                     m
                     }
                 }
@@ -1110,7 +1141,7 @@ impl HavokCollision {
         }
         if self.queries % 10 == 1 {
             crate::dlog(format!(
-                "havok query: {:.1} ms, bodies {count}, layer ok {n_layer_ok}, passed by slot {n_passed}, waiting {n_waiting}, decoded {n_decoded}, near {n_near}, picked {n_picked}, out {}",
+                "havok query: {:.1} ms, bodies {count}, layer ok {n_layer_ok}, passed by slot {n_passed}, waiting {n_waiting}, decoded {n_decoded} ({decode_ms:.1} ms, {n_deferred} left for later), near {n_near}, picked {n_picked}, out {}",
                 t_start.elapsed().as_secs_f32() * 1000.0, out.len()
             ));
         }

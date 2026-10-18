@@ -1713,6 +1713,11 @@ pub(crate) fn current_anim(chr: &eldenring::cs::ChrIns) -> i32 {
     t.anim_queue[(t.read_idx % 10) as usize].anim_id
 }
 
+/// The last SM64 tick's time in libsm64's thread: all, Mario's tick, the sound's (ms), his action.
+static LONG_TICK: Mutex<(f32, f32, f32, u32)> = Mutex::new((0.0, 0.0, 0.0, 0));
+/// An SM64 tick this long (ms) is worth a line.
+const LONG_TICK_MS: f32 = 20.0;
+
 /// FPS and scan-cost bookkeeping, logged every ~2 s.
 struct Perf {
     tick_ms: f32,
@@ -3355,14 +3360,17 @@ fn frame(data: &FD4TaskData) {
                 r.apply(id);
             }
             let mut state = sm64::SM64MarioState::default();
+            let job_start = std::time::Instant::now();
             {
                 let mut buffers = ctx.geo.buffers();
                 unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
             }
+            let mario_ms = job_start.elapsed().as_secs_f32() * 1000.0;
             // SM64's sound engine runs at the same 30 Hz as Mario
             let mut buf = [0i16; 544 * 2 * 2];
             let frames = unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) } as usize;
             audio::push(&buf[..(frames * 2 * 2).min(buf.len())]);
+            let sound_ms = job_start.elapsed().as_secs_f32() * 1000.0 - mario_ms;
             let n = ctx.geo.used() * 9;
             let mut mats = vec![0f32; 64 * 16];
             let mut tri_part = vec![0i32; sm64::GEO_MAX_TRIANGLES];
@@ -3384,9 +3392,23 @@ fn frame(data: &FD4TaskData) {
             let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
             let swing = chomp_swing.or(hammer_swing);
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing) } else { Vec::new() };
+            // (a long one: which part of it, for the log below)
+            *LONG_TICK.lock().unwrap_or_else(|e| e.into_inner()) = (job_start.elapsed().as_secs_f32() * 1000.0, mario_ms, sound_ms, state.action);
             (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
         });
         drop(tick_span);
+        // the log showed SM64 ticks of 40-75 ms (a hitch each): where they go
+        {
+            let took = tt.elapsed().as_secs_f32() * 1000.0;
+            static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if took >= LONG_TICK_MS && LOGGED.fetch_add(1, Ordering::Relaxed) < 40 {
+                let (job, mario, sound, action) = *LONG_TICK.lock().unwrap_or_else(|e| e.into_inner());
+                log(format!(
+                    "perf: a long SM64 tick, {took:.1} ms: {job:.1} in libsm64's thread (Mario {mario:.1}, sound {sound:.1}, poses and hits {:.1}), action {action:#x}",
+                    job - mario - sound
+                ));
+            }
+        }
         PERF.lock().unwrap_or_else(|e| e.into_inner()).tick_ms += tt.elapsed().as_secs_f32() * 1000.0;
         match result {
             Some((state, mesh, colors, normals, mut parts, hits, combo, swing)) => {
