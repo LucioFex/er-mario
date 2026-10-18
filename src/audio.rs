@@ -19,10 +19,14 @@ static RING: Mutex<VecDeque<[i16; 2]>> = Mutex::new(VecDeque::new());
 static GAIN_L: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f35_04f3); // ~0.707
 static GAIN_R: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f35_04f3);
 
+/// All of SM64's sound (blows, voices, chimes, music) is this loud: 5% under what it was
+/// (2026-10-18, the combos' noises were a bit much).
+const MASTER: f32 = 0.95;
+
 /// Places Mario's voice: `pan` -1 (left) .. 1 (right), `volume` 0..1. Equal-power panning.
 pub fn set_position(pan: f32, volume: f32) {
     let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-    let v = volume.clamp(0.0, 1.0);
+    let v = volume.clamp(0.0, 1.0) * MASTER;
     GAIN_L.store((angle.cos() * v).to_bits(), std::sync::atomic::Ordering::Relaxed);
     GAIN_R.store((angle.sin() * v).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
