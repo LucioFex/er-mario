@@ -21,6 +21,7 @@ mod coop;
 mod dodge;
 mod engine_mario;
 mod fireball;
+mod fx;
 mod grab;
 mod equip;
 mod kbd;

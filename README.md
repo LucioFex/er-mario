@@ -450,6 +450,12 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   and fading with the distance (none past 50 m).
 - The partner's wing cap shows its wings (drawn over their model), the Vanish cap makes them
   see-through, the Mega Mushroom makes them big.
+- Their effects show too, around where they're shown: fireballs, the hook's line, the boomerangs'
+  streaks, the hammer's and the Chain Chomp's ribbons and sparks, the blows' star bursts, stars and
+  coins, rings on the ground, the dash, Yoshi's tongue and eggs (they go with every pose).
+- Their place is their own also in dungeons and buildings (the block's position there), and when
+  it can't be used (over 40 m from where the game has them) they blend over to the game's place
+  instead of jumping.
 - The host owns the enemies: the guest's blows are sent to the host, who takes them off and deals
   the final blow. As the guest you can't grab enemies or launch them (they'd jump back to where
   the host has them), but every blow counts.
@@ -476,7 +482,8 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   `er_mario.ini` add exceptions, should a team come out wrong.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
-- Not synced yet: the Metal cap's look, Yoshi, sounds the mod adds itself (weapons, callouts).
+- Not synced yet: the Metal cap's look, Yoshi's model, sounds the mod adds itself (weapons,
+  callouts). Packets are version 5: both players need the same build.
 
 
 Co-op touches (nothing of this shows alone):

@@ -560,6 +560,244 @@ pub fn install(module: usize) -> bool {
 
 static BAG_START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
 
+/// A Mario's effects in the world (fx.rs: ours, or a co-op partner's), drawn over the game:
+/// fireballs, flying enemies' streaks, the boomerangs' streaks, Yoshi's tongue and eggs, the hook,
+/// the blows' star bursts, the dash, the hammer's and the Chain Chomp's ribbons and the chain's
+/// sparks, rings on the ground, stars and coins flying off the blows. `bodies`: spheres the 3D
+/// tongue and eggs are hidden behind.
+fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fx: &crate::fx::WorldFx, bodies: &[(Vec3, f32)]) {
+    // Mario's fireball: the charge at his hand, the shots and their bursts
+    for f in &fx.fire {
+        let (Some((c, z)), Some((top, _))) = (project(f.pos, size), project(f.pos + Vec3::Y * f.size * 0.5, size)) else { continue };
+        let h = (c[1] - top[1]) * 2.0;
+        if z > 60.0 || h < 1.0 {
+            continue;
+        }
+        let img = match f.frame as usize {
+            crate::fireball::FRAME_GLOW => IMG_GLOW,
+            n if n >= crate::fireball::FRAME_ORB => IMG_ORB + (n - crate::fireball::FRAME_ORB) % 4,
+            n => IMG_FLAME + n % 8,
+        };
+        dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(f.tint).build();
+    }
+
+    // enemies flying through the air (juggle.rs): a white streak behind each, fading
+    for streak in &fx.streaks {
+        for pair in streak.windows(2) {
+            let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+            let (Some((pa, za)), Some((pb, _))) = (project(a, size), project(b, size)) else { continue };
+            if za > 50.0 {
+                continue;
+            }
+            let fade = 1.0 - ta.max(tb);
+            let width = (size[1] / za.max(1.0) * 0.05).clamp(1.0, 10.0) * fade;
+            dl.add_line(pa, pb, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.45 * fade)).thickness(width).build();
+        }
+    }
+    // the boomerangs (models of their own, engine_mario): a streak of air behind each, thin
+    // and fading
+    for (pts, rsize) in &fx.rangs {
+        let n = pts.len().saturating_sub(1);
+        for (k, pair) in pts.windows(2).enumerate() {
+            let (Some((a, za)), Some((b, _))) = (project(pair[0], size), project(pair[1], size)) else { continue };
+            if za > 60.0 {
+                continue;
+            }
+            let fade = (k + 1) as f32 / (n + 1) as f32;
+            let width = (size[1] / za.max(1.0) * 0.035 * rsize / 0.55).clamp(1.0, 12.0) * fade;
+            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.3 * fade)).thickness(width).build();
+            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.6, 0.5, 0.25 * fade)).thickness(width * 0.35).build();
+        }
+    }
+    // on Yoshi: his tongue (pink, a round tip) and the eggs flying, tumbling
+    if let Some((mouth, tip)) = fx.tongue {
+        // a tube from his mouth that sags a little, a round tip
+        let n = 12;
+        let len = (tip - mouth).length();
+        let path: Vec<Vec3> = (0..=n)
+            .map(|k| {
+                let t = k as f32 / n as f32;
+                mouth + (tip - mouth) * t - Vec3::Y * (t * (1.0 - t) * len * 0.12)
+            })
+            .collect();
+        let mut mesh = Mesh::default();
+        mesh.tube(&path, &|k| 0.13 - 0.02 * k as f32 / n as f32, 8, &|k| if k % 3 == 0 { [0.98, 0.4, 0.55] } else { [0.93, 0.33, 0.5] });
+        mesh.ellipsoid(*path.last().unwrap_or(&tip), glam::Quat::IDENTITY, Vec3::splat(0.22), 0.0, 6, 10, &|i, _| if i < 2 { [1.0, 0.6, 0.72] } else { [0.98, 0.42, 0.58] });
+        mesh.draw(dl, size, 60.0, bodies);
+    }
+    for &(pos, age) in &fx.yoshi_fires {
+        let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.3, size)) else { continue };
+        let h = (c[1] - top[1]) * 2.0;
+        if z > 60.0 || h < 1.0 {
+            continue;
+        }
+        let frame = (age * 24.0) as usize % 8;
+        dl.add_image(textures[IMG_GLOW], [c[0] - h, c[1] - h], [c[0] + h, c[1] + h]).col([1.0, 0.55, 0.15, 0.6]).build();
+        dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
+    }
+    // the eggs: white with green spots, tumbling, in 3D
+    for &(pos, age) in &fx.eggs {
+        let sz = crate::ride::EGG_SIZE;
+        let rot = glam::Quat::from_euler(glam::EulerRot::YXZ, age * 9.0, age * 13.0, 0.0);
+        let mut mesh = Mesh::default();
+        mesh.ellipsoid(pos, rot, Vec3::new(0.38, 0.5, 0.38) * sz * 2.0, 0.22, 8, 12, &|i, j| {
+            if (matches!(i, 2 | 3) && j % 4 == 0) || (i == 5 && j % 4 == 2) || (i == 4 && j % 6 == 3) { [0.2, 0.72, 0.25] } else { [0.98, 0.97, 0.9] }
+        });
+        mesh.draw(dl, size, 60.0, bodies);
+    }
+    // the hook: a line of light from his hand with twinkles running along it, his cap spinning
+    // at its end
+    // (the Chomp as the hook: its chain, dark iron links along the line)
+    if let Some((hand, head)) = fx.chain {
+        let n = ((head - hand).length() / 0.22).clamp(2.0, 120.0) as usize;
+        for k in 0..n {
+            let p = hand + (head - hand) * ((k as f32 + 0.5) / n as f32);
+            let Some((c, z)) = project(p, size) else { continue };
+            if z > 60.0 {
+                continue;
+            }
+            let r = (size[1] / z.max(1.0) * 0.045).clamp(1.0, 9.0);
+            let (w, h) = if k % 2 == 0 { (r, r * 0.55) } else { (r * 0.45, r) };
+            dl.add_rect([c[0] - w, c[1] - h], [c[0] + w, c[1] + h], imgui::ImColor32::from_rgba_f32s(0.16, 0.16, 0.18, 0.95)).rounding(h).thickness((r * 0.35).max(1.0)).build();
+        }
+    }
+    if let Some((hand, head, spin)) = fx.hook {
+        if let (Some((a, za)), Some((b, zb))) = (project(hand, size), project(head, size)) {
+            if za < 60.0 && zb < 60.0 {
+                let width = (size[1] / za.min(zb).max(1.0) * 0.025).clamp(1.0, 5.0);
+                dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.85, 0.3, 0.85)).thickness(width).build();
+                dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.9, 0.9)).thickness((width * 0.4).max(1.0)).build();
+                for k in 0..4 {
+                    let t = ((spin * 0.25 + k as f32 * 0.25) % 1.0).abs();
+                    let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                    dl.add_circle(p, width * 1.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.8, 0.9)).filled(true).build();
+                }
+            }
+        }
+        if let (Some((c, z)), Some((top, _))) = (project(head, size), project(head + Vec3::Y * 0.22, size)) {
+            let h = (c[1] - top[1]) * 2.0;
+            if z < 60.0 && h > 1.0 {
+                // (spinning about its crown: narrower and wider, flipped half the turn)
+                let w = h * spin.cos();
+                let (u0, u1) = if w >= 0.0 { (0.0, 1.0) } else { (1.0, 0.0) };
+                let w = w.abs().max(h * 0.25);
+                dl.add_image(textures[IMG_CAPPY], [c[0] - w * 0.5, c[1] - h * 0.5], [c[0] + w * 0.5, c[1] + h * 0.5]).uv_min([u0, 0.0]).uv_max([u1, 1.0]).build();
+            }
+        }
+    }
+    // the blows that landed: a star burst each, growing a little as it goes
+    for spark in &fx.sparks {
+        let t = spark.t;
+        let s = spark.size * (0.7 + 0.5 * t);
+        let (Some((c, z)), Some((top, _))) = (project(spark.pos, size), project(spark.pos + Vec3::Y * s * 0.5, size)) else { continue };
+        let h = (c[1] - top[1]) * 2.0;
+        if z > 60.0 || h < 1.0 {
+            continue;
+        }
+        let frame = ((t * 3.0) as usize).min(2);
+        dl.add_image(textures[IMG_SPARK + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(spark.tint).build();
+    }
+    // the dash: streaks along Mario's path, fading behind him, and puffs where it started
+    for pair in fx.dash.windows(2) {
+        let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+        let fade = 1.0 - ta.max(tb);
+        for (k, up) in [0.25f32, 0.55, 0.85].into_iter().enumerate() {
+            let (Some((pa, za)), Some((pb, _))) = (project(a + Vec3::Y * up, size), project(b + Vec3::Y * up, size)) else { continue };
+            if za > 40.0 {
+                continue;
+            }
+            let width = (size[1] / za.max(1.0) * 0.025).clamp(1.0, 6.0) * if k == 1 { 1.4 } else { 0.8 };
+            let col = imgui::ImColor32::from_rgba_f32s(0.85, 0.95, 1.0, 0.55 * fade);
+            dl.add_line(pa, pb, col).thickness(width).build();
+        }
+    }
+    for &(p, t) in &fx.puffs {
+        let s = 0.5 + 0.9 * t;
+        let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
+        let h = (c[1] - top[1]) * 2.0;
+        if z > 40.0 || h < 1.0 {
+            continue;
+        }
+        dl.add_image(textures[IMG_GLOW], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5])
+            .col([0.85, 0.85, 0.8, 0.6 * (1.0 - t)])
+            .build();
+    }
+
+    // the combos (impact.rs): the hammer's swing as a fading ribbon from its handle to its head
+    for pair in fx.swing.windows(2) {
+        let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+        let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 40.0).map(|(c, _)| c)).collect();
+        let Some(pts) = pts else { continue };
+        let fade = 1.0 - t0.max(t1);
+        let edge = (pts[0], pts[1]);
+        dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
+        dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
+    }
+    // the Chain Chomp's ribbon of fire (Blades of Chaos): a hot core over a wider red glow, its
+    // older end cooling and thinning, flames licking along it; and the sparks off its chain
+    for (k, pair) in fx.chomp.windows(2).enumerate() {
+        let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+        // (two swings: no ribbon across the gap between them; a hit-stop's pause is no gap)
+        if (t0 - t1).abs() * crate::impact::CHOMP_TRAIL_TIME > 0.2 {
+            continue;
+        }
+        let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();
+        let Some(pts) = pts else { continue };
+        let fade = 1.0 - t0.max(t1);
+        dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(0.9, 0.22, 0.05, 0.35 * fade)).filled(true).build();
+        let core: Vec<[f32; 2]> = vec![pts[0], pts[1], lerp2(pts[1], pts[2], 0.45), lerp2(pts[0], pts[3], 0.45)];
+        dl.add_polyline(core, imgui::ImColor32::from_rgba_f32s(1.0, 0.62 + 0.3 * fade, 0.2 + 0.4 * fade, 0.55 * fade)).filled(true).build();
+        dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 0.95, 0.75, 0.85 * fade)).thickness(2.5).build();
+        if k % 2 == 0 {
+            if let (Some((c, z)), Some((top, _))) = (project(h1, size), project(h1 + Vec3::Y * 0.35, size)) {
+                let h = (c[1] - top[1]) * 2.0 * (0.6 + 0.6 * fade);
+                if z < 45.0 && h > 1.0 {
+                    let frame = (k + (t1 * 24.0) as usize) % 8;
+                    dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.6], [c[0] + h * 0.5, c[1] + h * 0.4]).col([1.0, 0.7, 0.35, 0.8 * fade]).build();
+                }
+            }
+        }
+    }
+    for &(now, before, t) in &fx.flying {
+        let (Some((a, za)), Some((b, _))) = (project(now, size), project(before, size)) else { continue };
+        if za > 40.0 {
+            continue;
+        }
+        let width = (size[1] / za.max(1.0) * 0.012).clamp(1.0, 3.0);
+        dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.9 - 0.4 * t, 0.45 - 0.3 * t, 1.0 - t)).thickness(width).build();
+    }
+    // shockwave rings on the ground, widening and fading
+    for r in &fx.rings {
+        let t = r.t;
+        let radius = r.radius * (0.25 + 0.75 * (1.0 - (1.0 - t) * (1.0 - t)));
+        let pts: Vec<[f32; 2]> = (0..=20)
+            .filter_map(|k| {
+                let a = k as f32 / 20.0 * std::f32::consts::TAU;
+                project(r.pos + Vec3::new(a.cos() * radius, 0.0, a.sin() * radius), size).filter(|(_, z)| *z < 50.0).map(|(c, _)| c)
+            })
+            .collect();
+        if pts.len() < 21 {
+            continue;
+        }
+        let Some((_, z)) = project(r.pos, size) else { continue };
+        let width = (size[1] / z.max(1.0) * 0.06).clamp(1.5, 10.0) * (1.0 - t * 0.6);
+        let [cr, cg, cb, ca] = r.tint;
+        dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(cr, cg, cb, ca * 0.8 * (1.0 - t))).thickness(width).build();
+    }
+    // stars and coins flying off the blows
+    for b in &fx.bits {
+        let (p, s, t, age) = (b.pos, b.size, b.t, b.age);
+        let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
+        let h = (c[1] - top[1]) * 2.0;
+        if z > 50.0 || h < 1.0 {
+            continue;
+        }
+        let fade = if t > 0.75 { (1.0 - t) / 0.25 } else { 1.0 };
+        let img = if b.coin { IMG_COIN_FRAMES + (age * 15.0) as usize % 4 } else { IMG_STAR };
+        dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col([1.0, 1.0, 1.0, fade]).build();
+    }
+}
+
 fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
@@ -839,245 +1077,13 @@ impl ImguiRenderLoop for Overlay {
             }
         }
 
-        // Mario's fireball: the charge at his hand, the shots and their bursts
-        for f in crate::fireball::sprites() {
-            let (Some((c, z)), Some((top, _))) = (project(f.pos, size), project(f.pos + Vec3::Y * f.size * 0.5, size)) else { continue };
-            let h = (c[1] - top[1]) * 2.0;
-            if z > 60.0 || h < 1.0 {
-                continue;
-            }
-            let img = match f.frame {
-                crate::fireball::FRAME_GLOW => IMG_GLOW,
-                n if n >= crate::fireball::FRAME_ORB => IMG_ORB + (n - crate::fireball::FRAME_ORB) % 4,
-                n => IMG_FLAME + n % 8,
-            };
-            dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(f.tint).build();
-        }
-
-        // enemies flying through the air (juggle.rs): a white streak behind each, fading
-        for streak in crate::impact::enemy_streaks() {
-            for pair in streak.windows(2) {
-                let ((a, ta), (b, tb)) = (pair[0], pair[1]);
-                let (Some((pa, za)), Some((pb, _))) = (project(a, size), project(b, size)) else { continue };
-                if za > 50.0 {
-                    continue;
-                }
-                let fade = 1.0 - ta.max(tb);
-                let width = (size[1] / za.max(1.0) * 0.05).clamp(1.0, 10.0) * fade;
-                dl.add_line(pa, pb, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.45 * fade)).thickness(width).build();
-            }
-        }
-        // the boomerangs (models of their own, engine_mario): a streak of air behind each, thin
-        // and fading
+        // Mario's effects in the world (fx.rs), and each co-op partner's around where they're shown
         {
-            let (rangs, _) = crate::boomerang::sprites();
-            for r in &rangs {
-                let n = r.trail.len();
-                let pts: Vec<Vec3> = r.trail.iter().copied().chain(std::iter::once(r.pos)).collect();
-                for (k, pair) in pts.windows(2).enumerate() {
-                    let (Some((a, za)), Some((b, _))) = (project(pair[0], size), project(pair[1], size)) else { continue };
-                    if za > 60.0 {
-                        continue;
-                    }
-                    let fade = (k + 1) as f32 / (n + 1) as f32;
-                    let width = (size[1] / za.max(1.0) * 0.035 * r.size / 0.55).clamp(1.0, 12.0) * fade;
-                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.3 * fade)).thickness(width).build();
-                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.6, 0.5, 0.25 * fade)).thickness(width * 0.35).build();
-                }
+            let fx = crate::fx::WorldFx::local();
+            draw_fx(&dl, textures, size, &fx, &crate::ride::sprites().bodies);
+            for partner in crate::coop::partner_fx() {
+                draw_fx(&dl, textures, size, &partner, &[]);
             }
-        }
-        // on Yoshi: his tongue (pink, a round tip) and the eggs flying, tumbling
-        {
-            let ride = crate::ride::sprites();
-            if let Some((mouth, tip)) = ride.tongue {
-                // a tube from his mouth that sags a little, a round tip
-                let n = 12;
-                let len = (tip - mouth).length();
-                let path: Vec<Vec3> = (0..=n)
-                    .map(|k| {
-                        let t = k as f32 / n as f32;
-                        mouth + (tip - mouth) * t - Vec3::Y * (t * (1.0 - t) * len * 0.12)
-                    })
-                    .collect();
-                let mut mesh = Mesh::default();
-                mesh.tube(&path, &|k| 0.13 - 0.02 * k as f32 / n as f32, 8, &|k| if k % 3 == 0 { [0.98, 0.4, 0.55] } else { [0.93, 0.33, 0.5] });
-                mesh.ellipsoid(*path.last().unwrap_or(&tip), glam::Quat::IDENTITY, Vec3::splat(0.22), 0.0, 6, 10, &|i, _| if i < 2 { [1.0, 0.6, 0.72] } else { [0.98, 0.42, 0.58] });
-                mesh.draw(&dl, size, 60.0, &ride.bodies);
-            }
-            for (pos, age) in ride.fires {
-                let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.3, size)) else { continue };
-                let h = (c[1] - top[1]) * 2.0;
-                if z > 60.0 || h < 1.0 {
-                    continue;
-                }
-                let frame = (age * 24.0) as usize % 8;
-                dl.add_image(textures[IMG_GLOW], [c[0] - h, c[1] - h], [c[0] + h, c[1] + h]).col([1.0, 0.55, 0.15, 0.6]).build();
-                dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
-            }
-            // the eggs: white with green spots, tumbling, in 3D
-            for (pos, age) in ride.eggs {
-                let sz = crate::ride::EGG_SIZE;
-                let rot = glam::Quat::from_euler(glam::EulerRot::YXZ, age * 9.0, age * 13.0, 0.0);
-                let mut mesh = Mesh::default();
-                mesh.ellipsoid(pos, rot, Vec3::new(0.38, 0.5, 0.38) * sz * 2.0, 0.22, 8, 12, &|i, j| {
-                    if (matches!(i, 2 | 3) && j % 4 == 0) || (i == 5 && j % 4 == 2) || (i == 4 && j % 6 == 3) { [0.2, 0.72, 0.25] } else { [0.98, 0.97, 0.9] }
-                });
-                mesh.draw(&dl, size, 60.0, &ride.bodies);
-            }
-        }
-        // the hook: a line of light from his hand with twinkles running along it, his cap spinning
-        // at its end
-        // (the Chomp as the hook: its chain, dark iron links along the line)
-        if let Some(hk) = crate::hook::live().filter(|_| crate::chomp::hooking()) {
-            let n = ((hk.head - hk.hand).length() / 0.22).clamp(2.0, 120.0) as usize;
-            for k in 0..n {
-                let p = hk.hand + (hk.head - hk.hand) * ((k as f32 + 0.5) / n as f32);
-                let Some((c, z)) = project(p, size) else { continue };
-                if z > 60.0 {
-                    continue;
-                }
-                let r = (size[1] / z.max(1.0) * 0.045).clamp(1.0, 9.0);
-                let (w, h) = if k % 2 == 0 { (r, r * 0.55) } else { (r * 0.45, r) };
-                dl.add_rect([c[0] - w, c[1] - h], [c[0] + w, c[1] + h], imgui::ImColor32::from_rgba_f32s(0.16, 0.16, 0.18, 0.95)).rounding(h).thickness((r * 0.35).max(1.0)).build();
-            }
-        }
-        if let Some(hk) = crate::hook::sprite().filter(|_| !crate::chomp::hooking()) {
-            if let (Some((a, za)), Some((b, zb))) = (project(hk.hand, size), project(hk.head, size)) {
-                if za < 60.0 && zb < 60.0 {
-                    let width = (size[1] / za.min(zb).max(1.0) * 0.025).clamp(1.0, 5.0);
-                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.85, 0.3, 0.85)).thickness(width).build();
-                    dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.9, 0.9)).thickness((width * 0.4).max(1.0)).build();
-                    for k in 0..4 {
-                        let t = ((hk.spin * 0.25 + k as f32 * 0.25) % 1.0).abs();
-                        let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-                        dl.add_circle(p, width * 1.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.8, 0.9)).filled(true).build();
-                    }
-                }
-            }
-            if let (Some((c, z)), Some((top, _))) = (project(hk.head, size), project(hk.head + Vec3::Y * 0.22, size)) {
-                let h = (c[1] - top[1]) * 2.0;
-                if z < 60.0 && h > 1.0 {
-                    // (spinning about its crown: narrower and wider, flipped half the turn)
-                    let w = h * hk.spin.cos();
-                    let (u0, u1) = if w >= 0.0 { (0.0, 1.0) } else { (1.0, 0.0) };
-                    let w = w.abs().max(h * 0.25);
-                    dl.add_image(textures[IMG_CAPPY], [c[0] - w * 0.5, c[1] - h * 0.5], [c[0] + w * 0.5, c[1] + h * 0.5]).uv_min([u0, 0.0]).uv_max([u1, 1.0]).build();
-                }
-            }
-        }
-        // the blows that landed: a star burst each, growing a little as it goes
-        for (spark, t) in crate::impact::sparks() {
-            let s = spark.size * (0.7 + 0.5 * t);
-            let (Some((c, z)), Some((top, _))) = (project(spark.pos, size), project(spark.pos + Vec3::Y * s * 0.5, size)) else { continue };
-            let h = (c[1] - top[1]) * 2.0;
-            if z > 60.0 || h < 1.0 {
-                continue;
-            }
-            let frame = ((t * 3.0) as usize).min(2);
-            dl.add_image(textures[IMG_SPARK + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(spark.tint).build();
-        }
-        // the dash: streaks along Mario's path, fading behind him, and puffs where it started
-        let trail = crate::impact::dash_trail();
-        for pair in trail.windows(2) {
-            let ((a, ta), (b, tb)) = (pair[0], pair[1]);
-            let fade = 1.0 - ta.max(tb);
-            for (k, up) in [0.25f32, 0.55, 0.85].into_iter().enumerate() {
-                let (Some((pa, za)), Some((pb, _))) = (project(a + Vec3::Y * up, size), project(b + Vec3::Y * up, size)) else { continue };
-                if za > 40.0 {
-                    continue;
-                }
-                let width = (size[1] / za.max(1.0) * 0.025).clamp(1.0, 6.0) * if k == 1 { 1.4 } else { 0.8 };
-                let col = imgui::ImColor32::from_rgba_f32s(0.85, 0.95, 1.0, 0.55 * fade);
-                dl.add_line(pa, pb, col).thickness(width).build();
-            }
-        }
-        for (p, t) in crate::impact::dash_puffs() {
-            let s = 0.5 + 0.9 * t;
-            let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
-            let h = (c[1] - top[1]) * 2.0;
-            if z > 40.0 || h < 1.0 {
-                continue;
-            }
-            dl.add_image(textures[IMG_GLOW], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5])
-                .col([0.85, 0.85, 0.8, 0.6 * (1.0 - t)])
-                .build();
-        }
-
-        // the combos (impact.rs): the hammer's swing as a fading ribbon from its handle to its head
-        let swing = crate::impact::swing_trail();
-        for pair in swing.windows(2) {
-            let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
-            let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 40.0).map(|(c, _)| c)).collect();
-            let Some(pts) = pts else { continue };
-            let fade = 1.0 - t0.max(t1);
-            let edge = (pts[0], pts[1]);
-            dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
-            dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
-        }
-        // the Chain Chomp's ribbon of fire (Blades of Chaos): a hot core over a wider red glow, its
-        // older end cooling and thinning, flames licking along it; and the sparks off its chain
-        let chomp = crate::impact::chomp_trail();
-        for (k, pair) in chomp.windows(2).enumerate() {
-            let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
-            // (two swings: no ribbon across the gap between them; a hit-stop's pause is no gap)
-            if (t0 - t1).abs() * crate::impact::CHOMP_TRAIL_TIME > 0.2 {
-                continue;
-            }
-            let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();
-            let Some(pts) = pts else { continue };
-            let fade = 1.0 - t0.max(t1);
-            dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(0.9, 0.22, 0.05, 0.35 * fade)).filled(true).build();
-            let core: Vec<[f32; 2]> = vec![pts[0], pts[1], lerp2(pts[1], pts[2], 0.45), lerp2(pts[0], pts[3], 0.45)];
-            dl.add_polyline(core, imgui::ImColor32::from_rgba_f32s(1.0, 0.62 + 0.3 * fade, 0.2 + 0.4 * fade, 0.55 * fade)).filled(true).build();
-            dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 0.95, 0.75, 0.85 * fade)).thickness(2.5).build();
-            if k % 2 == 0 {
-                if let (Some((c, z)), Some((top, _))) = (project(h1, size), project(h1 + Vec3::Y * 0.35, size)) {
-                    let h = (c[1] - top[1]) * 2.0 * (0.6 + 0.6 * fade);
-                    if z < 45.0 && h > 1.0 {
-                        let frame = (k + (t1 * 24.0) as usize) % 8;
-                        dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.6], [c[0] + h * 0.5, c[1] + h * 0.4]).col([1.0, 0.7, 0.35, 0.8 * fade]).build();
-                    }
-                }
-            }
-        }
-        for (now, before, t) in crate::impact::flying_sparks() {
-            let (Some((a, za)), Some((b, _))) = (project(now, size), project(before, size)) else { continue };
-            if za > 40.0 {
-                continue;
-            }
-            let width = (size[1] / za.max(1.0) * 0.012).clamp(1.0, 3.0);
-            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 0.9 - 0.4 * t, 0.45 - 0.3 * t, 1.0 - t)).thickness(width).build();
-        }
-        // shockwave rings on the ground, widening and fading
-        for (r, t) in crate::impact::rings() {
-            let radius = r.radius * (0.25 + 0.75 * (1.0 - (1.0 - t) * (1.0 - t)));
-            let pts: Vec<[f32; 2]> = (0..=20)
-                .filter_map(|k| {
-                    let a = k as f32 / 20.0 * std::f32::consts::TAU;
-                    project(r.pos + Vec3::new(a.cos() * radius, 0.0, a.sin() * radius), size).filter(|(_, z)| *z < 50.0).map(|(c, _)| c)
-                })
-                .collect();
-            if pts.len() < 21 {
-                continue;
-            }
-            let Some((_, z)) = project(r.pos, size) else { continue };
-            let width = (size[1] / z.max(1.0) * 0.06).clamp(1.5, 10.0) * (1.0 - t * 0.6);
-            let [cr, cg, cb, ca] = r.tint;
-            dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(cr, cg, cb, ca * 0.8 * (1.0 - t))).thickness(width).build();
-        }
-        // stars and coins flying off the blows
-        for (bit, p, s, t, age) in crate::impact::bits() {
-            let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * s * 0.5, size)) else { continue };
-            let h = (c[1] - top[1]) * 2.0;
-            if z > 50.0 || h < 1.0 {
-                continue;
-            }
-            let fade = if t > 0.75 { (1.0 - t) / 0.25 } else { 1.0 };
-            let img = match bit {
-                crate::impact::Bit::Coin => IMG_COIN_FRAMES + (age * 15.0) as usize % 4,
-                crate::impact::Bit::Star => IMG_STAR,
-            };
-            dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col([1.0, 1.0, 1.0, fade]).build();
         }
 
         // Mario got hurt: the screen's edges flash red, fading
