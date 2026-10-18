@@ -67,7 +67,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). A blow on Mario puts the charge out. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
-| D-pad left / up | Metal and Wing caps (they recharge in about 55-60 s) |
+| D-pad up | Wing cap (recharges in about 55 s) |
 | D-pad right | **Mega Mushroom** (see below) |
 
 **Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, Chain Chomp, boomerang. Holding
@@ -228,6 +228,38 @@ stops it and it clings to him, burning, for a second and a half; then it blows u
 everyone within 5 m, and the enemies it carried fly off. It also blows up against a wall or at the
 end of its range.
 
+### Combat v3
+
+Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/specs/2026-10-18-combat-v3-design.md`):
+
+| Input | Move | Notes |
+|---|---|---|
+| A just before an enemy's blow lands | **Mikiri stomp** (Sekiro) | A somersault over the blow onto its head, a stomp that staggers it, a bounce into the air. Bosses' stance cracks (a few open them for the tail grab). 2.5 s cooldown; too early or late it's a plain jump |
+| X right as a blow connects | **Action command**: NICE! / GREAT! | +30% on that blow, every third +50%. Mashing locks it out for a moment |
+| X at the end of the dash | **Dash strike** (Hades) | A lunging punch with the dash's speed, at most every 1.2 s |
+| back + X | **Launcher**, any weapon | Fists: super jump punch; hammer: launcher; Chomp: bite; boomerang: the upward throw |
+| forward + Y | **Leap** at the enemy into the weapon's dive | Fists: meteor; hammer: plunge; Chomp: crash; boomerang: fan |
+| B toward another enemy mid-string | **Freeflow** (Arkham) | A leap to it (3-12 m), the string goes on |
+| 12 blows without being hurt | **MAX finisher** | The weapon twinkles, MAX shows; its next finisher: fists phantom flurry + launch, hammer cross-shaped quake, Chomp ring of fire flinging the small ones, boomerang three big ones |
+| LT crouched + X | **Banana** | Regular enemies slip and fall (the game's own knockdown), big ones stagger, bosses walk over it. 2 at most, 10 s each |
+| LT crouched + Y (hold: red) | **Green / red Koopa shell** | Kicked along the floor, off walls and enemies (knockdown), 4 hits; the red one homes in, 2 hits. 8 s |
+| LT crouched + B | **Bob-omb** | Lobbed, bounces, goes off after 2 s or on the first enemy: a 3.5 m blast that throws the regular ones up. 12 s |
+| LT crouched + RB | **Spring** | Enemies stepping on it fly up; Mario jumping onto it goes higher than any jump. 15 s |
+| LT crouched + LB | **Stopwatch** | The enemy in front stops in time (3 s, bosses 1.2 s); blows on it build up momentum and it flies off when time runs again (bosses stagger). 25 s |
+| D-pad left | **Rock Mushroom** | 12 s as a boulder: down slopes faster, off walls, a slam after a drop; bowls regular enemies over (3 at once: STRIKE!), bounces off bosses; A hops, X rams; hits cost half. 75 s |
+| RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
+| RT on one enemy, RT on another | **Tether** | The two yanked into each other |
+| RT held on a big enemy | **Pole swing** | Mario swings round it; let go for a flying kick |
+| RT held on a big enemy, then A | **Boss ride** | Up on its back, the stick steers it; into a wall: WALL SLAM, its stance broken. 40 s |
+| R3 once the star is full | **Star Rush** | Style fills the star; 10 s of super armour (hits cost half, no knockback), 15% faster and harder |
+
+Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
+FRIENDLY FIRE, OUT OF THE PARK, KABOOM, BANANA SPLIT, SHELL SHOCK, PARRY THIS, MAXED OUT, and
+DOUBLE / TRIPLE / MULTI KILL; the gadgets have their own (SLIP!, CAROM!, STRIKE!, HOME RUN!,
+TETHER!, BOING!, STOP!). Finishers punch the camera in a little. Every gadget and power-up
+refuses with a buzz when it can't work. The trap kit's things, the shells and the boulder are real
+3D models (built from the ROM-free palette into the gauntlets' piece).
+
 **The sun.** Held on for 20 s (and not hit once: any blow on Mario, even a push that costs no
 health, puts out whatever he's charging), the giant one grows into an immense ball held high over
 his head. It flies slowly and works the same way, clings longer, and its explosion reaches 9 m:
@@ -258,6 +290,18 @@ close and risky hits.
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
+| Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |
+| Action command | — | **+30%** of the blow (every third **+50%**) |
+| Dash strike | — | **12%** |
+| Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown, Bob-omb **21%** in its blast, spring **2%** |
+| Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
+| Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
+| MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
+| Star Rush | — | Blows **×1.15**, hits on Mario **half** |
+| Boss ride wall slam | — | **11%** and the stance broken |
+
+(Shares already include the 0.75 damage factor; bosses take about 6.5% of them, more for the
+risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
 
@@ -285,6 +329,8 @@ The ground pound is slow and leaves Mario open, so it's worth the risk.
   leave Mario silent for the rest of the session. The audio thread now reopens the stream.
 - **Quieter background sounds.** Lakitu's camera clicks play at 25% and Yoshi's footsteps at 40%;
   the style meter's and the charges' chimes play softly.
+- **A shorter game over.** Bowser shows up sooner after Mario's death (1.6 s) and his iris closes
+  faster (1 s); the log records the whole timeline from death to respawn.
 - **Fewer hitches in fights.** The game's raycast check of each collision triangle is remembered,
   so fast combat moves no longer re-check hundreds of triangles every few frames.
 
@@ -344,12 +390,15 @@ replaces this fork's DLL with the original one.
 |---|---|---|
 | Left stick | W A S D | Move |
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
-| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive (into an enemy's back or side it picks the enemy up) |
-| Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
-| B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
+| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive (into an enemy's back or side it picks the enemy up). Right on a blow's impact: NICE!. Back + X: launcher |
+| Y | | Special move: breakdance sweep, slide kick (running), combos with X and B. Forward + Y: leap into the weapon's dive |
+| B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow |
+| A just before an enemy's blow | | Mikiri stomp |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools |
-| D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
-| RT | Middle mouse button | The hook (see above) |
+| D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
+| RT | Middle mouse button | The hook (see above). Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: boss ride |
+| LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
+| R3 (right stick click) | | Star Rush, once the star is full |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
@@ -391,6 +440,12 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - Not synced yet: caps' looks and sounds of the other player, Yoshi.
+
+
+Two small co-op touches: landing on your partner's head is a **Bros. Jump** (a high bounce off
+it), and while a partner is connected a little panel in the bottom left shows their head (Mario
+or Luigi), their power pie, and an arrow on the screen's edge with how far they are when they're
+out of view. Both players need the same build (the pose packet changed).
 
 ## Building
 
