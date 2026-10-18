@@ -624,6 +624,8 @@ pub struct Combat {
     string: HashMap<u64, (u32, u32)>,
     /// a MAX finisher that just landed: the blow and where (maxfin.rs takes it from here)
     max: Option<(Attack, glam::Vec3)>,
+    /// the last blow on each enemy and how it was then (its kill's skillshot, skillshot.rs)
+    last_blow: HashMap<u64, (Attack, crate::skillshot::How)>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -636,7 +638,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new() }
     }
 }
 
@@ -2058,6 +2060,15 @@ impl Combat {
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
                 let chest = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                // (what hit it last, and how it was: up in the air or not)
+                {
+                    let airborne = crate::juggle::is_juggled(handle) || crate::bat::is_flying(handle) || crate::knock::is_flying(handle);
+                    if self.last_blow.len() > 64 {
+                        let live: Vec<u64> = self.victims.keys().copied().collect();
+                        self.last_blow.retain(|k, _| live.contains(k));
+                    }
+                    self.last_blow.insert(target.key, (attack, crate::skillshot::How { airborne }));
+                }
                 // a finisher with the MAX ready (twelve blows without a hit): its MAX version
                 // (maxfin.rs; the boomerang's is its big throw, boomerang.rs)
                 if attack.finisher() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
@@ -2298,10 +2309,16 @@ impl Combat {
     pub fn kills(&mut self, tick: u32) -> Vec<glam::Vec3> {
         let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };
         let mut out = Vec::new();
-        self.victims.retain(|_, (handle, t)| match wcm.chr_ins_by_handle(handle) {
+        let last_blow = &mut self.last_blow;
+        self.victims.retain(|key, (handle, t)| match wcm.chr_ins_by_handle(handle) {
             Some(chr) if chr.modules.data.hp <= 0 => {
                 let p = chr.modules.physics.position;
-                out.push(glam::Vec3::new(p.0, p.1, p.2));
+                let at = glam::Vec3::new(p.0, p.1, p.2);
+                out.push(at);
+                // a creative kill gets its name (skillshot.rs)
+                if let Some((attack, how)) = last_blow.remove(key) {
+                    crate::skillshot::kill(attack, how, at);
+                }
                 false
             }
             Some(_) => tick.wrapping_sub(*t) < 300,

@@ -152,6 +152,8 @@ const DASH_COOLDOWN: u32 = 12;
 /// X launcher only from about standing (a run turning round shouldn't launch)
 const LEAN: f32 = 0.6;
 const LEAN_SLOW: f32 = 14.0;
+/// the freeflow: a blow at most this long ago (ticks) and B is a leap to the next enemy
+const FLOW_AFTER: u32 = 24;
 /// X this soon (ticks) after the dash ended: the dash strike, at most this often (as er_moves.c's
 /// ER_BONK_EVERY)
 const BONK_AFTER: u32 = 4;
@@ -246,6 +248,9 @@ pub enum Request {
     Spring([f32; 3]),
     /// a new velocity, the action kept (the boulder off a big body, rock.rs)
     Velocity([f32; 3]),
+    /// the freeflow: a leap to (x, y, z) (SM64 units), just off another enemy's body, popping up in
+    /// front of it (er_moves.c's zip, as the hook's)
+    Flow([f32; 3]),
 }
 
 impl Request {
@@ -264,6 +269,7 @@ impl Request {
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
                 }
                 Request::Velocity(v) => sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]),
+                Request::Flow([x, y, z]) => sm64::sm64_er_zip(id, x, y, z, 0, 1),
                 Request::Spring(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TRIPLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
@@ -470,6 +476,7 @@ impl Moves {
         state: &sm64::SM64MarioState,
         move_timer: i32,
         lean: f32,
+        flow: Option<[f32; 3]>,
         tick: u32,
     ) -> Option<Request> {
         let a = state.action;
@@ -608,6 +615,18 @@ impl Moves {
                 crate::style::swap();
                 crate::log(format!("moves: swap strike, {name}"));
                 return Some(Request::Action(action, arg));
+            }
+        }
+        // the freeflow (Arkham's): B toward another enemy in the middle of a string, a leap to it, the
+        // string going on (its blows keep counting, lib.rs found the one the stick points at)
+        let in_string = self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= FLOW_AFTER);
+        if b_pressed && in_string && !crate::mega::active() && a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 {
+            if let Some(to) = flow {
+                self.dash_ready = tick + DASH_COOLDOWN;
+                self.chain_seen = Some(tick);
+                crate::style::flow();
+                crate::log("moves: freeflow (B to another enemy)");
+                return Some(Request::Flow(to));
             }
         }
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)

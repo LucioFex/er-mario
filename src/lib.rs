@@ -58,6 +58,7 @@ mod traps;
 mod rock;
 mod bat;
 mod maxfin;
+mod skillshot;
 mod style;
 mod update;
 mod version;
@@ -2546,6 +2547,7 @@ fn frame(data: &FD4TaskData) {
         rock::clear();
         bat::clear();
         maxfin::clear();
+        skillshot::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -3064,7 +3066,33 @@ fn frame(data: &FD4TaskData) {
                 ((-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z) - m.state.face_angle).cos()
             }
         };
-        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, lean, m.ticks);
+        // the freeflow's enemy: the one the stick points at (within 35°), 3 to 12 m away, in sight
+        let flow = {
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            (sx * sx + sy * sy >= 0.36)
+                .then(|| {
+                    let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
+                    let dir = glam::Vec2::new(yaw.sin(), yaw.cos());
+                    let me = m.state.position;
+                    targets
+                        .iter()
+                        .filter(|t| t.shootable().is_some())
+                        .filter_map(|t| {
+                            let d = glam::Vec2::new(t.sm[0] - me[0], t.sm[2] - me[2]);
+                            let metres = d.length() * scale();
+                            ((3.0..=12.0).contains(&metres) && d.normalize_or_zero().dot(dir) >= 0.82 && (t.sm[1] - me[1]).abs() * scale() < 3.0).then_some((metres, t))
+                        })
+                        .min_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, t)| {
+                            // (just off its body on his side, about its waist high: the hook's spot)
+                            let d = glam::Vec2::new(me[0] - t.sm[0], me[2] - t.sm[2]).normalize_or(glam::Vec2::Y);
+                            let off = t.radius + 70.0;
+                            [t.sm[0] + d.x * off, t.sm[1] + (t.height * 0.35).min(250.0), t.sm[2] + d.y * off]
+                        })
+                })
+                .flatten()
+        };
+        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, lean, flow, m.ticks);
         let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));

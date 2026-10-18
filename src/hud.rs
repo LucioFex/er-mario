@@ -143,6 +143,8 @@ const IMG_LUIGI_HEAD: usize = 81;
 const IMG_KIT: usize = 82; // 4
 /// the Rock Mushroom (rock.rs): a mushroom with a stone cap
 const IMG_ROCK: usize = 86;
+/// an X in SM64's HUD font's colours (it has none: "MAX" read "MAK")
+const IMG_X: usize = 87;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -150,7 +152,7 @@ fn glyph_for(c: char) -> Option<usize> {
         'J' => 'I',
         'Q' => 'O',
         'V' => 'U',
-        'X' => 'K',
+        'X' => return Some(IMG_X),
         'Z' => 'S',
         c => c,
     };
@@ -255,6 +257,21 @@ pub fn load(rom: &[u8]) {
             out.push(Image::new(32, 32, |x, y| kit_pixel(k, x, y)));
         }
         out.push(Image::new(32, 32, rock_pixel));
+        // the X: two strokes crossing, filled and outlined with the K's own colours
+        {
+            let k = tex(&seg2, LETTERS.iter().find(|l| l.0 == 'K').map_or(0x2600, |l| l.1), 512)?;
+            let px = |i: usize| rgba16_px(&k, i);
+            let opaque: Vec<[u8; 4]> = (0..256).map(px).filter(|p| p[3] > 0).collect();
+            let lum = |p: &[u8; 4]| p[0] as u32 + p[1] as u32 + p[2] as u32;
+            let fill = opaque.iter().max_by_key(|p| lum(p)).copied().unwrap_or([255, 255, 255, 255]);
+            let edge = opaque.iter().min_by_key(|p| lum(p)).copied().unwrap_or([0, 0, 0, 255]);
+            out.push(Image::new(16, 16, |x, y| {
+                let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let d = ((fx - fy).abs()).min((fx + fy - 16.0).abs()) / std::f32::consts::SQRT_2;
+                let inside = (2.0..=14.0).contains(&fx) && (2.0..=14.0).contains(&fy);
+                if inside && d < 1.6 { fill } else if inside && d < 2.6 { edge } else { [0; 4] }
+            }));
+        }
         Some(out)
     };
     match load() {
@@ -565,7 +582,7 @@ impl ImguiRenderLoop for Overlay {
                     }
                 });
         }
-        if self.textures.len() <= IMG_ROCK {
+        if self.textures.len() <= IMG_X {
             return;
         }
         let size = ui.io().display_size;

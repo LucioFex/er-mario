@@ -208,6 +208,17 @@ pub fn swap() {
     }
 }
 
+/// Game thread: Mario leapt from one enemy to the next in the middle of a string (moves.rs's
+/// freeflow): a bonus, the string kept going.
+pub fn flow() {
+    let mut m = METER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(m) = m.as_mut().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP) {
+        m.last = Instant::now();
+        add(m, FLOW_POINTS);
+    }
+}
+const FLOW_POINTS: f32 = 1.5;
+
 /// Game thread: a combo's finisher landed at `at` (Elden Ring, the target's chest). From the S
 /// rank it's a star finish: true then (impact.rs shows it).
 pub fn finisher(at: Vec3) -> bool {
