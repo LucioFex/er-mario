@@ -27,8 +27,8 @@ use crate::combat::{self, Attack, Combat};
 use crate::{log, sm64, worker};
 
 /// how long a capture lasts at most (s), the wait before the next (s)
-const TIME: f32 = 10.0;
-const RECHARGE: f32 = 45.0;
+const TIME: f32 = 20.0;
+const RECHARGE: f32 = 20.0;
 /// how fast it's driven (m/s), how quickly it turns that way (rad/s), how fast into a wall counts
 /// as a crash (m/s: it built up speed)
 const DRIVE: f32 = 5.5;
@@ -167,7 +167,11 @@ fn seat(h: &FieldInsHandle) -> Option<(Vec3, Vec3, f32)> {
 pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
     let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none());
     // (co-op guest: the host owns the enemies; a boss in a scripted moment isn't ridden)
-    let chr = (ready && !crate::coop::guest() && !combat::hands_off(h) && !combat::is_boss_now(h) && seat(h).is_some())
+    let (guest, hands, boss, seated) = (crate::coop::guest(), combat::hands_off(h), combat::is_boss_now(h), seat(h).is_some());
+    if ready && !(!guest && !hands && !boss && seated) {
+        log(format!("boss ride: refused (ready {ready}, guest {guest}, scripted {hands}, boss bar {boss}, seat {seated})"));
+    }
+    let chr = (ready && !guest && !hands && !boss && seated)
         .then(|| unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(h)))
         .flatten();
     let Some(chr) = chr else {

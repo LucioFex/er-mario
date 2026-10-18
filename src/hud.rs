@@ -565,7 +565,8 @@ impl Mesh {
         }
     }
 
-    fn draw(self, dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], far: f32) {
+    fn draw(self, dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], far: f32, bodies: &[(Vec3, f32)]) {
+        let eye = camera_position();
         let light = Vec3::new(0.35, 0.85, 0.4).normalize();
         let mut out = Vec::with_capacity(self.tris.len());
         for (p, n, c) in self.tris {
@@ -573,6 +574,22 @@ impl Mesh {
             let z = (a.1 + b.1 + d.1) / 3.0;
             if z > far {
                 continue;
+            }
+            // (behind a body that's in front of it: not drawn)
+            if let Some(eye) = eye {
+                let c = (p[0] + p[1] + p[2]) / 3.0;
+                let d = c - eye;
+                let len2 = d.length_squared().max(1e-4);
+                if bodies.iter().any(|&(o, r)| {
+                    // (not one the camera is inside of)
+                    if (o - eye).length() <= r {
+                        return false;
+                    }
+                    let t = (o - eye).dot(d) / len2;
+                    t > 0.0 && t < 1.0 && (eye + d * t - o).length() < r
+                }) {
+                    continue;
+                }
             }
             let lit = (0.55 + 0.5 * n.dot(light)).clamp(0.35, 1.1);
             out.push((z, [a.0, b.0, d.0], imgui::ImColor32::from_rgba_f32s((c[0] * lit).min(1.0), (c[1] * lit).min(1.0), (c[2] * lit).min(1.0), 1.0)));
@@ -583,6 +600,13 @@ impl Mesh {
             dl.add_triangle(p[0], p[1], p[2], col).thickness(1.0).build();
         }
     }
+}
+
+/// Where the game's camera is.
+fn camera_position() -> Option<Vec3> {
+    let cam = unsafe { CSCamera::instance() }.ok()?;
+    let c = cam.pers_cam_1.position();
+    Some(Vec3::new(c.0, c.1, c.2))
 }
 
 /// World position -> screen pixel (None behind the camera), and its distance.
@@ -802,7 +826,7 @@ impl ImguiRenderLoop for Overlay {
                 let mut mesh = Mesh::default();
                 mesh.tube(&path, &|k| 0.13 - 0.02 * k as f32 / n as f32, 8, &|k| if k % 3 == 0 { [0.98, 0.4, 0.55] } else { [0.93, 0.33, 0.5] });
                 mesh.ellipsoid(*path.last().unwrap_or(&tip), glam::Quat::IDENTITY, Vec3::splat(0.22), 0.0, 6, 10, &|i, _| if i < 2 { [1.0, 0.6, 0.72] } else { [0.98, 0.42, 0.58] });
-                mesh.draw(&dl, size, 60.0);
+                mesh.draw(&dl, size, 60.0, &ride.bodies);
             }
             for (pos, age) in ride.fires {
                 let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.3, size)) else { continue };
@@ -822,7 +846,7 @@ impl ImguiRenderLoop for Overlay {
                 mesh.ellipsoid(pos, rot, Vec3::new(0.38, 0.5, 0.38) * sz * 2.0, 0.22, 8, 12, &|i, j| {
                     if (matches!(i, 2 | 3) && j % 4 == 0) || (i == 5 && j % 4 == 2) || (i == 4 && j % 6 == 3) { [0.2, 0.72, 0.25] } else { [0.98, 0.97, 0.9] }
                 });
-                mesh.draw(&dl, size, 60.0);
+                mesh.draw(&dl, size, 60.0, &ride.bodies);
             }
         }
         // the hook: a line of light from his hand with twinkles running along it, his cap spinning

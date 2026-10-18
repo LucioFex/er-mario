@@ -295,10 +295,9 @@ impl Hook {
                     }
                 }
             }
-            // A on a big one with R2 held (zipping to it or swinging round it): up on its back
+            // A on a medium or big one (zipping to it or swinging round it): up on its back
             Phase::Zipping(_) | Phase::Swinging(_)
                 if a_pressed
-                    && button
                     && allowed
                     && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {

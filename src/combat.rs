@@ -493,7 +493,7 @@ const FIST_SHARE: u16 = 100;
 /// (raised with the lower shares above, so bosses lose only a little)
 const BOSS_FACTOR: f32 = 0.065;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
-const DAMAGE_FACTOR: f32 = 0.75;
+const DAMAGE_FACTOR: f32 = 0.6;
 /// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
 const BULLET_EVERY: u32 = 30;
 /// the per-enemy cooldowns are kept this long (ticks: the longest of Attack::cooldown)
@@ -717,7 +717,41 @@ pub fn handle_key(h: &FieldInsHandle) -> u64 {
 pub fn hostile(chr: &ChrIns) -> bool {
     matches!(chr.team_type, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE)
         || chr.team_type >= TEAM_ENEMY_GROUPS
+        || team_learned(chr.team_type)
         || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc)
+}
+
+/// Teams from 10 to 49 are friendly or neutral NPCs, some at war with other enemies (Caelid's
+/// soldiers against its hounds) and with the player: the ones that hit Mario are hostile from then
+/// on (`learn_attacker`), and the ini's `hostile_teams = 30,48` lists more.
+static LEARNED_TEAMS: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+fn team_learned(team: u8) -> bool {
+    if !(10..TEAM_ENEMY_GROUPS).contains(&team) {
+        return false;
+    }
+    static CONFIGURED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let configured = CONFIGURED.get_or_init(|| crate::paths::config("hostile_teams").map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default());
+    configured.contains(&team) || LEARNED_TEAMS.lock().unwrap_or_else(|e| e.into_inner()).contains(&team)
+}
+
+/// Mario was hurt (lib.rs): whoever hit him from a team in the neutral range is an enemy now, and
+/// so is its whole team.
+pub fn learn_attacker(player: &ChrIns) {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
+    let Some(chr) = wcm.chr_ins_by_handle(&player.last_hit_by) else { return };
+    let team = chr.team_type;
+    if !(10..TEAM_ENEMY_GROUPS).contains(&team) || own_side(team) || team_learned(team) {
+        return;
+    }
+    // ("last hit by" can be stale: only one up close, alive, and a character a blow may land on)
+    let (p, q) = (player.modules.physics.position, chr.modules.physics.position);
+    let near = ((p.0 - q.0).powi(2) + (p.2 - q.2).powi(2)).sqrt() <= 8.0;
+    if !near || chr.modules.data.hp <= 0 || !hittable(chr.chr_type) {
+        return;
+    }
+    LEARNED_TEAMS.lock().unwrap_or_else(|e| e.into_inner()).push(team);
+    log(format!("combat: c{:04} of team {team} hit Mario: that team is hostile from now on", chr.character_id));
 }
 
 /// Enemies and NPCs, the red NPC invaders included; some bosses (Margit) are type 7. Never the

@@ -20,11 +20,11 @@ use crate::combat::{self, Attack, Combat};
 use crate::{log, sm64, worker};
 
 /// the tongue: how far (m), how wide (m), out and back (s), before the next (s)
-const TONGUE_REACH: f32 = 7.5;
+const TONGUE_REACH: f32 = 11.0;
 const TONGUE_WIDTH: f32 = 1.0;
 const TONGUE_TIME: f32 = 0.34;
 /// the tongue goes for the nearest enemy in this cone ahead (cos 60°) and follows it as it moves
-const TONGUE_COS: f32 = 0.5;
+const TONGUE_COS: f32 = 0.1;
 const TONGUE_REST: f32 = 0.12;
 /// eggs: at most, at the start, a new one every (s); thrown this fast (m/s), falling (m/s²), gone
 /// after (s), at most this far (m) to the enemy it's aimed at, between two (s)
@@ -114,6 +114,9 @@ pub struct Sprites {
     pub tongue: Option<(Vec3, Vec3)>,
     pub eggs: Vec<(Vec3, f32)>,
     pub fires: Vec<(Vec3, f32)>,
+    /// spheres (centre, radius) for Yoshi's and Mario's bodies: the 3D tongue and eggs are drawn
+    /// over the screen, so they're hidden behind these
+    pub bodies: Vec<(Vec3, f32)>,
     pub stock: u32,
     pub riding: bool,
 }
@@ -255,7 +258,7 @@ pub fn tick(
                 let here = HavokPosition(mouth.x, mouth.y, mouth.z, 0.0);
                 if let Some(c) = combat::nearby(&here, TONGUE_REACH + 3.0, origin).iter().find(|t| t.key() == key).map(&chest) {
                     let want = (c - mouth).normalize_or(dir);
-                    dir = (dir + (want - dir) * (dt * 14.0).min(1.0)).normalize_or(dir);
+                    dir = (dir + (want - dir) * (dt * 28.0).min(1.0)).normalize_or(dir);
                     s.tongue = Some((since, dir, Some(key)));
                 }
             }
@@ -472,5 +475,5 @@ pub fn tick(
         crate::impact::dash_point(feet + Vec3::Y * 0.2, false);
     }
 
-    s.sprites = Sprites { tongue: tongue_tip.map(|tip| (mouth, tip)), eggs: s.eggs.iter().map(|e| (e.pos, e.age)).collect(), fires: s.fires.iter().map(|f| (f.pos, f.age)).collect(), stock: s.stock, riding: true };
+    s.sprites = Sprites { tongue: tongue_tip.map(|tip| (mouth, tip)), eggs: s.eggs.iter().map(|e| (e.pos, e.age)).collect(), fires: s.fires.iter().map(|f| (f.pos, f.age)).collect(), bodies: vec![(feet + Vec3::Y * 0.95, 0.6), (feet - face * 0.5 + Vec3::Y * 0.9, 0.5), (mouth - face * 0.55, 0.3), (feet + Vec3::Y * 2.1, 0.3)], stock: s.stock, riding: true };
 }

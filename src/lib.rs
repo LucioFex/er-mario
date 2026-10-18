@@ -2904,6 +2904,8 @@ fn frame(data: &FD4TaskData) {
         // (a hit wakes him up)
         if matches!(hurt, Some(combat::Hurt::Hit(_))) {
             status::hit();
+            // (whoever hit him from a neutral team is an enemy now: Caelid's soldiers)
+            combat::learn_attacker(&player_ref.chr_ins);
         }
         // the Metal and Vanish caps: Elden Ring's hits do nothing (on Metal Mario they clang)
         if matches!(hurt, Some(combat::Hurt::Hit(_))) && caps::active() == Some(caps::METAL) {

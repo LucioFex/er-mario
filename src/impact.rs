@@ -466,13 +466,12 @@ pub fn mega_step(feet: Vec3, heavy: bool) {
     }
 }
 
-/// A perfect dodge (dodge.rs): a cold blue flash at the screen's edges, rings round Mario and
-/// stars. `feet`: Elden Ring.
+/// A perfect dodge (dodge.rs): a ring, a glint and stars on Mario, nothing over the screen. `feet`: Elden Ring.
 pub fn perfect_dodge(feet: Vec3) {
-    flash([0.35, 0.6, 1.0], 0.55, 0.45);
-    ring(feet + Vec3::Y * 0.8, 1.6, 0.35, [0.5, 0.75, 1.0, 1.0]);
-    ring(feet + Vec3::Y * 0.1, 2.6, 0.5, [0.5, 0.75, 1.0, 1.0]);
-    burst(feet + Vec3::Y * 1.0, 4, Bit::Star);
+    // (all on Mario, nothing over the screen: a thin ring at his waist, a glint, a few stars)
+    ring(feet + Vec3::Y * 0.9, 1.1, 0.28, [0.55, 0.8, 1.0, 0.8]);
+    spark(feet + Vec3::Y * 0.9, 1.2, [0.6, 0.85, 1.0, 0.8]);
+    burst(feet + Vec3::Y * 1.0, 3, Bit::Star);
 }
 
 /// The action command (timing.rs): a gold burst on the blow, a quick ring, a few stars; a "GREAT!"

@@ -81,7 +81,7 @@ the fists with the rush. In the air it's the weapon's air blow (two per jump, fo
 there). Each swap scores style points and flashes a golden ring.
 
 **Perfect dodge.** Dash (B) just as an enemy close by starts an attack and the world slows down for
-a second, Bayonetta's Witch Time: a blue flash, a "waha!", and for a moment Mario's blows are
+a second, Bayonetta's Witch Time: a ring and a glint on Mario (nothing over the screen), a "waha!", and for a moment Mario's blows are
 counters that hit 1.6x as hard (`src/dodge.rs`). Once every few seconds at most.
 
 **Hammer.** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
@@ -174,7 +174,7 @@ own moves (his mouth opens for the tongue, he nods with each egg and on a stomp)
 
 | Input on Yoshi | Move |
 |---|---|
-| X | Tongue: a 3D tube out to 7.5 m, it locks on to the nearest enemy in a 120° cone ahead and follows it as it moves, hits whoever it reaches, and every enemy it licks makes him an egg |
+| X | Tongue: a 3D tube out to 11 m, it locks on to the nearest enemy in a wide cone ahead and follows it closely as it moves (it's hidden behind Yoshi and Mario's bodies), hits whoever it reaches, and every enemy it licks makes him an egg |
 | Y (hold for more) | Throw a big 3D egg (white with green spots, tumbling) at the nearest enemy in the cone ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
 | RB (hold for more) | Mario's fireball from the saddle, a palm thrust straight at the nearest enemy ahead |
 | LT in the air | Stomp: a shockwave all around where he lands |
@@ -259,7 +259,7 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a medium or big enemy (after Mario flew to it) | **Pole swing** | Mario swings round it for 4 s, faster and faster. Let go and he's flung off along the swing with its inertia into a flying kick: swing between big enemies, or get away. Held to the end, he lands on its back (Capture) |
-| RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 10 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 45 s |
+| RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 20 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 20 s wait after it |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
 FRIENDLY FIRE, OUT OF THE PARK, KABOOM, BANANA SPLIT, SHELL SHOCK, PARRY THIS, MAXED OUT, and
@@ -307,7 +307,7 @@ close and risky hits.
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
 | Capture: charge **6%** each, wall slam | — | **11%** and the stance broken |
 
-(Shares already include the 0.75 damage factor; bosses take about 6.5% of them, more for the
+(The shares below were worked out with a 0.75 damage factor; the current one is 0.6 (ini `damage_factor`), so take 20% off each; bosses take about 6.5% of them, more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -444,6 +444,10 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   DLL is loaded (`enemy_hp_scale` in `er_mario.ini`). Reforged's one-off health drains no longer
   set Mario on fire, and invisible characters (the helpers by graces, enemies the game isn't
   drawing) are left alone.
+- Some enemies sit on neutral teams (Caelid's soldiers, at war with its hounds and with you) and
+  Mario's blows used to go through them. Whoever hits Mario from one of those teams is an enemy
+  from then on, and so is its whole team (the log says `combat: ... team N hit Mario`);
+  `hostile_teams = 30,48` in `er_mario.ini` lists teams that are enemies from the start.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - Not synced yet: caps' looks and sounds of the other player, Yoshi.
