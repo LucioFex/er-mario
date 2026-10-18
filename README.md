@@ -375,8 +375,9 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   the final blow. As the guest you can't grab enemies or launch them (they'd jump back to where
   the host has them), but every blow counts.
 - A blow on your partner only pushes them.
-- Two players are a bit harder than one: Mario's blows (shares of max HP) honour Seamless's extra
-  enemy health per player (read from its `ersc_settings.ini`), and the guide sets enemies to hit
+- Two players are a bit harder than one: Mario's blows (shares of max HP) act as if enemies had
+  35% more health per extra player (bosses 100%, `coop_health_scaling` / `coop_boss_health_scaling`
+  in `er_mario.ini`), and the guide sets enemies to hit
   15% harder. Alone, nothing changes.
 - With Reforged, put `er_mario.dll`, `er_mario.ini` and your ROM in Reforged's `dll\offline`:
   the mod then builds its models into Reforged's `addons\er-mario`, which Reforged's launcher

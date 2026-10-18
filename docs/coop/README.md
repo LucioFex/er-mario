@@ -21,106 +21,97 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 ## Requisitos (en las dos PCs)
 
 1. **Elden Ring en Steam**, actualizado. Los dos tienen que ser amigos en Steam.
-2. **Elden Ring Reforged (ERR)**, la **misma versión** en las dos PCs (Nexus Mods, mod 541).
-   Se descomprime fuera de la carpeta del juego, por ejemplo en `C:\ERR`.
-3. **Seamless Co-op**, la **misma versión** en las dos PCs (Nexus Mods, mod 510; probado con la 2.0.1).
+2. **Elden Ring Reforged (ERR)**, la **misma versión** en las dos PCs (Nexus Mods, mod 541; se usó la
+   **2.3.6.3**). Se descomprime fuera de la carpeta del juego. En esta guía `<ERR>` es la carpeta que
+   tiene los `.BAT` de lanzamiento, por ejemplo `C:\ERR - Elden Ring Reforged\ERRv2.3.6.3`.
+3. **Seamless Co-op**, la **misma versión** en las dos PCs (Nexus Mods, mod 510; se usó la 2.0.1).
 4. **ER Mario, el mismo build** en las dos PCs, porque los paquetes llevan una versión. Bajar
    `ER-Mario-coop.zip` del pre-release
    [coop-2026-10-17](https://github.com/LucioFex/er-mario/releases/tag/coop-2026-10-17). Trae
    `er_mario.dll`, un `er_mario.ini` de ejemplo y las licencias. Si después sale otro build, los dos
    tienen que actualizar.
-5. **Una ROM de Super Mario 64 (US) propia** en cada PC (`.z64`, `.n64` o `.v64`).
+5. **Una ROM de Super Mario 64 (US) propia** en cada PC (`.z64`, `.n64` o `.v64`). El MD5 del
+   `.z64` correcto es `20b854b239203baf6c961b850a4a51a2`.
    **La ROM no se comparte ni se sube a ningún lado.**
 
 ## Pasos en cada PC
 
 ### 1. Reforged
 
-1. Descomprimir ERR (por ejemplo en `C:\ERR`) y abrirlo una vez con el acceso *Launch ELDEN RING
-   Reforged (Offline)* para comprobar que arranca. Después cerrar el juego.
-   - ✔ Existen las carpetas `C:\ERR\dll\offline` y `C:\ERR\addons`.
-   - Si `addons` no existe, crearla. ER Mario la usa para detectar que está dentro de Reforged.
+1. Descomprimir ERR fuera de la carpeta del juego. Abrirlo una vez con
+   `2 - Launch ELDEN RING Reforged - Offline or Seamless (Windows).BAT` para comprobar que arranca, y
+   cerrar el juego.
+   - ✔ Existen `<ERR>\dll\offline` (con un `ersc_settings.ini` de Reforged) y `<ERR>\addons`.
+   - Reforged arma su propio perfil de me3 en cada arranque, con los DLL de `dll\offline` y las
+     carpetas de `addons`. No hay que editar ningún `.me3`.
 
 ### 2. Seamless Co-op dentro de Reforged
 
 1. Del zip de Seamless, copiar **solo** `SeamlessCoop\ersc.dll` y la carpeta `SeamlessCoop\locale`
-   a `C:\ERR\dll\offline\`. Reforged ya trae su propio `ersc_settings.ini` en esa carpeta y se usa
-   ese.
-2. En `C:\ERR\dll\offline\ersc_settings.ini` (igual en las dos PCs):
+   a `<ERR>\dll\offline\`. Se usa el `ersc_settings.ini` que trae Reforged, no el del zip.
+2. En `<ERR>\dll\offline\ersc_settings.ini` (igual en las dos PCs):
    - `cooppassword = <la que elijan>`: la **misma contraseña** en las dos.
    - `enemy_damage_scaling = 15` y `boss_damage_scaling = 15`: con dos jugadores los enemigos pegan
      un 15% más.
-   - `allow_invaders = 0` y `death_debuffs = 0`: así jugar solo queda igual que sin Seamless, sin
-     invasores y sin castigo de vida al morir.
-   - Dejar `enemy_health_scaling` y `boss_health_scaling` como están (35 y 100). ER Mario los lee
-     de este archivo.
-3. Anotar el valor de `save_file_extension` en ese mismo archivo (Seamless trae `co2`). Se usa en el
-   paso 5.
+   - El resto se deja como lo trae Reforged: `save_file_extension = err`, `allow_invaders = 0`,
+     `death_debuffs = 0` y el escalado de vida en 0.
 
 **Dificultad:** solo cuenta con dos jugadores. De a uno el juego queda igual que siempre. De a dos:
-- Los enemigos tienen la vida extra de Seamless (+35%, jefes +100%). Como los golpes de Mario quitan
-  un porcentaje de la vida, ER Mario los ajusta para que esa vida extra cuente de verdad. Si no,
-  con dos Marios todo moriría el doble de rápido.
-- Los enemigos pegan un 15% más (`enemy_damage_scaling`).
+- Los golpes de Mario quitan un porcentaje de la vida máxima del enemigo, así que con dos Marios
+  todo moriría el doble de rápido. ER Mario hace que los enemigos aguanten como si tuvieran un 35%
+  más de vida, y los jefes un 100% más. Esto se puede cambiar en `er_mario.ini` con
+  `coop_health_scaling` y `coop_boss_health_scaling`.
+- Los enemigos pegan un 15% más (`enemy_damage_scaling` de Seamless).
 
 ### 3. ER Mario dentro de Reforged
 
-1. Copiar a `C:\ERR\dll\offline\`:
-   - `er_mario.dll` y `er_mario.ini`, del zip
-   - la ROM propia de Super Mario 64 (US)
+1. Copiar a `<ERR>\dll\offline\` el `er_mario.dll` y el `er_mario.ini` del zip.
 2. En `er_mario.ini`:
+   - La ROM: copiarla a `<ERR>\dll\offline\`, o apuntar a ella con `rom = C:\ruta\a\la\rom.z64`.
    - **PC de Luigi:** `character = luigi`
    - **PC de Mario:** sin esa línea, o `character = mario`
-   - Si la ROM está en otro lado: `rom = C:\ruta\a\la\rom.z64`
-3. Abrir con *Launch ELDEN RING Reforged (Offline)* hasta el menú principal y cerrar. **La primera vez
-   hacen falta dos arranques:** en el primero el mod arma los modelos a partir de la ROM; en el
-   segundo me3 ya los carga.
-   - ✔ En `C:\ERR\dll\offline\logs\er_mario.log` aparece `package folder C:\ERR\addons\er-mario`.
-   - ✔ Existe `C:\ERR\addons\er-mario\parts\bd_m_0996.partsbnd.dcx`, que es el modelo del compañero.
+   - `base_assets = <ERR>\mod`, con la ruta completa. Reforged trae su propia versión de los íconos del
+     menú (`menu\hi\01_common.tpf.dcx`) y de la lista de materiales
+     (`material\allmaterial.matbinbnd.dcx`). Con esto, ER Mario parte de las de Reforged en vez de las
+     del juego y no le pisa los cambios.
+3. Abrir con el `.BAT` *Offline or Seamless* hasta el menú principal y cerrar. **La primera vez hacen
+   falta dos arranques:** en el primero el mod arma los modelos a partir de la ROM; en el segundo
+   me3 ya los carga.
+   - ✔ En `<ERR>\dll\offline\logs\er_mario.log` aparece `package folder <ERR>\addons\er-mario`.
+   - ✔ También aparece `assets: /menu/hi/01_common.tpf.dcx from ...\mod`.
+   - ✔ Existe `<ERR>\addons\er-mario\parts\bd_m_0996.partsbnd.dcx`, que es el modelo del compañero.
+   - ✔ No aparece `LOOKS USED`. En Reforged 2.3.2.2 se comprobó que las filas que reutiliza el mod
+     (bullets 65-70 y AtkParam 994-999) están libres. Las pecheras 660100 y 661100 conservan las
+     estadísticas de Reforged; el mod solo les cambia el modelo.
 
-### 4. ¿Reforged trae sus propios archivos de menú, material o Torrent?
+### 4. Una sola partida para solo y coop (PC de Mario, el anfitrión)
 
-ER Mario reconstruye tres archivos del juego: los íconos del menú, la lista de materiales y Torrent
-(que pasa a ser Yoshi). Si Reforged trae su propia versión de alguno, conviene que ER Mario parta de
-la de Reforged, para no borrarle los cambios.
-
-1. Buscar en la carpeta de Reforged, sin contar `addons\er-mario`:
-   `menu\hi\01_common.tpf.dcx`, `material\allmaterial.matbinbnd.dcx`, `chr\c8002.chrbnd.dcx`.
-2. Si aparece alguno, en `er_mario.ini` poner `base_assets = <carpeta que contiene menu\, material\ o chr\>`.
-   Después borrar `C:\ERR\addons\er-mario\.built` y volver a arrancar dos veces.
-   - ✔ En el log aparece `assets: /menu/hi/01_common.tpf.dcx from ...`.
-3. Si no aparece ninguno, no hay que hacer nada.
-
-### 5. Una sola partida para solo y coop (PC de Mario, el anfitrión)
-
-Mario juega solo en Reforged y de vez en cuando comparte esa misma partida con Luigi. Como
-`ersc.dll` está en `dll\offline`, **cada** arranque *Reforged (Offline)* carga Seamless, aunque
-juegues solo. Por eso solo y coop usan **el mismo archivo** y no hay que copiar nada entre una cosa y
-la otra. Para jugar solo, simplemente no se usa la olla.
+Mario juega solo en Reforged y de vez en cuando comparte esa misma partida con Luigi. Reforged usa
+`ER0000.err` tanto en solo como con Seamless (`save_file_extension = err`), así que **es el mismo
+archivo** y no hay que copiar nada entre una cosa y la otra. Para jugar solo, simplemente no se usa
+la olla.
 
 La primera vez hay que pasar a ese archivo la partida actual de ER Mario:
 
 1. Con el juego cerrado, ir a `%APPDATA%\EldenRing\<número de Steam>\`.
-2. **Copia de seguridad:** copiar toda la carpeta a otro lado antes de tocar nada.
-3. Ver qué archivo usa Reforged con Seamless. Arrancar una vez *Reforged (Offline)* hasta el título,
-   salir, y ver qué archivo se creó o se modificó en esa carpeta. Debería ser
-   `ER0000.<save_file_extension>` (por ejemplo `ER0000.co2`) o `ER0000.err`.
-4. Reemplazar ese archivo por una **copia** de `ER0000_mario.sl2` (la partida de ER Mario en un
-   jugador), con el nombre del paso anterior. El original `ER0000_mario.sl2` queda como respaldo de la
+2. **Copia de seguridad:** copiar toda la carpeta a otro lado antes de tocar nada. Ojo: el launcher
+   de Reforged puede haber creado ya un `ER0000.err` a partir de la partida vanilla (`ER0000.sl2`).
+3. Reemplazar `ER0000.err` por una **copia** de `ER0000_mario.sl2` (la partida de ER Mario en un
+   jugador), renombrada a `ER0000.err`. El original `ER0000_mario.sl2` queda como respaldo de la
    partida vanilla.
-   - ✔ Al arrancar Reforged (Offline), *Continuar* carga el personaje de Mario donde estaba.
-5. Reforged cambia armas, objetos y enemigos. Una partida vanilla carga, pero conviene revisar el
+   - ✔ Al arrancar Reforged, *Continuar* carga el personaje de Mario donde estaba.
+4. Reforged cambia armas, objetos y enemigos. Una partida vanilla carga, pero conviene revisar el
    equipo. El launcher de Reforged guarda hasta 25 copias de la partida por su cuenta.
-6. Desde ahí, para jugar solo con Mario se usa *Launch ELDEN RING Reforged (Offline)*. El perfil
-   `er-mario.me3` de `C:\ER-Mario` es la versión vanilla y ya no se usa para esta partida.
-   - ✔ Jugando solo, en el log aparece `coop: session []` y la vida de los enemigos es la normal.
+5. Desde ahí, para jugar solo con Mario se usa el `.BAT` *Offline or Seamless*. El perfil
+   `er-mario.me3` de la instalación vanilla de ER Mario queda para la partida vanilla.
+   - ✔ Jugando solo, en el log aparece `coop: session []`.
 
 La PC de Luigi puede crear un personaje nuevo en su propia partida de Reforged. El progreso del
 mundo es del anfitrión.
 
-### 6. Jugar
+### 5. Jugar
 
-1. Los dos abren *Launch ELDEN RING Reforged (Offline)* y cargan su personaje.
+1. Los dos abren Reforged con el `.BAT` *Offline or Seamless* y cargan su personaje.
 2. Mario (anfitrión) usa la **Tiny Great Pot** (Gran olla pequeña). Luigi usa el **Effigy of Malenia**
    (Efigie de Malenia) para unirse. Las dos cosas las da Seamless.
 3. ✔ En el log de cada uno aparece:

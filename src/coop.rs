@@ -502,28 +502,22 @@ pub fn players() -> usize {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(1, |s| s.peers.len() + 1)
 }
 
-/// Seamless Co-op's extra enemy health per extra player (%), regular and boss, from its
-/// ersc_settings.ini (next to er_mario.dll in Reforged's dll\offline, or in SeamlessCoop\), else
-/// its defaults.
+/// The enemies' extra health per extra player (%), regular and boss, that Mario's blows go by:
+/// `coop_health_scaling` / `coop_boss_health_scaling` in er_mario.ini, else Seamless Co-op's own
+/// defaults (35 / 100). Not read from Seamless's ersc_settings.ini: Reforged sets its scaling to 0
+/// there, and with Mario's blows being shares of max HP, two Marios would melt everything twice as
+/// fast.
 fn health_scaling() -> (f32, f32) {
     static SCALING: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
     *SCALING.get_or_init(|| {
-        let text = ["ersc_settings.ini", "SeamlessCoop/ersc_settings.ini"].iter().find_map(|f| std::fs::read_to_string(crate::paths::file(f)).ok());
-        let key = |k: &str| {
-            text.as_deref()?.lines().find_map(|l| {
-                let (a, b) = l.split_once('=')?;
-                (a.trim().eq_ignore_ascii_case(k)).then(|| b.trim().parse::<f32>().ok()).flatten()
-            })
-        };
-        let s = (key("enemy_health_scaling").unwrap_or(35.0), key("boss_health_scaling").unwrap_or(100.0));
-        log(format!("coop: Seamless health scaling {}% / boss {}% per player{}", s.0, s.1, if text.is_none() { " (its defaults: no ersc_settings.ini found)" } else { "" }));
+        let key = |k: &str, default: f32| crate::paths::config(k).and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(default);
+        let s = (key("coop_health_scaling", 35.0), key("coop_boss_health_scaling", 100.0));
+        log(format!("coop: with two, enemies take blows as if {}% healthier per extra player (bosses {}%)", s.0, s.1));
         s
     })
 }
 
-/// What Mario's blows (shares of max HP) are worth with this many players: Seamless gives the
-/// enemies more health per player, which a share of max HP alone would ignore (two Marios would
-/// melt everything twice as fast).
+/// What Mario's blows (shares of max HP) are worth with this many players (1 alone).
 pub fn share_factor(boss: bool) -> f32 {
     let extra = players().saturating_sub(1) as f32;
     if extra == 0.0 {
