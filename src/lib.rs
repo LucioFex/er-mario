@@ -144,6 +144,8 @@ static AUTO_STARTED: AtomicBool = AtomicBool::new(false);
 static DEBUG_DRAW: AtomicBool = AtomicBool::new(false);
 /// A menu or popup is open: the game gets the whole pad, Mario gets none.
 static MENU_OPEN: AtomicBool = AtomicBool::new(false);
+/// how long after a menu closes the game may still use an item asked for in it (input_task)
+const MENU_USE_AFTER: Duration = Duration::from_millis(1000);
 static PAD: Mutex<Option<(XINPUT_STATE, std::time::Instant)>> = Mutex::new(None);
 
 /// A diagnostic line: only in the log with `debug = 1` (players' logs stay short).
@@ -1406,6 +1408,11 @@ static FOLLOWING: AtomicBool = AtomicBool::new(false);
 static RIDING: AtomicBool = AtomicBool::new(false);
 /// Yoshi is being ridden with the keyboard (Elden Ring's own camera shows then).
 static KEY_RIDE: AtomicBool = AtomicBool::new(false);
+/// Elden Ring's "reverse camera X axis" option (System > Camera), each player's own.
+fn camera_x_reversed() -> bool {
+    unsafe { eldenring::cs::GameDataMan::instance() }.is_ok_and(|g| g.game_settings.reverse_camera_xaxis)
+}
+
 /// Mario is whistling for Torrent: the game gets its "use item" button pressed.
 static WHISTLING: AtomicBool = AtomicBool::new(false);
 /// Riding with Lakitu's camera: the angle (f32 bits) the left stick is turned by, NaN otherwise.
@@ -1552,7 +1559,34 @@ fn input_task() {
     const RIDER: u64 = 1 << 5 | 1 << 6 | 1 << 13;
     // ("use item", the whistle, only while Mario whistles, see below: kept on Torrent, a punch
     // while getting off was queued and whistled him back as soon as Mario was down)
-    let keep = ACTION | if mounted { RIDER } else { 0 } | if WHISTLING.load(Ordering::Relaxed) { USE_ITEM } else { 0 };
+    // the inventory's "Use" (Seamless Co-op's pot and effigy, any item used from the menu): the
+    // game's own use-item request goes through while a menu is up and a moment after it closes (it
+    // closes as the item comes out). Outside menus the pad's X never reaches the game (it's
+    // Mario's punch), so no punch uses an item.
+    let from_menu = {
+        static WAS: AtomicBool = AtomicBool::new(false);
+        static LEFT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        let open = MENU_OPEN.load(Ordering::Relaxed);
+        let mut left = LEFT.lock().unwrap_or_else(|e| e.into_inner());
+        if WAS.swap(open, Ordering::Relaxed) && !open {
+            *left = Some(std::time::Instant::now());
+        }
+        open || left.is_some_and(|t| t.elapsed() < MENU_USE_AFTER)
+    };
+    {
+        static ASKED: AtomicBool = AtomicBool::new(false);
+        let asked = [&mut req.action_requests, &mut req.new_action_presses, &mut req.queued_action_inputs].into_iter().any(|a| *bits(a) & USE_ITEM != 0);
+        if asked && !ASKED.swap(true, Ordering::Relaxed) {
+            log(format!(
+                "input: the game asks to use an item ({}; menu up {})",
+                if from_menu || WHISTLING.load(Ordering::Relaxed) { "let through" } else { "held back: not from a menu" },
+                MENU_OPEN.load(Ordering::Relaxed)
+            ));
+        } else if !asked {
+            ASKED.store(false, Ordering::Relaxed);
+        }
+    }
+    let keep = ACTION | if mounted { RIDER } else { 0 } | if WHISTLING.load(Ordering::Relaxed) || from_menu { USE_ITEM } else { 0 };
     for a in [
         &mut req.action_requests,
         &mut req.new_action_presses,
@@ -1887,6 +1921,22 @@ fn frame(data: &FD4TaskData) {
         })
     } else {
         pad
+    };
+    // the buttons held as a menu closes (the A that picked "Use" or ended a talk) are the menu's
+    // until they're let go: Mario doesn't jump or punch with them
+    let pad = {
+        static MENU_HELD: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        if MENU_OPEN.load(Ordering::Relaxed) {
+            MENU_HELD.store(u16::MAX, Ordering::Relaxed);
+            pad
+        } else {
+            pad.map(|mut p| {
+                let held = MENU_HELD.load(Ordering::Relaxed) & p.Gamepad.wButtons.0;
+                MENU_HELD.store(held, Ordering::Relaxed);
+                p.Gamepad.wButtons.0 &= !held;
+                p
+            })
+        }
     };
     // On Yoshi with the keyboard: whichever of the two last steered him. The keys go by the
     // game's own camera (a stick can be turned to Lakitu's, keys can't), so that camera shows.
@@ -2351,6 +2401,9 @@ fn frame(data: &FD4TaskData) {
             let lifted = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(engine_mario::root_offset());
             // the right stick (or the arrow keys) turns the camera smoothly
             let orbit = if key(0x25) { -1.0 } else if key(0x27) { 1.0 } else if stick.0.abs() > 4000 { (stick.0 as f32 / 32767.0).clamp(-1.0, 1.0) } else { 0.0 };
+            // (the way Elden Ring's own camera turns, its "reverse camera X axis" option as set in
+            // its menu: off, pushing right looks right; on, the other way, as SM64's did)
+            let orbit = if camera_x_reversed() { orbit } else { -orbit };
             lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2) + lifted, airborne, c, orbit, look, body_fwd, idle, exit, |from, to| {
                 let h = havok?;
                 let d = to - from;

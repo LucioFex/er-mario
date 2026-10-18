@@ -126,7 +126,11 @@ mundo es del anfitrión.
 
 1. Los dos abren Reforged con el `.BAT` *Offline or Seamless* y cargan su personaje.
 2. Mario (anfitrión) usa la **Tiny Great Pot** (Gran olla pequeña). Luigi usa el **Effigy of Malenia**
-   (Efigie de Malenia) para unirse. Las dos cosas las da Seamless.
+   (Efigie de Malenia) para unirse. Las dos cosas las da Seamless. Con Mario se usan desde el menú:
+   **Inventario > el objeto > Usar** (la X del mando es el puñetazo de Mario y no usa objetos). En el
+   log aparece `input: the game asks to use an item (let through ...)`.
+   La cámara de Lakitu gira como la de Elden Ring: si a alguien le resulta al revés, que cambie en
+   **Sistema > Cámara** la opción de invertir el eje X (es de cada PC).
 3. ✔ En el log de cada uno aparece:
    - `net: Steam messages API found, channel 0x4d41`
    - `coop: session [...] , host ... (us)` en la PC de Mario y `(them)` en la de Luigi
