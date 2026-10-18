@@ -2168,8 +2168,12 @@ impl Combat {
                     continue;
                 }
                 self.victims.insert(target.key, (*handle, tick));
+                // (a big body only dents and springs back: a giant flattened under him looked wrong,
+                // and the climb's head stomp comes as a ground pound)
+                let big = target.height > STOMP_HEIGHT || target.radius > 120.0;
                 match attack {
                     Attack::Stomp => crate::squish::start(handle, 0.35, 0.0),
+                    Attack::GroundPound | Attack::Quake | Attack::FlurryEnd | Attack::HammerSmash if big => crate::squish::start(handle, 0.35, 0.0),
                     Attack::GroundPound | Attack::Quake | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
@@ -2262,6 +2266,8 @@ impl Combat {
             let (bullet, ..) = attack.spec();
             if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
                 crate::style::hit(attack, target.key);
+                // (co-op: both on one enemy is a BROS!)
+                crate::coop::own_hit(target.key, glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.6, target.er.2));
             }
             // (breaking a jar or a crate is no blow to stop for)
             if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember) && !target.is_prop() {

@@ -71,6 +71,8 @@ const SOUND_BUZZ: i32 = 0x700E_0081;
 const SOUND_CRASH: i32 = 0x312F_0081;
 const SOUND_CHARGE: i32 = 0x305C_0081;
 const SOUND_SHIELD: i32 = 0x0442_8081;
+/// an enemy worn down enough to ride: a red coin's chime, soft
+const SOUND_MARK: i32 = 0x7828_9081;
 
 /// An attack asked of it, not started yet.
 struct Ask {
@@ -165,15 +167,134 @@ fn seat(h: &FieldInsHandle) -> Option<(Vec3, Vec3, f32)> {
     Some((p + Vec3::Y * h * 0.92 - fwd * r * 0.25, fwd, r))
 }
 
-/// Game thread (hook.rs): A while hooked to a big one with R2 held: up he jumps. True if he's on.
-pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
-    let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none());
-    // (co-op guest: the host owns the enemies; a boss in a scripted moment isn't ridden)
-    let (guest, hands, boss, seated) = (crate::coop::guest(), combat::hands_off(h), combat::is_boss_now(h), seat(h).is_some());
-    if ready && !(!guest && !hands && !boss && seated) {
-        log(format!("boss ride: refused (ready {ready}, guest {guest}, scripted {hands}, boss bar {boss}, seat {seated})"));
+/// One is ridden once it's worn down to this share of its health (fought for, not a free ride)
+const MOUNT_AT: f32 = 0.5;
+/// the "ride it" mark over its head when it gets there (s), out to how far it's looked for (m)
+pub const MARK_TIME: f32 = 1.2;
+const MARK_RANGE: f32 = 25.0;
+
+/// An enemy alive: its share of health left, its body (m: radius, height), the top of its head.
+fn body(h: &FieldInsHandle) -> Option<(f32, f32, f32, Vec3)> {
+    let wcm = unsafe { WorldChrMan::instance() }.ok()?;
+    let chr = wcm.chr_ins_by_handle(h)?;
+    let d = &chr.modules.data;
+    if d.hp <= 0 {
+        return None;
     }
-    let chr = (ready && !guest && !hands && !boss && seated)
+    let ph = &chr.modules.physics;
+    let height = ph.hit_height.max(ph.chr_hit_height).clamp(0.5, 12.0);
+    let radius = ph.hit_radius.max(ph.chr_hit_radius).clamp(0.2, 6.0);
+    let p = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
+    Some((d.hp as f32 / d.max_hp.max(1) as f32, radius, height, p + Vec3::Y * height))
+}
+
+/// Whether `h` is one to ride now: bigger than a man (a medium or big one), worn down to half
+/// its health, no boss bar up, not in a scripted moment, and the capture ready (not as a guest:
+/// the host owns the enemies).
+pub fn mountable(h: &FieldInsHandle) -> bool {
+    let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none());
+    ready && !crate::coop::guest() && worn(h)
+}
+
+/// Bigger than a man and worn down to MOUNT_AT, no boss bar, not scripted.
+fn worn(h: &FieldInsHandle) -> bool {
+    body(h).is_some_and(|(share, radius, height, _)| {
+        share <= MOUNT_AT && crate::juggle::pull_size(h, radius, height) != crate::juggle::PullSize::Small && !combat::hands_off(h) && !combat::is_boss_now(h)
+    })
+}
+
+/// The "ride it" marks: an enemy that just got worn down enough (the capture ready), and when.
+struct Marks {
+    /// those already marked (until they're no longer to ride, or out of reach)
+    seen: Vec<u64>,
+    /// on show: its handle, the top of its head (as last seen), since when
+    live: [Option<(FieldInsHandle, Vec3, Instant)>; 4],
+    /// when the enemies around were last looked at
+    looked: Option<Instant>,
+}
+
+static MARKS: Mutex<Marks> = Mutex::new(Marks { seen: Vec::new(), live: [None; 4], looked: None });
+/// how often the enemies around are looked at for it (s)
+const MARK_EVERY: f32 = 0.2;
+
+/// Game thread, each SM64 tick: the enemies within MARK_RANGE of Mario (`feet`) that just became
+/// ones to ride get a mark over the head for a moment (God of War's prompt circle), with a soft
+/// chime. (While the capture isn't ready, nobody's marked and those marked before stay marked: no
+/// chorus of chimes once it's ready again.)
+pub fn watch(feet: Vec3, origin: [f32; 3]) {
+    let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none()) && !crate::coop::guest();
+    let mut chime = false;
+    {
+        let mut m = MARKS.lock().unwrap_or_else(|e| e.into_inner());
+        if ready && m.looked.is_none_or(|t| t.elapsed().as_secs_f32() >= MARK_EVERY) {
+            m.looked = Some(Instant::now());
+            let mut here: Vec<u64> = Vec::new();
+            for t in combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), MARK_RANGE, origin) {
+                let Some(h) = t.shootable() else { continue };
+                // (not worn down any more, healed: marked again next time)
+                if !worn(h) {
+                    continue;
+                }
+                let key = combat::handle_key(h);
+                here.push(key);
+                if m.seen.contains(&key) {
+                    continue;
+                }
+                m.seen.push(key);
+                if let Some((.., head)) = body(h) {
+                    let slot = m.live.iter().position(|l| l.is_none_or(|(_, _, at)| at.elapsed().as_secs_f32() >= MARK_TIME)).unwrap_or(0);
+                    m.live[slot] = Some((*h, head, Instant::now()));
+                    chime = true;
+                    log(format!("boss ride: {key:x} can be ridden now (LT + R3 next to it)"));
+                }
+            }
+            m.seen.retain(|k| here.contains(k));
+        }
+        // (the marks follow their heads)
+        for l in m.live.iter_mut() {
+            let Some((h, head, at)) = l else { continue };
+            match body(h) {
+                Some((.., top)) if at.elapsed().as_secs_f32() < MARK_TIME => *head = top,
+                _ => *l = None,
+            }
+        }
+    }
+    if chime {
+        worker::call("ride chime", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_MARK, 0.12) });
+    }
+}
+
+/// For the HUD: the marks on show, the top of each head and its age (s).
+pub fn marks() -> [Option<(Vec3, f32)>; 4] {
+    let m = MARKS.lock().unwrap_or_else(|e| e.into_inner());
+    m.live.map(|l| l.map(|(_, head, at)| (head, at.elapsed().as_secs_f32())).filter(|(_, age)| *age < MARK_TIME))
+}
+
+/// Game thread (hook.rs, carry.rs): A while hooked to a big one with R2 held, or the grab (LT + R3)
+/// next to one worn down: up he jumps. True if he's on.
+pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
+    mount_as(h, id, true)
+}
+
+/// `mount`; `asked`: pressed for it (A, the grab), so a fresh one gets a "NOT YET" and a buzz; not
+/// asked (R2 held through a pole swing, the swing's own end), a fresh one just isn't ridden.
+pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
+    let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none());
+    // (co-op guest: the host owns the enemies; a boss in a scripted moment isn't ridden; a fresh
+    // one isn't either: worn down to half first)
+    let (guest, hands, boss, seated) = (crate::coop::guest(), combat::hands_off(h), combat::is_boss_now(h), seat(h).is_some());
+    let share = body(h).map_or(1.0, |b| b.0);
+    let tired = share <= MOUNT_AT;
+    if ready && !(!guest && !hands && !boss && seated && tired) {
+        log(format!("boss ride: refused (ready {ready}, guest {guest}, scripted {hands}, boss bar {boss}, seat {seated}, health {:.0}%)", share * 100.0));
+        if !tired && seated && asked {
+            crate::style::callout("NOT YET", None, [0.9, 0.9, 0.95], false, 0.0);
+        }
+    }
+    if !asked && !tired {
+        return false;
+    }
+    let chr = (ready && !guest && !hands && !boss && seated && tired)
         .then(|| unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(h)))
         .flatten();
     // (the coins last: only for a ride that really starts)

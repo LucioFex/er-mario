@@ -165,6 +165,17 @@ fn glyph_for(c: char) -> Option<usize> {
     LETTERS.iter().position(|&(l, _)| l == c).map(|i| IMG_LETTERS + i)
 }
 
+/// the style ranks' colours (style.rs RANKS), D to SSS
+const TINTS: [[f32; 3]; 7] = [
+    [0.75, 0.75, 0.8],
+    [0.45, 0.7, 1.0],
+    [0.4, 0.95, 0.5],
+    [1.0, 0.9, 0.3],
+    [1.0, 0.6, 0.2],
+    [1.0, 0.3, 0.25],
+    [1.0, 0.85, 0.35],
+];
+
 /// Reads the HUD's textures from the ROM.
 pub fn load(rom: &[u8]) {
     let (Some(d), Some(seg2)) = (crate::gameover::mio0(rom, BLOCK), crate::gameover::mio0(rom, SEGMENT2)) else {
@@ -371,16 +382,26 @@ pub fn set_tags(tags: Vec<Tag>) {
     *TAGS.lock().unwrap_or_else(|e| e.into_inner()) = tags;
 }
 
-/// A co-op partner's little panel (coop.rs): the top of their head (Elden Ring), their wedges,
-/// Luigi or Mario.
+/// A co-op partner's card (coop.rs): the top of their head (Elden Ring; None: not near), their
+/// wedges, Luigi or Mario, their power (coop::POWER_), coins and style rank, how shown (0-1), in
+/// danger (low or just hurt), down, and their coin bag (where, Elden Ring, and its coins).
 #[derive(Clone, Copy)]
 pub struct PartnerHud {
-    pub head: Vec3,
+    pub head: Option<Vec3>,
     pub wedges: u8,
     pub luigi: bool,
+    pub power: u8,
+    pub coins: u16,
+    pub rank: Option<u8>,
+    pub alpha: f32,
+    pub danger: bool,
+    pub down: bool,
+    pub bag: Option<(Vec3, u16)>,
 }
 
-static PARTNERS: Mutex<Vec<PartnerHud>> = Mutex::new(Vec::new());
+/// (Seamless Co-op takes up to four players)
+const MAX_PARTNERS: usize = 3;
+static PARTNERS: Mutex<[Option<PartnerHud>; MAX_PARTNERS]> = Mutex::new([None; MAX_PARTNERS]);
 
 /// The trap kit while it's up (LT held, crouching): how ready each of its buttons' things is
 /// (X, Y, B, RB; 1 ready), and since when it's up.
@@ -396,7 +417,35 @@ pub fn set_kit(ready: Option<[f32; 4]>) {
 }
 
 pub fn set_partners(partners: Vec<PartnerHud>) {
-    *PARTNERS.lock().unwrap_or_else(|e| e.into_inner()) = partners;
+    let mut p = PARTNERS.lock().unwrap_or_else(|e| e.into_inner());
+    *p = [None; MAX_PARTNERS];
+    for (slot, partner) in p.iter_mut().zip(partners) {
+        *slot = Some(partner);
+    }
+}
+
+/// `n` in decimal into `buf`, as text (no allocation: the HUD draws every frame).
+fn digits_of(n: u16, buf: &mut [u8; 5]) -> &str {
+    let mut k = buf.len();
+    let mut n = n;
+    loop {
+        k -= 1;
+        buf[k] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    std::str::from_utf8(&buf[k..]).unwrap_or("0")
+}
+
+/// `n` metres as "123M" into `buf` (no allocation).
+fn metres_of(n: u16, buf: &mut [u8; 6]) -> &str {
+    let mut digits = [0u8; 5];
+    let len = digits_of(n, &mut digits).len();
+    buf[..len].copy_from_slice(&digits[5 - len..]);
+    buf[len] = b'M';
+    std::str::from_utf8(&buf[..len + 1]).unwrap_or("M")
 }
 
 // ---- the overlay ---------------------------------------------------------------------------------
@@ -1251,15 +1300,6 @@ impl ImguiRenderLoop for Overlay {
         {
             static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
             let clock = now.duration_since(*START).as_secs_f32();
-            const TINTS: [[f32; 3]; 7] = [
-                [0.75, 0.75, 0.8],
-                [0.45, 0.7, 1.0],
-                [0.4, 0.95, 0.5],
-                [1.0, 0.9, 0.3],
-                [1.0, 0.6, 0.2],
-                [1.0, 0.3, 0.25],
-                [1.0, 0.85, 0.35],
-            ];
             let glyph = |id: usize, cx: f32, cy: f32, g: f32, tint: [f32; 4]| {
                 dl.add_image(textures[id], [cx - g * 0.5, cy - g * 0.5], [cx + g * 0.5, cy + g * 0.5]).col(tint).build();
             };
@@ -1318,6 +1358,38 @@ impl ImguiRenderLoop for Overlay {
                         let text = format!("{}M", metres as u32);
                         let g = 8.0 * px;
                         line(&text, x + text.chars().count() as f32 * g * 0.8 * 0.5, y0 + 27.0 * px, g, 0.8, [1.0, 0.9, 0.4, 0.9]);
+                    }
+                }
+                // co-op: the partners on it, faint (their head, the distance once they're far off;
+                // bright in danger), and their coin bags (a coin ringed in their colour)
+                let partners = *PARTNERS.lock().unwrap_or_else(|e| e.into_inner());
+                for p in partners.iter().flatten() {
+                    let ring = if p.luigi { [0.35, 0.9, 0.4, 0.9] } else { [1.0, 0.35, 0.3, 0.9] };
+                    if let Some((bag, _)) = p.bag {
+                        let d = rel((bag.x - eye.x).atan2(bag.z - eye.z).to_degrees() + turn);
+                        if d.abs() <= span * 0.5 {
+                            let x = cx + d / span * w;
+                            dl.add_circle([x, y0 + 13.0 * px], 3.5 * px, [1.0, 0.85, 0.25, 0.8]).filled(true).build();
+                            dl.add_circle([x, y0 + 13.0 * px], 3.5 * px, ring).thickness((1.5 * px).max(1.0)).build();
+                        }
+                    }
+                    let Some(at) = p.head else { continue };
+                    let d = rel((at.x - eye.x).atan2(at.z - eye.z).to_degrees() + turn);
+                    if d.abs() > span * 0.5 {
+                        continue;
+                    }
+                    let x = cx + d / span * w;
+                    let alpha = if p.danger { 0.75 + 0.25 * (clock * 8.0).sin() } else { 0.55 * fade(d) + 0.15 };
+                    let k = 10.0 * px;
+                    let face = if p.luigi { IMG_LUIGI_HEAD } else { IMG_HEAD };
+                    let grey = if p.down { 0.45 } else { 1.0 };
+                    dl.add_image(textures[face], [x - k * 0.5, y0 + 13.0 * px - k * 0.5], [x + k * 0.5, y0 + 13.0 * px + k * 0.5]).col([grey, grey, grey, alpha]).build();
+                    let metres = ((at.x - eye.x).powi(2) + (at.z - eye.z).powi(2)).sqrt();
+                    if metres > 30.0 {
+                        let mut buf = [0u8; 6];
+                        let text = metres_of(metres.min(999.0) as u16, &mut buf);
+                        let g = 7.0 * px;
+                        line(text, x + text.len() as f32 * g * 0.8 * 0.5, y0 + 26.0 * px, g, 0.8, [ring[0], ring[1], ring[2], alpha]);
                     }
                 }
             }
@@ -1566,11 +1638,28 @@ impl ImguiRenderLoop for Overlay {
             }
         }
 
-        // the co-op partner (coop.rs), small, bottom left: their head, a little power pie with their
-        // wedges (red when low, blinking at one), and when they're off screen an arrow on the
-        // screen's edge pointing their way, with how far they are
+        // an enemy worn down enough to ride (bossride.rs): a gold ring closing in over its head,
+        // Mario's (or Luigi's) face in it, gone in a moment (God of War's prompt circle)
+        for (head, age) in crate::bossride::marks().into_iter().flatten() {
+            let Some(([cx, cy], _)) = project(head + Vec3::Y * 0.5, size).filter(|(_, z)| *z < 60.0) else { continue };
+            let close = 1.0 - (age / 0.25).min(1.0);
+            let r = 11.0 * px * (1.0 + 1.6 * close * close);
+            let alpha = (1.0 - ((age - (crate::bossride::MARK_TIME - 0.35)) / 0.35).clamp(0.0, 1.0)) * (1.0 - close * 0.5);
+            dl.add_circle([cx, cy], r, [0.0, 0.0, 0.0, 0.45 * alpha]).thickness(4.0 * px).num_segments(40).build();
+            dl.add_circle([cx, cy], r, [1.0, 0.82, 0.3, 0.95 * alpha]).thickness(2.0 * px).num_segments(40).build();
+            let s = 12.0 * px;
+            let face = if crate::equip::luigi() { IMG_LUIGI_HEAD } else { IMG_HEAD };
+            dl.add_image(textures[face], [cx - s * 0.5, cy - s * 0.5], [cx + s * 0.5, cy + s * 0.5]).col([1.0, 1.0, 1.0, alpha]).build();
+        }
+
+        // the co-op partner (coop.rs), a small card bottom left that comes up only when something's
+        // going on (a fight, either hurt, them low, down or far off) and fades out once it's quiet:
+        // their head (greyed and crossed out when down), a little power pie with their wedges (red
+        // when low, blinking at one), the power they're using, their coins and style rank; over
+        // their head when they're in danger, their pie; off screen an arrow on the screen's edge
+        // their way with how far they are (red and quicker in danger, grey when down)
         {
-            let partners = PARTNERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let partners = *PARTNERS.lock().unwrap_or_else(|e| e.into_inner());
             static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let clock = T0.get_or_init(Instant::now).elapsed().as_secs_f32();
             let cam = unsafe { CSCamera::instance() }.ok().map(|c| {
@@ -1579,30 +1668,98 @@ impl ImguiRenderLoop for Overlay {
                 let p = pers.position();
                 (Vec3::new(p.0, p.1, p.2), v(pers.right()), v(pers.up()), v(pers.forward()))
             });
-            for (i, p) in partners.iter().enumerate() {
+            let img = |id: usize, x: f32, y: f32, w: f32, h: f32, col: [f32; 4]| {
+                dl.add_image(textures[id], [x, y], [x + w, y + h]).col(col).build();
+            };
+            // (SM64's letters left to right from x, centred on y; how wide)
+            let print = |text: &str, x: f32, y: f32, g: f32, col: [f32; 4]| -> f32 {
+                let mut cx = x;
+                for ch in text.chars() {
+                    if let Some(id) = glyph_for(ch) {
+                        img(id, cx, y - g * 0.5, g, g, col);
+                    }
+                    cx += g * 0.8;
+                }
+                cx - x
+            };
+            let mut row = 0.0;
+            for p in partners.iter().flatten() {
                 let s = 16.0 * px;
-                let (x0, y0) = (size[1] * 0.04, size[1] * 0.83 - i as f32 * s * 1.6);
                 let (head, tint) = if p.luigi { (IMG_LUIGI_HEAD, [0.35, 0.9, 0.4]) } else { (IMG_HEAD, [1.0, 0.35, 0.3]) };
-                dl.add_rect([x0 - px * 3.0, y0 - px * 3.0], [x0 + s * 2.4 + px * 3.0, y0 + s + px * 3.0], [0.0, 0.0, 0.0, 0.35]).filled(true).rounding(px * 4.0).build();
-                image(head, x0, y0, s, s);
-                let low = p.wedges <= 2;
-                let blink = p.wedges <= 1 && (clock * 6.0).sin() < 0.0;
-                let (cx, cy) = (x0 + s * 1.75, y0 + s * 0.5);
-                let r = s * 0.62;
-                if !blink {
-                    image(IMG_BASE, cx - r, cy - r, r * 2.0, r * 2.0);
-                    if p.wedges > 0 {
+                let pulse = 0.75 + 0.25 * (clock * if p.danger { 8.0 } else { 4.0 }).sin();
+                let a = p.alpha;
+                if a > 0.01 {
+                    let (x0, y0) = (size[1] * 0.04, size[1] * 0.83 - row * s * 1.6);
+                    row += 1.0;
+                    // (the card's width: head, pie, then what's there)
+                    let mut digits = [0u8; 5];
+                    let coins = digits_of(p.coins, &mut digits);
+                    let mut w = s * 2.4 + s * 0.75 + coins.len() as f32 * s * 0.55 * 0.8;
+                    if p.power != crate::coop::POWER_NONE {
+                        w += s * 0.95;
+                    }
+                    if p.rank.is_some() {
+                        w += s * 0.9;
+                    }
+                    let bg = if p.danger { [0.45, 0.05, 0.05, 0.45 * a * pulse] } else { [0.0, 0.0, 0.0, 0.35 * a] };
+                    dl.add_rect([x0 - px * 3.0, y0 - px * 3.0], [x0 + w + px * 3.0, y0 + s + px * 3.0], bg).filled(true).rounding(px * 4.0).build();
+                    let grey = if p.down { [0.45, 0.45, 0.45, a] } else { [1.0, 1.0, 1.0, a] };
+                    img(head, x0, y0, s, s, grey);
+                    if p.down {
+                        img(IMG_X, x0 + s * 0.2, y0 + s * 0.2, s * 0.6, s * 0.6, [1.0, 0.3, 0.25, a]);
+                    }
+                    let low = p.wedges <= 2;
+                    let blink = !p.down && p.wedges <= 1 && (clock * 6.0).sin() < 0.0;
+                    let (cx, cy) = (x0 + s * 1.75, y0 + s * 0.5);
+                    let r = s * 0.62;
+                    if !blink {
+                        img(IMG_BASE, cx - r, cy - r, r * 2.0, r * 2.0, grey);
+                        if p.wedges > 0 {
+                            let pie = r * 0.5;
+                            img(IMG_PIES + (p.wedges.min(8) - 1) as usize, cx - pie, cy - pie, pie * 2.0, pie * 2.0, if low { [1.0, 0.6, 0.6, a] } else { grey });
+                        }
+                    }
+                    let mut x = x0 + s * 2.55;
+                    let power = match p.power {
+                        crate::coop::POWER_WING => Some(IMG_CAP_BOX + 1),
+                        crate::coop::POWER_METAL => Some(IMG_CAP_BOX),
+                        crate::coop::POWER_VANISH => Some(IMG_CAP_BOX + 2),
+                        crate::coop::POWER_ROCK => Some(IMG_ROCK),
+                        crate::coop::POWER_MEGA => Some(IMG_MUSHROOM),
+                        crate::coop::POWER_YOSHI => Some(IMG_EGG),
+                        crate::coop::POWER_CAPTURE => Some(IMG_CAPPY),
+                        _ => None,
+                    };
+                    if let Some(id) = power {
+                        let k = s * 0.8 * (1.0 + 0.08 * (clock * 8.0).sin());
+                        img(id, x + (s * 0.8 - k) * 0.5, cy - k * 0.5, k, k, grey);
+                        x += s * 0.95;
+                    }
+                    let c = s * 0.6;
+                    img(IMG_COIN, x, cy - c * 0.5, c, c, grey);
+                    x += s * 0.75;
+                    x += print(coins, x, cy, s * 0.55, grey);
+                    if let Some(r) = p.rank.map(|r| (r as usize).min(TINTS.len() - 1)) {
+                        let t = TINTS[r];
+                        print(crate::style::RANKS[r].1, x + s * 0.25, cy, s * 0.7, [t[0], t[1], t[2], a]);
+                    }
+                }
+                let Some(at) = p.head else { continue };
+                let on_screen = project(at, size).filter(|(c, _)| c[0] >= 0.0 && c[0] <= size[0] && c[1] >= 0.0 && c[1] <= size[1]);
+                // in danger and in sight: their pie over their head
+                if let (Some(([hx, hy], z)), true) = (on_screen, p.danger) {
+                    if z < 60.0 && p.wedges > 0 {
+                        let r = s * 0.42;
+                        let hy = hy - r * 1.6;
+                        img(IMG_BASE, hx - r, hy - r, r * 2.0, r * 2.0, [1.0, 1.0, 1.0, 0.9 * pulse]);
                         let pie = r * 0.5;
-                        dl.add_image(textures[IMG_PIES + (p.wedges.min(8) - 1) as usize], [cx - pie, cy - pie], [cx + pie, cy + pie])
-                            .col(if low { [1.0, 0.6, 0.6, 1.0] } else { [1.0, 1.0, 1.0, 1.0] })
-                            .build();
+                        img(IMG_PIES + (p.wedges.min(8) - 1) as usize, hx - pie, hy - pie, pie * 2.0, pie * 2.0, [1.0, 0.6, 0.6, 0.9 * pulse]);
                     }
                 }
                 // off screen (or behind the camera): an arrow at the edge, and the distance in m
-                let on_screen = project(p.head, size).filter(|(c, _)| c[0] >= 0.0 && c[0] <= size[0] && c[1] >= 0.0 && c[1] <= size[1]);
                 if on_screen.is_none() {
                     let Some((cam, right, up, fwd)) = cam else { continue };
-                    let d = p.head - cam;
+                    let d = at - cam;
                     // (behind the camera: straight to the side they're on)
                     let side = d.dot(right);
                     let dir = if d.dot(fwd) < 0.0 {
@@ -1613,25 +1770,41 @@ impl ImguiRenderLoop for Overlay {
                     let c = [size[0] * 0.5, size[1] * 0.5];
                     let edge = [c[0] + dir.x * size[0] * 0.44, c[1] + dir.y * size[1] * 0.40];
                     let (ax, ay) = (dir.x, dir.y);
-                    let tip = [edge[0] + ax * s * 0.7, edge[1] + ay * s * 0.7];
-                    let l = [edge[0] - ay * s * 0.45, edge[1] + ax * s * 0.45];
-                    let rr = [edge[0] + ay * s * 0.45, edge[1] - ax * s * 0.45];
-                    let pulse = 0.75 + 0.25 * (clock * 4.0).sin();
-                    let col = imgui::ImColor32::from_rgba_f32s(tint[0], tint[1], tint[2], 0.85 * pulse);
-                    dl.add_triangle(tip, l, rr, col).filled(true).build();
+                    let k = if p.danger { s * 1.2 } else { s };
+                    let tip = [edge[0] + ax * k * 0.7, edge[1] + ay * k * 0.7];
+                    let l = [edge[0] - ay * k * 0.45, edge[1] + ax * k * 0.45];
+                    let rr = [edge[0] + ay * k * 0.45, edge[1] - ax * k * 0.45];
+                    let (fill, alpha) = if p.down {
+                        ([0.55, 0.55, 0.55], 0.7)
+                    } else if p.danger {
+                        ([1.0, 0.25, 0.2], 0.95 * pulse)
+                    } else {
+                        (tint, (0.55 + 0.3 * a) * pulse)
+                    };
+                    dl.add_triangle(tip, l, rr, imgui::ImColor32::from_rgba_f32s(fill[0], fill[1], fill[2], alpha)).filled(true).build();
                     dl.add_triangle(tip, l, rr, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.6)).thickness(px).build();
-                    let metres = (p.head - cam).length().round().min(999.0) as u32;
+                    let mut buf = [0u8; 6];
+                    let metres = metres_of(d.length().round().min(999.0) as u16, &mut buf);
                     let g = 8.0 * px;
-                    let text = format!("{metres}M");
-                    let n = text.len() as f32;
-                    for (k, ch) in text.chars().enumerate() {
-                        if let Some(id) = glyph_for(ch) {
-                            let x = edge[0] - ax * s * 0.9 - n * g * 0.4 + k as f32 * g * 0.8;
-                            let y = edge[1] - ay * s * 0.9 - g * 0.5;
-                            image(id, x, y, g, g);
-                        }
-                    }
+                    let n = metres.len() as f32;
+                    print(metres, edge[0] - ax * k * 0.9 - n * g * 0.4, edge[1] - ay * k * 0.9, g, [1.0, 1.0, 1.0, 1.0]);
                 }
+            }
+            // the BROS! streak (blows by both on one enemy), under the style meter while it lasts
+            if let Some((n, age)) = crate::coop::bros_streak() {
+                let fade = 1.0 - ((age - (crate::coop::BROS_KEEP - 1.0)) / 1.0).clamp(0.0, 1.0);
+                let pop = 1.0 + 0.3 * (1.0 - (age / 0.15).min(1.0));
+                let g = 10.0 * px * pop;
+                let mut digits = [0u8; 5];
+                let count = digits_of(n.min(9999) as u16, &mut digits);
+                let right = size[0] - 24.0 * px;
+                let y = size[1] * 0.30 + 66.0 * px;
+                let w = (5.0 + count.len() as f32) * g * 0.8;
+                let col = [0.45, 1.0, 0.5, 0.9 * fade];
+                let mut x = right - w;
+                x += print("BROS", x, y, g, col);
+                img(IMG_MULTIPLY, x, y - g * 0.4, g * 0.8, g * 0.8, col);
+                print(count, x + g * 0.8, y, g, col);
             }
         }
 
@@ -1957,4 +2130,20 @@ fn orb_pixel(x: usize, y: usize, frame: usize) -> [u8; 4] {
     // (a soft edge)
     let alpha = ((1.0 - r2.sqrt()) * 12.0).clamp(0.0, 1.0);
     [c[0] as u8, c[1] as u8, c[2] as u8, (alpha * 255.0) as u8]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numbers_without_allocating() {
+        let mut d = [0u8; 5];
+        assert_eq!(digits_of(0, &mut d), "0");
+        assert_eq!(digits_of(7, &mut d), "7");
+        assert_eq!(digits_of(65535, &mut d), "65535");
+        let mut m = [0u8; 6];
+        assert_eq!(metres_of(48, &mut m), "48M");
+        assert_eq!(metres_of(999, &mut m), "999M");
+    }
 }

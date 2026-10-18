@@ -20,14 +20,20 @@ use crate::{explore, log, net};
 
 const MAGIC: [u8; 3] = *b"ERM";
 /// bumped when a packet changes: the other side's older ones are ignored (and logged)
-/// (2: the pose carries the player's health and character, for the partner's HUD; 3: the trap kit's parts)
-const VERSION: u8 = 3;
+/// (2: the pose carries the player's health and character, for the partner's HUD; 3: the trap kit's
+/// parts; 4: the status, for the partner's HUD and the BROS!)
+/// From 4 on, a kind of packet a build doesn't know is skipped, and one longer than it expects is
+/// read as far as it knows: a later 4 can add kinds (grabbing and throwing the partner: the status's
+/// CARRYING and CARRIED are kept for it) or fields at the end without breaking an older 4's co-op.
+const VERSION: u8 = 4;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
 /// nothing but "here I am": Steam takes a player's messages only once we've sent them something,
 /// so this goes out every second even while we send nothing else (e.g. out of Mario mode)
 const KIND_HELLO: u8 = 4;
+/// how the player is doing (Status), a few times a second and when it changes
+const KIND_STATUS: u8 = 5;
 const HEADER: usize = 5;
 /// one part: rotation i16 x4, position mm i16 x3, scale and stretch u16 /1000 x4
 const PART_BYTES: usize = 22;
@@ -36,6 +42,10 @@ const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
 const PARTS_AT: usize = HEADER + 7;
 const HIT_BYTES: usize = HEADER + 8 + 4 + 12 + 1 + 4;
 const SHOVE_BYTES: usize = HEADER + 8;
+/// seq u16, health u16, character u8, coins u16, power u8, weapon u8, rank u8 (0xFF none), hits
+/// u16, flags u8, last enemy hit: handle key u64 and ms ago u16 (0xFFFF none), the coin bag: coins
+/// u16 (0 none), its origin block i32, its chunk position f32 x3
+const STATUS_BYTES: usize = HEADER + 2 + 2 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 12;
 
 /// how often the pose goes out
 const POSE_EVERY: Duration = Duration::from_millis(33);
@@ -60,11 +70,51 @@ pub struct Hit {
     pub pct: f32,
 }
 
+/// Status flags: in a fight, just hurt, down (out of health)
+pub const FIGHTING: u8 = 1;
+pub const HURT: u8 = 2;
+pub const DOWN: u8 = 4;
+/// (kept for grabbing and throwing the partner: holding them, held)
+#[allow(dead_code)]
+pub const CARRYING: u8 = 8;
+#[allow(dead_code)]
+pub const CARRIED: u8 = 16;
+
+/// Status powers: what the player is using
+pub const POWER_NONE: u8 = 0;
+pub const POWER_WING: u8 = 1;
+pub const POWER_METAL: u8 = 2;
+pub const POWER_VANISH: u8 = 3;
+pub const POWER_ROCK: u8 = 4;
+pub const POWER_MEGA: u8 = 5;
+pub const POWER_YOSHI: u8 = 6;
+pub const POWER_CAPTURE: u8 = 7;
+
+/// How a player is doing, for their partner's HUD.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub struct Status {
+    /// SM64's health (wedges in its high byte)
+    pub health: u16,
+    pub luigi: bool,
+    pub coins: u16,
+    pub power: u8,
+    pub weapon: u8,
+    /// their style string's rank (None: no string), its blows
+    pub rank: Option<u8>,
+    pub hits: u16,
+    pub flags: u8,
+    /// the enemy they last hit (handle key) and how long ago (ms)
+    pub hit: Option<(u64, u16)>,
+    /// their coin bag: its coins, its map origin block, its chunk position
+    pub bag: Option<(u16, i32, [f32; 3])>,
+}
+
 pub enum Packet {
     Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]> },
     Hit(Hit),
     Shove { dir: [f32; 2] },
     Hello,
+    Status { seq: u16, status: Status },
 }
 
 fn header(kind: u8, len: usize) -> Vec<u8> {
@@ -122,6 +172,28 @@ pub fn encode(p: &Packet) -> Vec<u8> {
             out
         }
         Packet::Hello => header(KIND_HELLO, HEADER),
+        Packet::Status { seq, status: s } => {
+            let mut out = header(KIND_STATUS, STATUS_BYTES);
+            out.extend_from_slice(&seq.to_le_bytes());
+            out.extend_from_slice(&s.health.to_le_bytes());
+            out.push(s.luigi as u8);
+            out.extend_from_slice(&s.coins.to_le_bytes());
+            out.push(s.power);
+            out.push(s.weapon);
+            out.push(s.rank.unwrap_or(0xFF));
+            out.extend_from_slice(&s.hits.to_le_bytes());
+            out.push(s.flags);
+            let (key, ago) = s.hit.unwrap_or((0, u16::MAX));
+            out.extend_from_slice(&key.to_le_bytes());
+            out.extend_from_slice(&ago.to_le_bytes());
+            let (coins, block, chunk) = s.bag.unwrap_or((0, 0, [0.0; 3]));
+            out.extend_from_slice(&coins.to_le_bytes());
+            out.extend_from_slice(&block.to_le_bytes());
+            for v in chunk {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out
+        }
     }
 }
 
@@ -132,8 +204,9 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
     let i16at = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]) as f32;
     let u16at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as f32 / 1000.0;
     let f32at = |o: usize| f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    // (longer than expected: a later build's fields at the end, skipped)
     match b[4] {
-        KIND_POSE if b.len() == POSE_BYTES => {
+        KIND_POSE if b.len() >= POSE_BYTES => {
             let seq = u32::from_le_bytes([b[5], b[6], b[7], b[8]]);
             let health = u16::from_le_bytes([b[9], b[10]]);
             let luigi = b[11] == 1;
@@ -148,7 +221,7 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
             }
             Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts) })
         }
-        KIND_HIT if b.len() == HIT_BYTES => {
+        KIND_HIT if b.len() >= HIT_BYTES => {
             let key = u64::from_le_bytes(b[5..13].try_into().ok()?);
             let (pos, pct) = ([f32at(17), f32at(21), f32at(25)], f32at(30));
             if !pos.iter().all(|v| v.is_finite()) || !pct.is_finite() {
@@ -162,11 +235,32 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 pct,
             }))
         }
-        KIND_SHOVE if b.len() == SHOVE_BYTES => {
+        KIND_SHOVE if b.len() >= SHOVE_BYTES => {
             let dir = [f32at(5), f32at(9)];
             dir.iter().all(|v| v.is_finite()).then_some(Packet::Shove { dir })
         }
-        KIND_HELLO if b.len() == HEADER => Some(Packet::Hello),
+        KIND_HELLO => Some(Packet::Hello),
+        KIND_STATUS if b.len() >= STATUS_BYTES => {
+            let u16at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
+            let key = u64::from_le_bytes(b[18..26].try_into().ok()?);
+            let ago = u16at(26);
+            let bag_coins = u16at(28);
+            let chunk = [f32at(34), f32at(38), f32at(42)];
+            let status = Status {
+                health: u16at(7),
+                luigi: b[9] == 1,
+                coins: u16at(10),
+                power: b[12],
+                weapon: b[13],
+                rank: (b[14] != 0xFF).then_some(b[14]),
+                hits: u16at(15),
+                flags: b[17],
+                hit: (ago != u16::MAX).then_some((key, ago)),
+                bag: (bag_coins > 0 && chunk.iter().all(|v| v.is_finite())).then_some((bag_coins, i32::from_le_bytes(b[30..34].try_into().ok()?), chunk)),
+            };
+            Some(Packet::Status { seq: u16at(5), status })
+        }
+        // (a kind of a later build's: skipped)
         _ => None,
     }
 }
@@ -210,6 +304,28 @@ struct State {
     shoved: Option<Instant>,
     old_version: bool,
     unpaired: bool,
+    /// the partners' status as it comes in
+    mates: Vec<Mate>,
+    /// our status: last sent (what, when), its seq
+    status_sent: Option<(Status, Instant)>,
+    status_seq: u16,
+}
+
+/// A partner's status, and what their HUD card makes of it.
+struct Mate {
+    steam: u64,
+    st: Status,
+    seq: u16,
+    at: Instant,
+    /// the enemy they last hit and when (on our clock)
+    hit: Option<(u64, Instant)>,
+    hurt_at: Option<Instant>,
+    /// "LUIGI!" said (low health) when, and them down
+    low_said: Option<Instant>,
+    down: bool,
+    /// their card: how shown (0-1), and when it last had a reason to show
+    alpha: f32,
+    wanted: Option<Instant>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -254,6 +370,7 @@ fn loopback() {
                 Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
                 Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
                 Some(Packet::Hello) => "hello".into(),
+                Some(Packet::Status { seq, status }) => format!("status seq {seq}, {status:?}"),
                 None => "UNREADABLE".into(),
             };
             log(format!("coop test: loopback got {what} from {from:x} ({} B)", data.len()));
@@ -277,6 +394,7 @@ fn loopback() {
         (encode(&Packet::Pose { seq: t.sent + 1, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(pose) }), false),
         (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
         (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
+        (encode(&Packet::Status { seq: t.sent as u16, status: own_status() }), false),
     ];
     for (bytes, reliable) in packets {
         if net::send(me, &bytes, reliable) {
@@ -372,6 +490,7 @@ fn refresh(s: &mut State) {
             if peers.is_empty() { "none" } else if host { "us" } else { "them" }
         ));
         s.remotes.retain(|r| peers.contains(&r.steam));
+        s.mates.retain(|m| peers.contains(&m.steam));
         s.peers = peers;
         s.host = host;
         s.host_id = host_id;
@@ -389,7 +508,8 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             continue;
         }
         let Some(p) = decode(&data) else {
-            if data.len() > 3 && data[..3] == MAGIC && !s.old_version {
+            // (our version but a kind we don't know: a later build's, fine)
+            if data.len() > 3 && data[..3] == MAGIC && data[3] != VERSION && !s.old_version {
                 s.old_version = true;
                 log(format!("coop: packets of version {} from {from:x} (ours {VERSION}): both need the same ER Mario", data[3]));
             }
@@ -421,8 +541,14 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             }
             Packet::Hit(_) | Packet::Hello => {}
             Packet::Shove { dir } => s.shove = Some(Vec3::new(dir[0], 0.0, dir[1])),
+            Packet::Status { seq, status } => mate_status(s, from, seq, status),
         }
     }
+    // (a partner's status stops while they load, after a death too: kept a while as down)
+    s.mates.retain(|m| {
+        let age = m.at.elapsed().as_secs_f32();
+        age < MATE_STALE || (m.down && age < MATE_DOWN_STALE)
+    });
     // (they stopped sending: out of Mario mode, gone)
     s.remotes.retain(|r| {
         let fresh = r.at.elapsed().as_secs_f32() < POSE_STALE;
@@ -458,6 +584,7 @@ pub fn frame() {
         }
     });
     let pose = *crate::engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner());
+    let status = own_status();
     let out = {
         let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_mut() else { return };
@@ -467,6 +594,21 @@ pub fn frame() {
             s.sent = Some(Instant::now());
             s.seq = s.seq.wrapping_add(1);
             out.push(encode(&Packet::Pose { seq: s.seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts) }));
+        }
+        // the status: a few times a second, sooner when something changed (a blow landed since)
+        let due = match &s.status_sent {
+            None => true,
+            Some((last, t)) => {
+                let e = t.elapsed();
+                let hit_since = status.hit.is_some_and(|(_, ago)| (ago as f32 / 1000.0) < e.as_secs_f32());
+                e >= STATUS_EVERY || (e >= STATUS_MIN && (hit_since || status_changed(last, &status)))
+            }
+        };
+        // (only in Mario mode: out of it there's no Mario to show)
+        if due && pose.is_some() {
+            s.status_sent = Some((status, Instant::now()));
+            s.status_seq = s.status_seq.wrapping_add(1);
+            out.push(encode(&Packet::Status { seq: s.status_seq, status }));
         }
         if s.hello.is_none_or(|t| t.elapsed() >= HELLO_EVERY) {
             s.hello = Some(Instant::now());
@@ -478,6 +620,9 @@ pub fn frame() {
         for &peer in &peers {
             net::send(peer, &bytes, false);
         }
+    }
+    if CHIME.swap(false, Ordering::Relaxed) {
+        crate::worker::call("bros chime", |_| unsafe { crate::sm64::sm64_play_sound_volume(SOUND_BROS, 0.09) });
     }
 }
 
@@ -509,7 +654,288 @@ pub fn apply_remote() {
 static OWN_HEALTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x880);
 
 pub fn set_own_health(health: i16) {
-    OWN_HEALTH.store(health.max(0) as u32, Ordering::Relaxed);
+    let now = health.max(0) as u32;
+    let was = OWN_HEALTH.swap(now, Ordering::Relaxed);
+    // (a wedge less: hurt, for the status)
+    if now >> 8 < was >> 8 && active() {
+        *OWN_HURT.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    }
+}
+
+static OWN_HURT: Mutex<Option<Instant>> = Mutex::new(None);
+/// what the player is using (a POWER_), whether he's in a fight: lib.rs sets them
+static POWER_NOW: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(POWER_NONE);
+static FIGHTING_NOW: AtomicBool = AtomicBool::new(false);
+
+pub fn set_power(power: u8) {
+    POWER_NOW.store(power, Ordering::Relaxed);
+}
+
+pub fn set_fighting(fighting: bool) {
+    FIGHTING_NOW.store(fighting, Ordering::Relaxed);
+}
+
+/// how often the status goes out, and at most how often when it changes
+const STATUS_EVERY: Duration = Duration::from_millis(250);
+const STATUS_MIN: Duration = Duration::from_millis(100);
+/// a partner whose status stopped this long ago is let go (s); one down is kept longer (the
+/// loading screen after their death)
+const MATE_STALE: f32 = 3.0;
+const MATE_DOWN_STALE: f32 = 60.0;
+/// "LUIGI!" (low health) at most this often (s)
+const LOW_EVERY: f32 = 8.0;
+/// the BROS!: both players' blows on one enemy this close in time (s); the same enemy again only
+/// this much later (s); a streak of them lasts this long after the last (s); style points each
+const BROS_WINDOW: f32 = 1.5;
+const BROS_EVERY: f32 = 0.8;
+pub const BROS_KEEP: f32 = 6.0;
+const BROS_POINTS: f32 = 1.5;
+/// the partner's card: up while there's a reason and this long after (s), in and out this fast (s)
+const CARD_LINGER: f32 = 5.0;
+const CARD_IN: f32 = 0.25;
+const CARD_OUT: f32 = 0.8;
+/// ...a reason: hurt this recently (s), this far off (m), this few wedges
+const CARD_HURT: f32 = 4.0;
+const CARD_FAR: f32 = 30.0;
+const LOW_WEDGES: u8 = 2;
+/// a red coin's chime, soft (the BROS!)
+const SOUND_BROS: i32 = 0x7828_9081;
+
+/// Our last blows (the enemy's handle key, where it was, when), for the BROS!
+struct Mine {
+    hits: [Option<(u64, Vec3, Instant)>; 8],
+    next: usize,
+}
+
+static MINE: Mutex<Mine> = Mutex::new(Mine { hits: [None; 8], next: 0 });
+
+/// Our latest blow on `key`: where, when.
+fn own_hit_on(key: u64) -> Option<(Vec3, Instant)> {
+    let m = MINE.lock().unwrap_or_else(|e| e.into_inner());
+    m.hits.iter().flatten().filter(|h| h.0 == key).max_by_key(|h| h.2).map(|h| (h.1, h.2))
+}
+
+fn last_own_hit() -> Option<(u64, Instant)> {
+    let m = MINE.lock().unwrap_or_else(|e| e.into_inner());
+    m.hits.iter().flatten().max_by_key(|h| h.2).map(|h| (h.0, h.2))
+}
+
+/// Mario's blow landed on an enemy (combat.rs; `at` where it is, Elden Ring): a BROS! if the
+/// partner hit it a moment ago too.
+pub fn own_hit(key: u64, at: Vec3) {
+    if !active() {
+        return;
+    }
+    let now = Instant::now();
+    {
+        let mut m = MINE.lock().unwrap_or_else(|e| e.into_inner());
+        let i = m.next;
+        m.hits[i] = Some((key, at, now));
+        m.next = (i + 1) % m.hits.len();
+    }
+    let theirs: Vec<Instant> = {
+        let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map_or(Vec::new(), |s| s.mates.iter().filter_map(|m| m.hit.filter(|h| h.0 == key).map(|h| h.1)).collect())
+    };
+    for t in theirs {
+        bros(key, at, now, t);
+    }
+}
+
+/// The streak of BROS! (blows by both on one enemy).
+struct Bros {
+    key: u64,
+    at: Option<Instant>,
+    /// the two blows the last one was made of (each blow counts once: one of theirs and a string
+    /// of ours is one BROS!, not one per blow)
+    used: Option<(Instant, Instant)>,
+    streak: u32,
+    streak_at: Option<Instant>,
+}
+
+impl Bros {
+    /// Our blow at `a` and theirs at `b` on `key`, seen at `now`: the streak's count if it's a
+    /// BROS! (close enough in time, and not the same enemy's again too soon).
+    fn add(&mut self, key: u64, a: Instant, b: Instant, now: Instant) -> Option<u32> {
+        let gap = if a > b { a - b } else { b - a };
+        if gap.as_secs_f32() > BROS_WINDOW {
+            return None;
+        }
+        if self.key == key && self.at.is_some_and(|t| (now - t).as_secs_f32() < BROS_EVERY) {
+            return None;
+        }
+        if self.used.is_some_and(|(x, y)| x == a || y == b) {
+            return None;
+        }
+        self.key = key;
+        self.at = Some(now);
+        self.used = Some((a, b));
+        self.streak = if self.streak_at.is_some_and(|t| (now - t).as_secs_f32() < BROS_KEEP) { self.streak + 1 } else { 1 };
+        self.streak_at = Some(now);
+        Some(self.streak)
+    }
+}
+
+/// a BROS! chime to play
+static CHIME: AtomicBool = AtomicBool::new(false);
+
+static BROS: Mutex<Bros> = Mutex::new(Bros { key: 0, at: None, used: None, streak: 0, streak_at: None });
+
+/// Both hit `key` (at `pos`), we at `a`, they at `b`: the BROS! over it (the first of a streak and
+/// every fifth: the rest add to the count and the style quietly).
+fn bros(key: u64, pos: Vec3, a: Instant, b: Instant) {
+    let Some(n) = BROS.lock().unwrap_or_else(|e| e.into_inner()).add(key, a, b, Instant::now()) else { return };
+    if n == 1 || n % 5 == 0 {
+        if n == 1 {
+            log("coop: BROS! (both on one enemy)");
+        }
+        crate::style::callout("BROS!", Some(pos), [0.45, 1.0, 0.5], true, BROS_POINTS);
+        // (played by frame(), out of the state's lock: the call waits for the SM64 thread)
+        CHIME.store(true, Ordering::Relaxed);
+    } else {
+        crate::style::team(BROS_POINTS);
+    }
+}
+
+/// For the HUD: the streak of BROS! going (2 or more), and how long since the last (s).
+pub fn bros_streak() -> Option<(u32, f32)> {
+    let b = BROS.lock().unwrap_or_else(|e| e.into_inner());
+    let age = b.streak_at?.elapsed().as_secs_f32();
+    (b.streak >= 2 && age < BROS_KEEP && active()).then_some((b.streak, age))
+}
+
+/// Our status, for the partner.
+fn own_status() -> Status {
+    let show = crate::style::show();
+    let health = own_health();
+    let mut flags = 0;
+    if FIGHTING_NOW.load(Ordering::Relaxed) || show.is_some() {
+        flags |= FIGHTING;
+    }
+    if OWN_HURT.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) {
+        flags |= HURT;
+    }
+    if health >> 8 == 0 {
+        flags |= DOWN;
+    }
+    let hit = last_own_hit().filter(|h| h.1.elapsed().as_secs_f32() < BROS_WINDOW + 0.5).map(|(k, t)| (k, t.elapsed().as_millis().min(60_000) as u16));
+    let bag = crate::coins::bag_chunk().map(|(block, chunk, n)| (n.clamp(1, u16::MAX as u32) as u16, block, chunk.to_array()));
+    Status {
+        health,
+        luigi: crate::equip::luigi(),
+        coins: crate::stats::get().coins.min(u16::MAX as u32) as u16,
+        power: POWER_NOW.load(Ordering::Relaxed),
+        weapon: crate::weapons::current(),
+        rank: show.as_ref().and_then(|s| s.rank).map(|r| r as u8),
+        hits: show.map_or(0, |s| s.count.min(u16::MAX as u32) as u16),
+        flags,
+        hit,
+        bag,
+    }
+}
+
+/// Whether a status says something new (the blow's age aside).
+fn status_changed(a: &Status, b: &Status) -> bool {
+    let (mut a, mut b) = (*a, *b);
+    let keys = (a.hit.map(|h| h.0), b.hit.map(|h| h.0));
+    a.hit = None;
+    b.hit = None;
+    a != b || keys.0 != keys.1
+}
+
+/// A partner's status came in: their card, the warnings ("LUIGI!", down, back), the BROS!
+fn mate_status(s: &mut State, from: u64, seq: u16, st: Status) {
+    let now = Instant::now();
+    let i = match s.mates.iter().position(|m| m.steam == from) {
+        // (an old one, out of order: dropped)
+        // (unless nothing came for a while: they restarted, their count with it)
+        Some(i) if (seq.wrapping_sub(s.mates[i].seq) >= u16::MAX / 2 || seq == s.mates[i].seq) && s.mates[i].at.elapsed().as_secs_f32() < 1.0 => return,
+        Some(i) => i,
+        None => {
+            log(format!("coop: status from {from:x} ({}, {} coins): partner card on", if st.luigi { "Luigi" } else { "Mario" }, st.coins));
+            s.mates.push(Mate { steam: from, st, seq, at: now, hit: None, hurt_at: None, low_said: None, down: false, alpha: 0.0, wanted: None });
+            s.mates.len() - 1
+        }
+    };
+    let m = &mut s.mates[i];
+    let (was, wedges) = ((m.st.health >> 8) as u8, (st.health >> 8) as u8);
+    if wedges < was || (st.flags & HURT != 0 && m.st.flags & HURT == 0) {
+        m.hurt_at = Some(now);
+    }
+    let (low, down_text, back) = if st.luigi { ("LUIGI!", "LUIGI DOWN", "LUIGI IS BACK") } else { ("MARIO!", "MARIO DOWN", "MARIO IS BACK") };
+    let down = st.flags & DOWN != 0 || wedges == 0;
+    if down && !m.down {
+        log(format!("coop: partner {from:x} is down"));
+        crate::style::callout(down_text, None, [0.85, 0.35, 0.3], true, 0.0);
+    } else if !down && m.down {
+        log(format!("coop: partner {from:x} is back"));
+        crate::style::callout(back, None, [0.45, 1.0, 0.5], false, 0.0);
+    } else if !down && wedges <= LOW_WEDGES && was > LOW_WEDGES && m.low_said.is_none_or(|t| t.elapsed().as_secs_f32() >= LOW_EVERY) {
+        m.low_said = Some(now);
+        crate::style::callout(low, None, [1.0, 0.35, 0.3], false, 0.0);
+    }
+    m.down = down;
+    m.st = st;
+    m.seq = seq;
+    m.at = now;
+    // their last blow (on our clock): a BROS! if we hit it a moment ago too
+    if let Some((key, ago)) = st.hit {
+        let at = now.checked_sub(Duration::from_millis(ago as u64)).unwrap_or(now);
+        // (the same blow comes in several statuses, its time a little off each: a new one only
+        // well after)
+        let fresh = m.hit.is_none_or(|(k, t)| k != key || at > t + Duration::from_millis(300));
+        if fresh {
+            m.hit = Some((key, at));
+            if let Some((pos, mine)) = own_hit_on(key) {
+                bros(key, pos, mine, at);
+            }
+        }
+    }
+}
+
+/// The card's fade: towards shown (or not) at its pace.
+fn card_step(alpha: f32, shown: bool, dt: f32) -> f32 {
+    if shown { (alpha + dt / CARD_IN).min(1.0) } else { (alpha - dt / CARD_OUT).max(0.0) }
+}
+
+/// Game thread, every frame: the partners' cards for the HUD. `me`: our feet (Elden Ring), `dt`
+/// the frame's time (s). Shown while something's going on (a fight, either hurt, them low, down
+/// or far off), gone a while after it's quiet.
+pub fn hud(me: Vec3, dt: f32) -> Vec<crate::hud::PartnerHud> {
+    if !active() {
+        return Vec::new();
+    }
+    let near = partners();
+    let me_fighting = FIGHTING_NOW.load(Ordering::Relaxed) || OWN_HURT.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < CARD_HURT);
+    let now = Instant::now();
+    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = guard.as_mut() else { return Vec::new() };
+    let mut out = Vec::with_capacity(s.mates.len());
+    for m in s.mates.iter_mut() {
+        let p = near.iter().find(|p| p.steam == m.steam);
+        let wedges = (m.st.health >> 8).min(8) as u8;
+        let hurt = m.hurt_at.map_or(f32::MAX, |t| t.elapsed().as_secs_f32());
+        let far = p.is_some_and(|p| (p.feet - me).length() > CARD_FAR);
+        if m.st.flags & FIGHTING != 0 || me_fighting || hurt < CARD_HURT || wedges <= LOW_WEDGES || m.down || far {
+            m.wanted = Some(now);
+        }
+        let shown = m.wanted.is_some_and(|t| (now - t).as_secs_f32() < CARD_LINGER);
+        m.alpha = card_step(m.alpha, shown, dt);
+        let bag = m.st.bag.and_then(|(coins, block, chunk)| crate::coins::place(block, Vec3::from(chunk)).map(|at| (at, coins)));
+        out.push(crate::hud::PartnerHud {
+            head: p.map(|p| p.head),
+            wedges,
+            luigi: m.st.luigi,
+            power: m.st.power,
+            coins: m.st.coins,
+            rank: m.st.rank,
+            alpha: m.alpha,
+            danger: !m.down && (wedges <= LOW_WEDGES || hurt < 2.0),
+            down: m.down,
+            bag,
+        });
+    }
+    out
 }
 
 fn own_health() -> u16 {
@@ -519,11 +945,10 @@ fn own_health() -> u16 {
 /// A partner as the HUD and the Bros. Jump see them.
 #[derive(Clone, Copy)]
 pub struct Partner {
+    pub steam: u64,
     /// their feet and the top of their head (Elden Ring)
     pub feet: Vec3,
     pub head: Vec3,
-    /// SM64's health (wedges in its high byte)
-    pub health: u16,
     pub luigi: bool,
 }
 
@@ -532,21 +957,21 @@ pub fn partners() -> Vec<Partner> {
     if !active() {
         return Vec::new();
     }
-    let list: Vec<(usize, [PartPose; PARTS], u16, bool)> = {
+    let list: Vec<(u64, usize, [PartPose; PARTS], bool)> = {
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_ref() else { return Vec::new() };
-        s.remotes.iter().filter_map(|r| s.chrs.iter().find(|c| c.0 == r.steam).map(|c| (c.1, r.last, r.health, r.luigi))).collect()
+        s.remotes.iter().filter_map(|r| s.chrs.iter().find(|c| c.0 == r.steam).map(|c| (r.steam, c.1, r.last, r.luigi))).collect()
     };
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };
     let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
     list.into_iter()
-        .filter(|(chr, ..)| live.contains(chr))
-        .map(|(chr, parts, health, luigi)| {
+        .filter(|(_, chr, ..)| live.contains(chr))
+        .map(|(steam, chr, parts, luigi)| {
             let p = unsafe { &*(chr as *const PlayerIns) }.chr_ins.modules.physics.position;
             let feet = Vec3::new(p.0, p.1, p.2);
             // (the head part's centre, and a little over it: its top)
             let head_y = parts[3].pos.y.clamp(0.4, 4.0) + 0.25 * parts[3].scale.clamp(0.5, 3.0);
-            Partner { feet, head: feet + Vec3::Y * head_y, health, luigi }
+            Partner { steam, feet, head: feet + Vec3::Y * head_y, luigi }
         })
         .collect()
 }
@@ -692,6 +1117,94 @@ mod tests {
         assert_eq!((h.chr_id, h.pos, h.attack, h.pct), (4750, [1.0, -2.5, 300.25], 203, 0.65));
         let Some(Packet::Shove { dir }) = decode(&encode(&Packet::Shove { dir: [0.6, -0.8] })) else { panic!("no shove") };
         assert_eq!(dir, [0.6, -0.8]);
+    }
+
+    #[test]
+    fn status_round_trip() {
+        let st = Status {
+            health: 0x380,
+            luigi: true,
+            coins: 1234,
+            power: POWER_MEGA,
+            weapon: 2,
+            rank: Some(4),
+            hits: 37,
+            flags: FIGHTING | HURT,
+            hit: Some((0x0012_3456_0000_00AB, 420)),
+            bag: Some((17, 0x3C2C_2400, [-1234.5, 88.25, 4096.0])),
+        };
+        let bytes = encode(&Packet::Status { seq: 65535, status: st });
+        assert_eq!(bytes.len(), STATUS_BYTES);
+        let Some(Packet::Status { seq, status }) = decode(&bytes) else { panic!("no status") };
+        assert_eq!((seq, status), (65535, st));
+        // nothing: no rank, no blow, no bag
+        let quiet = Status { health: 0x880, ..Status::default() };
+        let Some(Packet::Status { status, .. }) = decode(&encode(&Packet::Status { seq: 1, status: quiet })) else { panic!("no status") };
+        assert_eq!(status, quiet);
+    }
+
+    #[test]
+    fn later_builds_packets_are_read_or_skipped() {
+        // fields added at the end: read as far as we know
+        let st = Status { health: 0x480, coins: 9, ..Status::default() };
+        let mut bytes = encode(&Packet::Status { seq: 3, status: st });
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+        assert!(matches!(decode(&bytes), Some(Packet::Status { seq: 3, status }) if status == st));
+        let mut shove = encode(&Packet::Shove { dir: [0.0, 1.0] });
+        shove.push(9);
+        assert!(matches!(decode(&shove), Some(Packet::Shove { .. })));
+        // a kind we don't know (grabbing the partner, say): skipped, no harm
+        let mut other = header(42, HEADER + 4);
+        other.extend_from_slice(&[0; 4]);
+        assert!(decode(&other).is_none());
+        // too short: not read
+        let bytes = encode(&Packet::Status { seq: 3, status: st });
+        assert!(decode(&bytes[..STATUS_BYTES - 1]).is_none());
+    }
+
+    #[test]
+    fn bros_needs_both_close_in_time() {
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        let mut b = Bros { key: 0, at: None, used: None, streak: 0, streak_at: None };
+        // too far apart
+        assert_eq!(b.add(7, at(0.0), at(2.0), at(2.0)), None);
+        // close: the first of a streak
+        assert_eq!(b.add(7, at(3.0), at(3.4), at(3.4)), Some(1));
+        // the same enemy again right away: not counted twice (both sides see the same pair)
+        assert_eq!(b.add(7, at(3.5), at(3.4), at(3.5)), None);
+        // our string on their one blow: that blow's been counted
+        assert_eq!(b.add(7, at(4.3), at(3.4), at(4.3)), None);
+        // a fresh blow of theirs, on this one or another one: the streak goes on
+        assert_eq!(b.add(7, at(4.3), at(4.6), at(4.6)), Some(2));
+        assert_eq!(b.add(9, at(5.5), at(5.6), at(5.6)), Some(3));
+        // after a long quiet: a new streak
+        assert_eq!(b.add(9, at(20.0), at(20.1), at(20.1)), Some(1));
+    }
+
+    #[test]
+    fn card_fades_in_quick_and_out_slow() {
+        let mut a = 0.0;
+        for _ in 0..8 {
+            a = card_step(a, true, 1.0 / 30.0);
+        }
+        assert!(a >= 0.99, "in {a}");
+        for _ in 0..12 {
+            a = card_step(a, false, 1.0 / 30.0);
+        }
+        assert!(a > 0.4 && a < 0.6, "half out {a}");
+        for _ in 0..30 {
+            a = card_step(a, false, 1.0 / 30.0);
+        }
+        assert_eq!(a, 0.0);
+    }
+
+    #[test]
+    fn status_change_ignores_the_blows_age() {
+        let a = Status { health: 0x880, hit: Some((5, 100)), ..Status::default() };
+        assert!(!status_changed(&a, &Status { hit: Some((5, 300)), ..a }));
+        assert!(status_changed(&a, &Status { hit: Some((6, 0)), ..a }));
+        assert!(status_changed(&a, &Status { health: 0x780, ..a }));
     }
 
     #[test]

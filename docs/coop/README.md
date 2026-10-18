@@ -149,7 +149,10 @@ a sí misma.
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
-| `coop: packets of version N` | Tienen versiones distintas de ER Mario |
+| `coop: packets of version N` | Tienen versiones distintas de ER Mario (desde la 4 hace falta el mismo build en las dos PCs) |
+| `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
+| `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
+| `coop: partner ... is down` / `is back` | El compañero cayó / volvió |
 | `coop: partner's character paired by elimination` | Normal si hay un solo compañero: el personaje no traía el SteamID donde se esperaba |
 | `combat: a partner's ... not here` | Un golpe del invitado sobre un enemigo que el anfitrión no tiene cargado (se ignora) |
 | `combat: attack 99X as found: ... LOOKS USED` | Reforged usa esa fila de ataque: avisar, porque hay que mover las filas del mod |

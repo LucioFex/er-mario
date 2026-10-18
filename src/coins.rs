@@ -160,6 +160,19 @@ pub fn bag() -> Option<(Vec3, u32)> {
     BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|b| Some((b.spot.now(&here)?, b.amount)))
 }
 
+/// The bag for the co-op partner's compass: its map origin block, its chunk position (the same on
+/// both players' games, physics positions aren't), its coins. Only a bag placed by chunk position.
+pub fn bag_chunk() -> Option<(i32, Vec3, u32)> {
+    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|b| b.spot.chunk.map(|c| (i32::from(b.spot.origin), c, b.amount)))
+}
+
+/// Where a partner's bag (`bag_chunk` on their game) is in our physics coordinates, if it's in our
+/// part of the map.
+pub fn place(origin: i32, chunk: Vec3) -> Option<Vec3> {
+    let here = (*HERE.lock().unwrap_or_else(|e| e.into_inner()))?;
+    Spot { pos: Vec3::ZERO, chunk: Some(chunk), block: here.block, origin: BlockId::from(origin) }.now(&here)
+}
+
 /// Mario (feet at `mario`) touches the bag: the coins back in his purse. How many.
 pub fn collect_bag(mario: Vec3) -> Option<u32> {
     let (pos, amount) = bag()?;

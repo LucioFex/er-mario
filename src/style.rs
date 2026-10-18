@@ -345,6 +345,11 @@ pub fn flow() {
 }
 const FLOW_POINTS: f32 = 1.5;
 
+/// Co-op: points for a blow with the partner (coop.rs's BROS! streak), no word popping out.
+pub fn team(points: f32) {
+    bonus(points);
+}
+
 /// Points that keep the string going (no blow of their own).
 fn bonus(points: f32) {
     let mut g = METER.lock().unwrap_or_else(|e| e.into_inner());

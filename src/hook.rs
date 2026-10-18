@@ -39,7 +39,9 @@ const BACK_SPEED: f32 = 60.0;
 /// enemies within this cone (cos 60°) around where the camera or Mario looks, and any closer than
 /// this all around him (m)
 const AIM_CONE_COS: f32 = 0.5;
-const AIM_NEAR: f32 = 9.0;
+const AIM_NEAR: f32 = 12.0;
+/// one this close (m, to its body) is taken before farther ones in front (half its score)
+const AIM_CLOSE: f32 = 5.0;
 /// ticks after it's back before the next one; ticks the throw may take to let go
 const COOLDOWN: u32 = 10;
 const FALLBACK: u32 = 6;
@@ -303,7 +305,7 @@ impl Hook {
                     && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {
                 if let Aim::Enemy { mob, .. } = self.aim {
-                    if crate::bossride::mount(&mob, id) {
+                    if crate::bossride::mount_as(&mob, id, false) {
                         log("hook: up on its back");
                         if matches!(phase, Phase::Swinging(_)) {
                             worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
@@ -316,7 +318,7 @@ impl Hook {
                 let Aim::Enemy { mob, height, .. } = self.aim else { return };
                 let swinging = state.action == moves::ACT_ER_POLE_SWING || tick.wrapping_sub(since) < 2;
                 // (R2 held through the whole swing: he lands on its back, if it can be ridden)
-                if swinging && button && allowed && tick.wrapping_sub(since) == SWING_TICKS && crate::bossride::mount(&mob, id) {
+                if swinging && button && allowed && tick.wrapping_sub(since) == SWING_TICKS && crate::bossride::mount_as(&mob, id, false) {
                     log("hook: up on its back (R2 held to the end of the swing)");
                     worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
                     next = Some(Phase::Back);
@@ -395,6 +397,9 @@ impl Hook {
         let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
         // (near ones all around, the nearest first, those in front before those behind; far ones only
         // where he or the camera looks)
+        // (why near ones weren't taken, for the log: out of sight, outside the cone)
+        let (mut hidden, mut aside) = (0u32, 0u32);
+        let chest = feet + Vec3::Y * (CHEST + 0.4);
         let enemy = combat::nearby(&here, RANGE, origin)
             .iter()
             .filter_map(|t| {
@@ -404,17 +409,36 @@ impl Hook {
                 let d = (c - hand).with_y(0.0);
                 let cos = d.normalize_or(flat).dot(flat).max(d.normalize_or(face).dot(face));
                 let dist = d.length().max((c - hand).length() * 0.8);
-                if d.length() < 0.3 || (cos < AIM_CONE_COS && dist > AIM_NEAR) || ray(hand, c).is_some() {
+                let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
+                // (near is measured to its body: a big one's centre is far off when its leg is right there)
+                let edge = (dist - radius).max(0.0);
+                if d.length() < 0.3 {
                     return None;
                 }
-                let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
+                if cos < AIM_CONE_COS && edge > AIM_NEAR {
+                    aside += 1;
+                    return None;
+                }
+                // (in sight from his hand or his chest, to its middle or high on it: a bump in the
+                // ground or a low fence between his hand and its middle hid enemies right there)
+                let high = sm_to_er(origin, [t.sm[0], t.sm[1] + t.height.min(400.0) * 0.85, t.sm[2]]);
+                let high = Vec3::new(high.0, high.1, high.2);
+                if [hand, chest].iter().all(|&from| ray(from, c).is_some() && ray(from, high).is_some()) {
+                    hidden += 1;
+                    return None;
+                }
                 let size = crate::juggle::pull_size(&mob, radius, height);
                 let (drag, medium) = (size != crate::juggle::PullSize::Big, size == crate::juggle::PullSize::Medium);
-                // (the edge of a big one's body counts, not its centre)
+                // (the edge of a big one's body counts, not its centre; one close by is taken
+                // before a farther one in front, it's the one he's fighting)
                 let gap = (dist - radius * 0.7).max(0.5);
-                Some((gap * (1.8 - cos), Aim::Enemy { mob, radius, height, drag, medium }, c))
+                let close = if edge <= AIM_CLOSE { 0.5 } else { 1.0 };
+                Some((gap * (1.8 - cos) * close, Aim::Enemy { mob, radius, height, drag, medium }, c))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
+        if enemy.is_none() && hidden + aside > 0 {
+            log(format!("hook: no enemy taken ({hidden} out of sight, {aside} outside the aim)"));
+        }
         let (aim, at) = match enemy {
             Some((_, aim, c)) => (aim, c),
             None => {

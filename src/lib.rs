@@ -2473,7 +2473,29 @@ fn frame(data: &FD4TaskData) {
     let st = stats::get();
     hud::set_counters(st.deaths, st.coins, st.stars);
     hud::set_tags(combat::tags());
-    hud::set_partners(coop::partners().into_iter().map(|p| hud::PartnerHud { head: p.head, wedges: (p.health >> 8).min(8) as u8, luigi: p.luigi }).collect());
+    // co-op: what Mario is using, for the partner's card; their cards
+    if coop::active() {
+        coop::set_power(if bossride::active() {
+            coop::POWER_CAPTURE
+        } else if yoshi::active() {
+            coop::POWER_YOSHI
+        } else if mega::active() {
+            coop::POWER_MEGA
+        } else if rock::active() {
+            coop::POWER_ROCK
+        } else {
+            match caps::active() {
+                Some(caps::WING) => coop::POWER_WING,
+                Some(caps::METAL) => coop::POWER_METAL,
+                Some(_) => coop::POWER_VANISH,
+                None => coop::POWER_NONE,
+            }
+        });
+        let feet = to_er(m.origin, m.state.position);
+        hud::set_partners(coop::hud(glam::Vec3::new(feet.0, feet.1, feet.2), data.delta_time.time));
+    } else {
+        hud::set_partners(Vec::new());
+    }
     hud::set_bosses(combat::bosses());
     if gameover::update(!m.dead) {
         log("game over: Bowser laughs");
@@ -2836,7 +2858,9 @@ fn frame(data: &FD4TaskData) {
         // the enemy a falling Mario drifts onto, and the big bodies the camera keeps out of
         let home = combat::home(&m.state, &targets);
         lakitu::set_big(combat::big_bodies(&targets));
-        lakitu::set_fight(combat::fight_focus(&m.state, &targets));
+        let focus = combat::fight_focus(&m.state, &targets);
+        coop::set_fighting(focus.is_some());
+        lakitu::set_fight(focus);
         lakitu::set_crowd(combat::crowd(&targets));
         match lakitu::position() {
             Some(cam) => {
@@ -2846,6 +2870,11 @@ fn frame(data: &FD4TaskData) {
             None => combat::restore_faded(),
         }
         lakitu::set_climb(m.combat.climb(&targets));
+        // the enemies worn down enough to ride: a mark over their heads
+        {
+            let feet = to_er(m.origin, m.state.position);
+            bossride::watch(glam::Vec3::new(feet.0, feet.1, feet.2), m.origin);
+        }
         // SM64's health is Mario's: Elden Ring hits cost wedges, and the Tarnished's HP is kept full
         // (a hit bigger than his whole HP would still kill him outright, a low-level character
         // against a late boss: the game's own "player can't die" flag stops him at 1 HP, and it
@@ -3590,7 +3619,7 @@ fn frame(data: &FD4TaskData) {
                         // (the grab is on his feet: SM64's pick-up actions are ground ones)
                         if r3_press && l2_held && free && a & 0x800 == 0 {
                             let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
-                            if !carry::grab_nearest(feet, face, m.origin) {
+                            if !carry::grab_nearest(feet, face, m.origin, id) {
                                 worker::call("grab buzz", |_| unsafe { sm64::sm64_play_sound_volume(0x700E_0081, 0.35) });
                             }
                         }

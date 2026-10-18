@@ -45,7 +45,7 @@ the combo turns him toward the enemy.
 | **Auto-aim** | None | Each hit of the combo turns Mario to the nearest hostile around him (it keeps to the same one during a string), and a blow lunges a step at an enemy just out of reach (fists and hammer, on the ground) |
 | **Jump kick** | From a standstill it goes straight up | A small dash forward, aimed like the combo |
 | **Punch / kick reach** | 80 units, 50° cone, punches only | 135 units, 60° cone, punches **and** kicks |
-| **Head stomp** | Wide hitbox bounced Mario off heads he missed; walked on top of big beasts | Tighter stomp radius, height capped so large enemies can be stomped properly |
+| **Head stomp** | Wide hitbox bounced Mario off heads he missed; walked on top of big beasts | Tighter stomp radius, height capped so large enemies can be stomped properly; a stomped enemy dents and springs back (a ground pound flattens a regular one a moment, a big one only dents) |
 
 Auto-aim only targets enemies: regular foes, bosses, hostile groups and invaders. Friendly NPCs,
 allies, props, and enemies already down or being carried are left alone.
@@ -150,9 +150,11 @@ view while he's big. D-pad right again ends it early, and so do a door, a fog wa
 loading screen or dying. It replaced the Vanish cap.
 
 **The hook (RT).** Mario flings his cap out on a line of light, Devil May Cry's Snatch. It aims
-itself: any enemy close to Mario (within 9 m, all around him, the nearest first and those in front
-before those behind), farther ones where Mario or the camera looks; with none, the spot of the map
-the camera looks at (up to 20 m):
+itself: any enemy close to Mario (within 12 m of its body, all around him; one within 5 m first,
+then the nearest, those in front before those behind), farther ones where Mario or the camera
+looks; one counts as in sight if his hand or his chest sees its middle or high up on it (a bump in
+the ground no longer hides an enemy right there); with none, the spot of the map the camera looks
+at (up to 20 m):
 
 | It catches | What happens |
 |---|---|
@@ -273,7 +275,7 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a medium or big enemy (after Mario flew to it) | **Pole swing** | Mario swings round it for 4 s, faster and faster. Let go and he's flung off along the swing with its inertia into a flying kick: swing between big enemies, or get away. Held to the end, he lands on its back (Capture) |
-| RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 20 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 20 s wait after it |
+| LT + R3 next to a medium or big enemy worn down to half its health, or RT held on it, then A | **Capture** (Odyssey) | Only once it's at half its health or less: a gold ring with Mario's face closes in over its head for a moment, with a soft chime, when it gets there (God of War's prompt). Up on its back (RT can be let go) it fights for Mario for 20 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 20 s wait after it |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
 FRIENDLY FIRE, OUT OF THE PARK, KABOOM, BANANA SPLIT, SHELL SHOCK, PARRY THIS, MAXED OUT, and
@@ -470,10 +472,23 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Not synced yet: caps' looks and sounds of the other player, Yoshi.
 
 
-Two small co-op touches: landing on your partner's head is a **Bros. Jump** (a high bounce off
-it), and while a partner is connected a little panel in the bottom left shows their head (Mario
-or Luigi), their power pie, and an arrow on the screen's edge with how far they are when they're
-out of view. Both players need the same build (the pose packet changed).
+Co-op touches (nothing of this shows alone):
+- Landing on your partner's head is a **Bros. Jump** (a high bounce off it).
+- **Partner card**, bottom left, only while something's going on (a fight, either of you hurt,
+  them low, down or over 30 m away), fading out 5 s after it's quiet: their head (Mario or Luigi),
+  power pie, the power they're using (cap, Rock, Mega, Yoshi, a capture), coins and style rank. Red
+  and pulsing when they're in danger (2 wedges or less, or just hurt), grey and crossed out when down.
+- In danger and in view: their pie over their head. Out of view: an arrow on the screen's edge with
+  how far they are (red and quicker in danger, grey when down).
+- On the compass: their head (with the distance past 30 m) and their coin bag (a coin ringed in
+  their colour).
+- **BROS!** over an enemy you both hit within 1.5 s (style points); a streak of them counts as
+  "BROS x N" under the style meter (the word only on the first and every fifth).
+- Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO).
+- Both players need the same build: the packets are version 4 (the status packet: health, coins,
+  power, style, last enemy hit, coin bag, a few times a second). From version 4 on a build skips a
+  kind of packet it doesn't know and reads a longer one as far as it knows, so later additions
+  (grabbing and throwing your partner) can come without breaking it.
 
 ## Building
 

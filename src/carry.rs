@@ -88,8 +88,9 @@ pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32
 
 /// L2 + R3: Mario grabs the nearest enemy in front of him within arm's reach: a small one (carried,
 /// B throws it) from any side, or a big one whose stance is broken (by the tail: swing.rs, spin
-/// and B). `feet`, `face`: his place and the way he looks (Elden Ring). True if he took one.
-pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3]) -> bool {
+/// and B); one bigger than a man worn down to half is ridden instead (bossride.rs). `feet`, `face`:
+/// his place and the way he looks (Elden Ring). True if he took one.
+pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
     let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
     // (measured to their bodies: a wide one's centre is far off; nearest first, the next if that
     // one can't be taken)
@@ -105,6 +106,11 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3]) -> bool {
         .collect();
     found.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (_, h, radius, height) in found {
+        // (a medium or big one worn down to half: up on its back, the capture; not one with its
+        // stance broken, that's the tail grab's moment)
+        if crate::bossride::mountable(&h) && !crate::swing::is_open(&h) && crate::bossride::mount(&h, id) {
+            return true;
+        }
         if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, feet, radius, height, true) {
             return true;
         }
