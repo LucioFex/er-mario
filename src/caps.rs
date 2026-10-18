@@ -27,8 +27,8 @@ const COST: [u32; 3] = [0, crate::coins::COST_WING, 0];
 /// the blows of Metal Mario hit this much harder
 pub const METAL_DAMAGE: f32 = 1.6;
 /// the cap music's volume, and while a boss's health bar shows (the game's own music matters)
-const MUSIC_VOLUME: f32 = 0.15;
-const MUSIC_VOLUME_BOSS: f32 = 0.05;
+const MUSIC_VOLUME: f32 = 0.06;
+const MUSIC_VOLUME_BOSS: f32 = 0.025;
 /// Mario's opacity with the Vanish cap (it shimmers a little around this)
 pub const VANISH_OPACITY: f32 = 0.15;
 

@@ -516,7 +516,7 @@ const TEAM_ENEMY: u8 = 6;
 /// Other hostiles, some bosses among them (team 9).
 const TEAM_HOSTILE: u8 = 9;
 /// Enemies in groups of their own (60, and a boss on 65, seen in the field): every team from here
-/// up. (10-49 are left out: friendly or neutral NPCs might be among them.)
+/// up.
 const TEAM_ENEMY_GROUPS: u8 = 50;
 /// Bosses and other strong enemies (team 7), also before their health bar shows.
 const TEAM_STRONG_ENEMY: u8 = 7;
@@ -713,70 +713,114 @@ pub fn handle_key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
 
-/// An enemy (not a friendly or neutral NPC): the enemies' teams, the invaders.
+/// An enemy, one Mario's blows land on, as a weapon's would: anyone not on the player's side, but
+/// the friends' teams (`FRIENDLY_TEAMS`) and the human NPCs (c0000: merchants, quest NPCs) of the
+/// teams not known to be enemies. (Teams 10-49 used to be taken for neutral, and left out: they
+/// turned out to be the field's warring factions, Caelid's soldiers on 30 and 48, the giants on
+/// 49.) The ini's `hostile_teams` and `friendly_teams` add to the lists.
 pub fn hostile(chr: &ChrIns) -> bool {
-    matches!(chr.team_type, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE)
-        || chr.team_type >= TEAM_ENEMY_GROUPS
-        || team_learned(chr.team_type)
-        || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc)
-}
-
-/// Teams from 10 to 49 are friendly or neutral NPCs, some at war with other enemies (Caelid's
-/// soldiers against its hounds) and with the player: the ones that hit Mario are hostile from then
-/// on (`learn_attacker`), and the ini's `hostile_teams = 30,48` lists more.
-static LEARNED_TEAMS: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
-
-fn team_learned(team: u8) -> bool {
-    if !(10..TEAM_ENEMY_GROUPS).contains(&team) {
+    let team = chr.team_type;
+    if team == 0 || own_side(team) || team == CHARMED {
         return false;
     }
-    static CONFIGURED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    let configured = CONFIGURED.get_or_init(|| crate::paths::config("hostile_teams").map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default());
-    configured.contains(&team) || LEARNED_TEAMS.lock().unwrap_or_else(|e| e.into_inner()).contains(&team)
+    if listed("hostile_teams", team) || learned(chr) || matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc) {
+        return true;
+    }
+    if FRIENDLY_TEAMS.contains(&team) || listed("friendly_teams", team) || summoned(chr) {
+        return false;
+    }
+    if matches!(team, TEAM_ENEMY | TEAM_STRONG_ENEMY | TEAM_HOSTILE) || team >= TEAM_ENEMY_GROUPS {
+        return true;
+    }
+    // (a team not known to be an enemy: a warring faction, unless it's a human NPC or one with a
+    // name of its own, Blaidd, Alexander, Boc...)
+    chr.character_id != 0 && !named(chr)
 }
 
-/// Mario was hurt (lib.rs): whoever hit him from a team in the neutral range is an enemy now, and
-/// so is its whole team. The game's "last hit by" often names nobody: then, with no enemy about,
-/// the one neutral character right by him is taken to be it.
-pub fn learn_attacker(player: &ChrIns) {
-    // (up on a captured enemy, it's on his side: its team isn't learned)
-    if crate::bossride::active() {
-        return;
+/// A spirit ash or a Torrent (the co-op partner's too): the game's set of summoned buddies.
+fn summoned(chr: &ChrIns) -> bool {
+    // (the very same character: the set may look at the handle's index alone)
+    unsafe { WorldChrMan::instance() }.ok().is_some_and(|w| w.summon_buddy_chr_set.chr_ins_by_handle(&chr.field_ins_handle).is_some_and(|c| std::ptr::eq(c, chr)))
+}
+
+/// Whether its NpcParam row gives it a name (the NPCs: Blaidd, Alexander...; none of the field
+/// enemies' rows has one, Reforged's regulation looked at). Each row looked up once.
+fn named(chr: &ChrIns) -> bool {
+    static SEEN: std::sync::Mutex<Vec<(i32, bool)>> = std::sync::Mutex::new(Vec::new());
+    let id = chr.npc_param_id;
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&(_, named)) = seen.iter().find(|(i, _)| *i == id) {
+        return named;
     }
+    // (params not up yet: asked again later)
+    let Ok(repo) = (unsafe { SoloParamRepository::instance() }) else { return false };
+    let name = repo.get::<eldenring::cs::NpcParam>(id as u32).map_or(-1, |p| p.name_id());
+    // (900000000 and up: a boss's name on its health bar, not an NPC's)
+    let named = name > 0 && name < 900_000_000;
+    if named {
+        log(format!("combat: c{:04} (NpcParam {id}, team {}) has a name ({name}): an NPC, left alone", chr.character_id, chr.team_type));
+    }
+    seen.push((id, named));
+    named
+}
+
+/// Teams that are never Mario's enemies: friends (8), a captured enemy (15, bossride.rs), the
+/// helpers by graces (26).
+const FRIENDLY_TEAMS: [u8; 3] = [8, CHARMED, 26];
+
+/// Whether the ini's list `key` (e.g. `hostile_teams = 30,48`) has `team` (read once).
+fn listed(key: &'static str, team: u8) -> bool {
+    static LISTS: std::sync::Mutex<Vec<(&'static str, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
+    let mut lists = LISTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !lists.iter().any(|(k, _)| *k == key) {
+        let teams = crate::paths::config(key).map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect()).unwrap_or_default();
+        lists.push((key, teams));
+    }
+    lists.iter().find(|(k, _)| *k == key).is_some_and(|(_, t)| t.contains(&team))
+}
+
+/// The NPCs of teams not known to be enemies who hit Mario: each of them is hostile from then on
+/// (`learn_attacker`; only that one: a merchant of the same team is left alone).
+static LEARNED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+fn learned(chr: &ChrIns) -> bool {
+    LEARNED.lock().unwrap_or_else(|e| e.into_inner()).contains(&handle_key(&chr.field_ins_handle))
+}
+
+/// Mario was hurt (lib.rs): an NPC his blows don't land on (a human or named one of a team not
+/// known to be an enemy) who hit him is an enemy now. The game's "last hit by" often names nobody:
+/// then the nearest such NPC close by and in the middle of an attack is taken to be it.
+pub fn learn_attacker(player: &ChrIns) {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     let p = player.modules.physics.position;
     let flat = |c: &ChrIns| {
         let q = c.modules.physics.position;
         ((p.0 - q.0).powi(2) + (p.2 - q.2).powi(2)).sqrt()
     };
-    let neutral = |c: &ChrIns| (10..TEAM_ENEMY_GROUPS).contains(&c.team_type) && c.team_type != CHARMED && !own_side(c.team_type) && !team_learned(c.team_type);
+    // (not a friend's team: one that attacks the player is put on another by the game itself)
+    let spared = |c: &ChrIns| !hostile(c) && c.team_type != 0 && !own_side(c.team_type) && c.team_type != CHARMED && !FRIENDLY_TEAMS.contains(&c.team_type);
     let alive = |c: &ChrIns| c.modules.data.hp > 0 && hittable(c.chr_type) && !helper(c) && !is_torrent(c);
+    let attacking = |c: &ChrIns| {
+        let t = &c.modules.time_act;
+        let anim = t.anim_queue[(t.read_idx % 10) as usize].anim_id % 1_000_000;
+        // (enemies' attacks are 3000-3999, a human's 30000-39999, the player's own animations)
+        (3000..4000).contains(&anim) || (30000..40000).contains(&anim)
+    };
     let chr = match wcm.chr_ins_by_handle(&player.last_hit_by) {
-        // ("last hit by" can be stale: only one up close, alive, and a character a blow may land on)
-        Some(c) => Some(c).filter(|c| neutral(c) && alive(c) && flat(c) <= 8.0),
-        None => {
-            let mut enemy_near = false;
-            let mut found: Vec<&ChrIns> = Vec::new();
-            for set in wcm.chr_sets.iter().flatten() {
-                for c in set.characters() {
-                    let c: &ChrIns = c;
-                    if !alive(c) || flat(c) > 6.0 {
-                        continue;
-                    }
-                    if hostile(c) {
-                        enemy_near = true;
-                    } else if neutral(c) && flat(c) <= 3.0 {
-                        found.push(c);
-                    }
-                }
-            }
-            (!enemy_near && found.len() == 1).then(|| found[0])
-        }
+        // ("last hit by" can be stale: only one up close and alive)
+        Some(c) => Some(c).filter(|c| spared(c) && alive(c) && flat(c) <= 8.0),
+        None => wcm
+            .chr_sets
+            .iter()
+            .flatten()
+            .flat_map(|set| set.characters())
+            .map(|c| -> &ChrIns { c })
+            .filter(|c| alive(c) && spared(c) && flat(c) <= 5.0 && attacking(c))
+            .min_by(|a, b| flat(a).total_cmp(&flat(b))),
     };
     let Some(chr) = chr else { return };
-    let team = chr.team_type;
-    LEARNED_TEAMS.lock().unwrap_or_else(|e| e.into_inner()).push(team);
-    log(format!("combat: c{:04} of team {team} hit Mario: that team is hostile from now on", chr.character_id));
+    LEARNED.lock().unwrap_or_else(|e| e.into_inner()).push(handle_key(&chr.field_ins_handle));
+    log(format!("combat: c{:04} of team {} hit Mario: it's hostile from now on", chr.character_id, chr.team_type));
 }
 
 /// the team a captured enemy is put on (bossride.rs): never learned as hostile

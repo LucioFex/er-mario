@@ -1376,6 +1376,8 @@ fn game_driven(anim: i32) -> bool {
 
 /// SM64 action for climbing an Elden Ring ladder (libsm64 patch: the pole climb, moved by the game).
 const ACT_ER_LADDER: u32 = 0x0000035F;
+/// all of SM64's sound while the wing cap is on
+const WING_VOLUME: f32 = 0.65;
 const ACT_ER_RIDE: u32 = 0x0000035E;
 const ACT_FREEFALL: u32 = 0x0100088C;
 
@@ -4310,6 +4312,8 @@ fn frame(data: &FD4TaskData) {
         let dist = to.length().max(0.01);
         let pan = glam::Vec3::new(right.0, right.1, right.2).normalize_or_zero().dot(to / dist);
         let volume = (1.0 / (1.0 + (dist - 3.0).max(0.0) * 0.12)).clamp(0.0, 1.0);
+        // (with the wing cap SM64's flight is loud: its whooshes and flaps play all along)
+        let volume = volume * if caps::active() == Some(caps::WING) { WING_VOLUME } else { 1.0 };
         audio::set_position(pan, volume);
     }
     physics.position = pos;

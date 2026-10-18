@@ -458,12 +458,13 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   DLL is loaded (`enemy_hp_scale` in `er_mario.ini`). Reforged's one-off health drains no longer
   set Mario on fire, and invisible characters (the helpers by graces, enemies the game isn't
   drawing) are left alone.
-- Some enemies sit on neutral teams (Caelid's soldiers, at war with its hounds and with you) and
-  Mario's blows used to go through them. Whoever hits Mario from one of those teams is an enemy
-  from then on, and so is its whole team (the log says `combat: ... team N hit Mario`); when the
-  game doesn't say who hit him, with no enemy about, the one neutral character right by him
-  (4 m) is taken to be it;
-  `hostile_teams = 30,48` in `er_mario.ini` lists teams that are enemies from the start.
+- Mario's blows land on anyone not on your side, as a weapon's would, whatever team the game
+  puts them on (Caelid's soldiers at war with its hounds, the giants with swords...), except the
+  friends' teams, a captured enemy, spirit ashes and Torrents, and, on teams not known to be
+  enemies, the human NPCs (merchants, quest NPCs) and those with a name of their own in the
+  game's NpcParam (Blaidd, Alexander...; no field enemy has one). One of those who hits Mario is
+  an enemy from then on (the log says `combat: ... hit Mario: it's hostile from now on`). `hostile_teams = 30,48` / `friendly_teams = ...` in
+  `er_mario.ini` add exceptions, should a team come out wrong.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - Not synced yet: caps' looks and sounds of the other player, Yoshi.
