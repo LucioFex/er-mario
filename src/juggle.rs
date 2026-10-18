@@ -131,7 +131,7 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if crate::coop::guest() {
         return false;
     }
-    if refusal(radius_m, height_m, regular, stunned).is_some() {
+    if refusal(radius_m, height_m, regular, stunned).is_some() || crate::stopwatch::frozen(h) {
         return false;
     }
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());

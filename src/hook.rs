@@ -284,16 +284,21 @@ impl Hook {
                 }
             }
             // A on a big one with R2 held (zipping to it or swinging round it): up on its back
-            Phase::Zipping(_) | Phase::Swinging(_) if a_pressed && button && allowed && matches!(self.aim, Aim::Enemy { drag: false, .. }) => {
+            Phase::Zipping(_) | Phase::Swinging(_)
+                if a_pressed
+                    && button
+                    && allowed
+                    && matches!(self.aim, Aim::Enemy { drag: false, mob, radius, height } if chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
+            {
                 if let Aim::Enemy { mob, .. } = self.aim {
-                    if matches!(phase, Phase::Swinging(_)) {
-                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
-                    }
                     if crate::bossride::mount(&mob, id) {
                         log("hook: up on its back");
+                        if matches!(phase, Phase::Swinging(_)) {
+                            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+                        }
+                        next = Some(Phase::Back);
                     }
                 }
-                next = Some(Phase::Back);
             }
             Phase::Swinging(since) => {
                 let Aim::Enemy { mob, height, .. } = self.aim else { return };

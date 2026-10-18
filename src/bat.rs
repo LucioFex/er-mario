@@ -66,7 +66,7 @@ pub fn is_flying(h: &FieldInsHandle) -> bool {
 /// The home run: `h` batted away along `dir` (horizontal). False if it can't go.
 pub fn home_run(h: &FieldInsHandle, dir: Vec3) -> bool {
     // (co-op guest: the host owns the enemies)
-    if crate::coop::guest() || is_flying(h) || !combat::liftable(h) || combat::hands_off(h) {
+    if crate::coop::guest() || is_flying(h) || crate::stopwatch::frozen(h) || !combat::liftable(h) || combat::hands_off(h) {
         return false;
     }
     let Some(pos) = feet_of(h) else { return false };
@@ -188,7 +188,7 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
                 let near = combat::nearby(&HavokPosition(next.x, next.y, next.z, 0.0), 3.0, origin);
                 for (i, t) in near.iter().enumerate() {
                     let Some(h) = t.shootable() else { continue };
-                    if bowled.contains(&t.key()) || is_flying_in(&positions, t.key()) {
+                    if bowled.contains(&t.key()) || is_flying_in(&positions, t.key()) || crate::stopwatch::frozen(h) {
                         continue;
                     }
                     let foot = Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2);

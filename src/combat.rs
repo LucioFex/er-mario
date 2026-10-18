@@ -392,7 +392,8 @@ impl Attack {
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
-            Attack::MaxFlurry => 1,
+            // (the MAX shows' blows come on their own pace: maxfin.rs)
+            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1,
             // (one bowling a second: it rolls on over them)
             Attack::Rock => 30,
             Attack::FireSweep | Attack::Ember | Attack::Trample => 1,
@@ -2111,7 +2112,7 @@ impl Combat {
                 }
                 // a finisher with the MAX ready (twelve blows without a hit): its MAX version
                 // (maxfin.rs; the boomerang's is its big throw, boomerang.rs)
-                if attack.finisher() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
+                if attack.finisher() && !attack.ranged() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
                     self.max = Some((attack, chest));
                 }
                 // the action command: X right on the blow (timing.rs)

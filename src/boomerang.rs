@@ -331,7 +331,7 @@ impl Boomerang {
             moves::THROW_UPPER => (Kind::Upper, 1, reach.map_or(UPPER_RANGE, |r| (r + 1.0).min(UPPER_RANGE)), OUT_TIME * 0.9),
             // (with the MAX ready, three of them, a fan: style.rs, maxfin.rs)
             moves::THROW_BIG => {
-                let max = free >= 2 && crate::style::take_max();
+                let max = free >= 3 && crate::style::take_max();
                 if max {
                     log("max: three big boomerangs");
                     crate::style::callout("MAX!", Some(hand + Vec3::Y * 0.5), [1.0, 0.75, 0.2], true, 4.0);

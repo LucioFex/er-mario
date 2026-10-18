@@ -186,7 +186,10 @@ pub fn hit(attack: Attack) {
     };
     m.count += 1;
     m.last = now;
-    max_hit();
+    // (the MAX shows' own blows and the knock-on hits don't count towards the next one)
+    if !matches!(attack, Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::Bowled) {
+        max_hit();
+    }
     let kind = std::mem::discriminant(&attack);
     let mut points = POINTS;
     if attack.finisher() {

@@ -1006,6 +1006,18 @@ impl ImguiRenderLoop for Overlay {
                 crate::weapons::CHOMP => Some(IMG_CHOMP),
                 _ => None,
             };
+            // the MAX finisher ready: MAX in gold under the weapon's spot, pulsing
+            if crate::style::max_ready() {
+                let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
+                let pulse = 0.75 + 0.25 * (t * 6.0).sin();
+                let g = 8.0 * px * (1.0 + 0.08 * pulse);
+                for (k, ch) in "MAX".chars().enumerate() {
+                    if let Some(id) = glyph_for(ch) {
+                        let gx = x + k as f32 * g * 0.8;
+                        dl.add_image(textures[id], [gx, y0 + s + px * 6.0], [gx + g, y0 + s + px * 6.0 + g]).col([1.0, 0.75 * pulse + 0.15, 0.25, 1.0]).build();
+                    }
+                }
+            }
             if let Some(img) = weapon {
                 let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
                 dl.add_rect([x - px * 2.0, y0 - px * 2.0], [x + s + px * 2.0, y0 + s + px * 2.0], [0.0, 0.0, 0.0, 0.35]).filled(true).rounding(px * 3.0).build();
@@ -1187,11 +1199,6 @@ impl ImguiRenderLoop for Overlay {
                 let (x0, y0) = (right - w, y + 9.0 * px);
                 dl.add_rect([x0, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * st.alpha)).filled(true).build();
                 dl.add_rect([right - w * st.left, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(t[0], t[1], t[2], 0.9 * st.alpha)).filled(true).build();
-                // the MAX finisher ready: MAX in gold under the bar, pulsing
-                if crate::style::max_ready() {
-                    let pulse = 0.75 + 0.25 * (clock * 6.0).sin();
-                    line("MAX", right, y0 + 9.0 * px, 10.0 * px * (1.0 + 0.08 * pulse), 0.8, [1.0, 0.78 * pulse + 0.1, 0.25, st.alpha]);
-                }
                 // the star finish: its banner over the middle of the screen
                 if let Some(a) = st.star_age {
                     let pop = (1.0 - a / 0.15).max(0.0);
@@ -1318,11 +1325,13 @@ impl ImguiRenderLoop for Overlay {
                 let hand = -std::f32::consts::FRAC_PI_2 + r.clamp(0.0, 1.0) * std::f32::consts::TAU;
                 dl.add_line([cx, cy], [cx + hand.cos() * rr * 0.75, cy + hand.sin() * rr * 0.75], col(1.0)).thickness(px * 1.4).build();
                 dl.add_line([cx, cy], [cx, cy - rr * 0.5], col(1.0)).thickness(px * 1.4).build();
+                // (its button in the free corner up and right of it, clear of Y and B)
                 let g = 5.0 * px;
                 for (i, ch) in "LB".chars().enumerate() {
                     if let Some(id) = glyph_for(ch) {
-                        let lx = cx - g * 0.8 + i as f32 * g * 0.8;
-                        dl.add_image(textures[id], [lx, cy + rr + px], [lx + g, cy + rr + px + g]).col([1.0, 1.0, 1.0, 0.8 * pop]).build();
+                        let lx = cx + rr * 0.9 + i as f32 * g * 0.8;
+                        let ly = cy - rr * 1.4 - g;
+                        dl.add_image(textures[id], [lx, ly], [lx + g, ly + g]).col([1.0, 1.0, 1.0, 0.8 * pop]).build();
                     }
                 }
             }

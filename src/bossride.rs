@@ -22,8 +22,10 @@ const RECHARGE: f32 = 40.0;
 const DRIVE: f32 = 5.5;
 const TURN: f32 = 2.5;
 const CRASH_SPEED: f32 = 3.5;
-/// the stance a crash breaks (swing.rs's meter, as poise)
-const CRASH_STANCE: f32 = 400.0;
+/// the stance a crash cracks (swing.rs's meter, as poise: about 70% of a 100-poise boss's, two
+/// crashes open it), and the ride it takes first (s: a run-up, not a nudge into the wall)
+const CRASH_STANCE: f32 = 70.0;
+const CRASH_AFTER: f32 = 1.0;
 
 pub const ACT_ER_BOSS_RIDE: u32 = 0x0000_035C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
@@ -95,8 +97,16 @@ pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
 /// length 0-1), `hold` R2 held, `jump` A pressed, SM64's origin. Moves the enemy along, keeps
 /// Mario on its back (his SM64 position, for the next tick), crashes it into a wall.
 #[allow(clippy::too_many_arguments)]
-pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, id: i32, origin: [f32; 3], combat: &mut Combat, player: &eldenring::cs::ChrIns, tick: u32, ray: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, action: u32, id: i32, origin: [f32; 3], combat: &mut Combat, player: &eldenring::cs::ChrIns, tick: u32, ray: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
     let mut s = state();
+    // (knocked off it: the ride's over, he isn't pinned to its back)
+    if s.ride.as_ref().is_some_and(|r| action != ACT_ER_BOSS_RIDE && r.since.elapsed().as_secs_f32() > 0.15) {
+        s.ride = None;
+        s.ready_at = Some(Instant::now() + std::time::Duration::from_secs_f32(RECHARGE));
+        drop(s);
+        log("boss ride: knocked off");
+        return;
+    }
     let Some(r) = s.ride.as_mut() else { return };
     let Some((seat_at, fwd, radius)) = seat(&r.mob) else {
         drop(s);
@@ -126,7 +136,7 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, id: i32, origin: [f3
             let next = p + dir * r.speed * dt;
             // into a wall: it crashes there at speed, else it just stops
             match ray(p + Vec3::Y * 1.0, next + dir * radius + Vec3::Y * 1.0) {
-                Some(_) if r.speed >= CRASH_SPEED => crashed = Some(p + dir * radius + Vec3::Y * 1.2),
+                Some(_) if r.speed >= CRASH_SPEED && r.since.elapsed().as_secs_f32() >= CRASH_AFTER => crashed = Some(p + dir * radius + Vec3::Y * 1.2),
                 Some(_) => r.speed = 0.0,
                 None => {
                     // (along the ground: the floor where it's going)

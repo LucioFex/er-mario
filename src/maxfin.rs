@@ -91,7 +91,7 @@ pub fn tick(combat: &mut Combat, player: &ChrIns, origin: [f32; 3], tick: u32) {
                 worker::call("max blow", move |_| unsafe { sm64::sm64_play_sound_volume(s, if last { 0.9 } else { 0.5 }) });
                 // the last: whatever it can lift goes up
                 if last {
-                    for t in near.iter().filter(|t| t.shootable().is_some_and(combat::liftable)) {
+                    for t in near.iter().filter(|t| t.shootable().is_some_and(|h| combat::liftable(h) && !crate::stopwatch::frozen(h))) {
                         let h = t.shootable().copied();
                         if let Some(h) = h {
                             if (Vec3::new(t.er.0, t.er.1 + 1.0, t.er.2) - at).length() < FLURRY_REACH + 0.5 {
@@ -107,10 +107,25 @@ pub fn tick(combat: &mut Combat, player: &ChrIns, origin: [f32; 3], tick: u32) {
             if t > 0 && t % CROSS_EVERY == 0 {
                 let step = t / CROSS_EVERY;
                 let side = Vec3::Y.cross(dir).normalize_or(Vec3::X);
-                for arm in [dir, side, -dir, -side] {
-                    let p = feet + arm * CROSS_STEP * step as f32;
-                    combat.blast(player, p, CROSS_BLAST, Attack::MaxQuake, origin, tick);
-                    crate::impact::max_quake(p);
+                let points: Vec<Vec3> = [dir, side, -dir, -side].iter().map(|arm| feet + *arm * CROSS_STEP * step as f32).collect();
+                // (each enemy once a step, however many of its arms reach it)
+                let near = combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), CROSS_STEP * step as f32 + CROSS_BLAST + 4.0, origin);
+                let hits: Vec<(usize, Attack, bool)> = near
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.shootable().is_some())
+                    .filter(|(_, t)| {
+                        let foot = Vec3::new(t.er.0, t.er.1, t.er.2);
+                        let r = t.radius * crate::scale();
+                        points.iter().any(|p| (foot - *p).with_y(0.0).length() <= CROSS_BLAST + r && (foot.y - p.y).abs() < 2.0)
+                    })
+                    .map(|(i, _)| (i, Attack::MaxQuake, false))
+                    .collect();
+                if !hits.is_empty() {
+                    combat.deal(player, &near, &hits, tick);
+                }
+                for p in &points {
+                    crate::impact::max_quake(*p);
                 }
                 crate::lakitu::shake(0.7);
                 worker::call("max quake", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_QUAKE, 0.6) });
@@ -130,7 +145,7 @@ fn cyclone(feet: Vec3, combat: &mut Combat, player: &ChrIns, origin: [f32; 3], t
     let mut up = 0;
     for t in &near {
         let Some(h) = t.shootable().copied() else { continue };
-        if !combat::liftable(&h) || (Vec3::new(t.er.0, t.er.1, t.er.2) - feet).with_y(0.0).length() > CYCLONE_REACH {
+        if !combat::liftable(&h) || crate::stopwatch::frozen(&h) || (Vec3::new(t.er.0, t.er.1, t.er.2) - feet).with_y(0.0).length() > CYCLONE_REACH {
             continue;
         }
         if crate::juggle::try_launch(&h, feet, t.radius * crate::scale(), t.height * crate::scale(), true, false, true) {

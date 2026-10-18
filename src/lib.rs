@@ -3032,11 +3032,18 @@ fn frame(data: &FD4TaskData) {
         {
             // LT + L1 while crouching: the stopwatch (stopwatch.rs)
             static LB_HELD: AtomicBool = AtomicBool::new(false);
+            static LB_KIT: AtomicBool = AtomicBool::new(false);
             let was = LB_HELD.swap(l_hammer, Ordering::Relaxed);
             if kit_held && l_hammer && !was && fire_allowed && !big {
                 let feet = to_er(m.origin, m.state.position);
                 let facing = glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos());
                 stopwatch::use_it(glam::Vec3::new(feet.0, feet.1, feet.2), facing, m.origin);
+            }
+            // (pressed for the stopwatch, L1 is the kit's until it's let go: no weapon switch on
+            // its release)
+            LB_KIT.store(l_hammer && (LB_KIT.load(Ordering::Relaxed) || kit_held), Ordering::Relaxed);
+            if LB_KIT.load(Ordering::Relaxed) {
+                l_hammer = false;
             }
         }
         if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
@@ -3121,7 +3128,7 @@ fn frame(data: &FD4TaskData) {
             let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
             let steer = if mag > 0.2 { glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * mag } else { glam::Vec3::ZERO };
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
-            bossride::update(1.0 / 30.0, steer, b_hook, ride_jump, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
+            bossride::update(1.0 / 30.0, steer, b_hook, ride_jump, m.state.action, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
                 let d = to - from;
                 havok?
                     .phys_world
@@ -3137,13 +3144,21 @@ fn frame(data: &FD4TaskData) {
                     let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
                     let dir = glam::Vec2::new(yaw.sin(), yaw.cos());
                     let me = m.state.position;
+                    let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+                    let eye = to_er(m.origin, [me[0], me[1] + 80.0, me[2]]);
+                    let seen = |t: &combat::Target| {
+                        let c = to_er(m.origin, [t.sm[0], t.sm[1] + (t.height * 0.5).min(150.0), t.sm[2]]);
+                        let d = eldenring::position::PositionDelta(c.0 - eye.0, c.1 - eye.1, c.2 - eye.2);
+                        havok.is_none_or(|h| h.phys_world.cast_ray(RAY_FILTER, &eye, d, player_ref).is_none())
+                    };
                     targets
                         .iter()
                         .filter(|t| t.shootable().is_some())
                         .filter_map(|t| {
                             let d = glam::Vec2::new(t.sm[0] - me[0], t.sm[2] - me[2]);
-                            let metres = d.length() * scale();
-                            ((3.0..=12.0).contains(&metres) && d.normalize_or_zero().dot(dir) >= 0.82 && (t.sm[1] - me[1]).abs() * scale() < 3.0).then_some((metres, t))
+                            // (from the edge of its body: the boss he's hitting isn't the "next" one)
+                            let metres = (d.length() - t.radius) * scale();
+                            ((3.0..=12.0).contains(&metres) && d.normalize_or_zero().dot(dir) >= 0.82 && (t.sm[1] - me[1]).abs() * scale() < 3.0 && seen(t)).then_some((metres, t))
                         })
                         .min_by(|a, b| a.0.total_cmp(&b.0))
                         .map(|(_, t)| {
@@ -3488,7 +3503,7 @@ fn frame(data: &FD4TaskData) {
                 {
                     let feet = to_er(m.origin, state.position);
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !rock::active();
-                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !mega::changing();
+                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !mega::changing() && caps::active().is_none();
                     starrush::tick(r3, can_start, can_stay, glam::Vec3::new(feet.0, feet.1, feet.2), m.ticks);
                 }
                 // D-pad left: the Rock Mushroom (the Metal Cap's old place: caps.rs gets no left)
@@ -3500,7 +3515,7 @@ fn frame(data: &FD4TaskData) {
                     rock::tick(dpad[2], can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
                 }
                 let dpad = [dpad[0], dpad[1], false, dpad[3]];
-                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active(), boss) {
+                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active() && !starrush::active(), boss) {
                     let p = to_er(m.origin, state.position);
                     impact::cap_change(glam::Vec3::new(p.0, p.1, p.2), cap);
                 }
