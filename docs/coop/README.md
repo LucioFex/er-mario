@@ -25,7 +25,9 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
    **2.3.6.3**). Se descomprime fuera de la carpeta del juego. En esta guía `<ERR>` es la carpeta que
    tiene los `.BAT` de lanzamiento, por ejemplo `C:\ERR - Elden Ring Reforged\ERRv2.3.6.3`.
 3. **Seamless Co-op**, la **misma versión** en las dos PCs (Nexus Mods, mod 510; se usó la 2.0.1).
-4. **ER Mario, el mismo build** en las dos PCs, porque los paquetes llevan una versión. Bajar
+4. **ER Mario, el mismo build** en las dos PCs, porque los paquetes llevan una versión. Para
+   comprobarlo, comparar el SHA256 de `er_mario.dll` en las dos PCs: el chequeo de actualizaciones
+   del mod sigue diciendo 0.4.2 aunque el build cambie. Bajar
    `ER-Mario-coop.zip` del pre-release
    [coop-2026-10-17](https://github.com/LucioFex/er-mario/releases/tag/coop-2026-10-17). Trae
    `er_mario.dll`, un `er_mario.ini` de ejemplo y las licencias. Si después sale otro build, los dos
@@ -44,6 +46,9 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
    - ✔ Existen `<ERR>\dll\offline` (con un `ersc_settings.ini` de Reforged) y `<ERR>\addons`.
    - Reforged arma su propio perfil de me3 en cada arranque, con los DLL de `dll\offline` y las
      carpetas de `addons`. No hay que editar ningún `.me3`.
+   - El launcher necesita una ventana de consola propia: abrirlo siempre con el `.BAT`, nunca
+     llamando a `ReforgedLauncher.exe` desde otra terminal (falla con
+     `PromptPlus requires a terminal/console environment`).
 
 ### 2. Seamless Co-op dentro de Reforged
 
@@ -80,9 +85,13 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
    - ✔ En `<ERR>\dll\offline\logs\er_mario.log` aparece `package folder <ERR>\addons\er-mario`.
    - ✔ También aparece `assets: /menu/hi/01_common.tpf.dcx from ...\mod`.
    - ✔ Existe `<ERR>\addons\er-mario\parts\bd_m_0996.partsbnd.dcx`, que es el modelo del compañero.
-   - ✔ No aparece `LOOKS USED`. En Reforged 2.3.2.2 se comprobó que las filas que reutiliza el mod
-     (bullets 65-70 y AtkParam 994-999) están libres. Las pecheras 660100 y 661100 conservan las
-     estadísticas de Reforged; el mod solo les cambia el modelo.
+   - ✔ No aparece `LOOKS USED`. En Reforged 2.3.2.2 y 2.3.6.3 se comprobó que las filas que reutiliza
+     el mod (bullets 65-70 y AtkParam 994-999) están libres. Las pecheras 660100 y 661100 conservan
+     las estadísticas de Reforged; el mod solo les cambia el modelo.
+   - Si el log dice `assets: build failed: unsupported DCX format`, el `er_mario.dll` es viejo:
+     Reforged comprime su lista de materiales con DEFLATE y los builds anteriores al 18/10 no la leían.
+     Bajá el zip de nuevo, reemplazá `er_mario.dll` y arrancá dos veces más. El build que falló no
+     deja nada a medias: se rehace solo.
 
 ### 4. Una sola partida para solo y coop (PC de Mario, el anfitrión)
 
