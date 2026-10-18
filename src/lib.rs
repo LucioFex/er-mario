@@ -2050,6 +2050,12 @@ fn frame(data: &FD4TaskData) {
             }
             let id = m.id;
             rock::clear(id);
+            // (nothing of his left behind: an enemy stopped in time, flights, a ride, the star music)
+            stopwatch::clear();
+            starrush::clear();
+            bossride::clear();
+            bat::clear();
+            maxfin::clear();
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
             mega::clear();
             set_scale(BASE_SCALE);
@@ -2570,6 +2576,9 @@ fn frame(data: &FD4TaskData) {
         m.moving.clear(&mut m.havok);
         let id = m.id;
         rock::clear(id);
+        stopwatch::clear();
+        starrush::clear();
+        bossride::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -2588,6 +2597,8 @@ fn frame(data: &FD4TaskData) {
                 mega::clear();
             }
             coins::shift(glam::Vec3::from(d));
+            m.traps.shift(glam::Vec3::from(d));
+            bat::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
             m.moving.rewatch(&m.havok);
             for i in 0..3 {

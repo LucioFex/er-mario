@@ -139,6 +139,16 @@ pub fn tether(a: &FieldInsHandle, b: &FieldInsHandle) -> bool {
     true
 }
 
+/// The world's origin moved by `d` (lib.rs): the flights with it.
+pub fn shift(d: Vec3) {
+    for f in FLYING.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+        f.pos += d;
+        if let Kind::Yank { to, .. } = &mut f.kind {
+            *to += d;
+        }
+    }
+}
+
 pub fn clear() {
     let mut flying = FLYING.lock().unwrap_or_else(|e| e.into_inner());
     if let Ok(wcm) = unsafe { WorldChrMan::instance_mut() } {

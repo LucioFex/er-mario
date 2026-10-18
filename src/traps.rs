@@ -457,6 +457,13 @@ impl Traps {
         }
     }
 
+    /// The world's origin moved by `d` (Elden Ring's floating origin, lib.rs): the things with it.
+    pub fn shift(&mut self, d: Vec3) {
+        for it in &mut self.items {
+            it.pos += d;
+        }
+    }
+
     /// Everything out there is gone (Mario's death, out of Mario mode).
     pub fn clear(&mut self) {
         self.items.clear();
