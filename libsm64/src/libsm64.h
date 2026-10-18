@@ -234,7 +234,7 @@ extern SM64_LIB_FN void sm64_er_ride_throw(void);
 extern SM64_LIB_FN void sm64_er_zip(int32_t marioId, float x, float y, float z, int kind, int start);
 extern SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float z, int start);
 extern SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on);
-extern SM64_LIB_FN void sm64_er_pole(int32_t marioId, float x, float y, float z, int mode);
+extern SM64_LIB_FN void sm64_er_pole(int32_t marioId, float x, float y, float z, float radius, int mode);
 extern SM64_LIB_FN void sm64_er_star_music(int on);
 extern SM64_LIB_FN void sm64_set_sound_volume(float vol);
 

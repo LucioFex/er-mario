@@ -146,7 +146,7 @@ impl Hook {
         // (mid-swing: libsm64 lets go too, or he'd go round the spot where it was)
         if matches!(self.phase, Some(Phase::Swinging(_))) {
             let id = self.id;
-            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
         }
         if self.phase.take().is_some() {
             clear();
@@ -271,12 +271,14 @@ impl Hook {
                     && state.action == moves::ACT_ER_ZIP
                     && matches!(self.aim, Aim::Enemy { mob, radius, height, .. } if chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {
-                if let Aim::Enemy { mob, height, .. } = self.aim {
+                if let Aim::Enemy { mob, radius, height, .. } = self.aim {
                     match chest(&mob, height) {
                         Some((c, _)) => {
                             let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
+                            // (out past its body: round a boss, not through it)
+                            let out = (radius + BODY + 0.5) / crate::scale();
                             log("hook: pole swing");
-                            worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], 1) });
+                            worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], out, 1) });
                             next = Some(Phase::Swinging(tick));
                         }
                         None => next = Some(Phase::Back),
@@ -294,7 +296,7 @@ impl Hook {
                     if crate::bossride::mount(&mob, id) {
                         log("hook: up on its back");
                         if matches!(phase, Phase::Swinging(_)) {
-                            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+                            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
                         }
                         next = Some(Phase::Back);
                     }
@@ -309,7 +311,7 @@ impl Hook {
                         let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
                         // (R2 up: let go, off along the swing)
                         let mode = if button && allowed { 0 } else { 2 };
-                        worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], mode) });
+                        worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], 0.0, mode) });
                         if mode == 2 {
                             log("hook: let go of the swing");
                             self.swing_ready = tick + SWING_COOLDOWN;
@@ -318,7 +320,7 @@ impl Hook {
                     }
                     None => {
                         // (it's gone, or he's out of the swing: libsm64 lets go too)
-                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 2) });
+                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
                         self.swing_ready = tick + SWING_COOLDOWN;
                         next = Some(Phase::Back);
                     }

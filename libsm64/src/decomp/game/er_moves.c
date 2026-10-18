@@ -2936,6 +2936,10 @@ s32 act_er_home_run(struct MarioState *m) {
  * tick, and whether he lets go now */
 f32 er_pole_centre[3] = { 0.0f, 0.0f, 0.0f };
 s32 er_pole_release = 0;
+/** how far out he swings (SM64 units: the enemy's body and a bit, hook.rs) */
+f32 er_pole_radius = 190.0f;
+/** the most he moves a tick getting onto the circle (no jump through a wall) */
+#define ER_POLE_STEP 70.0f
 static f32 sErPoleAngle = 0.0f;
 static f32 sErPoleSpin = 0.0f;
 static f32 sErPoleRadius = 0.0f;
@@ -2962,11 +2966,11 @@ s32 act_er_pole_swing(struct MarioState *m) {
     if (t == 0) {
         sErPoleAngle = atan2f(dz, dx);
         sErPoleRadius = sqrtf(dx * dx + dz * dz);
-        if (sErPoleRadius < 160.0f) {
-            sErPoleRadius = 160.0f;
+        if (sErPoleRadius < er_pole_radius) {
+            sErPoleRadius = er_pole_radius;
         }
-        if (sErPoleRadius > 320.0f) {
-            sErPoleRadius = 320.0f;
+        if (sErPoleRadius > er_pole_radius + 160.0f) {
+            sErPoleRadius = er_pole_radius + 160.0f;
         }
         sErPoleSpin = ER_POLE_SPIN_FROM;
         set_mario_animation(m, MARIO_ANIM_DIVE);
@@ -2988,13 +2992,20 @@ s32 act_er_pole_swing(struct MarioState *m) {
     // round and round, faster; the line shortening a little (pulled in)
     sErPoleSpin = er_lerp(sErPoleSpin, ER_POLE_SPIN_TO, 0.06f);
     sErPoleAngle += sErPoleSpin;
-    sErPoleRadius = er_lerp(sErPoleRadius, 190.0f, 0.04f);
+    sErPoleRadius = er_lerp(sErPoleRadius, er_pole_radius, 0.04f);
     want[0] = er_pole_centre[0] + cosf(sErPoleAngle) * sErPoleRadius;
     want[1] = er_pole_centre[1] - 40.0f;
     want[2] = er_pole_centre[2] + sinf(sErPoleAngle) * sErPoleRadius;
     m->vel[0] = want[0] - m->pos[0];
     m->vel[1] = (want[1] - m->pos[1]) * 0.5f;
     m->vel[2] = want[2] - m->pos[2];
+    {
+        f32 step = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
+        if (step > ER_POLE_STEP) {
+            m->vel[0] *= ER_POLE_STEP / step;
+            m->vel[2] *= ER_POLE_STEP / step;
+        }
+    }
     m->forwardVel = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
     nx = -sinf(sErPoleAngle);
     nz = cosf(sErPoleAngle);
