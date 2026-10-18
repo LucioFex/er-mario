@@ -1992,6 +1992,30 @@ extern int er_mega;
 s32 er_bonk_ready(void);
 s32 act_er_rock(struct MarioState *m);
 
+/* its speed tick by tick: flat out, then easing off into a walk (about 4.4 m in a quarter of a
+ * second); with the stick at rest it slides to a stop (ACT_ER_DASH_END) */
+#define ER_DASH_TICKS 7
+static const f32 sErDashSpeed[ER_DASH_TICKS] = { 76.0f, 76.0f, 74.0f, 66.0f, 52.0f, 38.0f, 28.0f };
+#define ER_DASH_END_TICKS 4
+static const f32 sErDashEndSpeed[ER_DASH_END_TICKS] = { 20.0f, 12.0f, 6.0f, 0.0f };
+
+/** The dash's X and A: the dash strike at its end, earlier a plain punch; a jump. */
+static s32 er_dash_cancels(struct MarioState *m) {
+    // (out of it the dash's speed is cut: a punch kept it all and slid on, hitting all the way)
+    if ((m->input & INPUT_B_PRESSED) && (m->actionTimer >= 5 || m->action == ACT_ER_DASH_END) && !er_mega && er_bonk_ready()) {
+        return set_mario_action(m, ACT_ER_BONK, 0);
+    }
+    if (m->input & INPUT_B_PRESSED) {
+        mario_set_forward_vel(m, 12.0f);
+        return set_mario_action(m, ACT_MOVE_PUNCHING, 0);
+    }
+    if (m->input & INPUT_A_PRESSED) {
+        mario_set_forward_vel(m, 32.0f);
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+    return FALSE;
+}
+
 s32 act_er_dash(struct MarioState *m) {
     f32 speed;
 
@@ -2003,24 +2027,12 @@ s32 act_er_dash(struct MarioState *m) {
         set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
     }
 
-    // (out of it the dash's speed is cut: a punch kept it all and slid on, hitting all the way)
-    if (m->actionTimer >= 3) {
-        // (X at its end: the dash strike, er_moves.c; earlier a plain punch)
-        if ((m->input & INPUT_B_PRESSED) && m->actionTimer >= 5 && !er_mega && er_bonk_ready()) {
-            return set_mario_action(m, ACT_ER_BONK, 0);
-        }
-        if (m->input & INPUT_B_PRESSED) {
-            mario_set_forward_vel(m, 12.0f);
-            return set_mario_action(m, ACT_MOVE_PUNCHING, 0);
-        }
-        if (m->input & INPUT_A_PRESSED) {
-            mario_set_forward_vel(m, 32.0f);
-            return set_jumping_action(m, ACT_JUMP, 0);
-        }
+    // (X at its end: the dash strike, er_moves.c; earlier a plain punch)
+    if (m->actionTimer >= 3 && er_dash_cancels(m)) {
+        return TRUE;
     }
 
-    // 5 frames flat out, then 2 slowing down (about 4.5 m in a quarter of a second)
-    speed = m->actionTimer < 5 ? 76.0f : 76.0f * (0.5f - 0.2f * (m->actionTimer - 5));
+    speed = sErDashSpeed[m->actionTimer < ER_DASH_TICKS ? m->actionTimer : ER_DASH_TICKS - 1];
     mario_set_forward_vel(m, speed);
     set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
 
@@ -2033,11 +2045,38 @@ s32 act_er_dash(struct MarioState *m) {
             return set_mario_action(m, ACT_IDLE, 0);
     }
 
-    if (++m->actionTimer >= 7) {
+    if (++m->actionTimer >= ER_DASH_TICKS) {
         if (m->input & INPUT_NONZERO_ANALOG) {
             mario_set_forward_vel(m, 26.0f);
             return set_mario_action(m, ACT_WALKING, 0);
         }
+        return set_mario_action(m, ACT_ER_DASH_END, 0);
+    }
+    return FALSE;
+}
+
+/* er-mario: the dash's end with the stick at rest: a few ticks' slide to a stop, crouched like a
+ * long jump's landing (it stopped dead from 23 m/s); X, A and the stick still go on from it */
+s32 act_er_dash_end(struct MarioState *m) {
+    if (m->actionTimer == 0) {
+        set_mario_animation(m, MARIO_ANIM_CROUCH_FROM_FAST_LONGJUMP);
+    }
+    if (er_dash_cancels(m)) {
+        return TRUE;
+    }
+    if (m->input & INPUT_NONZERO_ANALOG) {
+        return set_mario_action(m, ACT_WALKING, 0);
+    }
+    mario_set_forward_vel(m, sErDashEndSpeed[m->actionTimer < ER_DASH_END_TICKS ? m->actionTimer : ER_DASH_END_TICKS - 1]);
+    switch (perform_ground_step(m)) {
+        case GROUND_STEP_LEFT_GROUND:
+            return set_mario_action(m, ACT_FREEFALL, 0);
+
+        case GROUND_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            return set_mario_action(m, ACT_IDLE, 0);
+    }
+    if (++m->actionTimer >= ER_DASH_END_TICKS) {
         mario_set_forward_vel(m, 0.0f);
         return set_mario_action(m, ACT_IDLE, 0);
     }
@@ -2096,6 +2135,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
         case ACT_HOLD_QUICKSAND_JUMP_LAND: cancel = act_hold_quicksand_jump_land(m); break;
         case ACT_LONG_JUMP_LAND:           cancel = act_long_jump_land(m);           break;
         case ACT_ER_DASH:                  cancel = act_er_dash(m);                  break;
+        case ACT_ER_DASH_END:              cancel = act_er_dash_end(m);              break;
         case ACT_ER_ROCK:                  cancel = act_er_rock(m);                  break;
     }
     /* clang-format on */

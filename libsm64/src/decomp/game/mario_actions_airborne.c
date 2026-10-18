@@ -2080,7 +2080,10 @@ s32 check_common_airborne_cancels(struct MarioState *m) {
 }
 
 /* er-mario: the dash in the air (pad B): a flat lunge where the stick points (ahead without it), no
- * falling while it lasts, out of harm's way; from its third frame B kicks and Z ground pounds */
+ * falling while it lasts (only starting to as it ends), out of harm's way; from its third frame B
+ * kicks and Z ground pounds */
+#define ER_AIR_DASH_TICKS 7
+
 s32 act_er_air_dash(struct MarioState *m) {
     if (m->actionTimer == 0) {
         if (m->input & INPUT_NONZERO_ANALOG) {
@@ -2099,8 +2102,13 @@ s32 act_er_air_dash(struct MarioState *m) {
         }
     }
 
-    mario_set_forward_vel(m, m->actionTimer < 5 ? 70.0f : 32.0f);
-    m->vel[1] = 0.0f;
+    // (easing off at its end, and starting to fall: it stopped and dropped at once)
+    {
+        static const f32 speeds[ER_AIR_DASH_TICKS] = { 70.0f, 70.0f, 66.0f, 58.0f, 48.0f, 40.0f, 34.0f };
+        s32 t = m->actionTimer < ER_AIR_DASH_TICKS ? m->actionTimer : ER_AIR_DASH_TICKS - 1;
+        mario_set_forward_vel(m, speeds[t]);
+        m->vel[1] = t < ER_AIR_DASH_TICKS - 2 ? 0.0f : -2.0f * (t - (ER_AIR_DASH_TICKS - 3));
+    }
     set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
 
     switch (perform_air_step(m, 0)) {
@@ -2116,7 +2124,7 @@ s32 act_er_air_dash(struct MarioState *m) {
             return TRUE;
     }
 
-    if (++m->actionTimer >= 7) {
+    if (++m->actionTimer >= ER_AIR_DASH_TICKS) {
         return set_mario_action(m, ACT_FREEFALL, 0);
     }
     return FALSE;
