@@ -931,6 +931,8 @@ pub fn impact(combat: &mut Combat, handle: &FieldInsHandle, pct: f32, tick: u32)
     let Some(chr) = wcm.chr_ins_by_handle_mut(handle) else { return };
     let data = &mut chr.modules.data;
     let (hp, max) = (data.hp, data.max_hp.max(1));
+    // (co-op: Seamless's extra health per player counts, coop::share_factor)
+    let pct = pct * crate::coop::share_factor(is_boss(handle));
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     // (throws kill right there when the impact takes the rest of his HP; a boss with a health
     // bar keeps his last point for a moment, in case his script wants him at it)
@@ -1096,6 +1098,8 @@ fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
     let boss = bar || boss_class(handle, chr);
     let data = &mut chr.modules.data;
     let (hp, max) = (data.hp, data.max_hp.max(1));
+    // (co-op: Seamless's extra health per player counts, coop::share_factor)
+    let pct = pct * crate::coop::share_factor(boss || is_boss(handle));
     let dmg = ((max as f32 * pct / 100.0).ceil() as i32).max(1);
     data.hp = (hp - dmg).max(1);
     show_damage(handle, hp, hp - data.hp, bar);

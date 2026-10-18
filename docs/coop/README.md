@@ -45,10 +45,22 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 1. Del zip de Seamless, copiar **solo** `SeamlessCoop\ersc.dll` y la carpeta `SeamlessCoop\locale`
    a `C:\ERR\dll\offline\`. Reforged ya trae su propio `ersc_settings.ini` en esa carpeta y se usa
    ese.
-2. En `C:\ERR\dll\offline\ersc_settings.ini`, poner la **misma contraseña** en las dos PCs:
-   `cooppassword = <la que elijan>`.
+2. En `C:\ERR\dll\offline\ersc_settings.ini` (igual en las dos PCs):
+   - `cooppassword = <la que elijan>`: la **misma contraseña** en las dos.
+   - `enemy_damage_scaling = 15` y `boss_damage_scaling = 15`: con dos jugadores los enemigos pegan
+     un 15% más.
+   - `allow_invaders = 0` y `death_debuffs = 0`: así jugar solo queda igual que sin Seamless, sin
+     invasores y sin castigo de vida al morir.
+   - Dejar `enemy_health_scaling` y `boss_health_scaling` como están (35 y 100). ER Mario los lee
+     de este archivo.
 3. Anotar el valor de `save_file_extension` en ese mismo archivo (Seamless trae `co2`). Se usa en el
    paso 5.
+
+**Dificultad:** solo cuenta con dos jugadores. De a uno el juego queda igual que siempre. De a dos:
+- Los enemigos tienen la vida extra de Seamless (+35%, jefes +100%). Como los golpes de Mario quitan
+  un porcentaje de la vida, ER Mario los ajusta para que esa vida extra cuente de verdad. Si no,
+  con dos Marios todo moriría el doble de rápido.
+- Los enemigos pegan un 15% más (`enemy_damage_scaling`).
 
 ### 3. ER Mario dentro de Reforged
 
@@ -79,21 +91,29 @@ la de Reforged, para no borrarle los cambios.
    - ✔ En el log aparece `assets: /menu/hi/01_common.tpf.dcx from ...`.
 3. Si no aparece ninguno, no hay que hacer nada.
 
-### 5. La partida (solo en la PC de Mario, el anfitrión)
+### 5. Una sola partida para solo y coop (PC de Mario, el anfitrión)
 
-La idea es seguir **con la partida actual de Mario**, ahora de a dos. El progreso es del anfitrión.
+Mario juega solo en Reforged y de vez en cuando comparte esa misma partida con Luigi. Como
+`ersc.dll` está en `dll\offline`, **cada** arranque *Reforged (Offline)* carga Seamless, aunque
+juegues solo. Por eso solo y coop usan **el mismo archivo** y no hay que copiar nada entre una cosa y
+la otra. Para jugar solo, simplemente no se usa la olla.
+
+La primera vez hay que pasar a ese archivo la partida actual de ER Mario:
 
 1. Con el juego cerrado, ir a `%APPDATA%\EldenRing\<número de Steam>\`.
 2. **Copia de seguridad:** copiar toda la carpeta a otro lado antes de tocar nada.
-3. Ver qué archivo de partida usa Reforged con Seamless. Arrancar una vez *Reforged (Offline)* hasta
-   el título, salir, y ver qué archivo se creó o modificó en esa carpeta. Debería ser
+3. Ver qué archivo usa Reforged con Seamless. Arrancar una vez *Reforged (Offline)* hasta el título,
+   salir, y ver qué archivo se creó o se modificó en esa carpeta. Debería ser
    `ER0000.<save_file_extension>` (por ejemplo `ER0000.co2`) o `ER0000.err`.
 4. Reemplazar ese archivo por una **copia** de `ER0000_mario.sl2` (la partida de ER Mario en un
-   jugador) con el nombre del paso anterior. El original `ER0000_mario.sl2` queda intacto para
-   seguir jugando solo.
+   jugador), con el nombre del paso anterior. El original `ER0000_mario.sl2` queda como respaldo de la
+   partida vanilla.
    - ✔ Al arrancar Reforged (Offline), *Continuar* carga el personaje de Mario donde estaba.
 5. Reforged cambia armas, objetos y enemigos. Una partida vanilla carga, pero conviene revisar el
    equipo. El launcher de Reforged guarda hasta 25 copias de la partida por su cuenta.
+6. Desde ahí, para jugar solo con Mario se usa *Launch ELDEN RING Reforged (Offline)*. El perfil
+   `er-mario.me3` de `C:\ER-Mario` es la versión vanilla y ya no se usa para esta partida.
+   - ✔ Jugando solo, en el log aparece `coop: session []` y la vida de los enemigos es la normal.
 
 La PC de Luigi puede crear un personaje nuevo en su propia partida de Reforged. El progreso del
 mundo es del anfitrión.

@@ -494,6 +494,45 @@ pub fn apply_remote() {
     }
 }
 
+/// Players in the session (1 out of one).
+pub fn players() -> usize {
+    if !active() {
+        return 1;
+    }
+    STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(1, |s| s.peers.len() + 1)
+}
+
+/// Seamless Co-op's extra enemy health per extra player (%), regular and boss, from its
+/// ersc_settings.ini (next to er_mario.dll in Reforged's dll\offline, or in SeamlessCoop\), else
+/// its defaults.
+fn health_scaling() -> (f32, f32) {
+    static SCALING: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+    *SCALING.get_or_init(|| {
+        let text = ["ersc_settings.ini", "SeamlessCoop/ersc_settings.ini"].iter().find_map(|f| std::fs::read_to_string(crate::paths::file(f)).ok());
+        let key = |k: &str| {
+            text.as_deref()?.lines().find_map(|l| {
+                let (a, b) = l.split_once('=')?;
+                (a.trim().eq_ignore_ascii_case(k)).then(|| b.trim().parse::<f32>().ok()).flatten()
+            })
+        };
+        let s = (key("enemy_health_scaling").unwrap_or(35.0), key("boss_health_scaling").unwrap_or(100.0));
+        log(format!("coop: Seamless health scaling {}% / boss {}% per player{}", s.0, s.1, if text.is_none() { " (its defaults: no ersc_settings.ini found)" } else { "" }));
+        s
+    })
+}
+
+/// What Mario's blows (shares of max HP) are worth with this many players: Seamless gives the
+/// enemies more health per player, which a share of max HP alone would ignore (two Marios would
+/// melt everything twice as fast).
+pub fn share_factor(boss: bool) -> f32 {
+    let extra = players().saturating_sub(1) as f32;
+    if extra == 0.0 {
+        return 1.0;
+    }
+    let (regular, bosses) = health_scaling();
+    1.0 / (1.0 + extra * if boss { bosses } else { regular } / 100.0).max(1.0)
+}
+
 /// Guest: a blow of ours on an enemy (its share of max HP, all bonuses in), for the host to take off.
 pub fn send_hit(handle: &FieldInsHandle, attack: u8, pct: f32) {
     if !guest() {
@@ -602,6 +641,13 @@ mod tests {
         assert_eq!((h.chr_id, h.pos, h.attack, h.pct), (4750, [1.0, -2.5, 300.25], 203, 0.65));
         let Some(Packet::Shove { dir }) = decode(&encode(&Packet::Shove { dir: [0.6, -0.8] })) else { panic!("no shove") };
         assert_eq!(dir, [0.6, -0.8]);
+    }
+
+    #[test]
+    fn alone_blows_are_worth_the_same() {
+        // out of a session: single player, nothing scaled
+        assert_eq!(share_factor(false), 1.0);
+        assert_eq!(share_factor(true), 1.0);
     }
 
     #[test]
