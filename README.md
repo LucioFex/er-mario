@@ -64,7 +64,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). A blow on Mario puts the charge out. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
 | D-pad up | Wing cap (recharges in about 55 s) |
@@ -172,8 +172,8 @@ own moves (his mouth opens for the tongue, he nods with each egg and on a stomp)
 
 | Input on Yoshi | Move |
 |---|---|
-| X | Tongue: lashed out ahead, it hits whoever it reaches, and every enemy it licks makes him an egg |
-| Y (hold for more) | Throw an egg at the nearest enemy ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
+| X | Tongue: a 3D tube out to 7.5 m, it locks on to the nearest enemy in a 120° cone ahead and follows it as it moves, hits whoever it reaches, and every enemy it licks makes him an egg |
+| Y (hold for more) | Throw a big 3D egg (white with green spots, tumbling) at the nearest enemy in the cone ahead: it arcs to it and bounces once off the ground. He has up to six (shown under the caps), a new one every 3 s and one per lick |
 | RB (hold for more) | Mario's fireball from the saddle, a palm thrust straight at the nearest enemy ahead |
 | LT in the air | Stomp: a shockwave all around where he lands |
 | LB | Burst of speed for 2.5 s, dust behind him (fast enough to run enemies over), then 6 s of rest |
@@ -184,8 +184,7 @@ B BONKERS, A AWESOME, S SUPER, SS SUPER STAR, SSS WAHOO. It's meant to be earned
 blow again within 6 s is worth 20% less each time (down to 30%), a long string on one enemy fades,
 the points drain away faster the higher the rank (A 1 point a second, S 2.2, SS 3.6, SSS 5.5) so a
 rank is only held by keeping up variety, finishers, skillshots and timing, and being hurt costs the
-string and halves the next seconds' points. Star Rush (faster blows) and the MAX shows' knock-on
-blows score less per blow. Marks: A 30, S 56, SS 88, SSS 130 points; mashing one button tops out
+string and halves the next seconds' points. The MAX shows' knock-on blows score less per blow. Marks: A 30, S 56, SS 88, SSS 130 points; mashing one button tops out
 around C, a varied fight reaches A or S, SS and SSS want a fast, varied, skilful one. A new rank
 slams in with its word, a soft red coin chime a note higher each time and Mario cheering from S up;
 a bar shows the time left before the string drops. Getting hurt ends it ("MAMMA MIA"). From rank
@@ -257,7 +256,6 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a big enemy | **Pole swing** | Mario swings round it; let go for a flying kick |
 | RT held on a big enemy, then A | **Capture** (Odyssey) | Up on its back (RT can be let go) it fights for Mario for 10 s: the stick steers it, X / Y its own light / heavy attacks, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off); A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. Big and medium enemies, not bosses with a health bar. 45 s |
-| R3 once the star is full | **Star Rush** | Style points fill the star (more from rank A up, so a good string fills it faster than mashing); 10 s of super armour (hits cost half, no knockback), 15% faster and harder |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
 FRIENDLY FIRE, OUT OF THE PARK, KABOOM, BANANA SPLIT, SHELL SHOCK, PARRY THIS, MAXED OUT, and
@@ -303,7 +301,6 @@ close and risky hits.
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
-| Star Rush | — | Blows **×1.15**, hits on Mario **half** |
 | Capture: charge **6%** each, wall slam | — | **11%** and the stance broken |
 
 (Shares already include the 0.75 damage factor; bosses take about 6.5% of them, more for the
@@ -404,7 +401,6 @@ replaces this fork's DLL with the original one.
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
 | RT | Middle mouse button | The hook (see above). Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: capture |
 | LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
-| R3 (right stick click) | | Star Rush, once the star is full |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |

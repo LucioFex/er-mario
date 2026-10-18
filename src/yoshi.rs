@@ -27,7 +27,7 @@ const SIZE: f32 = 1.1;
 /// Torrent's saddle is where his back was at 1.6 times: Mario comes down by the difference.
 const SEAT_DROP: f32 = 0.85 * (1.6 - SIZE);
 /// How much faster than Torrent he goes
-const RIDE_SPEED: f32 = 2.0;
+const RIDE_SPEED: f32 = 1.5;
 /// SOUND_GENERAL_YOSHI_WALK
 const SOUND_YOSHI_WALK: i32 = 0x306E_2081;
 /// SOUND_GENERAL_YOSHI_TALK

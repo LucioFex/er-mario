@@ -256,6 +256,11 @@ impl Fire {
         }
     }
 
+    /// A charge is going on in his hand (RB held, not put out).
+    pub fn charging(&self) -> bool {
+        self.held_since.is_some()
+    }
+
     /// Mario was hit (lib.rs): a charge in his hand goes out with a fizzle.
     pub fn douse(&mut self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         self.pending = None;

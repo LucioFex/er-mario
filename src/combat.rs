@@ -1365,12 +1365,9 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if crate::dodge::countering() && !attack.ranged() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
-    // Mega Mario's blows are a giant's; in a Star Rush a little harder
+    // Mega Mario's blows are a giant's
     if crate::mega::active() {
         pct *= crate::mega::DAMAGE;
-    }
-    if crate::starrush::active() {
-        pct *= crate::starrush::DAMAGE;
     }
     // Metal Mario hits harder (his fireballs too)
     if crate::caps::active() == Some(crate::caps::METAL) {

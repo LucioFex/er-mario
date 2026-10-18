@@ -56,10 +56,8 @@ const TARGET_FLOOR: f32 = 0.5;
 const DRAIN: [f32; 7] = [0.0, 0.0, 0.4, 1.0, 2.2, 3.6, 5.5];
 /// a rank is only lost with the points this far under its mark (so it doesn't flicker)
 const RANK_HOLD: f32 = 0.94;
-/// every point is worth this much in the Star Rush (faster blows must not inflate the string),
-/// and for SHAKEN_TIME (s) after being hurt; the knock-on blows of the MAX shows and the like
-/// are worth WEAK_SCALE
-const RUSH_SCALE: f32 = 0.7;
+/// every point is worth this much for SHAKEN_TIME (s) after being hurt; the knock-on blows of the
+/// MAX shows and the like are worth WEAK_SCALE
 const SHAKEN_SCALE: f32 = 0.6;
 const SHAKEN_TIME: f32 = 4.0;
 const WEAK_SCALE: f32 = 0.25;
@@ -195,12 +193,9 @@ impl Meter {
 /// When Mario was last hurt (the style clock), for the shaken seconds after.
 static HURT_AT: Mutex<f32> = Mutex::new(-100.0);
 
-/// What every point is worth now: less in the Star Rush, less just after being hurt.
+/// What every point is worth now: less just after being hurt.
 fn scale() -> f32 {
     let mut s = 1.0;
-    if crate::starrush::active() {
-        s *= RUSH_SCALE;
-    }
     if now() - *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) < SHAKEN_TIME {
         s *= SHAKEN_SCALE;
     }
@@ -298,17 +293,10 @@ pub fn rank() -> Option<usize> {
     live(&mut METER.lock().unwrap_or_else(|e| e.into_inner())).and_then(|m| m.rank)
 }
 
-/// Points into the string (the Star Rush's star fills with them, a little more from the A rank up),
-/// and the chime and the cheers for a rank not reached before.
+/// Points into the string, and the chime and the cheers for a rank not reached before.
 fn add(m: &mut Meter, now: f32, points: f32) {
     let points = points * scale();
     let up = m.gain(now, points);
-    let boost = match m.rank {
-        Some(r) if r >= 4 => 1.5,
-        Some(3) => 1.25,
-        _ => 1.0,
-    };
-    crate::starrush::feed(points * boost);
     if let Some(r) = up {
         let mut list = vec![(SOUND_RED_COIN + ((r as i32) << 16), CHIME_VOLUME)];
         match r {

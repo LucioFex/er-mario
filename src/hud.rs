@@ -511,6 +511,80 @@ fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
 
+/// A flat-shaded mesh in the world drawn far to near (Yoshi's tongue and eggs): triangles of
+/// world points with their outward normal and colour, lit from above.
+#[derive(Default)]
+struct Mesh {
+    tris: Vec<([Vec3; 3], Vec3, [f32; 3])>,
+}
+
+impl Mesh {
+    /// An ellipsoid (an egg: `taper` narrows its top), turned by `rot`, its colour by (ring, slice).
+    #[allow(clippy::too_many_arguments)]
+    fn ellipsoid(&mut self, centre: Vec3, rot: glam::Quat, radii: Vec3, taper: f32, rings: usize, slices: usize, colour: &dyn Fn(usize, usize) -> [f32; 3]) {
+        let point = |i: usize, j: usize| {
+            let (th, ph) = (std::f32::consts::PI * i as f32 / rings as f32, std::f32::consts::TAU * j as f32 / slices as f32);
+            let narrow = 1.0 - taper * th.cos().max(0.0);
+            let local = Vec3::new(th.sin() * ph.cos() * narrow, th.cos(), th.sin() * ph.sin() * narrow);
+            (centre + rot * (local * radii), rot * (local / radii).normalize_or(Vec3::Y))
+        };
+        for i in 0..rings {
+            for j in 0..slices {
+                let (a, b, c, d) = (point(i, j), point(i + 1, j), point(i + 1, j + 1), point(i, j + 1));
+                let col = colour(i, j);
+                self.tris.push(([a.0, b.0, c.0], (a.1 + b.1 + c.1).normalize_or(Vec3::Y), col));
+                self.tris.push(([a.0, c.0, d.0], (a.1 + c.1 + d.1).normalize_or(Vec3::Y), col));
+            }
+        }
+    }
+
+    /// A tube along `path` (points), `radius` at each, round sides.
+    fn tube(&mut self, path: &[Vec3], radius: &dyn Fn(usize) -> f32, sides: usize, colour: &dyn Fn(usize) -> [f32; 3]) {
+        let ring = |k: usize| {
+            let d = (path[(k + 1).min(path.len() - 1)] - path[k.saturating_sub(1)]).normalize_or(Vec3::Z);
+            let u = d.cross(Vec3::Y).normalize_or(Vec3::X);
+            let v = d.cross(u).normalize_or(Vec3::Y);
+            (0..sides)
+                .map(|j| {
+                    let a = std::f32::consts::TAU * j as f32 / sides as f32;
+                    let n = u * a.cos() + v * a.sin();
+                    (path[k] + n * radius(k), n)
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut prev = ring(0);
+        for k in 1..path.len() {
+            let next = ring(k);
+            for j in 0..sides {
+                let j2 = (j + 1) % sides;
+                let n = (prev[j].1 + prev[j2].1 + next[j].1 + next[j2].1).normalize_or(Vec3::Y);
+                self.tris.push(([prev[j].0, next[j].0, next[j2].0], n, colour(k)));
+                self.tris.push(([prev[j].0, next[j2].0, prev[j2].0], n, colour(k)));
+            }
+            prev = next;
+        }
+    }
+
+    fn draw(self, dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], far: f32) {
+        let light = Vec3::new(0.35, 0.85, 0.4).normalize();
+        let mut out = Vec::with_capacity(self.tris.len());
+        for (p, n, c) in self.tris {
+            let (Some(a), Some(b), Some(d)) = (project(p[0], size), project(p[1], size), project(p[2], size)) else { continue };
+            let z = (a.1 + b.1 + d.1) / 3.0;
+            if z > far {
+                continue;
+            }
+            let lit = (0.55 + 0.5 * n.dot(light)).clamp(0.35, 1.1);
+            out.push((z, [a.0, b.0, d.0], imgui::ImColor32::from_rgba_f32s((c[0] * lit).min(1.0), (c[1] * lit).min(1.0), (c[2] * lit).min(1.0), 1.0)));
+        }
+        out.sort_by(|x, y| y.0.total_cmp(&x.0));
+        for (_, p, col) in out {
+            dl.add_triangle(p[0], p[1], p[2], col).filled(true).build();
+            dl.add_triangle(p[0], p[1], p[2], col).thickness(1.0).build();
+        }
+    }
+}
+
 /// World position -> screen pixel (None behind the camera), and its distance.
 fn project(p: Vec3, size: [f32; 2]) -> Option<([f32; 2], f32)> {
     let cam = unsafe { CSCamera::instance() }.ok()?;
@@ -716,13 +790,19 @@ impl ImguiRenderLoop for Overlay {
         {
             let ride = crate::ride::sprites();
             if let Some((mouth, tip)) = ride.tongue {
-                if let (Some((a, za)), Some((b, _))) = (project(mouth, size), project(tip, size)) {
-                    if za < 60.0 {
-                        let width = (size[1] / za.max(1.0) * 0.06).clamp(2.0, 14.0);
-                        dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(0.95, 0.35, 0.5, 1.0)).thickness(width).build();
-                        dl.add_circle(b, width * 0.9, imgui::ImColor32::from_rgba_f32s(1.0, 0.45, 0.6, 1.0)).filled(true).build();
-                    }
-                }
+                // a tube from his mouth that sags a little, a round tip
+                let n = 12;
+                let len = (tip - mouth).length();
+                let path: Vec<Vec3> = (0..=n)
+                    .map(|k| {
+                        let t = k as f32 / n as f32;
+                        mouth + (tip - mouth) * t - Vec3::Y * (t * (1.0 - t) * len * 0.12)
+                    })
+                    .collect();
+                let mut mesh = Mesh::default();
+                mesh.tube(&path, &|k| 0.13 - 0.02 * k as f32 / n as f32, 8, &|k| if k % 3 == 0 { [0.98, 0.4, 0.55] } else { [0.93, 0.33, 0.5] });
+                mesh.ellipsoid(*path.last().unwrap_or(&tip), glam::Quat::IDENTITY, Vec3::splat(0.22), 0.0, 6, 10, &|i, _| if i < 2 { [1.0, 0.6, 0.72] } else { [0.98, 0.42, 0.58] });
+                mesh.draw(&dl, size, 60.0);
             }
             for (pos, age) in ride.fires {
                 let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.3, size)) else { continue };
@@ -734,16 +814,15 @@ impl ImguiRenderLoop for Overlay {
                 dl.add_image(textures[IMG_GLOW], [c[0] - h, c[1] - h], [c[0] + h, c[1] + h]).col([1.0, 0.55, 0.15, 0.6]).build();
                 dl.add_image(textures[IMG_FLAME + frame], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).build();
             }
+            // the eggs: white with green spots, tumbling, in 3D
             for (pos, age) in ride.eggs {
-                let (Some((c, z)), Some((top, _))) = (project(pos, size), project(pos + Vec3::Y * 0.2, size)) else { continue };
-                let h = (c[1] - top[1]) * 2.0;
-                if z > 60.0 || h < 1.0 {
-                    continue;
-                }
-                let angle = age * 12.0;
-                let (sn, co) = (angle.sin() * h * 0.5, angle.cos() * h * 0.5);
-                let corner = |x: f32, y: f32| [c[0] + x * co * 0.75 - y * sn, c[1] + x * sn * 0.75 + y * co];
-                dl.add_image_quad(textures[IMG_EGG], corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)).build();
+                let sz = crate::ride::EGG_SIZE;
+                let rot = glam::Quat::from_euler(glam::EulerRot::YXZ, age * 9.0, age * 13.0, 0.0);
+                let mut mesh = Mesh::default();
+                mesh.ellipsoid(pos, rot, Vec3::new(0.38, 0.5, 0.38) * sz * 2.0, 0.22, 8, 12, &|i, j| {
+                    if (matches!(i, 2 | 3) && j % 4 == 0) || (i == 5 && j % 4 == 2) || (i == 4 && j % 6 == 3) { [0.2, 0.72, 0.25] } else { [0.98, 0.97, 0.9] }
+                });
+                mesh.draw(&dl, size, 60.0);
             }
         }
         // the hook: a line of light from his hand with twinkles running along it, his cap spinning
@@ -972,21 +1051,6 @@ impl ImguiRenderLoop for Overlay {
                     let bar = [x, y0 + s + px * 2.0];
                     dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
                     dl.add_rect(bar, [x + s * ready.clamp(0.0, 1.0), bar[1] + px * 2.0], [1.0, 0.85, 0.2, 0.9]).filled(true).build();
-                }
-            }
-            // Star Rush's star (R3): filling as the style comes, pulsing when full, draining while on
-            {
-                let (fill, left) = crate::starrush::hud();
-                let x = x0 + caps.len() as f32 * s * 1.25 + s * 1.9;
-                let on = left.is_some();
-                let full = fill >= 1.0;
-                let grow = if on || full { s * 0.1 * (1.0 + (t * 7.0).sin()) } else { 0.0 };
-                dl.add_image(textures[IMG_STAR], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow]).col([1.0, 1.0, 1.0, if on || full { 1.0 } else { 0.3 }]).build();
-                let share = left.unwrap_or(fill).clamp(0.0, 1.0);
-                if share < 1.0 || on {
-                    let bar = [x, y0 + s + px * 2.0];
-                    dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
-                    dl.add_rect(bar, [x + s * share, bar[1] + px * 2.0], [1.0, 0.9, 0.35, 0.95]).filled(true).build();
                 }
             }
             // on Yoshi: his eggs in stock, a row under the caps

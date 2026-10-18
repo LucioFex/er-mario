@@ -579,27 +579,6 @@ pub fn max_glow(hand: Vec3) {
     spark(hand, 0.5, GOLD);
 }
 
-/// Star Rush on (`on`) or off: a golden flash, rings, stars all round.
-pub fn star_rush(feet: Vec3, on: bool) {
-    if on {
-        flash([1.0, 0.9, 0.4], 0.3, 0.5);
-        crate::lakitu::punch(0.3);
-    }
-    ring(feet + Vec3::Y * 0.1, if on { 3.0 } else { 1.8 }, 0.45, GOLD);
-    ring(feet + Vec3::Y * 0.9, 1.6, 0.3, WHITE);
-    burst(feet + Vec3::Y * 1.0, if on { 8 } else { 4 }, Bit::Star);
-}
-
-/// Star Rush going: a star twinkling round him now and then.
-pub fn star_spark(feet: Vec3) {
-    let a = crate::rand01() * std::f32::consts::TAU;
-    let at = feet + Vec3::new(a.cos() * 0.5, 0.3 + crate::rand01() * 1.1, a.sin() * 0.5);
-    spark(at, 0.45, GOLD);
-    if crate::rand01() < 0.3 {
-        burst(at, 1, Bit::Star);
-    }
-}
-
 /// The stopwatch: a cold ring and flash where it stops (or lets go of) an enemy (`big`), a small
 /// ring on each blow it soaks up.
 pub fn stopwatch(at: Vec3, big: bool) {

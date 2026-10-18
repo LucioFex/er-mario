@@ -59,7 +59,6 @@ mod rock;
 mod bat;
 mod maxfin;
 mod skillshot;
-mod starrush;
 mod stopwatch;
 mod bossride;
 mod style;
@@ -2059,7 +2058,6 @@ fn frame(data: &FD4TaskData) {
             rock::clear(id);
             // (nothing of his left behind: an enemy stopped in time, flights, a ride, the star music)
             stopwatch::clear();
-            starrush::clear();
             bossride::clear();
             bat::clear();
             maxfin::clear();
@@ -2568,7 +2566,6 @@ fn frame(data: &FD4TaskData) {
         bat::clear();
         maxfin::clear();
         skillshot::clear();
-        starrush::clear();
         stopwatch::clear();
         bossride::clear();
         dodge::clear();
@@ -2584,7 +2581,6 @@ fn frame(data: &FD4TaskData) {
         let id = m.id;
         rock::clear(id);
         stopwatch::clear();
-        starrush::clear();
         bossride::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
@@ -2649,7 +2645,7 @@ fn frame(data: &FD4TaskData) {
     // (in the style meter's slow motion Mario keeps his pace)
     let dt = style::mario_dt(data.delta_time.time);
     // (Mega Mario is a titan: all of him runs slower, his walk, his blows, his jumps)
-    let titan = if mega::active() { mega::TIME } else if starrush::active() { starrush::SPEED } else { 1.0 };
+    let titan = if mega::active() { mega::TIME } else { 1.0 };
     m.acc += if paused { 0.0 } else { dt.min(0.25) * titan };
     let ticks_before = SM64_TICKS.load(Ordering::Relaxed);
     while m.acc >= 1.0 / 30.0 {
@@ -2660,7 +2656,6 @@ fn frame(data: &FD4TaskData) {
         // SM64's B like X while Mario holds an enemy (the throw) or rides
         let fire_ok = !carry::holding() && !RIDING.load(Ordering::Relaxed);
         let (mut b_fire, mut b_dash, mut y_move, mut x_move, mut l_hammer) = (false, false, false, false, false);
-        let mut r3 = false;
         let mut dpad = [false; 4];
         // R2 (the middle mouse button): the hook (hook.rs)
         let mut b_hook = kbd::focused() && unsafe { GetAsyncKeyState(0x04) } as u16 & 0x8000 != 0;
@@ -2681,7 +2676,6 @@ fn frame(data: &FD4TaskData) {
             dpad = [XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT].map(|b| g.wButtons.contains(b));
             // (L1 is the hammer, L2 SM64's Z)
             l_hammer = g.wButtons.contains(XINPUT_GAMEPAD_LEFT_SHOULDER);
-            r3 = g.wButtons.contains(XINPUT_GAMEPAD_RIGHT_THUMB);
             inputs.button_z = (g.bLeftTrigger > 100) as u8;
             b_hook |= g.bRightTrigger > 100;
         }
@@ -3257,7 +3251,7 @@ fn frame(data: &FD4TaskData) {
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
                 let a = m.state.action;
                 let free = a & (ACT_FLAG_SWIMMING | ACT_FLAG_ON_POLE | ACT_FLAG_HANGING) == 0 && a != moves::ACT_ER_ZIP && a != ACT_ER_LADDER;
-                let calm = free && !m.dead && !mega::active() && !rock::active() && !starrush::active() && caps::active() != Some(caps::METAL) && !RIDING.load(Ordering::Relaxed);
+                let calm = free && !m.dead && !mega::active() && !rock::active() && caps::active() != Some(caps::METAL) && !RIDING.load(Ordering::Relaxed);
                 let calm = calm && !carry::holding() && !swing::holding() && !FOLLOWING.load(Ordering::Relaxed);
                 let p = player_ref.chr_ins.modules.physics.position;
                 calm && blown::roll(w, &player_ref.chr_ins, glam::Vec3::new(p.0, p.1, p.2))
@@ -3266,8 +3260,8 @@ fn frame(data: &FD4TaskData) {
         };
         let mario_at = m.state.position;
         let bled = status::just_set_in();
-        // (the boulder and Star Rush: hits cost half, no knockback)
-        let rocking = rock::active() || starrush::active();
+        // (the boulder: hits cost half, no knockback)
+        let rocking = rock::active();
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -3520,6 +3514,19 @@ fn frame(data: &FD4TaskData) {
                             .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                             .map(|h| glam::Vec3::new(h.0, h.1, h.2))
                     };
+                    // another attack while a fireball charges puts the charge out (RB has to come up)
+                    // (a button pressed now, not one held from before)
+                    static PREV_ATTACKS: Mutex<[bool; 5]> = Mutex::new([false; 5]);
+                    let attacks = [x_move, y_move, b_dash, b_hook, l_hammer];
+                    let rising = {
+                        let mut prev = PREV_ATTACKS.lock().unwrap_or_else(|e| e.into_inner());
+                        let rising = attacks.iter().zip(prev.iter()).any(|(n, p)| *n && !*p);
+                        *prev = attacks;
+                        rising
+                    };
+                    if b_fire && m.fire.charging() && rising {
+                        m.fire.douse(&state, m.origin, m.ticks);
+                    }
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
                     // the boomerangs: thrown when a throw lets go, from his right hand
                     let feet = to_er(m.origin, state.position);
@@ -3545,23 +3552,16 @@ fn frame(data: &FD4TaskData) {
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
-                // R3: Star Rush (starrush.rs), not with the Mega or the Rock Mushroom
-                {
-                    let feet = to_er(m.origin, state.position);
-                    let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !rock::active();
-                    let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !mega::changing() && caps::active().is_none();
-                    starrush::tick(r3, can_start, can_stay, glam::Vec3::new(feet.0, feet.1, feet.2), m.ticks);
-                }
                 // D-pad left: the Rock Mushroom (the Metal Cap's old place: caps.rs gets no left)
                 {
                     let feet = to_er(m.origin, state.position);
                     let free = gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person() && !m.dead;
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !carry::holding() && !swing::holding();
-                    let can_start = free && can_stay && !mega::changing() && !starrush::active() && caps::active().is_none() && state.health >= 0x100;
+                    let can_start = free && can_stay && !mega::changing() && caps::active().is_none() && state.health >= 0x100;
                     rock::tick(dpad[2], can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
                 }
                 let dpad = [dpad[0], dpad[1], false, dpad[3]];
-                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active() && !starrush::active(), boss) {
+                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active(), boss) {
                     let p = to_er(m.origin, state.position);
                     impact::cap_change(glam::Vec3::new(p.0, p.1, p.2), cap);
                 }
@@ -3572,7 +3572,7 @@ fn frame(data: &FD4TaskData) {
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed);
                     let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person();
                     const GROUNDED: u32 = 0x200 | 0x400;
-                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !rock::active() && !starrush::active() && !carry::holding() && !swing::holding();
+                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !rock::active() && !carry::holding() && !swing::holding();
                     let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
                     let ray = |from: glam::Vec3, to: glam::Vec3| {
                         let d = to - from;

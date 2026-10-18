@@ -20,9 +20,11 @@ use crate::combat::{self, Attack, Combat};
 use crate::{log, sm64, worker};
 
 /// the tongue: how far (m), how wide (m), out and back (s), before the next (s)
-const TONGUE_REACH: f32 = 4.5;
-const TONGUE_WIDTH: f32 = 0.7;
-const TONGUE_TIME: f32 = 0.3;
+const TONGUE_REACH: f32 = 7.5;
+const TONGUE_WIDTH: f32 = 1.0;
+const TONGUE_TIME: f32 = 0.34;
+/// the tongue goes for the nearest enemy in this cone ahead (cos 60°) and follows it as it moves
+const TONGUE_COS: f32 = 0.5;
 const TONGUE_REST: f32 = 0.12;
 /// eggs: at most, at the start, a new one every (s); thrown this fast (m/s), falling (m/s²), gone
 /// after (s), at most this far (m) to the enemy it's aimed at, between two (s)
@@ -35,7 +37,9 @@ const EGG_LIFE: f32 = 2.5;
 const EGG_AIM: f32 = 28.0;
 const EGG_REST: f32 = 0.28;
 /// how near an egg hits (m, plus the enemy's body)
-const EGG_RADIUS: f32 = 0.5;
+const EGG_RADIUS: f32 = 0.85;
+/// an egg's size when drawn (m)
+pub const EGG_SIZE: f32 = 0.8;
 /// Mario's fireball from the saddle: how fast (m/s), gone after (s), between two (s), how near it hits
 /// (m, plus the enemy's body)
 const FIRE_SPEED: f32 = 30.0;
@@ -82,7 +86,7 @@ struct State {
     stock: u32,
     refill: f32,
     /// the tongue: since when (s), where it was going
-    tongue: Option<(f32, Vec3)>,
+    tongue: Option<(f32, Vec3, Option<u64>)>,
     licked: Vec<u64>,
     tongue_ready: f32,
     egg_ready: f32,
@@ -227,25 +231,34 @@ pub fn tick(
     if pressed[0] && s.tongue.is_none() && s.t >= s.tongue_ready {
         // (at the nearest enemy ahead, else straight ahead)
         let here = HavokPosition(mouth.x, mouth.y, mouth.z, 0.0);
-        let to = combat::nearby(&here, TONGUE_REACH + 2.0, origin)
+        let near = combat::nearby(&here, TONGUE_REACH + 2.0, origin);
+        let target = near
             .iter()
             .filter(|t| t.shootable().is_some())
-            .map(&chest)
-            .filter(|c| (*c - mouth).with_y(0.0).normalize_or(face).dot(face) >= AHEAD_COS && (*c - mouth).length() <= TONGUE_REACH + 1.0)
-            .min_by(|a, b| (*a - mouth).length().total_cmp(&(*b - mouth).length()))
-            .unwrap_or(mouth + face * TONGUE_REACH);
-        let dir = (to - mouth).normalize_or(face);
-        s.tongue = Some((s.t, dir));
+            .map(|t| (t.key(), chest(t)))
+            .filter(|(_, c)| (*c - mouth).with_y(0.0).normalize_or(face).dot(face) >= TONGUE_COS && (*c - mouth).length() <= TONGUE_REACH + 1.0)
+            .min_by(|a, b| (a.1 - mouth).length().total_cmp(&(b.1 - mouth).length()));
+        let dir = target.map_or(face, |(_, c)| (c - mouth).normalize_or(face));
+        s.tongue = Some((s.t, dir, target.map(|(k, _)| k)));
         s.licked.clear();
         sound(SOUND_LICK, 0.5);
     }
     let mut tongue_tip = None;
-    if let Some((since, dir)) = s.tongue {
+    if let Some((since, mut dir, key)) = s.tongue {
         let p = (s.t - since) / TONGUE_TIME;
         if p >= 1.0 {
             s.tongue = None;
             s.tongue_ready = s.t + TONGUE_REST;
         } else {
+            // (it follows the enemy it went for, wherever it moves: it turns at most this fast)
+            if let Some(key) = key {
+                let here = HavokPosition(mouth.x, mouth.y, mouth.z, 0.0);
+                if let Some(c) = combat::nearby(&here, TONGUE_REACH + 3.0, origin).iter().find(|t| t.key() == key).map(&chest) {
+                    let want = (c - mouth).normalize_or(dir);
+                    dir = (dir + (want - dir) * (dt * 14.0).min(1.0)).normalize_or(dir);
+                    s.tongue = Some((since, dir, Some(key)));
+                }
+            }
             // out fast, back a little slower
             let k = if p < 0.4 { p / 0.4 } else { 1.0 - (p - 0.4) / 0.6 };
             let tip = mouth + dir * TONGUE_REACH * k;
@@ -269,6 +282,7 @@ pub fn tick(
                 if off <= TONGUE_WIDTH + body && y >= foot - 0.5 && y <= foot + tall + 0.5 {
                     s.licked.push(t.key());
                     combat.deal(player, &near, &[(i, Attack::Tongue, false)], tick);
+                    crate::lakitu::shake(0.4);
                     // a lick, an egg
                     if s.stock < EGGS_MAX {
                         s.stock += 1;
@@ -297,7 +311,7 @@ pub fn tick(
                 .map(&chest)
                 .filter(|c| {
                     let d = (*c - from).with_y(0.0);
-                    d.length() > 1.0 && d.normalize().dot(face) >= AHEAD_COS && ray(from, *c).is_none()
+                    d.length() > 1.0 && d.normalize().dot(face) >= TONGUE_COS && ray(from, *c).is_none()
                 })
                 .min_by(|a, b| (*a - from).length().total_cmp(&(*b - from).length()));
             // aimed: an arc that lands on it; else ahead, a little up, with his speed
@@ -350,6 +364,7 @@ pub fn tick(
             if (c - at).with_y(0.0).length() <= EGG_RADIUS + body && at.y >= foot - EGG_RADIUS && at.y <= foot + tall + EGG_RADIUS {
                 e.hit.push(t.key());
                 combat.deal(player, &near, &[(i, Attack::Egg, false)], tick);
+                crate::lakitu::shake(0.3);
                 crate::impact::egg_burst(at);
                 sound(SOUND_POP, 0.45);
                 return false;
