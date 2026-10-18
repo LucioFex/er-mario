@@ -24,10 +24,11 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 2. **Elden Ring Reforged (ERR)**, la **misma versión** en las dos PCs (Nexus Mods, mod 541).
    Se descomprime fuera de la carpeta del juego, por ejemplo en `C:\ERR`.
 3. **Seamless Co-op**, la **misma versión** en las dos PCs (Nexus Mods, mod 510; probado con la 2.0.1).
-4. **ER Mario, el mismo build** en las dos PCs: el mismo `er_mario.dll`, porque los paquetes llevan
-   una versión.
-   - Lo más fácil: el anfitrión le pasa al invitado su `er_mario.dll`.
-   - La otra opción es compilarlo con el fork (sección *Building* del README principal).
+4. **ER Mario, el mismo build** en las dos PCs, porque los paquetes llevan una versión. Bajar
+   `ER-Mario-coop.zip` del pre-release
+   [coop-2026-10-17](https://github.com/LucioFex/er-mario/releases/tag/coop-2026-10-17). Trae
+   `er_mario.dll`, un `er_mario.ini` de ejemplo y las licencias. Si después sale otro build, los dos
+   tienen que actualizar.
 5. **Una ROM de Super Mario 64 (US) propia** en cada PC (`.z64`, `.n64` o `.v64`).
    **La ROM no se comparte ni se sube a ningún lado.**
 
@@ -65,9 +66,8 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 ### 3. ER Mario dentro de Reforged
 
 1. Copiar a `C:\ERR\dll\offline\`:
-   - `er_mario.dll`
+   - `er_mario.dll` y `er_mario.ini`, del zip
    - la ROM propia de Super Mario 64 (US)
-   - un `er_mario.ini` (se puede copiar el de una instalación de ER Mario y editarlo)
 2. En `er_mario.ini`:
    - **PC de Luigi:** `character = luigi`
    - **PC de Mario:** sin esa línea, o `character = mario`
