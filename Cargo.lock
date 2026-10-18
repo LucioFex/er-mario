@@ -367,6 +367,7 @@ dependencies = [
  "glam",
  "hudhook",
  "ilhook",
+ "miniz_oxide 0.8.9",
  "num-bigint",
  "pelite",
  "png",

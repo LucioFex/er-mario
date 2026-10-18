@@ -36,6 +36,8 @@ base64 = "0.22"
 texpresso = "2"
 pelite = "0.10"
 png = "0.17"
+# DCX_DFLT (zlib): other mods' files, e.g. Reforged's material list (base_assets)
+miniz_oxide = "0.8"
 hudhook = "0.9.3"
 
 [build-dependencies]

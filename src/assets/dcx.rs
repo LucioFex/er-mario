@@ -49,11 +49,20 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, String> {
     if !data.starts_with(b"DCX\0") {
         return Ok(data.to_vec());
     }
-    if data.len() < 0x4C || &data[0x28..0x2C] != b"KRAK" {
-        return Err("unsupported DCX format".into());
+    if data.len() < 0x4C {
+        return Err("truncated DCX".into());
     }
     let (raw, comp) = (be32(data, 0x1C), be32(data, 0x20));
     let body = data.get(0x4C..0x4C + comp).ok_or("truncated DCX")?;
+    match &data[0x28..0x2C] {
+        b"KRAK" => {}
+        // zlib (mods' files: Reforged packs its material list so, base_assets)
+        b"DFLT" => {
+            let out = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body, raw).map_err(|e| format!("DFLT decompression failed ({:?})", e.status))?;
+            return if out.len() == raw { Ok(out) } else { Err(format!("DFLT gave {} bytes, {raw} expected", out.len())) };
+        }
+        other => return Err(format!("unsupported DCX format {}", String::from_utf8_lossy(other))),
+    }
     let o = oodle()?;
     let mut out = vec![0u8; raw];
     let n = unsafe {
@@ -107,4 +116,23 @@ pub fn compress(raw: &[u8]) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&comp);
     out.resize(out.len().div_ceil(16) * 16, 0);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reads_dflt() {
+        let raw: Vec<u8> = (0..5000u32).map(|i| (i * 7 % 251) as u8).collect();
+        let comp = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+        let mut dcx = vec![0u8; 0x4C];
+        dcx[..4].copy_from_slice(b"DCX\0");
+        dcx[0x1C..0x20].copy_from_slice(&(raw.len() as u32).to_be_bytes());
+        dcx[0x20..0x24].copy_from_slice(&(comp.len() as u32).to_be_bytes());
+        dcx[0x28..0x2C].copy_from_slice(b"DFLT");
+        dcx.extend_from_slice(&comp);
+        assert_eq!(super::decompress(&dcx).unwrap(), raw);
+        // an unknown format says which
+        dcx[0x28..0x2C].copy_from_slice(b"ZZZZ");
+        assert!(super::decompress(&dcx).unwrap_err().contains("ZZZZ"));
+    }
 }
