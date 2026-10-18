@@ -47,10 +47,15 @@ extern int er_mega;
 #define ER_LUNGE_MAX 42.0f
 #define ER_HAMMER_EXTRA 70.0f
 
-/** er-mario: turns Mario to the enemy the mod aims at, if there is one. */
+void er_turn_lag(struct MarioState *m, s16 from);
+
+/** er-mario: turns Mario to the enemy the mod aims at, if there is one (at once, but drawn turning
+ * over a few ticks: er_moves.c). */
 void er_aim_turn(struct MarioState *m) {
     if (er_aim_active) {
+        s16 from = m->faceAngle[1];
         m->faceAngle[1] = atan2s(er_aim_z - m->pos[2], er_aim_x - m->pos[0]);
+        er_turn_lag(m, from);
     }
 }
 

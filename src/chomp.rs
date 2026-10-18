@@ -50,6 +50,27 @@ const STRETCH_SPEED: f32 = 0.35;
 const STRETCH: f32 = 0.55;
 const SQUASH_TICKS: u32 = 5;
 const LINK_STRETCH: f32 = 0.3;
+/// a jump further than this in a tick (m) is the hook letting go, not flight (the cyclone flies
+/// it round metres a tick)
+const JUMP: f32 = 8.0;
+/// swung round him (the cyclone, a sweep; its speed round him in degrees a tick, eased this much
+/// a tick): from this fast the chain trails behind it in a curve, his hand leading the ball by a
+/// lag (degrees, and degrees per degree a tick, as er_moves.c's cyclone), bowed back along its
+/// middle (m, and m per degree a tick); from that fast its teeth lead, turned into the way it goes,
+/// and it stretches along it (all the way at the last speed)
+const SPIN_FROM: f32 = 3.0;
+const SPIN_FULL: f32 = 15.0;
+const SPIN_EASE: f32 = 0.5;
+const SPIN_LAG: f32 = 10.0;
+const SPIN_LAG_PER_SPEED: f32 = 0.55;
+const SPIN_BOW: f32 = 0.12;
+const SPIN_BOW_PER_SPEED: f32 = 0.006;
+const LEAD_FROM: f32 = 15.0;
+const LEAD: f32 = 0.8;
+const SPIN_STRETCH: f32 = 0.35;
+const SPIN_STRETCH_SPEED: f32 = 40.0;
+/// the chain only sags this slack (share of its length) and more
+const SAG_FROM: f32 = 0.1;
 
 struct State {
     out: bool,
@@ -64,9 +85,12 @@ struct State {
     last_centre: Option<Vec3>,
     step: f32,
     squash: u32,
+    /// how fast it goes round him (degrees a tick, part axes, eased), and its last angle round him
+    spin: f32,
+    round: Option<f32>,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0, last_centre: None, step: 0.0, squash: 0 });
+static STATE: Mutex<State> = Mutex::new(State { out: false, pos: None, scripted: false, born: None, look: Vec3::Z, jaw: 0.0, last_centre: None, step: 0.0, squash: 0, spin: 0.0, round: None });
 /// the Chomp is out and drawn, so it's the hook's head (hud.rs draws its chain, not the cap)
 static HOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -97,6 +121,8 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         s.last_centre = None;
         s.step = 0.0;
         s.squash = 0;
+        s.spin = 0.0;
+        s.round = None;
         HOOKING.store(false, std::sync::atomic::Ordering::Relaxed);
         return None;
     }
@@ -141,11 +167,24 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         let p = (t / POP_TIME).min(1.0);
         (if p < 0.6 { p / 0.6 * 1.2 } else { 1.2 - 0.2 * (p - 0.6) / 0.4 }).max(0.01)
     };
-    // it looks away from his hand (straining), and up or down the way it flies
+    // how fast it goes round him (swung by a move, not on the hook)
+    let round = centre.x.atan2(centre.z);
+    let turn = match s.round {
+        Some(r) if scripted && hooked.is_none() => (round - r + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI,
+        _ => 0.0,
+    };
+    s.round = Some(round);
+    s.spin += (turn.to_degrees() - s.spin) * SPIN_EASE;
+    let (speed, sense) = (s.spin.abs(), s.spin.signum());
+    let swung = ((speed - SPIN_FROM) / (SPIN_FULL - SPIN_FROM)).clamp(0.0, 1.0);
+    let lead = ((speed - LEAD_FROM) / LEAD_FROM).clamp(0.0, 1.0);
+    // it looks away from his hand (straining), and up or down the way it flies (swung fast round
+    // him, its teeth turned into the way it goes)
     let face = state.face_angle;
     let ahead = Vec3::new(-face.sin(), 0.0, face.cos());
     let away = (centre - hand).with_y(0.0);
     let flat = if away.length() > 0.3 { away.normalize() } else { ahead };
+    let flat = (flat + Vec3::new(flat.z, 0.0, -flat.x) * sense * lead * LEAD).normalize_or(flat);
     // (on the hook it looks along the chain, up or down, jaws wide)
     let (flat, scripted) = match hooked {
         Some(c) => ((c - hand).normalize_or(flat), true),
@@ -165,17 +204,21 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     // squash and stretch (its own axes: Z the way it looks)
     let step = s.last_centre.map_or(0.0, |c| (centre - c).length());
     s.last_centre = Some(centre);
-    if s.step > STRETCH_SPEED * 0.6 && step < s.step * 0.3 && step < 2.0 {
+    if s.step > STRETCH_SPEED * 0.6 && step < s.step * 0.3 && step < JUMP {
         s.squash = SQUASH_TICKS;
     }
     // (a jump of metres is the hook letting go, not flight)
-    s.step = if step < 2.0 { step } else { 0.0 };
+    s.step = if step < JUMP { step } else { 0.0 };
     let stretch = if s.squash > 0 {
         s.squash -= 1;
         let p = s.squash as f32 / SQUASH_TICKS as f32;
         Vec3::new(1.0 + 0.24 * p, 1.0 + 0.24 * p, 1.0 - 0.35 * p)
     } else {
-        let z = 1.0 + STRETCH * (s.step / STRETCH_SPEED).clamp(0.0, 1.0);
+        // (swung round, stretched along the way it goes, its teeth leading: by its speed round
+        // him, not its whole speed, a ball pulled long at the cyclone's metres a tick)
+        let flying = 1.0 + STRETCH * (s.step / STRETCH_SPEED).clamp(0.0, 1.0);
+        let swinging = 1.0 + SPIN_STRETCH * (speed / SPIN_STRETCH_SPEED).clamp(0.0, 1.0);
+        let z = flying + (swinging - flying) * lead;
         Vec3::new(1.0 / z.sqrt(), 1.0 / z.sqrt(), z)
     };
     // (a little wobble as it hops)
@@ -186,18 +229,29 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     parts[JAW] = PartPose { rot: (body * open).normalize(), pos: centre + body * (hinge - open * hinge) * size, scale: size, stretch };
     // the chain: from his hand to the back of the ball, its pairs of links spread along it (a
     // little bigger when it's long, so it reads as a chain), sagging when slack (and swaying a
-    // little); a pair's second link is turned a quarter, so the next pair's first hooks into it
+    // little); a pair's second link is turned a quarter, so the next pair's first hooks into it.
+    // Swung round him it trails the ball in a curve: his hand leads it round by a lag, the links
+    // turned less and less of it the nearer the ball, bowed back along the middle
     let anchor = centre - look * CHOMP_R * 0.85 * size;
     let span = anchor - hand;
     let slack = 1.0 - (span.length() / TAUT).min(1.0);
-    let sag = SAG * slack;
+    let sag = SAG * ((slack - SAG_FROM) / (1.0 - SAG_FROM)).max(0.0);
     let side = Vec3::Y.cross(span).normalize_or(right);
     let links = (span.length() / (CHAIN_LINKS as f32 * PAIR_LEN)).clamp(1.0, 2.1) * size.min(1.0);
+    let (reach, height, toward) = (span.with_y(0.0).length(), span.y, span.x.atan2(span.z));
+    let lag = (SPIN_LAG + SPIN_LAG_PER_SPEED * speed).to_radians() * sense * swung;
+    let bow = (SPIN_BOW + SPIN_BOW_PER_SPEED * speed) * swung;
+    let curve = |u: f32| {
+        let yaw = toward + lag * (1.0 - u.max(0.0).powf(0.8));
+        let behind = -Vec3::new(yaw.cos(), 0.0, -yaw.sin()) * sense;
+        hand + Vec3::new(yaw.sin() * reach * u, height * u, yaw.cos() * reach * u) + behind * (bow * 4.0 * u * (1.0 - u))
+            - Vec3::Y * (sag * 4.0 * u * (1.0 - u))
+    };
     for k in 0..CHAIN_LINKS {
         let u = (k as f32 + 0.5) / CHAIN_LINKS as f32;
         let sway = (t * 6.0 + k as f32 * 0.9).sin() * 0.05 * slack * (u * (1.0 - u) * 4.0);
-        let p = hand + span * u - Vec3::Y * (sag * 4.0 * u * (1.0 - u)) + side * sway;
-        let along = (span - Vec3::Y * (sag * 4.0 * (1.0 - 2.0 * u))).normalize_or(Vec3::Y);
+        let p = curve(u) + side * sway;
+        let along = (curve(u + 0.05) - curve(u - 0.05)).normalize_or(Vec3::Y);
         // (turned about the chain from a steady side, not the vertical: a chain going straight up
         // in a slam didn't twist about)
         let x = (side - along * side.dot(along)).try_normalize().unwrap_or(Vec3::X);
@@ -221,4 +275,6 @@ pub fn clear() {
     s.last_centre = None;
     s.step = 0.0;
     s.squash = 0;
+    s.spin = 0.0;
+    s.round = None;
 }

@@ -132,16 +132,37 @@ pub fn relative_parts(mats: &[f32], count: i32, mario: [f32; 3], eye_cell: u8, p
     Some(out)
 }
 
+/// Between two ticks a part that moved this far (m) jumped (a teleport, a part shown again): it
+/// isn't blended. The Chain Chomp and its chain go round metres from his hand in a tick (the
+/// cyclone), so they get further, and go round his hand, not across.
+const BLEND_JUMP: f32 = 2.0;
+const BLEND_JUMP_CHOMP: f32 = 8.0;
+
+/// The pose a share `t` of the way from one tick's to the next's.
 pub fn blend(a: &[PartPose; PARTS], b: &[PartPose; PARTS], t: f32) -> [PartPose; PARTS] {
     let mut out = *b;
     for i in 0..PARTS {
-        if a[i].pos.distance(b[i].pos) < 2.0 {
-            out[i].pos = a[i].pos.lerp(b[i].pos, t);
+        let chomp = (CHOMP..CHAIN + CHAIN_LINKS).contains(&i);
+        if a[i].pos.distance(b[i].pos) < if chomp { BLEND_JUMP_CHOMP } else { BLEND_JUMP } {
+            out[i].pos = if chomp { round_hand(a, b, i, t) } else { a[i].pos.lerp(b[i].pos, t) };
             out[i].rot = a[i].rot.slerp(b[i].rot, t);
             out[i].stretch = a[i].stretch.lerp(b[i].stretch, t);
         }
     }
     out
+}
+
+/// Part `i`'s place between two ticks, round his right hand: its angle about it the short way, its
+/// distance and height from it in between (a straight line cut across a swing, inside the chain).
+fn round_hand(a: &[PartPose; PARTS], b: &[PartPose; PARTS], i: usize, t: f32) -> Vec3 {
+    let hand = a[RIGHT_HAND].pos.lerp(b[RIGHT_HAND].pos, t);
+    let (da, db) = (a[i].pos - a[RIGHT_HAND].pos, b[i].pos - b[RIGHT_HAND].pos);
+    let (ra, rb) = (da.with_y(0.0).length(), db.with_y(0.0).length());
+    let (ya, yb) = (da.x.atan2(da.z), db.x.atan2(db.z));
+    let turn = (yb - ya + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    let yaw = ya + turn * t;
+    let r = ra + (rb - ra) * t;
+    hand + Vec3::new(yaw.sin() * r, da.y + (db.y - da.y) * t, yaw.cos() * r)
 }
 
 /// The pose to show this frame, in character space (set by the Mario frame, applied by `apply`).

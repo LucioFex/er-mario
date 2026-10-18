@@ -993,6 +993,9 @@ static u32 set_mario_action_cutscene(struct MarioState *m, u32 action, UNUSED u3
 
 /* er-mario: with the hammer out, B's punches become its swings (er_moves.c) */
 u32 er_hammer_redirect(struct MarioState *m, u32 action, u32 *actionArg);
+/* er-mario: the actions Mario has been put in so far (er_moves.c: a string's next blow is the same
+ * action again, a new one all the same) */
+u32 er_action_changes = 0;
 
 /**
  * Puts Mario into a given action, putting Mario through the appropriate
@@ -1031,6 +1034,7 @@ u32 set_mario_action(struct MarioState *m, u32 action, u32 actionArg) {
     m->actionArg = actionArg;
     m->actionState = 0;
     m->actionTimer = 0;
+    er_action_changes++;
 
     return TRUE;
 }
@@ -1731,6 +1735,8 @@ void func_sh_8025574C(void) {
 /**
  * Main function for executing Mario's behavior.
  */
+void er_moves_end_tick(struct MarioState *m);
+
 s32 execute_mario_action(UNUSED struct Object *o) {
     s32 inLoop = TRUE;
 
@@ -1780,6 +1786,8 @@ s32 execute_mario_action(UNUSED struct Object *o) {
                     break;
             }
         }
+        // er-mario: what's left of a turn is drawn easing out (er_moves.c)
+        er_moves_end_tick(gMarioState);
 
         sink_mario_in_quicksand(gMarioState);
         squish_mario_model(gMarioState);
