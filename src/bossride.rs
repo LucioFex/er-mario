@@ -174,6 +174,8 @@ pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
     let chr = (ready && !guest && !hands && !boss && seated)
         .then(|| unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(h)))
         .flatten();
+    // (the coins last: only for a ride that really starts)
+    let chr = chr.filter(|_| crate::coins::pay(crate::coins::COST_RIDE, "a capture"));
     let Some(chr) = chr else {
         worker::call("ride buzz", |_| unsafe { sm64::sm64_play_sound_global(SOUND_BUZZ) });
         return false;

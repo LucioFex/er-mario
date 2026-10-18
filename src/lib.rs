@@ -2553,6 +2553,11 @@ fn frame(data: &FD4TaskData) {
         log("the Tarnished died: Mario dies");
         stats::update(|s| s.deaths += 1);
         coins::clear();
+        // (half the purse stays in a bag where he fell)
+        {
+            let p = player_ref.chr_ins.modules.physics.position;
+            coins::die(glam::Vec3::new(p.0, p.1, p.2), player_ref.chr_ins.block_id);
+        }
         fireball::clear();
         boomerang::clear();
         blown::clear();
@@ -2945,11 +2950,27 @@ fn frame(data: &FD4TaskData) {
         let kills = if m.dead {
             0
         } else {
-            for p in m.combat.kills(m.ticks) {
-                coins::spawn(p);
+            // (alone, the enemies Mario defeated drop coins; in co-op each player's game drops them
+            // where enemies near them die, so each sees and takes their own)
+            let fallen = m.combat.kills(m.ticks);
+            if coop::active() {
+                let near = targets.iter().filter_map(|t| t.shootable().map(|h| (t.key(), *h))).collect();
+                for p in coins::watch(near) {
+                    coins::spawn(p);
+                }
+            } else {
+                for p in fallen {
+                    coins::spawn(p);
+                }
             }
             let me = to_er(m.origin, m.state.position);
+            coins::set_here(player_ref.chr_ins.block_id);
             let n = coins::collect(glam::Vec3::new(me.0, me.1, me.2));
+            if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2), player_ref.chr_ins.block_id) {
+                log(format!("coins: {amount} coins recovered"));
+                style::callout("COINS BACK", None, [1.0, 0.85, 0.25], true, 0.0);
+                worker::call("coins back", |_| unsafe { sm64::sm64_play_sound_volume(0x7828_9081_u32 as i32, 0.25) });
+            }
             // coins behind walls and hills stay hidden: a ray from the camera to each coin
             if let (Ok(cam), Ok(havok)) = (unsafe { CSCamera::instance() }, unsafe { eldenring::cs::CSHavokMan::instance() }) {
                 let c = cam.pers_cam_1.position();

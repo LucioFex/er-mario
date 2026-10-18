@@ -1,11 +1,23 @@
 //! SM64's yellow coins, dropped by the enemies Mario defeats: they spin where the enemy fell, and
-//! touching one heals a wedge (and counts on the HUD). They blink out after 20 s, like SM64's.
+//! touching one heals a wedge and goes into his purse (the HUD's counter, kept per character:
+//! stats.rs). They blink out after 20 s, like SM64's. The purse is what the big abilities cost
+//! (`pay`: the capture, the Mega and Rock Mushrooms, the wing cap), and, like Elden Ring's runes,
+//! half of it is lost when Mario dies, left in a bag where he fell: touch it to have it back (dying
+//! again first loses it for good). In co-op every player sees and takes coins of their own: each
+//! one's game drops them where enemies near them die (`watch`).
 
 use std::sync::Mutex;
 use std::time::Instant;
 
+use fromsoftware_shared::FromStatic;
 use glam::Vec3;
 
+
+/// what the abilities cost (coins), on top of their waits
+pub const COST_RIDE: u32 = 8;
+pub const COST_MEGA: u32 = 8;
+pub const COST_ROCK: u32 = 5;
+pub const COST_WING: u32 = 3;
 
 const LIFETIME: f32 = 20.0;
 const BLINK: f32 = 3.0;
@@ -20,6 +32,108 @@ struct Coin {
 }
 
 static COINS: Mutex<Vec<Coin>> = Mutex::new(Vec::new());
+
+/// Pays `cost` coins out of the purse if it holds them (true), else a "NEED COINS" and no (false).
+pub fn pay(cost: u32, what: &str) -> bool {
+    // (looked at and taken in one go: the character can change in between, in a loading screen)
+    let (mut paid, mut had) = (false, 0);
+    crate::stats::update(|s| {
+        had = s.coins;
+        if s.coins >= cost {
+            s.coins -= cost;
+            paid = true;
+        }
+    });
+    if !paid {
+        // (a held button asks every frame: once a second is enough)
+        static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed().as_secs_f32() > 1.0) {
+            *last = Some(Instant::now());
+            crate::style::callout("NEED COINS", None, [1.0, 0.8, 0.3], false, 0.0);
+            crate::log(format!("coins: {what} costs {cost}, the purse has {had}"));
+        }
+        return false;
+    }
+    crate::log(format!("coins: {what} cost {cost}"));
+    true
+}
+
+/// The map block the player is in now (set every frame): the bag is only shown and pointed to
+/// there, its position means nothing in another block.
+static HERE: Mutex<Option<eldenring::cs::BlockId>> = Mutex::new(None);
+
+pub fn set_here(block: eldenring::cs::BlockId) {
+    *HERE.lock().unwrap_or_else(|e| e.into_inner()) = Some(block);
+}
+
+/// The coins lost in the last death, in a bag where he fell (physics coordinates, the map block
+/// and how many).
+struct Bag {
+    pos: Vec3,
+    block: eldenring::cs::BlockId,
+    amount: u32,
+}
+
+static BAG: Mutex<Option<Bag>> = Mutex::new(None);
+
+/// Mario died at `pos` (in `block`): half the purse stays there in a bag, the one from an earlier
+/// death is gone.
+pub fn die(pos: Vec3, block: eldenring::cs::BlockId) {
+    let mut lost = 0;
+    crate::stats::update(|s| {
+        lost = s.coins / 2;
+        s.coins -= lost;
+    });
+    let mut bag = BAG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(old) = bag.take() {
+        crate::log(format!("coins: the bag of {} coins from the last death is gone", old.amount));
+    }
+    if lost > 0 {
+        *bag = Some(Bag { pos: pos + Vec3::Y * 0.05, block, amount: lost });
+        crate::log(format!("coins: died, {lost} coins left in a bag"));
+    }
+}
+
+/// The bag on the ground: where and how many (the HUD draws it, the compass points to it).
+pub fn bag() -> Option<(Vec3, u32)> {
+    let here = *HERE.lock().unwrap_or_else(|e| e.into_inner());
+    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|b| here == Some(b.block)).map(|b| (b.pos, b.amount))
+}
+
+/// Mario (feet at `mario`, in `block`) touches the bag: the coins back in his purse. How many.
+pub fn collect_bag(mario: Vec3, block: eldenring::cs::BlockId) -> Option<u32> {
+    let mut bag = BAG.lock().unwrap_or_else(|e| e.into_inner());
+    let b = bag.as_ref().filter(|b| b.block == block)?;
+    let d = b.pos - mario;
+    if Vec3::new(d.x, 0.0, d.z).length() > 1.4 || d.y < -1.0 || d.y > 2.0 {
+        return None;
+    }
+    let amount = b.amount;
+    *bag = None;
+    drop(bag);
+    crate::stats::update(|s| s.coins += amount);
+    crate::log(format!("coins: the bag is back, {amount} coins"));
+    Some(amount)
+}
+
+/// Co-op: the enemies near this player now (key, handle); those that were here before and have
+/// died since drop a coin for this player, wherever their blow came from: where they fell.
+pub fn watch(now: Vec<(u64, eldenring::cs::FieldInsHandle)>) -> Vec<Vec3> {
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut dead = Vec::new();
+    if let Ok(wcm) = unsafe { eldenring::cs::WorldChrMan::instance() } {
+        for (key, handle) in seen.iter().filter(|(k, _)| !now.iter().any(|(n, _)| n == k)) {
+            let _ = key;
+            if let Some(chr) = wcm.chr_ins_by_handle(handle).filter(|c| c.modules.data.hp <= 0) {
+                let p = chr.modules.physics.position;
+                dead.push(Vec3::new(p.0, p.1, p.2));
+            }
+        }
+    }
+    *seen = now;
+    dead
+}
 
 /// A coin where an enemy fell (its feet, in the game's physics coordinates).
 pub fn spawn(pos: Vec3) {
@@ -59,12 +173,19 @@ pub fn collect(mario: Vec3) -> u32 {
 
 /// The game re-based its physics coordinates by `d`.
 pub fn shift(d: Vec3) {
+    if let Some(b) = BAG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        b.pos += d;
+    }
     for c in COINS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
         c.pos += d;
     }
 }
 
+static SEEN: Mutex<Vec<(u64, eldenring::cs::FieldInsHandle)>> = Mutex::new(Vec::new());
+
 pub fn clear() {
+    // (and the co-op watch starts over: nobody who died while Mario was down drops a coin)
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).clear();
     COINS.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 

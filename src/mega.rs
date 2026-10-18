@@ -137,6 +137,8 @@ pub fn tick(right: bool, can_start: bool, can_stay: bool, room: impl Fn() -> boo
                 } else if !room() {
                     log("mega: no room for a giant here");
                     sounds(vec![SOUND_BUZZ]);
+                } else if !crate::coins::pay(crate::coins::COST_MEGA, "the Mega Mushroom") {
+                    sounds(vec![SOUND_BUZZ]);
                 } else {
                     log("mega: growing");
                     s.phase = Phase::Growing(Instant::now());

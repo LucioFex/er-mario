@@ -214,6 +214,19 @@ turns gently to keep it in view, and in an air combo it rises with Mario, backs 
 levels out to look up at the fight. A big enemy that gets between the camera
 and Mario (or around the camera) turns see-through until it's out of the way.
 
+**Coins as a purse.** The coin counter (kept per character) is now money, and each coin still heals
+a wedge. The big abilities cost coins on top of their waits: **Capture 8**, **Mega Mushroom 8**,
+**Rock Mushroom 5**, **wing cap 3** (a "NEED COINS" if the purse is short; `src/coins.rs`).
+Like Elden Ring's runes, **half the purse is lost when Mario dies and stays in a bag where he fell**:
+a big spinning coin in a golden glow, marked on the compass with its distance; touching it gives
+the coins back. Dying again before that loses that bag for good (the bag isn't kept between
+sessions). In co-op every player has a purse and coins of their own: each game drops a coin
+where an enemy near that player dies, so Mario and Luigi each see and take theirs.
+
+**Compass.** Elden Ring's compass is hidden with the rest of its HUD, so there is one at the top
+middle: a strip with N / NE / E / SE ..., ticks every 15° and the way the camera looks (north is
++Z; if it comes out turned, `compass_north = 180` in `er_mario.ini` turns it).
+
 **Enemy grabs.** Elden Ring's grabs work on Mario: a troll's fist, a beast's jaws, a boss lifting
 him up. The game holds him and carries him through its throw while Mario dangles in its grip,
 kicking and groaning (SM64's Chuckya grab); one that holds him inside its body swallows him whole,

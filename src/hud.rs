@@ -507,6 +507,8 @@ pub fn install(module: usize) -> bool {
     }
 }
 
+static BAG_START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+
 fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
@@ -600,6 +602,13 @@ impl Mesh {
             dl.add_triangle(p[0], p[1], p[2], col).thickness(1.0).build();
         }
     }
+}
+
+/// The way the game's camera looks.
+fn camera_forward() -> Option<Vec3> {
+    let cam = unsafe { CSCamera::instance() }.ok()?;
+    let f = cam.pers_cam_1.forward();
+    Some(Vec3::new(f.0, f.1, f.2)).filter(|v| v.length() > 0.1)
 }
 
 /// Where the game's camera is.
@@ -761,6 +770,20 @@ impl ImguiRenderLoop for Overlay {
                 continue;
             }
             image(IMG_COIN_FRAMES + (age * 15.0) as usize % 4, foot[0] - h * 0.5, head[1], h, h);
+        }
+
+        // the bag of coins lost in the last death: a big spinning coin in a golden glow
+        if let Some((pos, _)) = crate::coins::bag() {
+            let lift = pos + Vec3::Y * 0.9;
+            if let (Some((c, z)), Some((top, _))) = (project(lift, size), project(lift + Vec3::Y * 0.5, size)) {
+                let h = (c[1] - top[1]) * 2.0;
+                if z < 80.0 && h > 1.0 {
+                    let clock = Instant::now().duration_since(*BAG_START).as_secs_f32();
+                    let pulse = 0.8 + 0.2 * (clock * 3.0).sin();
+                    dl.add_image(textures[IMG_GLOW], [c[0] - h * 1.4, c[1] - h * 1.4], [c[0] + h * 1.4, c[1] + h * 1.4]).col([1.0, 0.8, 0.2, 0.55 * pulse]).build();
+                    image(IMG_COIN_FRAMES + (clock * 12.0) as usize % 4, c[0] - h * 0.5, c[1] - h * 0.5, h, h);
+                }
+            }
         }
 
         // Mario's fireball: the charge at his hand, the shots and their bursts
@@ -1247,6 +1270,52 @@ impl ImguiRenderLoop for Overlay {
                 }
             };
             let line = |text: &str, right: f32, cy: f32, g: f32, gap: f32, tint: [f32; 4]| line_wave(text, right, cy, g, gap, tint, &|_| 0.0);
+            // the compass (Elden Ring's own is hidden with the rest of its HUD): a strip at the top with
+            // the way the camera looks (north is +Z, `compass_north` in the ini turns it), and the bag
+            // of lost coins on it
+            if let (Some(fwd), Some(eye)) = (camera_forward(), camera_position()) {
+                let turn: f32 = crate::paths::config("compass_north").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                let heading = fwd.x.atan2(fwd.z).to_degrees() + turn;
+                let (span, w, cx, y0) = (110.0f32, size[0] * 0.28, size[0] * 0.5, 14.0 * px);
+                let rel = |deg: f32| ((deg - heading + 540.0).rem_euclid(360.0)) - 180.0;
+                let fade = |d: f32| (1.0 - (d.abs() / (span * 0.5)).powi(2)).clamp(0.0, 1.0);
+                dl.add_line([cx - w * 0.5, y0 + 13.0 * px], [cx + w * 0.5, y0 + 13.0 * px], [1.0, 1.0, 1.0, 0.22]).thickness(px.max(1.0)).build();
+                const NAMES: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+                for step in 0..24 {
+                    let deg = step as f32 * 15.0;
+                    let d = rel(deg);
+                    if d.abs() > span * 0.5 {
+                        continue;
+                    }
+                    let x = cx + d / span * w;
+                    let a = fade(d);
+                    let major = step % 3 == 0;
+                    let h = if major { 8.0 } else { 4.0 } * px;
+                    dl.add_line([x, y0 + 13.0 * px - h], [x, y0 + 13.0 * px], [1.0, 1.0, 1.0, 0.7 * a]).thickness(px.max(1.0)).build();
+                    if major {
+                        let name = NAMES[step / 3];
+                        let g = if name.len() == 1 { 12.0 } else { 9.0 } * px;
+                        let n = name.chars().count() as f32;
+                        line(name, x + n * g * 0.8 * 0.5, y0 + 2.0 * px, g, 0.8, if step == 0 { [1.0, 0.4, 0.35, a] } else { [1.0, 1.0, 1.0, a] });
+                    }
+                }
+                // (where he's looking: a little marker under the strip)
+                dl.add_triangle([cx - 4.0 * px, y0 + 20.0 * px], [cx + 4.0 * px, y0 + 20.0 * px], [cx, y0 + 15.0 * px], [1.0, 0.85, 0.3, 0.9]).filled(true).build();
+                // the bag of coins lost in the last death
+                if let Some((bag, _)) = crate::coins::bag() {
+                    let d = rel((bag.x - eye.x).atan2(bag.z - eye.z).to_degrees() + turn);
+                    if d.abs() <= span * 0.5 {
+                        let x = cx + d / span * w;
+                        let pulse = 0.75 + 0.25 * (clock * 4.0).sin();
+                        dl.add_circle([x, y0 + 13.0 * px], 5.0 * px, [1.0, 0.85, 0.25, pulse]).filled(true).build();
+                        dl.add_circle([x, y0 + 13.0 * px], 5.0 * px, [0.4, 0.25, 0.0, 0.9]).thickness(px.max(1.0)).build();
+                        let metres = ((bag.x - eye.x).powi(2) + (bag.z - eye.z).powi(2)).sqrt();
+                        let text = format!("{}M", metres as u32);
+                        let g = 8.0 * px;
+                        line(&text, x + text.chars().count() as f32 * g * 0.8 * 0.5, y0 + 27.0 * px, g, 0.8, [1.0, 0.9, 0.4, 0.9]);
+                    }
+                }
+            }
             let right = size[0] - 24.0 * px;
             let top = size[1] * 0.30;
             if let Some(st) = crate::style::show() {

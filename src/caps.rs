@@ -22,6 +22,8 @@ const FLAG: [u32; 3] = [0x4, 0x8, 0x2];
 const TICKS: [u16; 3] = [600, 1200, 600];
 /// seconds before it can be worn again, from when it comes off
 const RECHARGE: [f32; 3] = [60.0, 55.0, 60.0];
+/// the coins each cap costs (the Metal Cap is retired: free)
+const COST: [u32; 3] = [0, crate::coins::COST_WING, 0];
 /// the blows of Metal Mario hit this much harder
 pub const METAL_DAMAGE: f32 = 1.6;
 /// the cap music's volume, and while a boss's health bar shows (the game's own music matters)
@@ -119,7 +121,7 @@ pub fn tick(id: i32, flags: u32, dpad: [bool; 4], allowed: bool, boss: bool) -> 
     let ready = state.ready_at[kind as usize].is_none_or(|t| Instant::now() >= t);
     drop(state);
     // (no cap on Mega Mario: Lakitu's buzz)
-    if now == Some(kind) || !ready || crate::mega::active() || crate::mega::changing() {
+    if now == Some(kind) || !ready || crate::mega::active() || crate::mega::changing() || !crate::coins::pay(COST[kind as usize], NAMES[kind as usize]) {
         worker::call("cap buzz", |_| unsafe { sm64::sm64_play_sound_global(SOUND_BUZZ) });
         return changed;
     }

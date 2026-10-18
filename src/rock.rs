@@ -107,7 +107,7 @@ pub fn tick(left: bool, can_start: bool, can_stay: bool, id: i32, action: u32, f
         return;
     }
     let ready = s.ready_at.is_none_or(|t| Instant::now() >= t);
-    if !ready || !can_start {
+    if !ready || !can_start || !crate::coins::pay(crate::coins::COST_ROCK, "the Rock Mushroom") {
         drop(s);
         worker::call("rock buzz", |_| unsafe { sm64::sm64_play_sound_global(SOUND_BUZZ) });
         return;
