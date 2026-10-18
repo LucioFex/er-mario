@@ -27,11 +27,11 @@ pub const MAX_OUT: u32 = 3;
 const _: () = assert!(MAX_OUT as usize == RANGS);
 /// how far one flies (m), the launcher's and the big one's at most, how long the way out takes
 /// (s), how far it curves to the side (m), how high the launcher's arc goes (m)
-const RANGE: f32 = 12.0;
-const UPPER_RANGE: f32 = 7.0;
-const BIG_RANGE: f32 = 28.0;
-const OUT_TIME: f32 = 0.5;
-const BIG_OUT_TIME: f32 = 0.9;
+const RANGE: f32 = 18.0;
+const UPPER_RANGE: f32 = 9.0;
+const BIG_RANGE: f32 = 36.0;
+const OUT_TIME: f32 = 0.6;
+const BIG_OUT_TIME: f32 = 1.05;
 const CURVE: f32 = 1.3;
 const UPPER_ARC: f32 = 2.6;
 /// it flies a little past the enemy it was turned to (m)
@@ -58,10 +58,10 @@ const RADIUS: f32 = 40.0;
 const SIZE: f32 = 0.55;
 const BIG_SIZE: f32 = 1.5;
 /// turned to the nearest enemy within this range (m) and cone (cos 50°) in front
-const AIM_RANGE: f32 = 25.0;
+const AIM_RANGE: f32 = 30.0;
 const AIM_CONE_COS: f32 = 0.64;
 /// the big one's: farther and wider (cos 70°)
-const BIG_AIM_RANGE: f32 = 40.0;
+const BIG_AIM_RANGE: f32 = 45.0;
 const BIG_AIM_CONE_COS: f32 = 0.34;
 /// the fan's three: this far apart (radians)
 const FAN: f32 = 0.38;

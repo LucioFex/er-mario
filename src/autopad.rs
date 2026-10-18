@@ -10,10 +10,15 @@ use std::time::{Instant, SystemTime};
 use windows::Win32::UI::Input::XboxController::*;
 
 use crate::log;
+use fromsoftware_shared::FromStatic;
 
 struct Step {
     /// `GO`: the left stick steers to the nearest hostile (stops 4 m off it)
     seek: bool,
+    /// `SPAM` / `SPAMn`: a punch bullet every frame in front of the Tarnished (testing the bullet
+    /// pools), with spawn request variant n
+    spam: bool,
+    variant: u32,
     buttons: u16,
     ms: u32,
     sticks: [f32; 4],
@@ -60,9 +65,15 @@ fn parse(text: &str) -> Vec<Step> {
         let mut buttons = 0;
         let mut triggers = [0.0; 2];
         let mut seek = false;
+        let mut spam = false;
+        let mut variant = 0;
         for n in names.split('+') {
             match n.to_ascii_uppercase().as_str() {
                 "GO" => seek = true,
+                v if v.starts_with("SPAM") => {
+                    spam = true;
+                    variant = v[4..].parse().unwrap_or(0);
+                }
                 "LT" => triggers[0] = 1.0,
                 "RT" => triggers[1] = 1.0,
                 _ => buttons |= button(n).unwrap_or(0),
@@ -73,7 +84,7 @@ fn parse(text: &str) -> Vec<Step> {
         if nums.len() > 4 {
             triggers = [at(4).max(triggers[0]), at(5).max(triggers[1])];
         }
-        out.push(Step { seek, buttons, ms, sticks: [at(0), at(1), at(2), at(3)], triggers });
+        out.push(Step { seek, spam, variant, buttons, ms, sticks: [at(0), at(1), at(2), at(3)], triggers });
     }
     out
 }
@@ -119,6 +130,7 @@ pub fn apply(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     }
     let Some(i) = current else {
         log("autopad: done");
+        SPAMMING.store(false, std::sync::atomic::Ordering::Relaxed);
         s.started = None;
         return connected(rc);
     };
@@ -127,6 +139,11 @@ pub fn apply(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         log(format!("autopad: step {}", i + 1));
     }
     let step = &s.steps[i];
+    SPAMMING.store(step.spam, std::sync::atomic::Ordering::Relaxed);
+    if s.logged != i {
+        let counters = unsafe { eldenring::cs::CSBulletManager::instance() }.map_or(0, |m| unsafe { *((m as *const _ as usize + 0x1d4) as *const u32) });
+        log(format!("autopad: step {} variant {} spam {}, holders so far {counters}", i + 1, step.variant, step.spam));
+    }
     let st = unsafe { &mut *state };
     if rc != 0 {
         *st = XINPUT_STATE::default();
@@ -156,6 +173,8 @@ pub fn apply(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
     0
 }
 
+static SPAMMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The stick that heads for the nearest hostile (screen right, forward), from the game thread.
 static SEEK: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
 
@@ -174,6 +193,56 @@ pub fn report(player: &eldenring::cs::ChrIns) {
     }
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     seek(player, wcm);
+    if SPAMMING.load(std::sync::atomic::Ordering::Relaxed) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        static ERRS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        static PATCHED: std::sync::Once = std::sync::Once::new();
+        PATCHED.call_once(|| {
+            crate::combat::patch_for_test();
+        });
+        let p = player.modules.physics.position;
+        let r = crate::combat::shoot(player, &eldenring::position::HavokPosition(p.0 + 1.0, p.1, p.2, 0.0), 65);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if r != "Ok(())" {
+            ERRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if n % 50 == 0 {
+            // (the manager's counters: each pool's alive and ever-allocated, then four more)
+            let counters = unsafe { eldenring::cs::CSBulletManager::instance() }.map_or(Vec::new(), |m| {
+                let base = m as *const _ as usize;
+                [0x18, 0x1c, 0x38, 0x3c, 0x58, 0x5c, 0x1d0, 0x1d4, 0x1d8, 0x1dc].iter().map(|o| unsafe { *((base + o) as *const u32) }).collect()
+            });
+            log(format!("autopad: spammed {n} bullets, {} failed, manager counters {counters:?}", ERRS.load(std::sync::atomic::Ordering::Relaxed)));
+            if n == 100 {
+                // what the leaking pool holds: its head entry's class, and what its first qwords point to
+                if let Ok(m) = unsafe { eldenring::cs::CSBulletManager::instance() } {
+                    let base = m as *const _ as usize;
+                    let head = unsafe { *((base + 0x28) as *const usize) };
+                    let mut line = format!("autopad: leaking pool head {head:#x} class {:?}:", crate::explore::class_of(head));
+                    for off in (0..0x9d0).step_by(8) {
+                        if let Some(name) = crate::explore::class_of(head + off) {
+                            line += &format!(" embeds +{off:#x} {name};");
+                        }
+                        if let Some(q) = crate::explore::read_u64(head + off).map(|v| v as usize) {
+                            if let Some(name) = crate::explore::class_of(q) {
+                                line += &format!(" +{off:#x}->{name};");
+                            }
+                        }
+                    }
+                    log(line);
+                }
+            }
+        }
+    }
+    // the Tarnished's animations as they change (a hit's reaction plays on him even when Mario
+    // shows nothing)
+    {
+        static ANIM: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+        let a = crate::current_anim(player);
+        if a != -1 && ANIM.swap(a, std::sync::atomic::Ordering::Relaxed) != a {
+            log(format!("autopad: Tarnished anim {a}, hp {}/{}, last hit by {:?}", player.modules.data.hp, player.modules.data.max_hp, crate::combat::last_attacker(player).0));
+        }
+    }
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     if last.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0) {
         return;
@@ -199,18 +268,49 @@ pub fn report(player: &eldenring::cs::ChrIns) {
             let efwd = glam::Quat::from_xyzw(eo.0, eo.1, eo.2, eo.3).mul_vec3(glam::vec3(0.0, 0.0, -1.0));
             let deg = |a: f32| ((a.to_degrees() + 540.0) % 360.0 - 180.0).round() as i32;
             out.push((d.length(), format!(
-                "c{:04} {:.0} m at {}°, faces {}°, anim {}",
+                "c{:04} {:.0} m at {}°, faces {}°, hp {}, anim {}",
                 chr.character_id,
                 d.length(),
                 deg(yaw(d) - yaw(fwd)),
                 deg(yaw(efwd) - yaw(-d)),
+                chr.modules.data.hp,
                 crate::current_anim(chr)
             )));
         }
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // (once: the Tarnished's effects that change how enemies see and hear him, and his animation)
+    static STEALTH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !STEALTH.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let effects: Vec<String> = player
+            .special_effect
+            .entries()
+            .filter_map(|e| {
+                let p = unsafe { e.param_data?.as_ref() };
+                Some(format!(
+                    "{} (prio {:.2}, sight enemy x{:.2} +{:.1}, hearing enemy x{:.2} +{:.1}, sight x{:.2} +{:.1}, hearing x{:.2} +{:.1}, sound lvl {})",
+                    e.param_id,
+                    p.target_priority(),
+                    p.sight_search_enemy_rate(),
+                    p.sight_search_enemy_add(),
+                    p.hearing_search_enemy_rate(),
+                    p.hearing_search_enemy_add(),
+                    p.sight_search_rate(),
+                    p.sight_search_add(),
+                    p.hearing_search_rate(),
+                    p.hearing_search_add(),
+                    p.hearing_ai_sound_level()
+                ))
+            })
+            .collect();
+        log(format!("autopad: Tarnished anim {}, effects: {}", crate::current_anim(player), effects.join(" | ")));
+    }
     let list: Vec<String> = out.into_iter().take(6).map(|o| o.1).collect();
-    log(format!("autopad: hostiles {}", if list.is_empty() { "none".into() } else { list.join(" | ") }));
+    let bullets = unsafe { eldenring::cs::CSBulletManager::instance() }.map_or((0, 0), |m| {
+        let me = crate::combat::handle_key(&player.field_ins_handle);
+        m.bullets().fold((0, 0), |(n, mine), b| (n + 1, mine + (crate::combat::handle_key(&b.targeting_owner.owner_chr_handle) == me) as u32))
+    });
+    log(format!("autopad: bullets alive {} ({} the player's), hostiles {}", bullets.0, bullets.1, if list.is_empty() { "none".into() } else { list.join(" | ") }));
 }
 
 

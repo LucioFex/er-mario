@@ -1155,13 +1155,11 @@ impl ImguiRenderLoop for Overlay {
         if let Some(state) = crate::lakitu::hud_state() {
             let (x, y) = (size[0] - 54.0 * px, size[1] - (240.0 - 205.0) * px);
             image(IMG_CAMERA, x, y, 16.0 * px, 16.0 * px);
-            // (the smart camera: Mario's head in Lakitu's place, SM64's Mario cam)
-            let who = if matches!(state, crate::lakitu::HudState::Auto) { IMG_HEAD } else { IMG_LAKITU };
-            image(who, x + 16.0 * px, y, 16.0 * px, 16.0 * px);
+            image(IMG_LAKITU, x + 16.0 * px, y, 16.0 * px, 16.0 * px);
             match state {
                 crate::lakitu::HudState::Far => image(IMG_ARROW_DOWN, x + 4.0 * px, y + 16.0 * px, 8.0 * px, 8.0 * px),
                 crate::lakitu::HudState::FirstPerson => image(IMG_ARROW_UP, x + 4.0 * px, y - 8.0 * px, 8.0 * px, 8.0 * px),
-                crate::lakitu::HudState::Near | crate::lakitu::HudState::Auto => {}
+                crate::lakitu::HudState::Near => {}
             }
         }
 

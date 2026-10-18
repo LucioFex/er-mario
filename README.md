@@ -114,9 +114,9 @@ louder or softer each time, and the boomerangs whir one at a time.
 
 | Input | Move |
 |---|---|
-| X | Throw one, from one hand then the other. It curves out, hits on the way out and again on the way back. Up to three in the air |
+| X | Throw one, from one hand then the other (it flies up to 18 m). It curves out, hits on the way out and again on the way back. Up to three in the air |
 | Y | Three at once in a fan |
-| Y (hold) | The big boomerang: Mario whirls round on the spot with it held out (like swinging Bowser by the tail), faster and faster as it grows in his hand, then lets fly. It flies far (up to 28 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
+| Y (hold) | The big boomerang: Mario whirls round on the spot with it held out (like swinging Bowser by the tail), faster and faster as it grows in his hand, then lets fly. It flies far (up to 36 m) homing in on the enemy, hangs on it for 3 s spinning (following it as it moves, or the next one when it falls), hitting everyone around it again and again |
 | X, X, Y | Boomerang launcher: thrown up in an arc, it sends enemies flying up |
 | X / Y in the air | Throws in the air; the first few hold Mario up, Devil May Cry style |
 
@@ -198,13 +198,7 @@ walls by the lens. Out in the open it looks a little ahead of where Mario runs a
 at full speed, and on a steady run it swings round behind him on its own (God of War style, never
 when he runs towards it or right after you turn it yourself). It keeps real time in slow motion, so
 it never lags behind Mario. Something in the way (a column, a doorframe) makes it turn a little to
-see past it before it dives in close, and it never comes closer than a metre to Mario.
-
-**Smart camera.** One more push down on the right stick past the farthest zoom switches Lakitu to a
-camera that places itself (the HUD shows Mario's head instead of Lakitu): it swings behind a run
-sooner, and in a fight it looks over Mario's shoulder at the enemy, backing off to keep both in the
-picture; with a group, or a boss with his adds, it frames them all, the bigger ones counting more.
-Up on the right stick goes back to the normal zooms. Next to a big enemy Lakitu's camera backs off and looks up at it,
+see past it before it dives in close, and it never comes closer than a metre to Mario. Next to a big enemy Lakitu's camera backs off and looks up at it,
 more the bigger and closer it is; if one is close but out of view, the camera drifts round to
 show it (not right after you turn the camera yourself). In a fight the camera works like God of
 War's or Devil May Cry's: it leans towards the enemy you're fighting so both share the screen (with a group around Mario,
@@ -259,6 +253,13 @@ close and risky hits.
 The ground pound is slow and leaves Mario open, so it's worth the risk.
 
 ### Fixes and quality of life
+
+- Elden Ring only lets the player create about 256 bullets a session (their emitters are never
+  freed), and every blow of Mario's that the game registers, and his footstep noise, is one. Once
+  they ran out, blows no longer woke or staggered enemies and Mario made no noise. They're now
+  rationed: a light blow registers on the same enemy at most every second (heavy blows and
+  finishers always), and the noise only plays with an enemy within 20 m that Mario isn't already
+  fighting. Known limit: a very long session can still run out.
 
 - **Enemies notice Mario like a normal player.** The game never walks the Tarnished in Mario
   mode, so enemies never heard his steps and only fought back once hit. Now Mario makes the
@@ -342,7 +343,7 @@ replaces this fork's DLL with the original one.
 | RT | Middle mouse button | The hook (see above) |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air |
-| Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). One more down past the farthest zoom: the **smart camera** (Mario's head on the HUD) |
+| Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
 | L3 (left stick click) | R | Whistle for Yoshi |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |

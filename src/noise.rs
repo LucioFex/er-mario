@@ -27,9 +27,11 @@ const TAKEN_BULLETS: std::ops::RangeInclusive<u32> = 65..=70;
 const TAKEN_ATTACKS: std::ops::RangeInclusive<u32> = 994..=999;
 /// how far each level of noise carries (m): a walk, a run / jump / blow, a heavy blow
 const RADII: [f32; 3] = [5.0, 10.0, 18.0];
+/// only with an enemy this close (m)
+const HEAR_FROM: f32 = 20.0;
 /// at most one noise this often (s), sooner for a louder one
-const EVERY: f32 = 0.6;
-const LOUDER_EVERY: f32 = 0.2;
+const EVERY: f32 = 2.0;
+const LOUDER_EVERY: f32 = 1.0;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub enum Level {
@@ -172,6 +174,12 @@ pub fn tick(player: &ChrIns, state: &sm64::SM64MarioState, before: &sm64::SM64Ma
         None
     };
     let Some(level) = level else { return };
+    // (each noise costs one of the ~256 bullets the game gives the player a session, combat.rs:
+    // only with an enemy near enough to hear it, and not once Mario is fighting, his blows tell)
+    let p = player.modules.physics.position;
+    if crate::combat::in_the_way(glam::Vec3::new(p.0, p.1, p.2), HEAR_FROM).is_empty() || attacking {
+        return;
+    }
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((t, last)) = s.last {
         let age = t.elapsed().as_secs_f32();

@@ -354,6 +354,8 @@ const FIST_SHARE: u16 = 100;
 const BOSS_FACTOR: f32 = 0.065;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
 const DAMAGE_FACTOR: f32 = 0.75;
+/// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
+const BULLET_EVERY: u32 = 30;
 /// Mega Mario's steps hurt the same enemy at most this often (ticks)
 const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
@@ -378,12 +380,29 @@ fn config_f32(key: &str, default: f32) -> f32 {
     crate::paths::config(key).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// (autopad's bullet test: the rows as Mario's blows use them)
+pub fn patch_for_test() -> bool {
+    patch_params()
+}
+
 /// Patches the six bullets/attacks into Mario's moves (once the params are loaded).
 fn patch_params() -> bool {
     let Ok(repo) = (unsafe { SoloParamRepository::instance_mut() }) else { return false };
     for attack in Attack::ALL {
         let (bullet, atk, damage, poise, level, radius) = attack.spec();
         let Some(b) = repo.get_mut::<Bullet>(bullet as u32) else { return false };
+        log(format!(
+            "combat: bullet {bullet} as found: sfx {} / hit {} / flick {}, se {} {} hit {}, hit bullet {}, interval bullet {}, life {}",
+            b.sfx_id_bullet(),
+            b.sfx_id_hit(),
+            b.sfx_id_flick(),
+            b.se_id_bullet1(),
+            b.se_id_bullet2(),
+            b.se_id_hit(),
+            b.hit_bullet_id(),
+            b.interval_create_bullet_id(),
+            b.life()
+        ));
         b.set_atk_id_bullet(atk as i32);
         b.set_life(0.1);
         b.set_dist(0.0);
@@ -451,6 +470,8 @@ pub struct Combat {
     stomps: HashMap<u64, u32>,
     /// Mega Mario's steps: the tick each enemy was last stepped on
     trampled: HashMap<u64, u32>,
+    /// the tick of the last bullet on each enemy (they're rationed: BULLET_EVERY)
+    bullet_at: HashMap<u64, u32>,
     /// stomps per enemy in a row since Mario last stood on the ground (their damage fades)
     stomp_run: HashMap<u64, u32>,
     /// blows on each enemy in the current string, and the tick of the last one (their damage fades
@@ -468,7 +489,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
     }
 }
 
@@ -1646,6 +1667,21 @@ impl Combat {
                     crate::style::finisher(at);
                 }
             }
+            // (the game gives the player only ~256 bullets a session: their emitters are never freed,
+            // and once they're gone no blow of Mario's is the game's any more, enemies neither react
+            // nor wake. So a bullet only where it matters: a heavy blow or a finisher, else at most
+            // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
+            // the hook or the tongue)
+            let light = matches!(attack, Attack::FireSweep | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..));
+            let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
+            if light || !(heavy || due) {
+                continue;
+            }
+            self.bullet_at.insert(target.key, tick);
+            if self.bullet_at.len() > 64 {
+                self.bullet_at.retain(|_, t| tick.wrapping_sub(*t) < BULLET_EVERY);
+            }
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
         }
@@ -1685,7 +1721,23 @@ fn strike(player: &ChrIns, p: &HavokPosition, bullet: i32) -> String {
                 rest: [0; 0x80],
             };
             let Ok(manager) = (unsafe { CSBulletManager::instance_mut() }) else { return "no bullet manager".into() };
-            format!("{:?}", manager.spawn_bullet(unsafe { &*(&request as *const SpawnRequest as *const _) }))
+            let result = manager.spawn_bullet(unsafe { &*(&request as *const SpawnRequest as *const _) });
+            // (it failed: what's alive in the game's bullet pool, whose, and how old)
+            if result.is_err() {
+                static FAILS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                if FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 50 == 0 {
+                    let (mut n, mut mine, mut oldest) = (0, 0, 0.0f32);
+                    for b in manager.bullets() {
+                        n += 1;
+                        if handle_key(&b.targeting_owner.owner_chr_handle) == handle_key(&player.field_ins_handle) {
+                            mine += 1;
+                            oldest = oldest.max(b.time_alive);
+                        }
+                    }
+                    log(format!("combat: bullet spawn failed: {n} bullets alive, {mine} the player's (oldest {oldest:.1} s)"));
+                }
+            }
+            format!("{result:?}")
         }
     }
 }
