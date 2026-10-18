@@ -1068,7 +1068,8 @@ impl ImguiRenderLoop for Overlay {
         {
             let worn = if mega_on { Some(2) } else if rock_left.is_some() { Some(0) } else { crate::caps::active() };
             let s = 20.0 * px;
-            let (x0, y0) = (size[1] * 0.04, size[1] * 0.05);
+            // (under the lives, coins and stars counters, which take the top 31 SM64 pixels)
+            let (x0, y0) = (22.0 * px, 38.0 * px);
             static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
             let t = T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f32();
             for (i, &ready) in caps.iter().enumerate() {
@@ -1276,7 +1277,7 @@ impl ImguiRenderLoop for Overlay {
             if let (Some(fwd), Some(eye)) = (camera_forward(), camera_position()) {
                 let turn: f32 = crate::paths::config("compass_north").and_then(|v| v.parse().ok()).unwrap_or(0.0);
                 let heading = fwd.x.atan2(fwd.z).to_degrees() + turn;
-                let (span, w, cx, y0) = (110.0f32, size[0] * 0.28, size[0] * 0.5, 14.0 * px);
+                let (span, w, cx, y0) = (110.0f32, size[0] * 0.28, size[0] * 0.5, 36.0 * px);
                 let rel = |deg: f32| ((deg - heading + 540.0).rem_euclid(360.0)) - 180.0;
                 let fade = |d: f32| (1.0 - (d.abs() / (span * 0.5)).powi(2)).clamp(0.0, 1.0);
                 dl.add_line([cx - w * 0.5, y0 + 13.0 * px], [cx + w * 0.5, y0 + 13.0 * px], [1.0, 1.0, 1.0, 0.22]).thickness(px.max(1.0)).build();
