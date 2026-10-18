@@ -55,6 +55,8 @@ enum ErHit {
     ER_HIT_CHOMP_LAUNCH,
     ER_HIT_MIKIRI,
     ER_HIT_BONK,
+    ER_HIT_ROCK,
+    ER_HIT_ROCK_SLAM,
 };
 
 /* (same bits as moves.rs FX_*) */
@@ -2224,5 +2226,189 @@ s32 act_er_bonk(struct MarioState *m) {
     if (++m->actionTimer >= ER_BONK_END) {
         return set_mario_action(m, (m->input & INPUT_NONZERO_ANALOG) ? ACT_WALKING : ACT_IDLE, 0);
     }
+    return FALSE;
+}
+
+/* ---- the Rock Mushroom (rock.rs) ------------------------------------------------------------- */
+
+/** a boulder now (rock.rs turns it on and off) */
+s32 er_rock_on = 0;
+/** the ram's wait (ticks), and how fast he was falling just before he landed */
+static s32 sErRockRam = 0;
+/** the highest he's been since he left the ground (a fall from very high kills, as on foot) */
+static f32 sErRockPeak = 0.0f;
+#define ER_ROCK_RAM_EVERY 45
+#define ER_ROCK_TOP 78.0f
+#define ER_ROCK_SLOPE 7.5f
+#define ER_ROCK_PUSH 1.6f
+#define ER_ROCK_FRICTION 0.988f
+#define ER_ROCK_HIT_SPEED 16.0f
+#define ER_ROCK_SLAM_FALL 48.0f
+
+/** Turned into a boulder in mid-air: his fall counts from here. */
+void er_rock_peak_from(f32 y) {
+    sErRockPeak = y;
+}
+
+/** Off a wall: the speed into it turned back out (a little lost), a thud. */
+static void er_rock_bounce(struct MarioState *m, f32 *vx, f32 *vz) {
+    f32 nx, nz, d;
+    if (m->wall != NULL) {
+        nx = m->wall->normal.x;
+        nz = m->wall->normal.z;
+    } else {
+        f32 l = sqrtf(*vx * *vx + *vz * *vz);
+        nx = l > 0.1f ? -*vx / l : 0.0f;
+        nz = l > 0.1f ? -*vz / l : 0.0f;
+    }
+    d = *vx * nx + *vz * nz;
+    if (d < 0.0f) {
+        *vx = (*vx - 2.0f * d * nx) * 0.72f;
+        *vz = (*vz - 2.0f * d * nz) * 0.72f;
+    }
+    if (-d > 14.0f) {
+        er_sound(m, SOUND_GENERAL_POUND_ROCK);
+        er_move_fx |= ER_FX_GROUND;
+        m->particleFlags |= PARTICLE_VERTICAL_STAR;
+    }
+}
+
+/**
+ * The Rock Mushroom (Super Mario Galaxy 2): Mario as a boulder. The ground under him drives it:
+ * down a slope he speeds up, up one he slows down, the stick only nudges it (a heavy ball); walls
+ * send him back, a long drop lands as a slam. A hops, X rams forward. What he rolls into he hits
+ * (rock.rs, combat.rs); rock.rs draws the boulder and his head peeking out of it.
+ */
+s32 act_er_rock(struct MarioState *m) {
+    f32 vx = m->vel[0];
+    f32 vz = m->vel[2];
+    f32 speed;
+    s32 t = m->actionTimer++;
+
+    if (!er_rock_on) {
+        mario_set_forward_vel(m, m->forwardVel > 24.0f ? 24.0f : m->forwardVel);
+        if (m->actionState == 1) {
+            return set_mario_action(m, ACT_FREEFALL, 0);
+        }
+        return set_mario_action(m, m->forwardVel > 8.0f ? ACT_WALKING : ACT_IDLE, 0);
+    }
+    if (t == 0) {
+        sErRockRam = 0;
+        set_mario_animation(m, MARIO_ANIM_START_CROUCHING);
+        set_anim_to_frame(m, 8);
+    }
+    // the stick nudges it
+    if (m->input & INPUT_NONZERO_ANALOG) {
+        f32 push = ER_ROCK_PUSH * m->intendedMag / 32.0f;
+        vx += sins(m->intendedYaw) * push;
+        vz += coss(m->intendedYaw) * push;
+    }
+    // X: a ram, a burst along the way it rolls
+    if (sErRockRam > 0) {
+        sErRockRam--;
+    }
+    if ((m->input & INPUT_B_PRESSED) && sErRockRam == 0) {
+        f32 l = sqrtf(vx * vx + vz * vz);
+        f32 dx = l > 4.0f ? vx / l : sins(m->faceAngle[1]);
+        f32 dz = l > 4.0f ? vz / l : coss(m->faceAngle[1]);
+        vx += dx * 30.0f;
+        vz += dz * 30.0f;
+        sErRockRam = ER_ROCK_RAM_EVERY;
+        er_sound(m, SOUND_ACTION_SPIN);
+        er_shout(m);
+        er_move_fx |= ER_FX_SPIN;
+    }
+    if (m->actionState == 0) {
+        // down the slope it's on, faster; rolling, a little slower all the time
+        if (m->floor != NULL) {
+            vx += m->floor->normal.x * ER_ROCK_SLOPE;
+            vz += m->floor->normal.z * ER_ROCK_SLOPE;
+        }
+        vx *= ER_ROCK_FRICTION;
+        vz *= ER_ROCK_FRICTION;
+        if (m->input & INPUT_A_PRESSED) {
+            m->vel[1] = 40.0f;
+            m->actionState = 1;
+            sErRockPeak = m->pos[1];
+            er_sound(m, SOUND_ACTION_TERRAIN_JUMP + (SOUND_TERRAIN_STONE << 16));
+        }
+    }
+    speed = sqrtf(vx * vx + vz * vz);
+    // (downhill it may go on past its top speed on the flat: it brakes back down to it slowly)
+    if (speed > ER_ROCK_TOP * 1.4f) {
+        vx *= ER_ROCK_TOP * 1.4f / speed;
+        vz *= ER_ROCK_TOP * 1.4f / speed;
+    } else if (speed > ER_ROCK_TOP && m->actionState == 0 && (m->floor == NULL || m->floor->normal.y > 0.97f)) {
+        vx *= 0.97f;
+        vz *= 0.97f;
+    }
+    speed = sqrtf(vx * vx + vz * vz);
+    m->vel[0] = vx;
+    m->vel[2] = vz;
+    m->slideVelX = vx;
+    m->slideVelZ = vz;
+    m->forwardVel = speed;
+    if (speed > 2.0f) {
+        m->faceAngle[1] = atan2s(vz, vx);
+    }
+    if (m->actionState == 0) {
+        switch (perform_ground_step(m)) {
+            case GROUND_STEP_LEFT_GROUND:
+                m->actionState = 1;
+                m->vel[1] = 0.0f;
+                sErRockPeak = m->pos[1];
+                break;
+            case GROUND_STEP_HIT_WALL:
+                er_rock_bounce(m, &m->vel[0], &m->vel[2]);
+                break;
+        }
+    } else {
+        f32 fall = -m->vel[1];
+        if (m->pos[1] > sErRockPeak) {
+            sErRockPeak = m->pos[1];
+        }
+        switch (perform_air_step(m, 0)) {
+            case AIR_STEP_LANDED:
+                m->actionState = 0;
+                // (from very high up the boulder is no help: as a fall on foot, the end)
+                if (sErRockPeak - m->pos[1] > 2200.0f) {
+                    m->health = 0xFF;
+                    m->hurtCounter = 0;
+                    play_sound(SOUND_MARIO_ATTACKED, m->marioObj->header.gfx.cameraToObject);
+                    return drop_and_set_mario_action(m, ACT_HARD_BACKWARD_GROUND_KB, 4);
+                }
+                if (fall > ER_ROCK_SLAM_FALL) {
+                    er_move_hit = ER_HIT_ROCK_SLAM;
+                    er_move_fx |= ER_FX_QUAKE;
+                    er_sound(m, SOUND_GENERAL_POUND_ROCK);
+                    play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
+                } else {
+                    er_sound(m, SOUND_ACTION_TERRAIN_LANDING + (SOUND_TERRAIN_STONE << 16));
+                }
+                m->vel[1] = 0.0f;
+                break;
+            case AIR_STEP_HIT_WALL:
+                er_rock_bounce(m, &m->vel[0], &m->vel[2]);
+                break;
+            case AIR_STEP_HIT_LAVA_WALL:
+                lava_boost_on_wall(m);
+                return TRUE;
+        }
+    }
+    // rolling into things hits them (rock.rs, combat.rs)
+    if (speed > ER_ROCK_HIT_SPEED && er_move_hit == ER_HIT_NONE) {
+        er_move_hit = ER_HIT_ROCK;
+    }
+    // its rumble: stone steps, faster the faster it rolls, soft
+    if (m->actionState == 0 && speed > 6.0f) {
+        s32 every = 10 - (s32)(speed / 12.0f);
+        if (every < 3) {
+            every = 3;
+        }
+        if (t % every == 0) {
+            er_sound_soft(SOUND_ACTION_TERRAIN_STEP + (SOUND_TERRAIN_STONE << 16), 0.25f);
+        }
+    }
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
     return FALSE;
 }

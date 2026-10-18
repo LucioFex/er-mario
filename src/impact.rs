@@ -121,6 +121,8 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::ShellHit => (0, 1.0, false),
         Attack::Bomb => (0, 1.5, true),
         Attack::Boing => (0, 0.7, false),
+        Attack::Rock => (1, 1.1, false),
+        Attack::RockSlam => (4, 1.5, true),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -509,6 +511,16 @@ pub fn shell_break(at: Vec3, red: bool) {
 pub fn boing(top: Vec3) {
     ring(top, 0.9, 0.25, WHITE);
     puffs(top, 2, 0.2);
+}
+
+/// The Rock Mushroom on (`on`) or off: a burst of dust and pebbles, a stone-grey ring, stars.
+pub fn rock(feet: Vec3, on: bool) {
+    let grey = [0.7, 0.66, 0.6, 1.0];
+    ring(feet + Vec3::Y * 0.1, if on { 2.2 } else { 1.6 }, 0.35, grey);
+    ring(feet + Vec3::Y * 0.7, 1.2, 0.25, if on { GOLD } else { WHITE });
+    puffs(feet + Vec3::Y * 0.4, if on { 8 } else { 6 }, 0.7);
+    burst(feet + Vec3::Y * 0.9, if on { 5 } else { 3 }, Bit::Star);
+    crate::lakitu::shake(if on { 0.5 } else { 0.3 });
 }
 
 /// The Bob-omb's blast: a fiery flash, wide rings, smoke, stars, the camera shaken.

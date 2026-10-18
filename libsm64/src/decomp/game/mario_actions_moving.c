@@ -1990,6 +1990,7 @@ s32 check_common_moving_cancels(struct MarioState *m) {
  * keeping its speed. */
 extern int er_mega;
 s32 er_bonk_ready(void);
+s32 act_er_rock(struct MarioState *m);
 
 s32 act_er_dash(struct MarioState *m) {
     f32 speed;
@@ -2095,6 +2096,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
         case ACT_HOLD_QUICKSAND_JUMP_LAND: cancel = act_hold_quicksand_jump_land(m); break;
         case ACT_LONG_JUMP_LAND:           cancel = act_long_jump_land(m);           break;
         case ACT_ER_DASH:                  cancel = act_er_dash(m);                  break;
+        case ACT_ER_ROCK:                  cancel = act_er_rock(m);                  break;
     }
     /* clang-format on */
 

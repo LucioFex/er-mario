@@ -96,11 +96,14 @@ pub enum Attack {
     ShellHit,
     Bomb,
     Boing,
+    /// the Rock Mushroom (rock.rs): the boulder rolling into them, its slam after a drop
+    Rock,
+    RockSlam,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 50] = [
+const CODES: [Attack; 52] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -109,7 +112,7 @@ const CODES: [Attack; 50] = [
     Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
-    Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing,
+    Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -173,6 +176,8 @@ impl Attack {
             Attack::Slip | Attack::ShellHit => Attack::Sweep.spec(),
             Attack::Bomb => Attack::GroundPound.spec(),
             Attack::Boing => Attack::Punch.spec(),
+            Attack::Rock => Attack::Sweep.spec(),
+            Attack::RockSlam => Attack::GroundPound.spec(),
         }
     }
 
@@ -259,6 +264,9 @@ impl Attack {
             Attack::ShellHit => (10.0, "damage_shell_hit"),
             Attack::Bomb => (28.0, "damage_bobomb"),
             Attack::Boing => (3.0, "damage_spring"),
+            // the boulder: bowling them over is the point (a regular enemy in about ten), its slam
+            Attack::Rock => (9.0, "damage_rock"),
+            Attack::RockSlam => (16.0, "damage_rock_slam"),
         }
     }
 
@@ -318,6 +326,8 @@ impl Attack {
             Attack::Bonk => 1.3,
             Attack::Slip | Attack::ShellHit | Attack::Boing => 1.0,
             Attack::Bomb => 1.2,
+            Attack::Rock => 1.0,
+            Attack::RockSlam => 1.2,
         }
     }
 
@@ -341,6 +351,8 @@ impl Attack {
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
+            // (one bowling a second: it rolls on over them)
+            Attack::Rock => 30,
             Attack::FireSweep | Attack::Ember | Attack::Trample => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
@@ -1517,6 +1529,9 @@ const CHOMP_CRASH_RADIUS: f32 = 347.0;
 /// the Mikiri's stomp around Mario, the dash strike's reach in front (SM64 units)
 const MIKIRI_RADIUS: f32 = 170.0;
 const BONK_REACH: f32 = 200.0;
+/// the boulder's reach around Mario (its radius and a bit), its slam's
+const ROCK_RADIUS: f32 = 85.0;
+const ROCK_SLAM_RADIUS: f32 = 280.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
@@ -1564,6 +1579,8 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         // the Mikiri lands on whoever is under him; the dash strike in front, a bit past a punch
         Hit::Mikiri => (Attack::Mikiri, Reach::Around(me, MIKIRI_RADIUS)),
         Hit::Bonk => (Attack::Bonk, Reach::Front(BONK_REACH)),
+        Hit::Rock => (Attack::Rock, Reach::Around(me, ROCK_RADIUS)),
+        Hit::RockSlam => (Attack::RockSlam, Reach::Around(me, ROCK_SLAM_RADIUS)),
     };
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
     let mut out = Vec::new();
@@ -1966,6 +1983,12 @@ impl Combat {
                 }
                 // the Mikiri: the world slows a moment, and a boss's stance cracks (swing.rs: a
                 // few of them open him up for the tail grab)
+                // the boulder: off a big one it bounces, a regular one counts for the strike
+                if attack == Attack::Rock {
+                    let me = player.modules.physics.position;
+                    let big = !liftable(handle) || target.radius * crate::scale() > 0.9;
+                    crate::rock::rolled_into(target.key, glam::Vec3::new(target.er.0, target.er.1 + 0.6, target.er.2), big, glam::Vec3::new(me.0, me.1, me.2));
+                }
                 if attack == Attack::Mikiri && crate::timing::mikiri_landed() {
                     crate::style::witch_time(crate::timing::MIKIRI_SLOW);
                     crate::style::callout("MIKIRI!", Some(chest), [0.7, 0.9, 1.0], true, crate::style::MIKIRI_POINTS);
@@ -1994,7 +2017,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Rock | Attack::RockSlam);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -2004,7 +2027,7 @@ impl Combat {
                 self.bullet_at.retain(|_, t| tick.wrapping_sub(*t) < BULLET_EVERY);
             }
             // the banana and the shells knock a regular enemy down (the game's own knockdown)
-            if matches!(attack, Attack::Slip | Attack::ShellHit) && target.handle.as_ref().is_some_and(liftable) {
+            if matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock) && target.handle.as_ref().is_some_and(liftable) {
                 knockdown(tick);
             }
             let result = strike(player, &target.er, bullet);

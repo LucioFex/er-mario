@@ -55,6 +55,7 @@ mod swing;
 mod stats;
 mod timing;
 mod traps;
+mod rock;
 mod style;
 mod update;
 mod version;
@@ -2531,6 +2532,7 @@ fn frame(data: &FD4TaskData) {
         style::clear();
         timing::clear();
         m.traps.clear();
+        rock::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -2987,7 +2989,7 @@ fn frame(data: &FD4TaskData) {
         }
         // (in the middle of one of the weapons' moves too: the new one comes in swinging, moves.rs;
         // not while a fireball is being thrown)
-        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
+        if let Some(w) = m.moves.switch_weapon(l_hammer, hands_free && !big && !rock::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             let hand = to_er(m.origin, m.state.position);
@@ -3001,6 +3003,10 @@ fn frame(data: &FD4TaskData) {
         let juggling = juggle::active();
         // the trap kit: LT held while he crouches, plus X / Y / B / RB (traps.rs); those buttons are
         // the kit's alone then (no breakdance, dash, special or fireball)
+        // (the boulder: none of his moves, X is its ram and A its hop, libsm64's)
+        if rock::active() {
+            (x_move, y_move, b_dash, b_fire, b_hook) = (false, false, false, false, false);
+        }
         let kit_on = inputs.button_z != 0 && traps::crouching(m.state.action) && fire_allowed && !interacting && !big && !carry::holding() && !swing::holding() && !RIDING.load(Ordering::Relaxed);
         let kit_request = m.traps.input(kit_on, [x_move, y_move, b_dash, b_fire], m.ticks);
         hud::set_kit(kit_on.then(|| m.traps.ready()));
@@ -3016,6 +3022,8 @@ fn frame(data: &FD4TaskData) {
         }
         coop::set_own_health(m.state.health);
         let request = kit_request.or_else(|| m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks));
+        // the boulder off something big
+        let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
         // off the spring: up, higher than any jump
         let request = request.or_else(|| {
             let up = m.traps.take_bounce()?;
@@ -3081,7 +3089,7 @@ fn frame(data: &FD4TaskData) {
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
                 let a = m.state.action;
                 let free = a & (ACT_FLAG_SWIMMING | ACT_FLAG_ON_POLE | ACT_FLAG_HANGING) == 0 && a != moves::ACT_ER_ZIP && a != ACT_ER_LADDER;
-                let calm = free && !m.dead && !mega::active() && caps::active() != Some(caps::METAL) && !RIDING.load(Ordering::Relaxed);
+                let calm = free && !m.dead && !mega::active() && !rock::active() && caps::active() != Some(caps::METAL) && !RIDING.load(Ordering::Relaxed);
                 let calm = calm && !carry::holding() && !swing::holding() && !FOLLOWING.load(Ordering::Relaxed);
                 let p = player_ref.chr_ins.modules.physics.position;
                 calm && blown::roll(w, &player_ref.chr_ins, glam::Vec3::new(p.0, p.1, p.2))
@@ -3090,6 +3098,7 @@ fn frame(data: &FD4TaskData) {
         };
         let mario_at = m.state.position;
         let bled = status::just_set_in();
+        let rocking = rock::active();
         let result = worker::call("tick", move |ctx| {
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -3117,6 +3126,10 @@ fn frame(data: &FD4TaskData) {
                 // (let go by an enemy: thrown off it already, the same)
                 Some(combat::Hurt::Hit(wedges)) if still_flying || grab::just_released() || bled => unsafe {
                     sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x100).max(0xFF) as u16)
+                },
+                // (the boulder: half of it, and it rolls on)
+                Some(combat::Hurt::Hit(wedges)) if rocking => unsafe {
+                    sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x80).max(0xFF) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
                     sm64::sm64_mario_take_damage(id, wedges, 0, hurt_from[0], hurt_from[1], hurt_from[2]);
@@ -3311,13 +3324,23 @@ fn frame(data: &FD4TaskData) {
                     m.traps.tick(&combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     if let Some(p) = parts.as_mut() {
                         m.traps.pose(p, feet);
+                        rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
                     m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
-                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed), boss) {
+                // D-pad left: the Rock Mushroom (the Metal Cap's old place: caps.rs gets no left)
+                {
+                    let feet = to_er(m.origin, state.position);
+                    let free = gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person() && !m.dead;
+                    let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !carry::holding() && !swing::holding();
+                    let can_start = free && can_stay && !mega::changing() && caps::active().is_none() && state.health >= 0x100;
+                    rock::tick(dpad[2], can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
+                }
+                let dpad = [dpad[0], dpad[1], false, dpad[3]];
+                if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active(), boss) {
                     let p = to_er(m.origin, state.position);
                     impact::cap_change(glam::Vec3::new(p.0, p.1, p.2), cap);
                 }
@@ -3328,7 +3351,7 @@ fn frame(data: &FD4TaskData) {
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed);
                     let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person();
                     const GROUNDED: u32 = 0x200 | 0x400;
-                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !carry::holding() && !swing::holding();
+                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !rock::active() && !carry::holding() && !swing::holding();
                     let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
                     let ray = |from: glam::Vec3, to: glam::Vec3| {
                         let d = to - from;

@@ -253,6 +253,7 @@
 #define ACT_BACKFLIP_LAND              0x0400047A // (0x07A | ACT_FLAG_MOVING | ACT_FLAG_ALLOW_FIRST_PERSON)
 // er-mario: the dash (pad B), on the ground
 #define ACT_ER_DASH                    0x0002047B // (0x07B | ACT_FLAG_MOVING | ACT_FLAG_INVULNERABLE)
+#define ACT_ER_ROCK                    0x0080047C // (0x07C | ACT_FLAG_MOVING | ACT_FLAG_ATTACKING) the Rock Mushroom's boulder
 
 // group 0x080: airborne actions
 #define ACT_JUMP                       0x03000880 // (0x080 | ACT_FLAG_AIR | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION | ACT_FLAG_CONTROL_JUMP_HEIGHT)

@@ -141,6 +141,8 @@ const IMG_EGG: usize = 80;
 const IMG_LUIGI_HEAD: usize = 81;
 /// the trap kit (traps.rs): banana, shell, Bob-omb, spring
 const IMG_KIT: usize = 82; // 4
+/// the Rock Mushroom (rock.rs): a mushroom with a stone cap
+const IMG_ROCK: usize = 86;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -252,6 +254,7 @@ pub fn load(rom: &[u8]) {
         for k in 0..4 {
             out.push(Image::new(32, 32, |x, y| kit_pixel(k, x, y)));
         }
+        out.push(Image::new(32, 32, rock_pixel));
         Some(out)
     };
     match load() {
@@ -562,7 +565,7 @@ impl ImguiRenderLoop for Overlay {
                     }
                 });
         }
-        if self.textures.len() < IMG_KIT + 4 {
+        if self.textures.len() <= IMG_ROCK {
             return;
         }
         let size = ui.io().display_size;
@@ -916,9 +919,11 @@ impl ImguiRenderLoop for Overlay {
         // draining while he's big)
         let mut caps = crate::caps::hud();
         let (mega_ready, mega_on) = crate::mega::hud();
+        let (rock_ready, rock_left) = crate::rock::hud();
         caps[2] = mega_ready;
+        caps[0] = rock_ready;
         {
-            let worn = if mega_on { Some(2) } else { crate::caps::active() };
+            let worn = if mega_on { Some(2) } else if rock_left.is_some() { Some(0) } else { crate::caps::active() };
             let s = 20.0 * px;
             let (x0, y0) = (size[1] * 0.04, size[1] * 0.05);
             static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -928,10 +933,19 @@ impl ImguiRenderLoop for Overlay {
                 let on = worn == Some(i as u8);
                 let grow = if on { s * 0.12 * (1.0 + (t * 8.0).sin()) } else { 0.0 };
                 let alpha = if on || ready >= 1.0 { 1.0 } else { 0.35 };
-                let img = if i == 2 { IMG_MUSHROOM } else { IMG_CAP_BOX + i };
+                let img = match i {
+                    2 => IMG_MUSHROOM,
+                    0 => IMG_ROCK,
+                    _ => IMG_CAP_BOX + i,
+                };
                 dl.add_image(textures[img], [x - grow, y0 - grow], [x + s + grow, y0 + s + grow])
                     .col([1.0, 1.0, 1.0, alpha])
                     .build();
+                if let (0, Some(left)) = (i, rock_left) {
+                    let bar = [x, y0 + s + px * 2.0];
+                    dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
+                    dl.add_rect(bar, [x + s * left, bar[1] + px * 2.0], [0.75, 0.7, 0.62, 0.95]).filled(true).build();
+                }
                 if let (2, Some(left)) = (i, crate::mega::left()) {
                     let bar = [x, y0 + s + px * 2.0];
                     dl.add_rect(bar, [x + s, bar[1] + px * 2.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
@@ -1376,6 +1390,37 @@ fn seg_dist(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
 }
 
 /// The Boomerang Bros.' boomerang: a fat white chevron with red tips and a dark outline.
+/// The Rock Mushroom's icon: a mushroom whose cap is a grey boulder with darker spots.
+fn rock_pixel(x: usize, y: usize) -> [u8; 4] {
+    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+    let outline = [24, 20, 16, 255];
+    // the cap: the top of an ellipse
+    let (dx, dy) = ((fx - 16.0) / 14.0, (fy - 16.0) / 12.0);
+    let r = (dx * dx + dy * dy).sqrt();
+    if fy <= 17.0 && r < 1.0 {
+        if r > 0.9 || fy > 16.0 {
+            return outline;
+        }
+        let spot = |cx: f32, cy: f32, s: f32| ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() < s;
+        if spot(10.0, 10.0, 3.0) || spot(20.0, 7.0, 2.5) || spot(23.0, 13.0, 2.0) {
+            return [85, 80, 76, 255];
+        }
+        let shade = (150.0 - (fy - 4.0) * 3.0) as u8;
+        return [shade, shade - 6, shade - 14, 255];
+    }
+    // the stem, with eyes
+    if (17.0..29.0).contains(&fy) && (fx - 16.0).abs() < 7.0 {
+        if (fx - 16.0).abs() > 6.0 || fy > 28.0 {
+            return outline;
+        }
+        if ((fx - 13.0).abs() < 1.2 || (fx - 19.0).abs() < 1.2) && (19.0..24.0).contains(&fy) {
+            return [20, 20, 20, 255];
+        }
+        return [245, 230, 200, 255];
+    }
+    [0; 4]
+}
+
 /// The trap kit's icons, 32 x 32: a banana, a green shell, a Bob-omb, a spring.
 fn kit_pixel(k: usize, x: usize, y: usize) -> [u8; 4] {
     let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);

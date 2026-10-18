@@ -208,6 +208,7 @@ unsafe extern "C" {
     /// `start` 0 only moves the pull's end
     pub fn sm64_er_zip(id: i32, x: f32, y: f32, z: f32, kind: i32, start: i32);
     pub fn sm64_er_mikiri(id: i32, x: f32, y: f32, z: f32, start: i32);
+    pub fn sm64_er_rock(id: i32, on: i32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
 }

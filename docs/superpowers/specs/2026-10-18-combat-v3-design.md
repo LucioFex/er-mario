@@ -98,6 +98,38 @@ co-op only gets two subtle touches. Fun over power: Mario must not become OP.
 22. **Shorter game over**: the wait from Mario's death to Bowser's face and the restart is too
     long (gameover.rs): trim it a bit, keep the sequence readable.
 
+## Decisions taken while implementing
+
+### D-pad left: the Rock Mushroom (batch 3)
+Options weighed (all had to use the map, be flashy and fun, and not be another "invulnerable"):
+1. **Rock Mushroom** (Super Mario Galaxy 2): Mario turns into a rolling boulder with his head
+   peeking out. The terrain drives it: downhill he picks up speed from the real slope under him,
+   uphill he slows, walls bounce him back (each bounce a "carom"), drops turn into a slam when he
+   lands, breakable props shatter, regular enemies are bowled over (the game's knockdown), bosses
+   and big bodies bounce him off. A hops, X rams forward (a burst, cooldown).
+2. **Cloud Flower** (SMG2): A in the air leaves a cloud to stand on (3 at most) to reach roofs and
+   cliffs and come down on enemies from high up. Uses height only; standing out of reach of a
+   boss would cheese it and confuse its AI.
+3. **Propeller Mushroom** (NSMB Wii): spin 10 m up from anywhere, glide down, drill dive. Uses
+   height only and overlaps the Wing Cap (D-pad up) and the new spring.
+**Picked: the Rock Mushroom.** It is the one that really plays with the Lands Between (its hills,
+slopes, ruins' walls, crates and barrels), it reads at a glance, it is funny (a Mario boulder
+bowling soldiers over), and it is fair: it never makes Mario invulnerable (hits cost half and don't
+knock him out of it), it only knocks regular enemies down (no kills by itself), bosses take chip
+damage and bounce him away. 12 s, back after 75 s; no weapons or moves while rolling.
+The Metal Cap is gone from D-pad left (its code stays dormant: nothing puts it on any more).
+
+### Trap kit notes (batch 2)
+- The kit's meshes would not fit the chest piece (Mario + gear use 1150 of its 1184 vertices):
+  they live in the gauntlets' piece (2405 vertices; the kit takes 942) on 7 leaf finger bones,
+  with their own palette albedo and copies of the gauntlets' materials (AM_M_0999).
+- The Bob-omb and the spring were built in batch 2 with the rest of the kit (same code, one asset
+  rebuild instead of two); batch 3 was the D-pad-left power-up.
+- Slips and shell hits use the game's own knockdown: the sweep's attack row gets a knockdown hit
+  reaction for a few ticks (`knockdown_level` in er_mario.ini if the guess, 4, is wrong).
+- The Bob-omb's blast sends regulars up (juggle), never kills by itself (spec rule), and goes off
+  on the first enemy it touches.
+
 ## Batches
 
 1. 9, 10, 11, 19 (timing) + 20 (partner HUD)

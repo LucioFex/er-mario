@@ -1098,6 +1098,25 @@ SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float z, int 
         set_mario_action(gMarioState, ACT_ER_MIKIRI, 0);
 }
 
+/** er-mario: the Rock Mushroom (rock.rs): Mario rolls as a boulder while `on` */
+SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on)
+{
+    extern s32 er_rock_on;
+    extern void er_rock_peak_from(f32 y);
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
+    er_rock_on = on;
+    if (on && gMarioState->action != ACT_ER_ROCK && gMarioState->health >= 0x100 && gMarioState->heldObj == NULL
+        && !(gMarioState->action & (ACT_FLAG_INVULNERABLE | ACT_FLAG_INTANGIBLE))
+        && (gMarioState->action & ACT_GROUP_MASK) != ACT_GROUP_CUTSCENE) {
+        s32 air = (gMarioState->action & ACT_FLAG_AIR) != 0;
+        set_mario_action(gMarioState, ACT_ER_ROCK, 0);
+        gMarioState->actionState = air ? 1 : 0;
+        er_rock_peak_from(gMarioState->peakHeight > gMarioState->pos[1] ? gMarioState->peakHeight : gMarioState->pos[1]);
+    }
+}
+
 /** er-mario: Mario throws a fireball from Yoshi's saddle (ride.rs): his palm thrust */
 SM64_LIB_FN void sm64_er_ride_throw(void)
 {

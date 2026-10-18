@@ -69,10 +69,10 @@ pub const ACT_ER_ZIP: u32 = 0x0080_0892;
 pub const ACT_ER_MIKIRI: u32 = 0x0082_0893;
 pub const ACT_ER_BONK: u32 = 0x0080_039A;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 20] = [
+const COMBO_ACTIONS: [u32; 21] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
-    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK,
+    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK,
 ];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
@@ -181,6 +181,8 @@ pub enum Hit {
     ChompLaunch,
     Mikiri,
     Bonk,
+    Rock,
+    RockSlam,
 }
 
 impl Hit {
@@ -188,7 +190,7 @@ impl Hit {
         use Hit::*;
         [
             Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
-            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk,
+            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam,
         ]
             .get((v as usize).wrapping_sub(1))
             .copied()
@@ -229,6 +231,8 @@ pub enum Request {
     Bounce([f32; 3]),
     /// off the spring (traps.rs): a triple jump's flip at this velocity
     Spring([f32; 3]),
+    /// a new velocity, the action kept (the boulder off a big body, rock.rs)
+    Velocity([f32; 3]),
 }
 
 impl Request {
@@ -246,6 +250,7 @@ impl Request {
                     sm64::sm64_set_mario_action(id, ACT_DOUBLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
                 }
+                Request::Velocity(v) => sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]),
                 Request::Spring(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TRIPLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
