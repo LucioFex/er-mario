@@ -68,11 +68,16 @@ pub const ACT_ER_ZIP: u32 = 0x0080_0892;
 /// timing (timing.rs): the Mikiri stomp, the dash strike
 pub const ACT_ER_MIKIRI: u32 = 0x0082_0893;
 pub const ACT_ER_BONK: u32 = 0x0080_039A;
+/// the hook's (hook.rs): the home run, the pole swing round a big enemy, the kick off it
+pub const ACT_ER_HOME_RUN: u32 = 0x0080_039B;
+pub const ACT_ER_POLE_SWING: u32 = 0x0080_0895;
+pub const ACT_ER_SWING_KICK: u32 = 0x0080_0896;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 21] = [
+const COMBO_ACTIONS: [u32; 24] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
-    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK,
+    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN, ACT_ER_POLE_SWING,
+    ACT_ER_SWING_KICK,
 ];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
@@ -183,6 +188,8 @@ pub enum Hit {
     Bonk,
     Rock,
     RockSlam,
+    HomeRun,
+    SwingKick,
 }
 
 impl Hit {
@@ -190,7 +197,7 @@ impl Hit {
         use Hit::*;
         [
             Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
-            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam,
+            ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam, HomeRun, SwingKick,
         ]
             .get((v as usize).wrapping_sub(1))
             .copied()

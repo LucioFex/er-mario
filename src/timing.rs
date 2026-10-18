@@ -121,7 +121,7 @@ pub fn buttons(a: bool, x: bool, tick: u32) -> bool {
 
 /// The press at `at` came after a moment without one (not mashing, not locked out).
 fn clean(s: &State, at: u32) -> bool {
-    s.x_before.is_none_or(|b| at.wrapping_sub(b) >= NICE_CLEAN) && at >= s.locked_until
+    s.x_before.is_none_or(|b| at.wrapping_sub(b) >= NICE_CLEAN) && at.wrapping_sub(s.locked_until) < u32::MAX / 2
 }
 
 /// A "NICE!" now: its share, the streak counted. None if it's too soon after the last.
@@ -311,6 +311,10 @@ pub fn mikiri_done() {
 pub fn clear() {
     let mut s = state();
     s.landed = None;
+    s.locked_until = 0;
+    s.presses.clear();
+    s.x_at = None;
+    s.x_before = None;
     s.streak = 0;
     s.streak_at = None;
     s.mikiri_on = None;

@@ -56,6 +56,7 @@ mod stats;
 mod timing;
 mod traps;
 mod rock;
+mod bat;
 mod style;
 mod update;
 mod version;
@@ -2021,6 +2022,7 @@ fn frame(data: &FD4TaskData) {
         if gameover::ACTIVE.swap(false, Ordering::Relaxed) {
             gameover::reset();
         }
+        hud::set_kit(None);
         {
             let mut pending = PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
             // every 0.25 s: empty the armour (model reload), then put the old loadout back
@@ -2432,6 +2434,14 @@ fn frame(data: &FD4TaskData) {
         for (mob, pct) in &landed {
             combat::impact(&mut m.combat, mob, *pct, m.ticks);
         }
+        // enemies sent flying by the hook's moves (the home run, the tether)
+        bat::update(data.delta_time.time, m.origin, &player_ref.chr_ins, &mut m.combat, m.ticks, |from, to| {
+            let h = havok?;
+            let d = to - from;
+            h.phys_world
+                .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+        });
     }
     let st = stats::get();
     hud::set_counters(st.deaths, st.coins, st.stars);
@@ -2533,6 +2543,7 @@ fn frame(data: &FD4TaskData) {
         timing::clear();
         m.traps.clear();
         rock::clear();
+        bat::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -3010,9 +3021,28 @@ fn frame(data: &FD4TaskData) {
         let kit_on = inputs.button_z != 0 && traps::crouching(m.state.action) && fire_allowed && !interacting && !big && !carry::holding() && !swing::holding() && !RIDING.load(Ordering::Relaxed);
         let kit_request = m.traps.input(kit_on, [x_move, y_move, b_dash, b_fire], m.ticks);
         hud::set_kit(kit_on.then(|| m.traps.ready()));
-        if kit_on {
-            (x_move, y_move, b_dash, b_fire) = (false, false, false, false);
-            inputs.button_b = 0;
+        // a button that went down for the kit stays the kit's until it's let go (held on, it
+        // reached the dash, the fireball or the boomerang once the throw began)
+        {
+            static KIT_HELD: Mutex<[bool; 4]> = Mutex::new([false; 4]);
+            let mut held = KIT_HELD.lock().unwrap_or_else(|e| e.into_inner());
+            let now = [x_move, y_move, b_dash, b_fire];
+            for k in 0..4 {
+                held[k] = now[k] && (held[k] || kit_on);
+            }
+            if held[0] {
+                x_move = false;
+                inputs.button_b = 0;
+            }
+            if held[1] {
+                y_move = false;
+            }
+            if held[2] {
+                b_dash = false;
+            }
+            if held[3] {
+                b_fire = false;
+            }
         }
         let hold_y = y_move;
         // timing (timing.rs): A and X as pressed; an X just after a blow landed is a "NICE!"
@@ -3021,7 +3051,9 @@ fn frame(data: &FD4TaskData) {
             m.combat.extra_share(&h, attack, extra, m.ticks);
         }
         coop::set_own_health(m.state.health);
-        let request = kit_request.or_else(|| m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks));
+        // (the moves' tick runs every tick, so their own held buttons stay right)
+        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
+        let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
         // off the spring: up, higher than any jump
@@ -3321,13 +3353,16 @@ fn frame(data: &FD4TaskData) {
                         m.rang.pose(p, feet, state.face_angle, weapon_on == weapons::RANG && hands_free && !busy, &combo, state.action);
                     }
                     // the trap kit's things, out there on their own
-                    m.traps.tick(&combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    // (the spring's super jump only out of a jump or a fall, as the Bros. Jump)
+                    const JUMPS: [u32; 8] = [0x0300_0880, 0x0300_0881, 0x0100_0882, 0x0100_0883, 0x0100_0887, 0x0300_0888, 0x0300_0886, 0x0100_088C];
+                    let can_bounce = JUMPS.contains(&state.action) && !mega::active() && !RIDING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding() && !m.dead;
+                    m.traps.tick(&combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, can_bounce, &ray);
                     if let Some(p) = parts.as_mut() {
                         m.traps.pose(p, feet);
                         rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
-                    m.hook.tick(id, b_hook, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, x_move, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));

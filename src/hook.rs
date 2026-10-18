@@ -66,6 +66,8 @@ enum Phase {
     Pulling,
     /// pulling him (since this tick)
     Zipping(u32),
+    /// R2 held on a big one: Mario swings round it (since this tick)
+    Swinging(u32),
     Back,
 }
 
@@ -78,6 +80,9 @@ pub struct Hook {
     pressed: bool,
     /// a wall or a ledge was hooked this airtime (the next only clinks off)
     map_used: bool,
+    /// X held last tick (the home run); the next pole swing allowed from this tick
+    x_held: bool,
+    swing_ready: u32,
 }
 
 /// What hud.rs draws: his hand, the cap's spot, its spin (radians).
@@ -131,7 +136,7 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 
 impl Hook {
     pub fn new() -> Self {
-        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false }
+        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0 }
     }
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
@@ -148,6 +153,7 @@ impl Hook {
         &mut self,
         id: i32,
         button: bool,
+        x: bool,
         allowed: bool,
         mv: &sm64::SM64ErMove,
         state: &sm64::SM64MarioState,
@@ -162,10 +168,28 @@ impl Hook {
         const DT: f32 = 1.0 / 30.0;
         let pressed = button && !self.pressed;
         self.pressed = button;
+        let x_pressed = x && !self.x_held;
+        self.x_held = x;
         let air = state.action & ACT_FLAG_AIR != 0;
         // back on his feet: the map is fair game again
         if !air && state.action != moves::ACT_ER_ZIP && !matches!(self.phase, Some(Phase::Zipping(_))) {
             self.map_used = false;
+        }
+        // R2 again with an enemy on the line: the tether, it and the next one yanked into each other
+        if pressed && allowed {
+            if let (Some(Phase::Pulling | Phase::Zipping(_)), Aim::Enemy { mob, .. }) = (self.phase, self.aim) {
+                match self.second(&mob, feet, origin, &ray).filter(|b| crate::bat::tether(&mob, b)) {
+                    Some(_) => {
+                        sound(SOUND_LATCH, 0.7);
+                        if matches!(self.phase, Some(Phase::Zipping(_))) {
+                            worker::call("tether", move |_| unsafe { sm64::sm64_set_mario_action(id, 0x0100_088C) });
+                        }
+                        self.phase = Some(Phase::Back);
+                    }
+                    None => sound(SOUND_BUZZ, 0.4),
+                }
+                return;
+            }
         }
         if pressed {
             let busy = state.action & (ACT_FLAG_SWIMMING | ACT_FLAG_INVULNERABLE) != 0 || state.action == moves::ACT_ER_ZIP;
@@ -215,6 +239,11 @@ impl Hook {
                 }
             }
             Phase::Pulling => {
+                // X as it comes in, on his feet: the home run (er_moves.c's swing, bat.rs's flight)
+                if x_pressed && !air && allowed {
+                    log("hook: home run swing");
+                    worker::call("home run", move |_| unsafe { sm64::sm64_set_mario_action(id, moves::ACT_ER_HOME_RUN) });
+                }
                 // on the enemy as it comes in, until it's in front of him
                 match self.aim {
                     Aim::Enemy { mob, height, .. } if crate::juggle::is_pulled(&mob) => match chest(&mob, height) {
@@ -222,6 +251,42 @@ impl Hook {
                         None => next = Some(Phase::Back),
                     },
                     _ => next = Some(Phase::Back),
+                }
+            }
+            // R2 still held a moment after it caught a big one: he swings round it instead
+            Phase::Zipping(since) if button && allowed && tick.wrapping_sub(since) == SWING_HOLD && tick >= self.swing_ready && matches!(self.aim, Aim::Enemy { .. }) => {
+                if let Aim::Enemy { mob, height, .. } = self.aim {
+                    match chest(&mob, height) {
+                        Some((c, _)) => {
+                            let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
+                            log("hook: pole swing");
+                            worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], 1) });
+                            next = Some(Phase::Swinging(tick));
+                        }
+                        None => next = Some(Phase::Back),
+                    }
+                }
+            }
+            Phase::Swinging(since) => {
+                let Aim::Enemy { mob, height, .. } = self.aim else { return };
+                let swinging = state.action == moves::ACT_ER_POLE_SWING || tick.wrapping_sub(since) < 2;
+                match chest(&mob, height).filter(|_| swinging) {
+                    Some((c, _)) => {
+                        self.pos = c;
+                        let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
+                        // (R2 up: let go, off along the swing)
+                        let mode = if button && allowed { 0 } else { 2 };
+                        worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], mode) });
+                        if mode == 2 {
+                            log("hook: let go of the swing");
+                            self.swing_ready = tick + SWING_COOLDOWN;
+                            next = Some(Phase::Back);
+                        }
+                    }
+                    None => {
+                        self.swing_ready = tick + SWING_COOLDOWN;
+                        next = Some(Phase::Back);
+                    }
                 }
             }
             Phase::Zipping(since) => {
@@ -250,10 +315,11 @@ impl Hook {
                 }
             }
         }
-        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) {
+        // (a swing lasts as long as it does: C lets go after 3 s)
+        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Swinging(_))) {
             next = Some(Phase::Back);
         }
-        if tick.wrapping_sub(self.born) > LIFE + 30 {
+        if tick.wrapping_sub(self.born) > LIFE + 150 {
             next = None;
         }
         if next.is_none() {
@@ -390,6 +456,38 @@ impl Hook {
                 Some(Phase::Back)
             }
         }
+    }
+}
+
+/// R2 held this many ticks after the hook caught a big one: the pole swing; at most one this often
+const SWING_HOLD: u32 = 6;
+const SWING_COOLDOWN: u32 = 90;
+/// the tether's second enemy within this far of the first (m)
+const TETHER_RANGE: f32 = 15.0;
+
+impl Hook {
+    /// The tether's other enemy: the best one near the first, other than it, in sight of it.
+    fn second(&self, first: &FieldInsHandle, feet: Vec3, origin: [f32; 3], ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Option<FieldInsHandle> {
+        let at = self.pos;
+        let look = crate::lakitu::forward().map(|v| v.with_y(0.0).normalize_or(Vec3::Z)).unwrap_or(Vec3::Z);
+        combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), TETHER_RANGE, origin)
+            .iter()
+            .filter_map(|t| {
+                let mob = *t.shootable()?;
+                if key(&mob) == key(first) {
+                    return None;
+                }
+                let c = Vec3::new(t.er.0, t.er.1 + 0.6 + (t.height * crate::scale()).min(3.0) * 0.5, t.er.2);
+                if ray(at, c).is_some() {
+                    return None;
+                }
+                // (the one most in front of the camera, then the nearest)
+                let d = (c - feet).with_y(0.0);
+                let cos = d.normalize_or(look).dot(look);
+                Some(((c - at).length() * (1.8 - cos), mob))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, m)| m)
     }
 }
 

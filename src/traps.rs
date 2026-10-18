@@ -35,7 +35,7 @@ const BANANA_LIFE: f32 = 45.0;
 const SHELL_LIFE: f32 = 8.0;
 const SPRING_LIFE: f32 = 15.0;
 const FUSE: f32 = 2.0;
-const AWAY: f32 = 30.0;
+const AWAY: f32 = 20.0;
 /// Y held this long (ticks) with LT: the red shell
 const RED_HOLD: u32 = 8;
 /// a shell's speed (m/s), its hits before it's gone, how fast the red one turns (rad/s)
@@ -44,6 +44,9 @@ const RED_SPEED: f32 = 8.0;
 const GREEN_HITS: u32 = 4;
 const RED_HITS: u32 = 2;
 const RED_TURN: f32 = 3.5;
+/// a shell hits the same enemy again after this long, the spring sends the same one up again (s)
+const SHELL_AGAIN: f32 = 1.6;
+const SPRING_AGAIN: f32 = 4.0;
 /// the blast's reach (m); the spring's super jump (SM64 units per tick up)
 const BLAST: f32 = 3.5;
 const SPRING_JUMP: f32 = 76.0;
@@ -172,7 +175,8 @@ impl Traps {
     pub fn ready(&self) -> [f32; 4] {
         let now = self.now();
         let left = |back: f32, at: f32| if at <= now { 1.0 } else { 1.0 - (at - now) / back };
-        let banana = self.bananas.iter().map(|&b| left(BANANA_BACK, b)).fold(0.0f32, f32::max);
+        let out = self.items.iter().filter(|i| i.kind == Kind::Banana).count();
+        let banana = if out >= 2 { 0.0 } else { self.bananas.iter().map(|&b| left(BANANA_BACK, b)).fold(0.0f32, f32::max) };
         [banana, left(SHELL_BACK, self.shell), left(BOMB_BACK, self.bomb), left(SPRING_BACK, self.spring)]
     }
 
@@ -253,9 +257,12 @@ impl Traps {
         tick: u32,
         player: &ChrIns,
         combat: &mut Combat,
+        can_bounce: bool,
         ray: impl Fn(Vec3, Vec3) -> Option<Vec3>,
     ) {
         let ahead = Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
+        // (a bounce nobody took last tick is gone)
+        self.bounce = None;
         if let Some((kind, _)) = self.pending {
             if mv.throw_kind > 0 && mv.throw_kind as u32 - 1 == kind.throw() {
                 self.pending = None;
@@ -266,10 +273,19 @@ impl Traps {
             }
         }
         let now = self.now();
+        // (who's around, once a tick for all of them)
+        let near: Vec<combat::Target> = if self.items.is_empty() { Vec::new() } else { combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), AWAY + 4.0, origin) };
         let mut items = std::mem::take(&mut self.items);
         for it in items.iter_mut() {
             it.age += DT;
-            it.hit.retain(|(_, at)| it.age - *at < 0.5);
+            // (a shell hits the same enemy again only after a while, the spring sends one up every
+            // few seconds: no stunlock against a wall, no juggling one on it for good)
+            let again = match it.kind {
+                Kind::Spring => SPRING_AGAIN,
+                Kind::Green | Kind::Red => SHELL_AGAIN,
+                _ => 0.5,
+            };
+            it.hit.retain(|(_, at)| it.age - *at < again);
             let life = match it.kind {
                 Kind::Banana => BANANA_LIFE,
                 Kind::Green | Kind::Red => SHELL_LIFE,
@@ -290,28 +306,33 @@ impl Traps {
             }
             match it.kind {
                 Kind::Banana => {
-                    fly(it, &ray, 0.0);
+                    if fly(it, &ray, Landing::Stop) == Step::Wall {
+                        it.vel.x *= -0.3;
+                        it.vel.z *= -0.3;
+                    }
                     if it.state == State::Down {
-                        banana_trip(it, player, combat, origin, tick);
+                        banana_trip(it, &near, player, combat, tick);
                     }
                 }
-                Kind::Green | Kind::Red => shell(it, &ray, player, combat, origin, tick),
+                Kind::Green | Kind::Red => shell(it, &ray, &near, player, combat, tick),
                 Kind::Bomb => {
-                    fly(it, &ray, 0.35);
+                    if fly(it, &ray, Landing::Bounce(0.35)) == Step::Wall {
+                        it.vel.x *= -0.5;
+                        it.vel.z *= -0.5;
+                    }
                     // rolling on: slowing down
                     if it.state == State::Down {
                         it.vel *= 0.93;
                     }
                     it.spin += it.vel.with_y(0.0).length() * DT / crate::assets::kit::BOMB_R;
                     // (a touch is enough: it goes off on the first enemy)
-                    let near = combat::nearby(&HavokPosition(it.pos.x, it.pos.y, it.pos.z, 0.0), 2.0, origin);
                     if it.age > 0.15 && near.iter().any(|t| t.shootable().is_some() && touching(t, it.pos, 0.3, origin)) {
                         explode(it, player, combat, origin, tick);
                         it.gone = true;
                     }
                 }
                 Kind::Spring => {
-                    fly(it, &ray, 0.0);
+                    fly(it, &ray, Landing::Stop);
                     // springing back to shape
                     it.squash_vel += (-it.squash * 260.0 - it.squash_vel * 9.0) * DT;
                     it.squash += it.squash_vel * DT;
@@ -319,7 +340,7 @@ impl Traps {
                         let top = it.pos + Vec3::Y * crate::assets::kit::SPRING_H;
                         // Mario coming down on it (or walking onto it): up he goes
                         let d = (feet - it.pos).with_y(0.0).length();
-                        let falling = state.velocity[1] <= 0.0;
+                        let falling = state.velocity[1] <= 0.0 && can_bounce;
                         if d < 0.45 && feet.y > it.pos.y - 0.1 && feet.y < top.y + 0.35 && falling && now - self.bounced_at > 0.5 {
                             self.bounced_at = now;
                             self.bounce = Some(SPRING_JUMP);
@@ -329,7 +350,7 @@ impl Traps {
                             crate::impact::boing(top);
                             sound(SOUND_BOING, 1.0);
                         }
-                        spring_launch(it, player, combat, origin, tick, feet);
+                        spring_launch(it, &near, player, combat, tick, feet);
                     }
                 }
             }
@@ -369,7 +390,11 @@ impl Traps {
                 for i in self.items.iter_mut().filter(|i| i.kind == Kind::Spring) {
                     i.gone = true;
                 }
-                let at = feet + ahead * 1.0;
+                // (not through a wall: short of it)
+                let at = match ray(feet + Vec3::Y * 0.5, feet + ahead * 1.0 + Vec3::Y * 0.5) {
+                    Some(w) => feet + ahead * ((w - feet).with_y(0.0).length() - 0.4).max(0.0),
+                    None => feet + ahead * 1.0,
+                };
                 let ground = ray(at + Vec3::Y * 1.0, at - Vec3::Y * 2.0).unwrap_or(at);
                 sound(SOUND_POUND_ROCK, 0.4);
                 (KIT_SPRING, ground, Vec3::ZERO)
@@ -385,7 +410,8 @@ impl Traps {
             yaw: ahead.x.atan2(ahead.z),
             spin: 0.0,
             age: 0.0,
-            state: if kind == Kind::Spring { State::Down } else { State::Flying },
+            // (the spring on its floor, or falling to one: set down by a ledge)
+            state: if kind == Kind::Spring && ray(pos + Vec3::Y * 0.3, pos - Vec3::Y * 0.3).is_some() { State::Down } else { State::Flying },
             hits: 0,
             hit: Vec::new(),
             struck: Vec::new(),
@@ -457,49 +483,82 @@ fn touching(t: &combat::Target, p: Vec3, reach: f32, _origin: [f32; 3]) -> bool 
     (foot - p).with_y(0.0).length() <= r + reach && p.y >= foot.y - reach - 0.3 && p.y <= foot.y + h + reach
 }
 
-/// Falls under gravity until it meets the floor (`bounce`: the share of its fall it bounces back
-/// up with), then lies or slides on it, following it down slopes and off ledges.
-fn fly(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, bounce: f32) {
+/// How a thing meets the floor: it stops there (a banana, the spring), slides on (a shell), or
+/// bounces with this share of its fall (the Bob-omb).
+#[derive(Clone, Copy, PartialEq)]
+enum Landing {
+    Stop,
+    Slide,
+    Bounce(f32),
+}
+
+/// What it did this tick.
+#[derive(Clone, Copy, PartialEq)]
+enum Step {
+    Moved,
+    Wall,
+}
+
+/// A wall in the way from `a` to `b` (Elden Ring), not just the slope it goes up: a hit, with no
+/// floor to stand on a little up from it.
+fn wall(ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, a: Vec3, b: Vec3) -> bool {
+    if ray(a + Vec3::Y * 0.3, b + Vec3::Y * 0.3).is_none() {
+        return false;
+    }
+    // (up a slope: there's floor at its far end not much above)
+    ray(b + Vec3::Y * 0.7, b - Vec3::Y * 0.3).is_none_or(|g| g.y > a.y + 0.45)
+}
+
+/// Falls under gravity until it meets the floor, then lies or slides on it, following it down
+/// slopes and off ledges.
+fn fly(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, landing: Landing) -> Step {
     match it.state {
         State::Flying => {
             it.vel.y -= GRAVITY * DT;
             let next = it.pos + it.vel * DT;
             // into a wall on the way: back off it
-            if let Some(_wall) = ray(it.pos + Vec3::Y * 0.2, next + Vec3::Y * 0.2).filter(|_| it.vel.with_y(0.0).length() > 0.5) {
-                it.vel.x *= -0.4;
-                it.vel.z *= -0.4;
-                return;
+            if it.vel.with_y(0.0).length() > 0.5 && wall(ray, it.pos, next) {
+                return Step::Wall;
             }
             match ray(it.pos + Vec3::Y * 0.3, next - Vec3::Y * 0.05).filter(|_| it.vel.y <= 0.0) {
                 Some(ground) => {
                     it.pos = ground;
-                    if bounce > 0.0 && it.vel.y < -3.0 {
-                        it.vel.y = -it.vel.y * bounce;
-                        it.vel.x *= 0.7;
-                        it.vel.z *= 0.7;
-                        sound(SOUND_BODY_HIT_GROUND, 0.25);
-                    } else {
-                        it.state = State::Down;
-                        it.vel.y = 0.0;
-                        if bounce == 0.0 {
-                            it.vel = Vec3::ZERO;
+                    match landing {
+                        Landing::Bounce(k) if it.vel.y < -3.0 => {
+                            it.vel.y = -it.vel.y * k;
+                            it.vel.x *= 0.7;
+                            it.vel.z *= 0.7;
+                            sound(SOUND_BODY_HIT_GROUND, 0.25);
                         }
-                        crate::impact::thud_small(ground);
+                        _ => {
+                            it.state = State::Down;
+                            it.vel.y = 0.0;
+                            if landing == Landing::Stop {
+                                it.vel = Vec3::ZERO;
+                            }
+                            crate::impact::thud_small(ground);
+                        }
                     }
                 }
                 None => it.pos = next,
             }
+            Step::Moved
         }
         State::Down => {
             let flat = it.vel.with_y(0.0);
+            // (lying still: the floor checked again now and then, a lift moves, a ledge crumbles)
             if flat.length() < 0.05 {
-                return;
+                if (it.age * 30.0) as u32 % 15 == 0 {
+                    match ray(it.pos + Vec3::Y * 0.5, it.pos - Vec3::Y * 1.0) {
+                        Some(g) => it.pos = g,
+                        None => it.state = State::Flying,
+                    }
+                }
+                return Step::Moved;
             }
             let next = it.pos + flat * DT;
-            if ray(it.pos + Vec3::Y * 0.2, next + Vec3::Y * 0.2).is_some() {
-                it.vel.x *= -0.5;
-                it.vel.z *= -0.5;
-                return;
+            if wall(ray, it.pos, next) {
+                return Step::Wall;
             }
             // (the floor under where it's going: down a slope, up a step, off a ledge)
             match ray(next + Vec3::Y * 0.5, next - Vec3::Y * 0.8) {
@@ -509,13 +568,13 @@ fn fly(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, bounce: f32) {
                     it.state = State::Flying;
                 }
             }
+            Step::Moved
         }
     }
 }
 
 /// A regular enemy steps on the banana: down it goes. A big one staggers, a boss walks on.
-fn banana_trip(it: &mut Item, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32) {
-    let near = combat::nearby(&HavokPosition(it.pos.x, it.pos.y, it.pos.z, 0.0), 2.5, origin);
+fn banana_trip(it: &mut Item, near: &[combat::Target], player: &ChrIns, combat: &mut Combat, tick: u32) {
     for (i, t) in near.iter().enumerate() {
         let Some(h) = t.shootable() else { continue };
         let foot = Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2);
@@ -528,7 +587,7 @@ fn banana_trip(it: &mut Item, player: &ChrIns, combat: &mut Combat, origin: [f32
             continue;
         }
         log(format!("traps: an enemy slipped on the banana ({})", if combat::liftable(h) { "down" } else { "staggered" }));
-        combat.deal(player, &near, &[(i, Attack::Slip, false)], tick);
+        combat.deal(player, near, &[(i, Attack::Slip, false)], tick);
         crate::style::callout("SLIP!", Some(foot + Vec3::Y * 1.2), [1.0, 0.9, 0.25], false, 2.0);
         crate::impact::slip(foot);
         sound(SOUND_BODY_HIT_GROUND, 0.6);
@@ -538,16 +597,16 @@ fn banana_trip(it: &mut Item, player: &ChrIns, combat: &mut Combat, origin: [f32
 }
 
 /// The shell's slide: along the floor, homing (the red one), off the walls, into the enemies.
-fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32) {
+fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, near: &[combat::Target], player: &ChrIns, combat: &mut Combat, tick: u32) {
     let red = it.kind == Kind::Red;
     let speed = if red { RED_SPEED } else { GREEN_SPEED };
     it.spin += DT * 18.0;
-    let near = combat::nearby(&HavokPosition(it.pos.x, it.pos.y, it.pos.z, 0.0), 12.0, origin);
     // the red one turns to the nearest enemy it hasn't just hit
     if red {
         let target = near
             .iter()
             .filter(|t| t.shootable().is_some() && !it.hit.iter().any(|(k, _)| *k == t.key()))
+            .filter(|t| (Vec3::new(t.er.0, t.er.1, t.er.2) - it.pos).length() < 12.0)
             .map(|t| Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2))
             .min_by(|a, b| (*a - it.pos).length_squared().total_cmp(&(*b - it.pos).length_squared()));
         if let Some(to) = target {
@@ -565,8 +624,7 @@ fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, player: &ChrI
         it.vel = Vec3::new(flat.x, it.vel.y, flat.z);
     }
     let before = it.vel;
-    fly(it, ray, 0.0);
-    if it.state == State::Down && it.vel.with_y(0.0).length() < before.with_y(0.0).length() * 0.9 {
+    if fly(it, ray, Landing::Slide) == Step::Wall {
         // off a wall: back the way it came, a little to one side
         let back = Quat::from_rotation_y((crate::rand01() - 0.5) * 0.7) * -before.with_y(0.0);
         it.vel = back.normalize_or(Vec3::Z) * speed;
@@ -575,7 +633,7 @@ fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, player: &ChrI
     }
     for (i, t) in near.iter().enumerate() {
         let Some(h) = t.shootable() else { continue };
-        if it.hit.iter().any(|(k, _)| *k == t.key()) || !touching(t, it.pos + Vec3::Y * 0.12, crate::assets::kit::SHELL_R, origin) {
+        if it.hit.iter().any(|(k, _)| *k == t.key()) || !touching(t, it.pos + Vec3::Y * 0.12, crate::assets::kit::SHELL_R, [0.0; 3]) {
             continue;
         }
         it.hit.push((t.key(), it.age));
@@ -584,7 +642,7 @@ fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, player: &ChrI
         }
         it.hits += 1;
         let _ = h;
-        combat.deal(player, &near, &[(i, Attack::ShellHit, false)], tick);
+        combat.deal(player, near, &[(i, Attack::ShellHit, false)], tick);
         sound(SOUND_HIT, 0.5);
         // three enemies by one shell: a carom
         if it.struck.len() == 3 {
@@ -626,9 +684,8 @@ fn explode(it: &Item, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], ti
 }
 
 /// A regular enemy stepping on the spring is sent up (once in a while each).
-fn spring_launch(it: &mut Item, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32, mario: Vec3) {
+fn spring_launch(it: &mut Item, near: &[combat::Target], player: &ChrIns, combat: &mut Combat, tick: u32, mario: Vec3) {
     let top = it.pos + Vec3::Y * crate::assets::kit::SPRING_H;
-    let near = combat::nearby(&HavokPosition(it.pos.x, it.pos.y, it.pos.z, 0.0), 2.5, origin);
     for (i, t) in near.iter().enumerate() {
         let Some(h) = t.shootable() else { continue };
         let foot = Vec3::new(t.er.0, t.er.1 + 0.6, t.er.2);
@@ -637,7 +694,7 @@ fn spring_launch(it: &mut Item, player: &ChrIns, combat: &mut Combat, origin: [f
         }
         it.hit.push((t.key(), it.age));
         if crate::juggle::try_launch(h, mario, t.radius * crate::scale(), t.height * crate::scale(), true, false, true) {
-            combat.deal(player, &near, &[(i, Attack::Boing, false)], tick);
+            combat.deal(player, near, &[(i, Attack::Boing, false)], tick);
             crate::style::callout("BOING!", Some(foot + Vec3::Y * 1.4), [1.0, 0.5, 0.4], false, 2.0);
             crate::impact::boing(top);
             sound(SOUND_BOING2, 0.8);

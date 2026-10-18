@@ -242,6 +242,7 @@ s32 act_er_tornado(struct MarioState *m);
 s32 act_er_meteor_land(struct MarioState *m);
 s32 act_er_chain(struct MarioState *m);
 s32 act_er_bonk(struct MarioState *m);
+s32 act_er_home_run(struct MarioState *m);
 s32 act_er_shell(struct MarioState *m);
 s32 act_er_hammer_launch(struct MarioState *m);
 s32 act_er_throw(struct MarioState *m);
@@ -613,6 +614,7 @@ s32 mario_execute_object_action(struct MarioState *m) {
         case ACT_ER_METEOR_LAND:     cancel = act_er_meteor_land(m);     break;
         case ACT_ER_CHAIN:           cancel = act_er_chain(m);           break;
         case ACT_ER_BONK:            cancel = act_er_bonk(m);            break;
+        case ACT_ER_HOME_RUN:        cancel = act_er_home_run(m);        break;
         case ACT_ER_SHELL:           cancel = act_er_shell(m);           break;
         case ACT_ER_HAMMER_LAUNCH:   cancel = act_er_hammer_launch(m);   break;
         case ACT_ER_THROW:           cancel = act_er_throw(m);           break;

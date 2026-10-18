@@ -254,6 +254,17 @@ pub fn shot(h: &FieldInsHandle) {
     }
 }
 
+/// `h` isn't juggled any more (another move takes it: bat.rs), its gravity back.
+pub fn release(h: &FieldInsHandle) {
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(i) = up.iter().position(|j| key(&j.mob) == key(h)) {
+        up.remove(i);
+        if let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(h)) {
+            chr.modules.physics.gravity_disabled = false;
+        }
+    }
+}
+
 pub fn clear() {
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     if let Ok(wcm) = unsafe { WorldChrMan::instance_mut() } {
@@ -278,7 +289,7 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
     up.retain_mut(|j| {
         let Some(chr) = wcm.chr_ins_by_handle_mut(&j.mob) else { return false };
         // dead: the game's death (and its ragdoll) takes it from here
-        if chr.modules.data.hp <= 0 || crate::carry::is_carried(&j.mob) || crate::knock::is_flying(&j.mob) {
+        if chr.modules.data.hp <= 0 || crate::carry::is_carried(&j.mob) || crate::knock::is_flying(&j.mob) || crate::bat::is_flying(&j.mob) {
             chr.modules.physics.gravity_disabled = false;
             return false;
         }

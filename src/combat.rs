@@ -99,11 +99,17 @@ pub enum Attack {
     /// the Rock Mushroom (rock.rs): the boulder rolling into them, its slam after a drop
     Rock,
     RockSlam,
+    /// the hook's moves (hook.rs, bat.rs): the home run's swing, an enemy bowled over by the one
+    /// batted away, the tether's crash, the kick off the pole swing
+    HomeRun,
+    Bowled,
+    Tether,
+    SwingKick,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 52] = [
+const CODES: [Attack; 56] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -113,6 +119,7 @@ const CODES: [Attack; 52] = [
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
+    Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -175,9 +182,13 @@ impl Attack {
             // knockdown for a moment)
             Attack::Slip | Attack::ShellHit => Attack::Sweep.spec(),
             Attack::Bomb => Attack::GroundPound.spec(),
-            Attack::Boing => Attack::Punch.spec(),
+            // (not the punch's row: the finisher turns that one up for a moment)
+            Attack::Boing => Attack::Kick.spec(),
             Attack::Rock => Attack::Sweep.spec(),
             Attack::RockSlam => Attack::GroundPound.spec(),
+            Attack::HomeRun | Attack::SwingKick => Attack::Stomp.spec(),
+            Attack::Bowled => Attack::Sweep.spec(),
+            Attack::Tether => Attack::GroundPound.spec(),
         }
     }
 
@@ -267,6 +278,12 @@ impl Attack {
             // the boulder: bowling them over is the point (a regular enemy in about ten), its slam
             Attack::Rock => (9.0, "damage_rock"),
             Attack::RockSlam => (16.0, "damage_rock_slam"),
+            // the hook's moves: setting things up more than hurting (the flight and the crash are
+            // the show), the swing kick a strong blow for the risk of the swing
+            Attack::HomeRun => (14.0, "damage_home_run"),
+            Attack::Bowled => (8.0, "damage_bowled"),
+            Attack::Tether => (12.0, "damage_tether"),
+            Attack::SwingKick => (18.0, "damage_swing_kick"),
         }
     }
 
@@ -287,6 +304,8 @@ impl Attack {
                 | Attack::ShellHit
                 | Attack::Bomb
                 | Attack::Boing
+                | Attack::Bowled
+                | Attack::Tether
         )
     }
 
@@ -328,6 +347,8 @@ impl Attack {
             Attack::Bomb => 1.2,
             Attack::Rock => 1.0,
             Attack::RockSlam => 1.2,
+            Attack::HomeRun | Attack::Bowled | Attack::Tether => 1.0,
+            Attack::SwingKick => 1.3,
         }
     }
 
@@ -559,6 +580,7 @@ fn patch_params() -> bool {
         a.set_self_target(false);
     }
     log("combat: Mario's attacks patched into bullets 65-70");
+    patch_knockdown(repo);
     true
 }
 
@@ -1003,24 +1025,69 @@ fn finisher(player: &ChrIns, at: &HavokPosition, tick: u32) -> String {
     strike(player, at, bullet)
 }
 
-/// The sweep's bullet knocks down for a few ticks (the banana, the shells): its hit reaction the
-/// game's knockdown (`knockdown_level` in er_mario.ini: AtkParam's dmgLevel, 4 "blown away" by
-/// default) and poise damage enough to break any regular enemy's.
-static KNOCK_UNTIL: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
-const KNOCK_TICKS: u32 = 8;
+/// The knockdown's own bullet (the banana, the shells, the boulder, the hook's crashes on regular
+/// enemies): an unused dev bullet and attack of its own (from the far ends of noise.rs's ranges),
+/// set up like the blows' with the game's knockdown as its hit reaction (`knockdown_level` in
+/// er_mario.ini: AtkParam's dmgLevel, 4 "blown away" by default) and poise damage enough for a
+/// regular enemy. Only ever fired at regular ones (a boss is never knocked down by it).
+static KNOCK_BULLET: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
+const KNOCK_POISE: f32 = 60.0;
 
-fn knockdown(tick: u32) {
-    static LEVEL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    let level = *LEVEL.get_or_init(|| {
-        let l = crate::paths::config("knockdown_level").and_then(|v| v.parse().ok()).unwrap_or(4u8);
-        log(format!("combat: the trap kit's knockdown is hit reaction level {l}"));
-        l
-    });
-    let (_, atk, ..) = Attack::Sweep.spec();
-    let Some(a) = (unsafe { SoloParamRepository::instance_mut() }).ok().and_then(|r| r.get_mut::<AtkParam_Pc>(atk)) else { return };
+fn patch_knockdown(repo: &mut SoloParamRepository) {
+    let level = crate::paths::config("knockdown_level").and_then(|v| v.parse().ok()).unwrap_or(4u8);
+    let bullet = (100..=199u32).rev().find(|&b| repo.get::<Bullet>(b).is_some_and(|r| r.atk_id_bullet() <= 0 && r.sfx_id_bullet() <= 0));
+    let atk = (900..=979u32).rev().find(|&a| repo.get::<AtkParam_Pc>(a).is_some_and(|r| r.atk_phys() == 0 && r.appear_ai_sound_id() <= 0));
+    let (Some(bullet), Some(atk)) = (bullet, atk) else {
+        log("combat: no free bullet / attack for the knockdown: the trap kit only staggers");
+        return;
+    };
+    let (sweep, ..) = Attack::Sweep.spec();
+    let Some(from) = repo.get::<Bullet>(sweep as u32).map(|b| (b.hit_radius(), b.life())) else { return };
+    let Some(b) = repo.get_mut::<Bullet>(bullet) else { return };
+    b.set_atk_id_bullet(atk as i32);
+    b.set_sfx_id_bullet(-1);
+    b.set_sfx_id_flick(-1);
+    b.set_life(from.1);
+    b.set_dist(0.0);
+    b.set_init_vellocity(0.0);
+    b.set_max_vellocity(0.0);
+    b.set_min_vellocity(0.0);
+    b.set_accel_in_range(0.0);
+    b.set_accel_out_range(0.0);
+    b.set_gravity_in_range(0.0);
+    b.set_gravity_out_range(0.0);
+    b.set_hit_radius(from.0);
+    b.set_hit_radius_max(from.0);
+    b.set_spread_time(0.0);
+    b.set_num_shoot(1);
+    b.set_homing_angle(0);
+    b.set_is_penetrate_chr(true);
+    b.set_is_penetrate_obj(true);
+    b.set_is_penetrate_map(true);
+    b.set_is_hit_both_team(false);
+    let Some(a) = repo.get_mut::<AtkParam_Pc>(atk) else { return };
+    a.set_atk_phys_correction(FIST_SHARE);
+    a.set_atk_mag_correction(0);
+    a.set_atk_fire_correction(0);
+    a.set_atk_thun_correction(0);
+    a.set_atk_stam_correction(100);
+    a.set_guard_atk_rate_correction(100);
+    a.set_guard_break_correction(100);
+    a.set_atk_phys(BULLET_DAMAGE);
+    a.set_atk_obj(300);
+    a.set_atk_mag(0);
+    a.set_atk_fire(0);
+    a.set_atk_thun(0);
+    a.set_atk_stam(30);
+    a.set_atk_super_armor(KNOCK_POISE);
     a.set_dmg_level(level);
-    a.set_atk_super_armor(400.0);
-    *KNOCK_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) = Some(tick.wrapping_add(KNOCK_TICKS));
+    a.set_atk_attribute(1);
+    a.set_is_add_base_atk(true);
+    a.set_oppose_target(true);
+    a.set_friendly_target(false);
+    a.set_self_target(false);
+    *KNOCK_BULLET.lock().unwrap_or_else(|e| e.into_inner()) = Some(bullet as i32);
+    log(format!("combat: the knockdown is bullet {bullet} / attack {atk} (hit reaction level {level})"));
 }
 
 /// Bosses whose script took over at their last point: Mario's hits do nothing more to them.
@@ -1532,6 +1599,9 @@ const BONK_REACH: f32 = 200.0;
 /// the boulder's reach around Mario (its radius and a bit), its slam's
 const ROCK_RADIUS: f32 = 85.0;
 const ROCK_SLAM_RADIUS: f32 = 280.0;
+/// the home run's swing in front (a bat's reach), the swing kick's all round him
+const HOME_RUN_REACH: f32 = 230.0;
+const SWING_KICK_RADIUS: f32 = 140.0;
 
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
@@ -1581,6 +1651,8 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::Bonk => (Attack::Bonk, Reach::Front(BONK_REACH)),
         Hit::Rock => (Attack::Rock, Reach::Around(me, ROCK_RADIUS)),
         Hit::RockSlam => (Attack::RockSlam, Reach::Around(me, ROCK_SLAM_RADIUS)),
+        Hit::HomeRun => (Attack::HomeRun, Reach::Front(HOME_RUN_REACH)),
+        Hit::SwingKick => (Attack::SwingKick, Reach::Around(me, SWING_KICK_RADIUS)),
     };
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
     let mut out = Vec::new();
@@ -1766,18 +1838,6 @@ impl Combat {
             }
         }
         self.cooldown.retain(|_, t| tick.wrapping_sub(*t) < 12);
-        // (the knockdown back to the sweep's own stagger once its bullet is gone)
-        {
-            let mut until = KNOCK_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
-            if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
-                let (_, atk, _, poise, level, _) = Attack::Sweep.spec();
-                if let Some(a) = (unsafe { SoloParamRepository::instance_mut() }).ok().and_then(|r| r.get_mut::<AtkParam_Pc>(atk)) {
-                    a.set_dmg_level(level);
-                    a.set_atk_super_armor(poise * 0.8);
-                }
-                *until = None;
-            }
-        }
         {
             let mut until = FINISHER_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
             if until.is_some_and(|u| tick.wrapping_sub(u) < u32::MAX / 2) {
@@ -1879,12 +1939,15 @@ impl Combat {
             if matches!(attack, Attack::Stomp | Attack::GroundPound) {
                 *self.stomps.entry(target.key).or_insert(0) += 1;
             }
-            if self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
+            // (the trap kit and the hook's flights keep their own pace, apart from Mario's blows:
+            // traps.rs, bat.rs)
+            let own_pace = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether);
+            if !own_pace && self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
                 continue;
             }
             // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
             // burn and Mega's steps come at their own pace and leave Mario's blows free)
-            if !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample) {
+            if !own_pace && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample) {
                 self.cooldown.insert(target.key, tick);
             }
             if let Some(handle) = &target.handle {
@@ -1917,7 +1980,7 @@ impl Combat {
                     }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -1983,6 +2046,15 @@ impl Combat {
                 }
                 // the Mikiri: the world slows a moment, and a boss's stance cracks (swing.rs: a
                 // few of them open him up for the tail grab)
+                // the home run: batted away along the camera (bat.rs)
+                if attack == Attack::HomeRun {
+                    let me = player.modules.physics.position;
+                    let dir = crate::lakitu::forward()
+                        .map(|f| f.with_y(0.0))
+                        .filter(|f| f.length() > 0.3)
+                        .unwrap_or(glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
+                    crate::bat::home_run(handle, dir);
+                }
                 // the boulder: off a big one it bounces, a regular one counts for the strike
                 if attack == Attack::Rock {
                     let me = player.modules.physics.position;
@@ -2017,7 +2089,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Rock | Attack::RockSlam);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Rock | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -2026,10 +2098,10 @@ impl Combat {
             if self.bullet_at.len() > 64 {
                 self.bullet_at.retain(|_, t| tick.wrapping_sub(*t) < BULLET_EVERY);
             }
-            // the banana and the shells knock a regular enemy down (the game's own knockdown)
-            if matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock) && target.handle.as_ref().is_some_and(liftable) {
-                knockdown(tick);
-            }
+            // the banana, the shells, the boulder, the hook's crashes knock a regular enemy down
+            // (the game's own knockdown: a bullet of its own)
+            let knock = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock | Attack::Bowled | Attack::Tether) && target.handle.as_ref().is_some_and(liftable);
+            let bullet = if knock { KNOCK_BULLET.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(bullet) } else { bullet };
             let result = strike(player, &target.er, bullet);
             log(format!("combat: {attack:?} hit -> bullet {bullet}: {result}"));
         }

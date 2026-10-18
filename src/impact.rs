@@ -123,6 +123,10 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Boing => (0, 0.7, false),
         Attack::Rock => (1, 1.1, false),
         Attack::RockSlam => (4, 1.5, true),
+        Attack::HomeRun => (6, 1.5, true),
+        Attack::Bowled => (0, 0.9, false),
+        Attack::Tether => (0, 1.4, true),
+        Attack::SwingKick => (4, 1.3, true),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -521,6 +525,16 @@ pub fn rock(feet: Vec3, on: bool) {
     puffs(feet + Vec3::Y * 0.4, if on { 8 } else { 6 }, 0.7);
     burst(feet + Vec3::Y * 0.9, if on { 5 } else { 3 }, Bit::Star);
     crate::lakitu::shake(if on { 0.5 } else { 0.3 });
+}
+
+/// The tether's crash: two enemies into each other, a ring, stars, the camera shaken.
+pub fn tether(at: Vec3) {
+    spark(at, 2.0, WHITE);
+    ring(at, 1.8, 0.3, [0.6, 0.85, 1.0, 1.0]);
+    ring(at - Vec3::Y * 0.9, 2.6, 0.4, DUST);
+    puffs(at - Vec3::Y * 0.8, 5, 0.6);
+    burst(at, 5, Bit::Star);
+    crate::lakitu::shake(0.9);
 }
 
 /// The Bob-omb's blast: a fiery flash, wide rings, smoke, stars, the camera shaken.

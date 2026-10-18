@@ -1098,6 +1098,29 @@ SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float z, int 
         set_mario_action(gMarioState, ACT_ER_MIKIRI, 0);
 }
 
+/** er-mario: the pole swing (hook.rs): round (x, y, z) (SM64 units), `mode` 1 starts it, 0 moves
+ * its centre (the enemy on the move), 2 lets go */
+SM64_LIB_FN void sm64_er_pole(int32_t marioId, float x, float y, float z, int mode)
+{
+    extern f32 er_pole_centre[3];
+    extern s32 er_pole_release;
+    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+        return;
+    global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
+    er_pole_centre[0] = x;
+    er_pole_centre[1] = y;
+    er_pole_centre[2] = z;
+    if (mode == 2) {
+        er_pole_release = 1;
+    } else if (mode == 1) {
+        er_pole_release = 0;
+        if (gMarioState->health >= 0x100 && gMarioState->heldObj == NULL
+            && !(gMarioState->action & (ACT_FLAG_INVULNERABLE | ACT_FLAG_INTANGIBLE))
+            && (gMarioState->action & ACT_GROUP_MASK) != ACT_GROUP_CUTSCENE)
+            set_mario_action(gMarioState, ACT_ER_POLE_SWING, 0);
+    }
+}
+
 /** er-mario: the Rock Mushroom (rock.rs): Mario rolls as a boulder while `on` */
 SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on)
 {

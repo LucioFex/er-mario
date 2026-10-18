@@ -255,7 +255,8 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                         if suffix.is_empty() {
                             log(format!("assets: the gauntlets ({}): {info}; their own names {:?}", f.name, tex::utf16_with(&data, "AM_M_1280")));
                         }
-                        let fit = bones.len() == crate::engine_mario::KIT_PARTS && kit_bones.as_ref().is_none_or(|b| *b == bones);
+                        // (the far LOD only after the near one took it: its materials come with it)
+                        let fit = bones.len() == crate::engine_mario::KIT_PARTS && kit_bones.as_ref().is_none_or(|b| *b == bones) && (suffix.is_empty() || kit_bones.is_some());
                         let built = if fit {
                             flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + crate::engine_mario::KIT_PARTS, &bones)
                         } else {
