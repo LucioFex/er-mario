@@ -2601,8 +2601,10 @@ fn frame(data: &FD4TaskData) {
         let d = [p.0 - last[0], p.1 - last[1], p.2 - last[2]];
         if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() > 2.0 {
             log(format!("world origin shifted by {d:?}"));
-            // (a load or a warp: Mega Mario wouldn't know whether he fits where he lands)
-            if mega::active() || mega::changing() {
+            // (a load or a warp: Mega Mario wouldn't know whether he fits where he lands; not the
+            // floating origin's steps as he walks, tens of metres: his frame shifts with them)
+            let far = (d[0] * d[0] + d[2] * d[2]).sqrt() > 150.0;
+            if far && (mega::active() || mega::changing()) {
                 log("mega: over (the world moved)");
                 mega::clear();
             }
@@ -3616,13 +3618,17 @@ fn frame(data: &FD4TaskData) {
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
+                // D-pad down: whatever power is on comes off (the cap: caps.rs; the Rock, the Mega)
+                static DOWN_WAS: AtomicBool = AtomicBool::new(false);
+                let power_off = dpad[1] && !DOWN_WAS.swap(dpad[1], Ordering::Relaxed) && !MENU_OPEN.load(Ordering::Relaxed);
+                DOWN_WAS.store(dpad[1], Ordering::Relaxed);
                 // D-pad left: the Rock Mushroom (the Metal Cap's old place: caps.rs gets no left)
                 {
                     let feet = to_er(m.origin, state.position);
                     let free = gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person() && !m.dead;
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !carry::holding() && !swing::holding();
                     let can_start = free && can_stay && !mega::changing() && caps::active().is_none() && state.health >= 0x100;
-                    rock::tick(dpad[2], can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
+                    rock::tick(dpad[2], power_off, can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
                 }
                 let dpad = [dpad[0], dpad[1], false, dpad[3]];
                 if let Some(cap) = caps::tick(id, state.flags, dpad, gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !rock::active(), boss) {
@@ -3645,7 +3651,7 @@ fn frame(data: &FD4TaskData) {
                             .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                             .map(|h| glam::Vec3::new(h.0, h.1, h.2))
                     };
-                    mega::tick(dpad[3] && !MENU_OPEN.load(Ordering::Relaxed), can_start, can_stay, || mega::room(feet, ray), id, state.action, feet, m.ticks)
+                    mega::tick(dpad[3] && !MENU_OPEN.load(Ordering::Relaxed), power_off, can_start, can_stay, || mega::room(feet, ray), id, state.action, feet, m.ticks)
                 };
                 m.prev_parts = m.parts.take();
                 m.parts = parts;

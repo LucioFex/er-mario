@@ -84,14 +84,14 @@ fn set(id: i32, on: bool) {
 
 /// Game thread, every SM64 tick: D-pad left held, whether it may start now (on his feet or in the
 /// air, free, not big, no cap on, not riding or holding anyone) and stay on, his feet (Elden Ring).
-pub fn tick(left: bool, can_start: bool, can_stay: bool, id: i32, action: u32, feet: Vec3) {
+pub fn tick(left: bool, off: bool, can_start: bool, can_stay: bool, id: i32, action: u32, feet: Vec3) {
     let mut s = state();
     let pressed = left && !s.held;
     s.held = left;
     if let Some(since) = s.since {
         s.took |= action == ACT_ER_ROCK;
-        // over: its time, D-pad left again, or he can't be one any more
-        let over = since.elapsed().as_secs_f32() >= TIME || pressed || !can_stay || (since.elapsed().as_secs_f32() > 0.3 && action != ACT_ER_ROCK);
+        // over: its time, D-pad left again or down, or he can't be one any more
+        let over = since.elapsed().as_secs_f32() >= TIME || pressed || off || !can_stay || (since.elapsed().as_secs_f32() > 0.3 && action != ACT_ER_ROCK);
         if over {
             s.since = None;
             // (it never really started, he couldn't be one: no wait)

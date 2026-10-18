@@ -121,7 +121,7 @@ pub enum Change {
 /// riding or in a cap, alive) and stay big (alive, no menu, not riding), whether there's room for a
 /// giant where he stands, his action, Elden Ring feet. What lib.rs must do.
 #[allow(clippy::too_many_arguments)]
-pub fn tick(right: bool, can_start: bool, can_stay: bool, room: impl Fn() -> bool, _id: i32, action: u32, feet: Vec3, tick: u32) -> Option<Change> {
+pub fn tick(right: bool, off: bool, can_start: bool, can_stay: bool, room: impl Fn() -> bool, _id: i32, action: u32, feet: Vec3, tick: u32) -> Option<Change> {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let pressed = right && !s.held;
     s.held = right;
@@ -169,8 +169,8 @@ pub fn tick(right: bool, can_start: bool, can_stay: bool, room: impl Fn() -> boo
             }
         }
         Phase::Big(t) => {
-            // over: his time is up, D-pad right again, or he can't be big (a menu, his death)
-            if t.elapsed().as_secs_f32() >= LAST || pressed || !allowed_big(can_stay, action) {
+            // over: his time is up, D-pad right again or down, or he can't be big (a menu, his death)
+            if t.elapsed().as_secs_f32() >= LAST || pressed || off || !allowed_big(can_stay, action) {
                 log("mega: shrinking");
                 s.phase = Phase::Shrinking(Instant::now());
                 // (back to his size in the world at once, drawn big and stepping down)

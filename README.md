@@ -321,7 +321,7 @@ close and risky hits.
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
 | Capture: charge **6%** each, wall slam | — | **11%** and the stance broken |
 
-(The shares below were worked out with a 0.75 damage factor; the current one is 0.6 (ini `damage_factor`), so take 20% off each; bosses take about 6.5% of them, more for the
+(The shares below were worked out with a 0.75 damage factor; the current one is 0.6, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 20% off each (44% with Reforged; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 6.5% of them, more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -423,7 +423,7 @@ replaces this fork's DLL with the original one.
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
-| D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
+| D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom) |
 | L3 (left stick click) | R | Whistle for Yoshi |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |

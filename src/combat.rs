@@ -1032,12 +1032,22 @@ const BOSS_MAX_HP: f32 = 2500.0;
 fn hp_scale() -> f32 {
     static SCALE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *SCALE.get_or_init(|| {
-        let reforged = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("reforged.dll")) }.is_ok();
+        let reforged = reforged();
         let scale = config_f32("enemy_hp_scale", if reforged { 2.0 } else { 1.0 }).clamp(0.5, 10.0);
         log(format!("combat: enemies count as bosses from {:.0} HP (x{scale}{})", BOSS_MAX_HP * scale, if reforged { ", Reforged" } else { "" }));
         scale
     })
 }
+
+/// Whether Elden Ring Reforged's DLL is loaded.
+fn reforged() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("reforged.dll")) }.is_ok())
+}
+
+/// Reforged's enemies are meant to hold out longer (1.7 times the health), but Mario's blows take a
+/// share of their health, so they fell as fast as in vanilla: his blows are worth this much less.
+const REFORGED_DAMAGE: f32 = 0.7;
 
 /// Whether a character takes boss damage: a boss bar now or before, the strong-enemy team, or
 /// big / tough enough (a field boss hit before his bar showed took a regular enemy's 50%).
@@ -1419,7 +1429,8 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
-    let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", DAMAGE_FACTOR);
+    let factor = DAMAGE_FACTOR * if reforged() { REFORGED_DAMAGE } else { 1.0 };
+    let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", factor);
     if boss {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
