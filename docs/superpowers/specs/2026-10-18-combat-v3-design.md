@@ -130,6 +130,43 @@ The Metal Cap is gone from D-pad left (its code stays dormant: nothing puts it o
 - The Bob-omb's blast sends regulars up (juggle), never kills by itself (spec rule), and goes off
   on the first enemy it touches.
 
+### Balance log (section G, tuned while implementing)
+Numbers are shares of a regular enemy's max HP before the 0.75 damage factor; bosses take ~6.5%
+of them times each attack's boss bonus.
+- **Mikiri** 12% + GroundPound-level stagger, 2.5 s cooldown, window 0.2-0.9 s into the attack
+  animation, hostile enemies only (merchants/animals playing attack anims excluded), lands on the
+  near side of wide bodies and at most 3 m up (a giant's knee). Bosses: +30 stance (about four
+  Mikiris open a 100-poise boss for the tail grab). Not on Mega, Yoshi, holding anyone, swimming,
+  or on the tick he's hit. Grab bosses: the somersault is invulnerable, so it also escapes grabs.
+- **Action command** +30% (third +50%, then the cycle restarts), only one-blow attacks (no spins,
+  flurries, rushes, shockwaves), no X in the 8 ticks before, more than 4 presses in 1 s or a late
+  press locks it for 20 ticks: rhythm pays off, mashing doesn't.
+- **Dash strike** 16%, at most every 1.2 s (dash-strike-dash was an invulnerable loop).
+- **Trap kit**: banana 8% + knockdown (2 charges, 10 s), shell 10%/hit (green 4, red 2 + homing,
+  the same enemy again only after 1.6 s), Bob-omb 28% blast + launch of regulars (12 s), spring
+  3% + launch (the same enemy every 4 s, 15 s). Bosses: banana and spring ignore them; shell and
+  blast only their small share. Knockdowns use a dedicated bullet row with 60 poise (never a
+  boss), at most one per enemy every 3.5 s whatever causes it (trap, boulder, tether, bowling).
+- **Rock Mushroom** 9% per roll-over, once a second per enemy, its slam 16% after a 4.8 m+ drop;
+  12 s, 75 s recharge; hits on Mario half, no knockback (not invulnerable); lethal falls still
+  kill; bosses bounce him off. Slopes over ~12° can't be climbed rolling (intended: a ball).
+- **Hook**: home run 14% + 6% landing that never kills; bowled 8% + knockdown; tether 12% each
+  (only draggable regulars fly; bosses can't be yanked); pole swing kick 18%, swing every 3 s,
+  only from within 3 m of the body; boss ride: 4 s, 40 s recharge, a wall crash 15% + stance
+  broken (the tail grab), the boss keeps attacking meanwhile.
+- **MAX finisher**: needs 12 blows in a row without being hurt (hurt = lost), one use; fists 6×3%
+  + 10% launch, hammer cross 3 steps × 9% (1.5 m blasts), Chomp ring 14% within 6.5 m + launch of
+  regulars, boomerang 3 big ones.
+- **Star Rush**: ~110 style points to fill (two or three good strings), 10 s, ×1.15 damage and
+  speed, hits half with no knockback; not with Mega or the boulder.
+- **Stopwatch**: regular 3 s, big 2 s, boss 1.2 s, 25 s recharge; blows store momentum (2.2,
+  heavy 5 m/s each, flight 4-24 m/s); bosses only stagger (stance). A stopped enemy is never
+  finished until time runs again.
+- **Freeflow**: B toward an enemy 3-12 m away within 35° of the stick, only within 0.8 s of a
+  blow; it's the hook's zip (no damage of its own).
+- **Co-op**: the guest never moves enemies (home run, tether, launches, ride, stopwatch flights
+  refuse); every new attack is appended to the wire codes; the pose packet is v3.
+
 ## Batches
 
 1. 9, 10, 11, 19 (timing) + 20 (partner HUD)

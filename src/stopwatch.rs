@@ -77,7 +77,8 @@ pub fn frozen(h: &FieldInsHandle) -> bool {
 /// Ring) if there's one and it's ready; a buzz otherwise.
 pub fn use_it(feet: Vec3, facing: Vec3, origin: [f32; 3]) {
     let mut s = state();
-    let ready = s.ready_at.is_none_or(|t| Instant::now() >= t) && s.frozen.is_none();
+    // (co-op guest: the host owns the enemies, one stopped here would only be stopped here)
+    let ready = s.ready_at.is_none_or(|t| Instant::now() >= t) && s.frozen.is_none() && !crate::coop::guest();
     let target = combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), REACH, origin)
         .iter()
         .filter_map(|t| {
