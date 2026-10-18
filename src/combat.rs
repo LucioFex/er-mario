@@ -736,23 +736,51 @@ fn team_learned(team: u8) -> bool {
 }
 
 /// Mario was hurt (lib.rs): whoever hit him from a team in the neutral range is an enemy now, and
-/// so is its whole team.
+/// so is its whole team. The game's "last hit by" often names nobody: then, with no enemy about,
+/// the one neutral character right by him is taken to be it.
 pub fn learn_attacker(player: &ChrIns) {
+    // (up on a captured enemy, it's on his side: its team isn't learned)
+    if crate::bossride::active() {
+        return;
+    }
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
-    let Some(chr) = wcm.chr_ins_by_handle(&player.last_hit_by) else { return };
+    let p = player.modules.physics.position;
+    let flat = |c: &ChrIns| {
+        let q = c.modules.physics.position;
+        ((p.0 - q.0).powi(2) + (p.2 - q.2).powi(2)).sqrt()
+    };
+    let neutral = |c: &ChrIns| (10..TEAM_ENEMY_GROUPS).contains(&c.team_type) && c.team_type != CHARMED && !own_side(c.team_type) && !team_learned(c.team_type);
+    let alive = |c: &ChrIns| c.modules.data.hp > 0 && hittable(c.chr_type) && !helper(c) && !is_torrent(c);
+    let chr = match wcm.chr_ins_by_handle(&player.last_hit_by) {
+        // ("last hit by" can be stale: only one up close, alive, and a character a blow may land on)
+        Some(c) => Some(c).filter(|c| neutral(c) && alive(c) && flat(c) <= 8.0),
+        None => {
+            let mut enemy_near = false;
+            let mut found: Vec<&ChrIns> = Vec::new();
+            for set in wcm.chr_sets.iter().flatten() {
+                for c in set.characters() {
+                    let c: &ChrIns = c;
+                    if !alive(c) || flat(c) > 6.0 {
+                        continue;
+                    }
+                    if hostile(c) {
+                        enemy_near = true;
+                    } else if neutral(c) && flat(c) <= 3.0 {
+                        found.push(c);
+                    }
+                }
+            }
+            (!enemy_near && found.len() == 1).then(|| found[0])
+        }
+    };
+    let Some(chr) = chr else { return };
     let team = chr.team_type;
-    if !(10..TEAM_ENEMY_GROUPS).contains(&team) || own_side(team) || team_learned(team) {
-        return;
-    }
-    // ("last hit by" can be stale: only one up close, alive, and a character a blow may land on)
-    let (p, q) = (player.modules.physics.position, chr.modules.physics.position);
-    let near = ((p.0 - q.0).powi(2) + (p.2 - q.2).powi(2)).sqrt() <= 8.0;
-    if !near || chr.modules.data.hp <= 0 || !hittable(chr.chr_type) {
-        return;
-    }
     LEARNED_TEAMS.lock().unwrap_or_else(|e| e.into_inner()).push(team);
     log(format!("combat: c{:04} of team {team} hit Mario: that team is hostile from now on", chr.character_id));
 }
+
+/// the team a captured enemy is put on (bossride.rs): never learned as hostile
+const CHARMED: u8 = 15;
 
 /// Enemies and NPCs, the red NPC invaders included; some bosses (Margit) are type 7. Never the
 /// player, phantoms or the ghost kinds (bloodstains, messages, graces).

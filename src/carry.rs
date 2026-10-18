@@ -91,7 +91,9 @@ pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32
 /// and B). `feet`, `face`: his place and the way he looks (Elden Ring). True if he took one.
 pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3]) -> bool {
     let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
-    let found = crate::combat::nearby(&here, 4.5, origin)
+    // (measured to their bodies: a wide one's centre is far off; nearest first, the next if that
+    // one can't be taken)
+    let mut found: Vec<_> = crate::combat::nearby(&here, 9.0, origin)
         .iter()
         .filter_map(|t| {
             let h = *t.shootable()?;
@@ -100,12 +102,21 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3]) -> bool {
             let gap = (d.length() - radius).max(0.0);
             (gap <= REACH && (gap < 0.8 || d.normalize_or(face).dot(face) >= 0.3)).then_some((gap, h, radius, height))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0));
-    let Some((_, h, radius, height)) = found else { return false };
-    if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, feet, radius, height, true) {
-        return true;
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, h, radius, height) in found {
+        if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, feet, radius, height, true) {
+            return true;
+        }
+        // (one up in a juggle is let go of first: two moving it at once would tear it about)
+        if crate::juggle::is_juggled(&h) && crate::swing::is_open(&h) && !crate::coop::guest() {
+            crate::juggle::release(&h);
+        }
+        if crate::swing::try_grab(&h, radius) {
+            return true;
+        }
     }
-    crate::swing::try_grab(&h, radius)
+    false
 }
 
 /// how far (m, from its body) Mario's grab reaches

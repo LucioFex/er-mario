@@ -160,7 +160,7 @@ the camera looks at (up to 20 m):
 | A wall | Mario flies to it and clings to it a moment: A wall kicks off it, LT lets go |
 | A floor or a ledge | Mario flies there and lands |
 | **LT held** (any time, ground or air) + RT: a small enemy | Dragged in to Mario; in the air it hangs in front of him, ready for the air string |
-| LT + RT: a medium enemy (a stronger or wider regular one, up to 1.4 m wide and 3.4 m tall) | Dragged in too, but the same one only every 5 s |
+| LT + RT: a medium enemy (a stronger or wider regular one, up to 1.4 m wide and 3.4 m tall) | Dragged in too, but the same one only every 5 s, and in the air it drops in front of him (no endless juggle) |
 | LT + RT: a big enemy (a boss, a strong one) | Only a tiny hit: it doesn't come and Mario doesn't go |
 
 Walls and ledges are good for **one hook per jump**: after that it only clinks off them until
@@ -217,7 +217,8 @@ and Mario (or around the camera) turns see-through until it's out of the way.
 **Coins as a purse.** The coin counter (kept per character) is now money, and each coin still heals
 a wedge. The big abilities cost coins on top of their waits: **Capture 8**, **Mega Mushroom 8**,
 **Rock Mushroom 5**, **wing cap 3** (a "NEED COINS" if the purse is short; `src/coins.rs`).
-Like Elden Ring's runes, **half the purse is lost when Mario dies and stays in a bag where he fell**:
+Like Elden Ring's runes, **half the purse is lost when Mario dies and stays in a bag where he last stood**
+(a fall into the abyss leaves it at the edge; it keeps its place through loads and warps):
 a big spinning coin in a golden glow, marked on the compass with its distance; touching it gives
 the coins back. Dying again before that loses that bag for good (the bag isn't kept between
 sessions). In co-op every player has a purse and coins of their own: each game drops a coin
@@ -267,8 +268,8 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | LT crouched + RB | **Spring** | Enemies stepping on it fly up; Mario jumping onto it goes higher than any jump. 15 s |
 | LT crouched + LB | **Stopwatch** | The enemy in front stops in time (3 s, bosses 1.2 s); blows on it build up momentum and it flies off when time runs again (bosses stagger). 25 s |
 | D-pad left | **Rock Mushroom** | 12 s as a boulder: down slopes faster, off walls, a slam after a drop; bowls regular enemies over (3 at once: STRIKE!), bounces off bosses; A hops, X rams; hits cost half. 75 s |
-| R3 as a projectile comes | **Parry** (Sekiro / Hollow Knight) | A palm thrust opens a 0.45 s window: an enemy's arrow or spell that reaches Mario (3.8 m) is turned back as a blue-white fireball with a level-3 charge's strength (about 20% on a regular enemy), homing on whoever fired it; up to 3 per press. A press that deflects nothing waits 1.6 s, a deflect 0.6 s. PARRY! (3 style points) |
-| LT held + R3 | **Grab** | The nearest enemy in front within arm's reach: a small one is carried like a Bob-omb (B throws it), from any side now; a big one whose stance is broken (Mikiri, a wall slam) by the tail: spin the stick, B lets go |
+| R3 as a projectile comes | **Parry** (Sekiro / Hollow Knight) | A palm thrust opens a 0.45 s window: an enemy's arrow or spell that reaches Mario (3.8 m) is turned back as a blue-white fireball with a level-3 charge's strength (about 20% on a regular enemy), homing on whoever fired it; a volley is stopped (up to 3 per press) but only one shot goes back. Only shots coming at him, from enemies (not neutral NPCs or the co-op partner); not while swimming, hanging, on a pole or a ladder, or as the Rock. A press that deflects nothing waits 1.6 s, a deflect 1 s. PARRY! (3 style points) |
+| LT held + R3 (on his feet) | **Grab** | The nearest enemy in front within arm's reach (the next one if that can't be taken): a small one is carried like a Bob-omb (B throws it), from any side now; a big one whose stance is broken (Mikiri, a wall slam) by the tail: spin the stick, B lets go |
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
 | RT held on a medium or big enemy (after Mario flew to it) | **Pole swing** | Mario swings round it for 4 s, faster and faster. Let go and he's flung off along the swing with its inertia into a flying kick: swing between big enemies, or get away. Held to the end, he lands on its back (Capture) |
@@ -420,7 +421,7 @@ replaces this fork's DLL with the original one.
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing; held + A: capture |
 | LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
-| LT | K | Crouch, ground pound in the air |
+| LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (also takes the cap off) |
 | L3 (left stick click) | R | Whistle for Yoshi |
@@ -459,7 +460,9 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   drawing) are left alone.
 - Some enemies sit on neutral teams (Caelid's soldiers, at war with its hounds and with you) and
   Mario's blows used to go through them. Whoever hits Mario from one of those teams is an enemy
-  from then on, and so is its whole team (the log says `combat: ... team N hit Mario`);
+  from then on, and so is its whole team (the log says `combat: ... team N hit Mario`); when the
+  game doesn't say who hit him, with no enemy about, the one neutral character right by him
+  (4 m) is taken to be it;
   `hostile_teams = 30,48` in `er_mario.ini` lists teams that are enemies from the start.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).

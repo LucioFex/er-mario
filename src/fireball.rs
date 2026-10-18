@@ -275,6 +275,14 @@ impl Fire {
         self.bursts.push(Burst { pos: from, level: 0, born: tick });
     }
 
+    /// Another attack pressed while RB charges (lib.rs): the charge goes out, a shot already let go
+    /// of (waiting for the throw) still flies.
+    pub fn put_out(&mut self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
+        let pending = self.pending.take();
+        self.douse(state, origin, tick);
+        self.pending = pending;
+    }
+
     /// Mario was hit (lib.rs): a charge in his hand goes out with a fizzle.
     pub fn douse(&mut self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         self.pending = None;
@@ -907,7 +915,8 @@ fn home(shot: &mut Shot, origin: [f32; 3]) {
     }
     let dir = vel / speed;
     let p = shot.pos;
-    if shot.homing.is_none() || shot.age % HOME_EVERY == 0 {
+    // (a turned-back shot keeps to its shooter while he's there)
+    if shot.homing.is_none() || (shot.age % HOME_EVERY == 0 && !shot.reflected) {
         let here = sm_to_er(origin, p);
         shot.homing = combat::nearby(&here, HOME_RANGE, origin)
             .iter()

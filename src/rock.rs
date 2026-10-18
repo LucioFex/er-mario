@@ -44,6 +44,8 @@ struct State {
     struck: bool,
     /// bounced off something big: the way out (ER, horizontal), for the next tick
     bounce: Option<Vec3>,
+    /// SM64 took it (he was seen as the boulder): else the coins go back
+    took: bool,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -55,6 +57,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     bowled: Vec::new(),
     struck: false,
     bounce: None,
+    took: false,
 });
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -86,12 +89,16 @@ pub fn tick(left: bool, can_start: bool, can_stay: bool, id: i32, action: u32, f
     let pressed = left && !s.held;
     s.held = left;
     if let Some(since) = s.since {
+        s.took |= action == ACT_ER_ROCK;
         // over: its time, D-pad left again, or he can't be one any more
         let over = since.elapsed().as_secs_f32() >= TIME || pressed || !can_stay || (since.elapsed().as_secs_f32() > 0.3 && action != ACT_ER_ROCK);
         if over {
             s.since = None;
             // (it never really started, he couldn't be one: no wait)
             s.ready_at = (since.elapsed().as_secs_f32() > 1.0).then(|| Instant::now() + std::time::Duration::from_secs_f32(RECHARGE));
+            if !std::mem::take(&mut s.took) {
+                crate::coins::refund(crate::coins::COST_ROCK, "the Rock Mushroom");
+            }
             s.last = None;
             drop(s);
             set(id, false);
@@ -118,6 +125,7 @@ pub fn tick(left: bool, can_start: bool, can_stay: bool, id: i32, action: u32, f
     s.bowled.clear();
     s.struck = false;
     s.bounce = None;
+    s.took = false;
     drop(s);
     set(id, true);
     log("rock: Rock Mushroom on");

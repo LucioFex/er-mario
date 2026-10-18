@@ -299,6 +299,7 @@ impl Hook {
             Phase::Zipping(_) | Phase::Swinging(_)
                 if a_pressed
                     && allowed
+                    && !crate::coop::guest()
                     && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
             {
                 if let Aim::Enemy { mob, .. } = self.aim {
@@ -368,7 +369,7 @@ impl Hook {
                 }
             }
         }
-        // (a swing lasts as long as it does: C lets go after 3 s)
+        // (a swing lasts as long as it does: C lets go after 4 s)
         if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Swinging(_))) {
             next = Some(Phase::Back);
         }
@@ -482,7 +483,7 @@ impl Hook {
                 // (L2: the enemy comes, if it's small or medium; a big one, or a medium one pulled
                 // not long ago, only gets the tap)
                 if self.pull {
-                    if drag && !(medium && medium_waits(&mob)) && crate::juggle::pull(&mob, air, radius) {
+                    if drag && !(medium && medium_waits(&mob)) && crate::juggle::pull(&mob, air, radius, medium) {
                         if medium {
                             medium_pulled(&mob);
                         }

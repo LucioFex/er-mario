@@ -108,9 +108,9 @@ struct Meter {
     count: u32,
     points: f32,
     last_kind: Option<Discriminant<Attack>>,
-    /// the kinds of the last blows and when, the blows on each enemy (count, when last)
+    /// the kinds of the last blows and when, the blows on each enemy (when)
     recent: Vec<(Discriminant<Attack>, f32)>,
-    targets: HashMap<u64, (u32, f32)>,
+    targets: HashMap<u64, Vec<f32>>,
     last: f32,
     rank: Option<usize>,
     /// the best rank of the string (the chime only sounds for a new one)
@@ -152,7 +152,7 @@ impl Meter {
         }
     }
 
-    /// Points of one blow of `attack` on enemy `target` (before the Star Rush and the like).
+    /// Points of one blow of `attack` on enemy `target` (before the after-a-hurt and MAX knock-on scaling).
     fn blow(&mut self, now: f32, attack: Attack, target: u64) -> f32 {
         let kind = std::mem::discriminant(&attack);
         self.recent.retain(|&(_, t)| now - t <= KIND_WINDOW);
@@ -167,16 +167,15 @@ impl Meter {
             points += VARIETY_POINTS;
         }
         self.last_kind = Some(kind);
+        // (the blows on this one within the window, sliding: older ones don't count)
         if self.targets.len() > 16 {
-            self.targets.retain(|_, &mut (_, t)| now - t <= TARGET_WINDOW);
+            self.targets.retain(|_, at| at.last().is_some_and(|&t| now - t <= TARGET_WINDOW));
         }
-        let on = self.targets.entry(target).or_insert((0, now));
-        if now - on.1 > TARGET_WINDOW {
-            on.0 = 0;
-        }
-        on.0 += 1;
-        on.1 = now;
-        points * TARGET_FADE.powi(on.0.saturating_sub(TARGET_FREE) as i32).max(TARGET_FLOOR)
+        let on = self.targets.entry(target).or_default();
+        on.retain(|&t| now - t <= TARGET_WINDOW);
+        on.push(now);
+        let n = on.len() as u32;
+        points * TARGET_FADE.powi(n.saturating_sub(TARGET_FREE) as i32).max(TARGET_FLOOR)
     }
 
     /// Points in (already scaled): the rank it takes to, if that's a new best.
@@ -634,6 +633,24 @@ mod tests {
         m.settle(2.4);
         // 60 - 2.2 * 2.4 s, still S ... and a new peak is the only chime
         assert!(m.points < 56.0);
+        // (held at S down to 0.94 of its mark)
+        assert_eq!(m.rank, Some(4));
         assert!(m.gain(2.4, 0.5).is_none());
+        m.points = 52.0;
+        m.settle(2.4);
+        assert_eq!(m.rank, Some(3));
+    }
+
+    #[test]
+    fn one_enemy_window_slides() {
+        // 7 blows on one enemy, then a pause longer than the window from the first ones but not
+        // from the last: only the blows within 8 s count
+        let mut m = Meter::new(0.0);
+        for i in 0..7 {
+            m.blow(i as f32, Attack::Punch, 1);
+        }
+        m.blow(9.0, Attack::Kick, 1);
+        // (the one at 0 s is out of the window by 9 s: 1..6 and 9)
+        assert_eq!(m.targets[&1].len(), 7);
     }
 }

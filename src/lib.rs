@@ -277,7 +277,7 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         // RB is the fireball, RT the hook and L3 whistles for Torrent (input_task); as the game's
         // attack buttons, pressed in the same frame, they kept the whistle from being used (and L3
         // is the game's crouch)
-        // (R3 is Star Rush, not the game's lock-on)
+        // (R3 is the parry and the grab, not the game's lock-on)
         g.wButtons &= !(XINPUT_GAMEPAD_RIGHT_SHOULDER | XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB);
         g.bRightTrigger = 0;
         // L1 brings out Mario's hammer (moves.rs), not the game's guard
@@ -1916,6 +1916,8 @@ fn frame(data: &FD4TaskData) {
 
     let Some(player) = (unsafe { WorldChrMan::instance_mut() }).ok().and_then(|w| w.main_player.as_mut()) else {
         IN_WORLD.store(false, Ordering::Relaxed);
+        // (out of the world, a load: a captured enemy is let go while its handle still names it)
+        bossride::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2554,10 +2556,7 @@ fn frame(data: &FD4TaskData) {
         stats::update(|s| s.deaths += 1);
         coins::clear();
         // (half the purse stays in a bag where he fell)
-        {
-            let p = player_ref.chr_ins.modules.physics.position;
-            coins::die(glam::Vec3::new(p.0, p.1, p.2), player_ref.chr_ins.block_id);
-        }
+        coins::die(&player_ref.chr_ins);
         fireball::clear();
         boomerang::clear();
         blown::clear();
@@ -2964,9 +2963,9 @@ fn frame(data: &FD4TaskData) {
                 }
             }
             let me = to_er(m.origin, m.state.position);
-            coins::set_here(player_ref.chr_ins.block_id);
+            coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0);
             let n = coins::collect(glam::Vec3::new(me.0, me.1, me.2));
-            if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2), player_ref.chr_ins.block_id) {
+            if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2)) {
                 log(format!("coins: {amount} coins recovered"));
                 style::callout("COINS BACK", None, [1.0, 0.85, 0.25], true, 0.0);
                 worker::call("coins back", |_| unsafe { sm64::sm64_play_sound_volume(0x7828_9081_u32 as i32, 0.25) });
@@ -3292,9 +3291,29 @@ fn frame(data: &FD4TaskData) {
         let rocking = rock::active();
         // (L2 held: the grab and the hook's pull)
         let l2_held = inputs.button_z != 0;
-        // (in the air L2 is SM64's ground pound: not while the hook or R3 is being used with it)
-        if l2_held && (b_hook || r3) && m.state.action & 0x800 != 0 {
-            inputs.button_z = 0;
+        // (in the air L2 is SM64's ground pound: not for a press that the hook or R3 went with,
+        // even once they're let go first; a fresh press in the air waits a few ticks for them)
+        {
+            static Z_EATEN: AtomicBool = AtomicBool::new(false);
+            static Z_DOWN_AT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            static Z_WAS: AtomicBool = AtomicBool::new(false);
+            // (a press on the ground isn't held back: L2 + A leaves the ground for the backflip at
+            // once, and a held-back Z would come in the air as a fresh press, a ground pound)
+            static Z_IN_AIR: AtomicBool = AtomicBool::new(false);
+            if l2_held && !Z_WAS.swap(l2_held, Ordering::Relaxed) {
+                Z_DOWN_AT.store(m.ticks, Ordering::Relaxed);
+                Z_IN_AIR.store(m.state.action & 0x800 != 0, Ordering::Relaxed);
+            }
+            Z_WAS.store(l2_held, Ordering::Relaxed);
+            if !l2_held {
+                Z_EATEN.store(false, Ordering::Relaxed);
+            } else if b_hook || r3 {
+                Z_EATEN.store(true, Ordering::Relaxed);
+            }
+            let fresh = Z_IN_AIR.load(Ordering::Relaxed) && m.ticks.wrapping_sub(Z_DOWN_AT.load(Ordering::Relaxed)) < 3;
+            if l2_held && m.state.action & 0x800 != 0 && (Z_EATEN.load(Ordering::Relaxed) || fresh) {
+                inputs.button_z = 0;
+            }
         }
         let result = worker::call("tick", move |ctx| {
             if lava {
@@ -3407,20 +3426,9 @@ fn frame(data: &FD4TaskData) {
                 unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
             }
             let mario_ms = job_start.elapsed().as_secs_f32() * 1000.0;
-            // SM64's sound engine runs at the same 30 Hz as Mario (when he runs faster, the Star
-            // Rush, it skips the ticks he has extra: the ring filled up and dropped chunks, clicks)
-            static AUDIO_DUE: Mutex<f32> = Mutex::new(0.0);
-            let due = {
-                let mut d = AUDIO_DUE.lock().unwrap_or_else(|e| e.into_inner());
-                *d = (*d + 1.0 / titan.max(1.0)).min(2.0);
-                let due = *d >= 1.0;
-                if due {
-                    *d -= 1.0;
-                }
-                due
-            };
+            // SM64's sound engine runs at the same 30 Hz as Mario
             let mut buf = [0i16; 544 * 2 * 2];
-            let frames = if due { (unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) }) as usize } else { 0 };
+            let frames = (unsafe { sm64::sm64_audio_tick(audio::queued(), 1100, buf.as_mut_ptr()) }) as usize;
             audio::push(&buf[..(frames * 2 * 2).min(buf.len())]);
             let sound_ms = job_start.elapsed().as_secs_f32() * 1000.0 - mario_ms;
             let n = ctx.geo.used() * 9;
@@ -3559,7 +3567,7 @@ fn frame(data: &FD4TaskData) {
                         rising
                     };
                     if b_fire && m.fire.charging() && rising {
-                        m.fire.douse(&state, m.origin, m.ticks);
+                        m.fire.put_out(&state, m.origin, m.ticks);
                     }
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
                     // R3: the parry (parry.rs); with L2 held, the grab (carry.rs: a small enemy, or a big one
@@ -3570,8 +3578,13 @@ fn frame(data: &FD4TaskData) {
                         PREV_R3.store(r3, Ordering::Relaxed);
                         let feet = to_er(m.origin, state.position);
                         let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
-                        let free = fire_allowed && !m.dead && state.action & 0x0002_0000 == 0 && !mega::active() && !bossride::active() && !swing::holding() && !carry::holding();
-                        if r3_press && l2_held && free {
+                        // (not swimming, hanging, on a pole or a shell, zipping, on a ladder, in a
+                        // cutscene action, rolling as the Rock: the palm thrust would cut those short)
+                        let a = state.action;
+                        let busy = a & (0x2000 | 0x0020_0000 | 0x0010_0000 | 0x0001_0000) != 0 || a & 0x1C0 == 0x100 || a == moves::ACT_ER_ZIP || a == moves::ACT_ER_POLE_SWING || a == ACT_ER_LADDER;
+                        let free = fire_allowed && !m.dead && a & 0x0002_0000 == 0 && !busy && !mega::active() && !rock::active() && !bossride::active() && !swing::holding() && !carry::holding();
+                        // (the grab is on his feet: SM64's pick-up actions are ground ones)
+                        if r3_press && l2_held && free && a & 0x800 == 0 {
                             let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
                             if !carry::grab_nearest(feet, face, m.origin) {
                                 worker::call("grab buzz", |_| unsafe { sm64::sm64_play_sound_volume(0x700E_0081, 0.35) });
@@ -3599,7 +3612,7 @@ fn frame(data: &FD4TaskData) {
                         rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
-                    m.hook.tick(id, b_hook, l2_held, x_move, a_pressed, fire_allowed && !swing::holding(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, l2_held, x_move, a_pressed, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
@@ -3708,7 +3721,10 @@ fn frame(data: &FD4TaskData) {
 
     // keep SM64 coordinates small: re-centre its world on Mario when he travels far
     let [mx, my, mz] = m.state.position;
-    if mx.abs() > 4000.0 || mz.abs() > 4000.0 || my.abs() > 4000.0 {
+    // (not in a pole swing or a zip, whose centre and end are in the old frame, unless far out)
+    let anchored = m.state.action == moves::ACT_ER_POLE_SWING || m.state.action == moves::ACT_ER_ZIP;
+    let limit = if anchored { 8000.0 } else { 4000.0 };
+    if mx.abs() > limit || mz.abs() > limit || my.abs() > limit {
         let here = collision::sm_to_er(m.origin, m.state.position);
         log(format!("re-centring SM64 world at {:?} (mario was at {:?})", (here.0, here.1, here.2), m.state.position));
         // moving objects live in SM64 coordinates: rebuild them in the new frame (moving them there

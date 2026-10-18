@@ -81,11 +81,13 @@ struct Ask {
     /// frames it's been written; the animation it was in when first written (None: not yet)
     frames: u32,
     start_anim: Option<i32>,
+    /// its HP when first written: one hit in between was staggered, not idle
+    start_hp: Option<i32>,
 }
 
 impl Ask {
     fn new(id: i32, heavy: bool, tries: u32) -> Self {
-        Ask { id, heavy, since: Instant::now(), tries, frames: 0, start_anim: None }
+        Ask { id, heavy, since: Instant::now(), tries, frames: 0, start_anim: None, start_hp: None }
     }
 }
 
@@ -259,6 +261,7 @@ pub fn pre_behavior() {
         return;
     };
     let start_anim = *ask.start_anim.get_or_insert(anim);
+    let start_hp = *ask.start_hp.get_or_insert(chr.modules.data.hp);
     // started: that one, or another of its attacks it went into instead (a variant of it)
     if (anim == ask.id && at < 0.5) || (anim != start_anim && is_attack(anim)) {
         let (id, kind) = (ask.id, r.kind);
@@ -283,7 +286,8 @@ pub fn pre_behavior() {
     // tried (a few a press)
     let (id, heavy, tries, kind) = (ask.id, ask.heavy, ask.tries, r.kind);
     // (a step from walking to standing as the stick came up isn't a reason to give up)
-    let idle = !is_attack(anim);
+    // (but not if it was hit meanwhile: knocked about, it couldn't take one)
+    let idle = !is_attack(anim) && chr.modules.data.hp >= start_hp;
     if idle && !s.works.get(&kind).is_some_and(|w| w.contains(&id)) {
         let n = s.misses.entry((kind, id)).or_default();
         *n += 1;
@@ -471,7 +475,8 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
 
 /// It comes to its senses: its team and its own will back, its poise gone a moment (dazed).
 fn release(r: &Ride) {
-    if let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(&r.mob)) {
+    // (the same one: after a load its handle may name another)
+    if let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(&r.mob)).filter(|c| c.character_id as i32 == r.kind) {
         chr.team_type = r.team;
         chr.debug_flags.set_disabled_secondary_actions(r.no_attacks);
         chr.debug_flags.set_disabled_movement(r.no_moving);

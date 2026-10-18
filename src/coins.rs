@@ -9,6 +9,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
+use eldenring::cs::{BlockId, ChrIns};
 use fromsoftware_shared::FromStatic;
 use glam::Vec3;
 
@@ -32,6 +33,12 @@ struct Coin {
 }
 
 static COINS: Mutex<Vec<Coin>> = Mutex::new(Vec::new());
+
+/// What was paid for didn't come about: the coins back.
+pub fn refund(cost: u32, what: &str) {
+    crate::stats::update(|s| s.coins += cost);
+    crate::log(format!("coins: {cost} back, {what} didn't start"));
+}
 
 /// Pays `cost` coins out of the purse if it holds them (true), else a "NEED COINS" and no (false).
 pub fn pay(cost: u32, what: &str) -> bool {
@@ -59,27 +66,69 @@ pub fn pay(cost: u32, what: &str) -> bool {
     true
 }
 
-/// The map block the player is in now (set every frame): the bag is only shown and pointed to
-/// there, its position means nothing in another block.
-static HERE: Mutex<Option<eldenring::cs::BlockId>> = Mutex::new(None);
-
-pub fn set_here(block: eldenring::cs::BlockId) {
-    *HERE.lock().unwrap_or_else(|e| e.into_inner()) = Some(block);
+/// Where the player is (set every frame): his map block, and how his physics position sits in the
+/// map's chunk coordinates (those don't move when the game shifts the world's origin, a load or a
+/// warp does, so the bag stays where he fell).
+#[derive(Clone, Copy)]
+struct Here {
+    block: BlockId,
+    origin: BlockId,
+    /// chunk position minus physics position (None: the game gave no chunk position)
+    off: Option<Vec3>,
 }
 
-/// The coins lost in the last death, in a bag where he fell (physics coordinates, the map block
-/// and how many).
-struct Bag {
+static HERE: Mutex<Option<Here>> = Mutex::new(None);
+
+/// A spot in the world: physics position (moved by `shift`, used if the game gave no chunk
+/// position), chunk position and its block.
+#[derive(Clone, Copy)]
+struct Spot {
     pos: Vec3,
-    block: eldenring::cs::BlockId,
+    chunk: Option<Vec3>,
+    block: BlockId,
+    origin: BlockId,
+}
+
+impl Spot {
+    fn of(chr: &ChrIns) -> Spot {
+        let (p, c) = (chr.modules.physics.position, chr.chunk_position);
+        let chunk = Vec3::new(c.0, c.1, c.2);
+        Spot { pos: Vec3::new(p.0, p.1, p.2), chunk: (chunk.length_squared() > 1e-6).then_some(chunk), block: chr.block_id, origin: chr.block_origin }
+    }
+
+    /// Where it is now in physics coordinates, if in the player's part of the map.
+    fn now(&self, here: &Here) -> Option<Vec3> {
+        match self.chunk {
+            Some(c) => (self.origin == here.origin).then_some(here.off.map(|o| c - o)).flatten(),
+            None => (self.block == here.block).then_some(self.pos),
+        }
+    }
+}
+
+/// the last spot he stood on, alive: the bag goes there (a fall into the abyss leaves it at the edge)
+static GROUND: Mutex<Option<Spot>> = Mutex::new(None);
+
+/// Every frame: where the player is, and whether Mario stands on something.
+pub fn here(chr: &ChrIns, grounded: bool) {
+    let spot = Spot::of(chr);
+    let off = spot.chunk.map(|c| c - spot.pos);
+    *HERE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Here { block: spot.block, origin: spot.origin, off });
+    if grounded {
+        *GROUND.lock().unwrap_or_else(|e| e.into_inner()) = Some(spot);
+    }
+}
+
+/// The coins lost in the last death, in a bag where he fell, and how many.
+struct Bag {
+    spot: Spot,
     amount: u32,
 }
 
 static BAG: Mutex<Option<Bag>> = Mutex::new(None);
 
-/// Mario died at `pos` (in `block`): half the purse stays there in a bag, the one from an earlier
-/// death is gone.
-pub fn die(pos: Vec3, block: eldenring::cs::BlockId) {
+/// Mario died (the Tarnished `chr`): half the purse stays in a bag where he last stood, the one
+/// from an earlier death is gone.
+pub fn die(chr: &ChrIns) {
     let mut lost = 0;
     crate::stats::update(|s| {
         lost = s.coins / 2;
@@ -89,29 +138,36 @@ pub fn die(pos: Vec3, block: eldenring::cs::BlockId) {
     if let Some(old) = bag.take() {
         crate::log(format!("coins: the bag of {} coins from the last death is gone", old.amount));
     }
+    let now = Spot::of(chr);
+    // (the last ground, if it's in this part of the map and not far: else where he is)
+    let ground = GROUND.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let near = |g: &Spot| match (g.chunk, now.chunk) {
+        (Some(a), Some(b)) => g.origin == now.origin && a.distance(b) < 150.0,
+        _ => g.block == now.block && g.pos.distance(now.pos) < 150.0,
+    };
+    let mut spot = ground.filter(near).unwrap_or(now);
+    spot.pos += Vec3::Y * 0.05;
+    spot.chunk = spot.chunk.map(|c| c + Vec3::Y * 0.05);
     if lost > 0 {
-        *bag = Some(Bag { pos: pos + Vec3::Y * 0.05, block, amount: lost });
-        crate::log(format!("coins: died, {lost} coins left in a bag"));
+        *bag = Some(Bag { spot, amount: lost });
+        crate::log(format!("coins: died, {lost} coins left in a bag ({})", if spot.chunk.is_some() { "map chunk position" } else { "no chunk position: physics position" }));
     }
 }
 
 /// The bag on the ground: where and how many (the HUD draws it, the compass points to it).
 pub fn bag() -> Option<(Vec3, u32)> {
-    let here = *HERE.lock().unwrap_or_else(|e| e.into_inner());
-    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|b| here == Some(b.block)).map(|b| (b.pos, b.amount))
+    let here = (*HERE.lock().unwrap_or_else(|e| e.into_inner()))?;
+    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|b| Some((b.spot.now(&here)?, b.amount)))
 }
 
-/// Mario (feet at `mario`, in `block`) touches the bag: the coins back in his purse. How many.
-pub fn collect_bag(mario: Vec3, block: eldenring::cs::BlockId) -> Option<u32> {
-    let mut bag = BAG.lock().unwrap_or_else(|e| e.into_inner());
-    let b = bag.as_ref().filter(|b| b.block == block)?;
-    let d = b.pos - mario;
+/// Mario (feet at `mario`) touches the bag: the coins back in his purse. How many.
+pub fn collect_bag(mario: Vec3) -> Option<u32> {
+    let (pos, amount) = bag()?;
+    let d = pos - mario;
     if Vec3::new(d.x, 0.0, d.z).length() > 1.4 || d.y < -1.0 || d.y > 2.0 {
         return None;
     }
-    let amount = b.amount;
-    *bag = None;
-    drop(bag);
+    *BAG.lock().unwrap_or_else(|e| e.into_inner()) = None;
     crate::stats::update(|s| s.coins += amount);
     crate::log(format!("coins: the bag is back, {amount} coins"));
     Some(amount)
@@ -173,8 +229,12 @@ pub fn collect(mario: Vec3) -> u32 {
 
 /// The game re-based its physics coordinates by `d`.
 pub fn shift(d: Vec3) {
+    // (the chunk positions don't move)
     if let Some(b) = BAG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        b.pos += d;
+        b.spot.pos += d;
+    }
+    if let Some(g) = GROUND.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        g.pos += d;
     }
     for c in COINS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
         c.pos += d;

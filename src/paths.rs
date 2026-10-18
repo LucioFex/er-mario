@@ -78,7 +78,15 @@ pub fn base_assets() -> Option<PathBuf> {
 
 /// `key = value` from er_mario.ini (lines starting with # or ; are comments).
 pub fn config(key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(file(CONFIG)).ok()?;
+    // (asked for every frame and every blow: read from the disk at most every 2 s)
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> = std::sync::Mutex::new(None);
+    let text = {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.as_ref().is_none_or(|(at, _)| at.elapsed().as_secs_f32() > 2.0) {
+            *cache = Some((std::time::Instant::now(), std::fs::read_to_string(file(CONFIG)).ok()));
+        }
+        cache.as_ref().and_then(|(_, t)| t.clone())?
+    };
     text.lines().find_map(|line| {
         let line = line.trim();
         if line.starts_with('#') || line.starts_with(';') {

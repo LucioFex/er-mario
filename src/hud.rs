@@ -587,8 +587,10 @@ impl Mesh {
                     if (o - eye).length() <= r {
                         return false;
                     }
+                    // (a sphere is rounder than the body it stands for, and one by the point itself
+                    // shouldn't hide it: smaller, and well in front)
                     let t = (o - eye).dot(d) / len2;
-                    t > 0.0 && t < 1.0 && (eye + d * t - o).length() < r
+                    t > 0.0 && t < 0.85 && (eye + d * t - o).length() < r * 0.75
                 }) {
                     continue;
                 }
@@ -1277,7 +1279,9 @@ impl ImguiRenderLoop for Overlay {
             if let (Some(fwd), Some(eye)) = (camera_forward(), camera_position()) {
                 let turn: f32 = crate::paths::config("compass_north").and_then(|v| v.parse().ok()).unwrap_or(0.0);
                 let heading = fwd.x.atan2(fwd.z).to_degrees() + turn;
-                let (span, w, cx, y0) = (110.0f32, size[0] * 0.28, size[0] * 0.5, 36.0 * px);
+                // (under the power meter while it shows, following it as it slides)
+                let y0 = meter_height.map_or(36.0 * px, |h| (size[1] * (1.0 - h / 240.0) + 34.0 * px).max(36.0 * px));
+                let (span, w, cx) = (110.0f32, size[0] * 0.28, size[0] * 0.5);
                 let rel = |deg: f32| ((deg - heading + 540.0).rem_euclid(360.0)) - 180.0;
                 let fade = |d: f32| (1.0 - (d.abs() / (span * 0.5)).powi(2)).clamp(0.0, 1.0);
                 dl.add_line([cx - w * 0.5, y0 + 13.0 * px], [cx + w * 0.5, y0 + 13.0 * px], [1.0, 1.0, 1.0, 0.22]).thickness(px.max(1.0)).build();

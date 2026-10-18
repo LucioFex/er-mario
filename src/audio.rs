@@ -120,7 +120,8 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
                     // fold SM64's (mostly centred) mix to mono and place it where Mario is
                     let mono = (l + r) * 0.5 / 32768.0 * std::f32::consts::SQRT_2;
                     for (c, s) in frame.iter_mut().enumerate() {
-                        *s = mono * if c % 2 == 0 { gl } else { gr };
+                        // (hard to one side and close by it could go over: no clipping wrap)
+                        *s = (mono * if c % 2 == 0 { gl } else { gr }).clamp(-1.0, 1.0);
                     }
                 }
             },

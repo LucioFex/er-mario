@@ -197,14 +197,16 @@ pub fn pull_size(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> PullSize {
 
 /// The hook caught `h` (hook.rs): dragged in to Mario, `air`: he's in the air.
 /// True if it's coming.
-pub fn pull(h: &FieldInsHandle, air: bool, radius_m: f32) -> bool {
+pub fn pull(h: &FieldInsHandle, air: bool, radius_m: f32, medium: bool) -> bool {
     // (co-op guest: the host owns the enemies, moving one here would only make it jump)
     if crate::coop::guest() {
         return false;
     }
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     // (a wider body stops farther off, not inside him)
-    let phase = Phase::Pulled { since: Instant::now(), air, near: PULL_NEAR + (radius_m - MAX_RADIUS).max(0.0) };
+    // (a medium one isn't held up in the air: it drops in front of him, else it could be juggled
+    // on and on without ever being stunned)
+    let phase = Phase::Pulled { since: Instant::now(), air: air && !medium, near: PULL_NEAR + (radius_m - MAX_RADIUS).max(0.0) };
     if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
         j.phase = phase;
         return true;
