@@ -72,12 +72,14 @@ pub const ACT_ER_BONK: u32 = 0x0080_039A;
 pub const ACT_ER_HOME_RUN: u32 = 0x0080_039B;
 pub const ACT_ER_POLE_SWING: u32 = 0x0080_0895;
 pub const ACT_ER_SWING_KICK: u32 = 0x0080_0896;
+/// forward + Y: the leap at an enemy into the weapon's dive (er_moves.c act_er_leap)
+const ACT_ER_LEAP: u32 = 0x0080_0897;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 24] = [
+const COMBO_ACTIONS: [u32; 25] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
     ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN, ACT_ER_POLE_SWING,
-    ACT_ER_SWING_KICK,
+    ACT_ER_SWING_KICK, ACT_ER_LEAP,
 ];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
@@ -146,6 +148,10 @@ const AIR_DASHES: u32 = 3;
 const MEGA_SLAM_COOLDOWN: u32 = 75;
 /// ticks between two dashes
 const DASH_COOLDOWN: u32 = 12;
+/// the stick this far toward or away from where he faces (cos) is "forward" / "back"; the back +
+/// X launcher only from about standing (a run turning round shouldn't launch)
+const LEAN: f32 = 0.6;
+const LEAN_SLOW: f32 = 14.0;
 /// X this soon (ticks) after the dash ended: the dash strike, at most this often (as er_moves.c's
 /// ER_BONK_EVERY)
 const BONK_AFTER: u32 = 4;
@@ -463,6 +469,7 @@ impl Moves {
         interacting: bool,
         state: &sm64::SM64MarioState,
         move_timer: i32,
+        lean: f32,
         tick: u32,
     ) -> Option<Request> {
         let a = state.action;
@@ -616,6 +623,38 @@ impl Moves {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 crate::log("moves: air dash");
                 return Some(Request::Action(ACT_ER_AIR_DASH, 0));
+            }
+        }
+        // the directional moves (Devil May Cry's): back + X the launcher, whatever's in hand; forward
+        // + Y the leap at an enemy into the weapon's dive (running, the fists keep the slide kick)
+        {
+            use crate::weapons::{CHOMP, FISTS, HAMMER, RANG};
+            let slow = state.forward_velocity < LEAN_SLOW;
+            let stringy = !combo(a) || matches!(a, ACT_ER_HAMMER | ACT_ER_CHOMP | ACT_ER_THROW | ACT_ER_CHAIN) || punching;
+            if x_pressed && ground && lean < -LEAN && slow && stringy && !crate::mega::active() {
+                let launcher = match self.weapon {
+                    FISTS => Some((ACT_ER_UPPERCUT, 0, "super jump punch")),
+                    HAMMER => Some((ACT_ER_HAMMER_LAUNCH, 0, "hammer launcher")),
+                    CHOMP => Some((ACT_ER_CHOMP, 3, "Chomp bite")),
+                    RANG if crate::boomerang::ready() > 0 => Some((ACT_ER_THROW, THROW_UPPER, "boomerang launcher")),
+                    _ => None,
+                };
+                if let Some((action, arg, name)) = launcher {
+                    self.x_chain = 0;
+                    crate::log(format!("moves: back + X, the {name}"));
+                    return Some(Request::Action(action, arg));
+                }
+            }
+            if y_pressed && ground && lean > LEAN && state.forward_velocity < RUN_SPEED && !combo(a) && !punching && !crate::mega::active() {
+                let arg = match self.weapon {
+                    HAMMER => 1,
+                    RANG => 2,
+                    CHOMP => 3,
+                    _ => 0,
+                };
+                self.x_chain = 0;
+                crate::log("moves: forward + Y, the leap");
+                return Some(Request::Action(ACT_ER_LEAP, arg));
             }
         }
         // X just after the dash: the dash strike (Hades'; er_moves.c takes an X in its last ticks too)

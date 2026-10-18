@@ -2592,3 +2592,73 @@ s32 act_er_swing_kick(struct MarioState *m) {
     }
     return FALSE;
 }
+
+/* ---- the directional moves (moves.rs) -------------------------------------------------------- */
+
+#define ER_LEAP_CROUCH 3
+#define ER_LEAP_MAX 30
+
+/**
+ * Forward + Y (Devil May Cry's Stinger / Helm Breaker, a gap closer): a crouch, a leap at the enemy
+ * in front with a flip, and from its top the weapon's dive onto it (actionArg: the weapon): the
+ * fists' meteor dive, the hammer's plunge, the Chomp's crash, the boomerangs' fan.
+ */
+s32 act_er_leap(struct MarioState *m) {
+    s32 t = m->actionTimer++;
+    if (t < ER_LEAP_CROUCH) {
+        if (t == 0) {
+            er_aim_turn(m);
+            set_mario_anim_with_accel(m, MARIO_ANIM_START_CROUCHING, 0x9000);
+            er_sound(m, SOUND_ACTION_SIDE_FLIP_UNK);
+        }
+        mario_set_forward_vel(m, m->forwardVel * 0.5f);
+        m->vel[1] = 0.0f;
+        if (perform_ground_step(m) == GROUND_STEP_LEFT_GROUND) {
+            m->actionTimer = ER_LEAP_CROUCH;
+        }
+        vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+        return FALSE;
+    }
+    if (t == ER_LEAP_CROUCH) {
+        // (farther to an enemy further away: the aimed blow's gap, as the lunges)
+        f32 far = er_take_lunge(m);
+        er_aim_turn(m);
+        m->vel[1] = er_mega ? 22.0f : 36.0f;
+        mario_set_forward_vel(m, 30.0f + (far > 30.0f ? 30.0f : far));
+        set_mario_animation(m, MARIO_ANIM_TRIPLE_JUMP);
+        set_anim_to_frame(m, 0);
+        er_sound(m, SOUND_MARIO_HOOHOO);
+        er_sound(m, SOUND_ACTION_SPIN);
+        er_move_fx |= ER_FX_LAUNCH;
+    }
+    // at the top of the leap: the dive
+    if (t > ER_LEAP_CROUCH + 4 && m->vel[1] < 8.0f) {
+        switch (m->actionArg) {
+            case 1: return set_mario_action(m, ACT_ER_HAMMER_AIR, 1);
+            case 2:
+                if (er_rang_ready) {
+                    return set_mario_action(m, ACT_ER_AIR_THROW, ER_THROW_STORM);
+                }
+                return set_mario_action(m, ACT_FREEFALL, 0);
+            case 3: return set_mario_action(m, ACT_ER_CHOMP_AIR, 1);
+            default: return set_mario_action(m, ACT_ER_METEOR, 0);
+        }
+    }
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            if (t > ER_LEAP_CROUCH + 2) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            break;
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    if (t >= ER_LEAP_MAX) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}

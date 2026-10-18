@@ -110,6 +110,47 @@ pub fn witch_time(time: f32) {
     slow(time);
 }
 
+/// The world slowed this long (s) for a big moment (a MAX finisher, maxfin.rs).
+pub fn slow_down(time: f32) {
+    slow(time);
+}
+
+/// MAX finishers (maxfin.rs): this many blows in a row without being hurt and the next finisher
+/// is a MAX one.
+pub const MAX_HITS: u32 = 12;
+struct Max {
+    streak: u32,
+    ready: bool,
+}
+static MAX: Mutex<Max> = Mutex::new(Max { streak: 0, ready: false });
+
+/// A MAX finisher is ready (the weapon glows).
+pub fn max_ready() -> bool {
+    MAX.lock().unwrap_or_else(|e| e.into_inner()).ready
+}
+
+/// Uses the MAX finisher up: true if it was ready (then the streak starts over).
+pub fn take_max() -> bool {
+    let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    let ready = std::mem::replace(&mut m.ready, false);
+    if ready {
+        m.streak = 0;
+    }
+    ready
+}
+
+fn max_hit() {
+    let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    m.streak += 1;
+    if m.streak >= MAX_HITS && !m.ready {
+        m.ready = true;
+        drop(m);
+        crate::log(format!("style: MAX ready ({MAX_HITS} blows without a hit)"));
+        callout("MAX READY", None, [1.0, 0.75, 0.2], false, 0.0);
+        sounds(vec![(SOUND_RED_COIN + (7 << 16), CHIME_VOLUME)]);
+    }
+}
+
 /// The current rank, if the string is still going.
 pub fn rank() -> Option<usize> {
     METER.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP).and_then(|m| m.rank)
@@ -144,6 +185,7 @@ pub fn hit(attack: Attack) {
     };
     m.count += 1;
     m.last = now;
+    max_hit();
     let kind = std::mem::discriminant(&attack);
     let mut points = POINTS;
     if attack.finisher() {
@@ -254,6 +296,13 @@ pub const MIKIRI_POINTS: f32 = 2.5;
 
 /// Game thread: Mario was hurt, the string is lost.
 pub fn hurt() {
+    {
+        let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+        if m.ready {
+            crate::log("style: MAX lost (hurt)");
+        }
+        *m = Max { streak: 0, ready: false };
+    }
     let lost = METER.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|m| m.last.elapsed().as_secs_f32() <= KEEP).and_then(|m| m.rank);
     if let Some(r) = lost.filter(|&r| r >= 1) {
         *LOST.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), r));
@@ -350,6 +399,7 @@ pub fn mario_dt(game_dt: f32) -> f32 {
 pub fn clear() {
     *METER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CALLOUTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    *MAX.lock().unwrap_or_else(|e| e.into_inner()) = Max { streak: 0, ready: false };
     *SLOW.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *STAR.lock().unwrap_or_else(|e| e.into_inner()) = None;

@@ -57,6 +57,7 @@ mod timing;
 mod traps;
 mod rock;
 mod bat;
+mod maxfin;
 mod style;
 mod update;
 mod version;
@@ -2544,6 +2545,7 @@ fn frame(data: &FD4TaskData) {
         m.traps.clear();
         rock::clear();
         bat::clear();
+        maxfin::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -3052,7 +3054,17 @@ fn frame(data: &FD4TaskData) {
         }
         coop::set_own_health(m.state.health);
         // (the moves' tick runs every tick, so their own held buttons stay right)
-        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, m.ticks);
+        // where the stick points against where he faces (cos; 0 with the stick at rest): SM64's own
+        // intended yaw (mario.c: atan2s(-stickY, stickX) plus the camera's yaw, libsm64.c flips the stick's X) against his facing
+        let lean = {
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            if sx * sx + sy * sy < 0.36 {
+                0.0
+            } else {
+                ((-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z) - m.state.face_angle).cos()
+            }
+        };
+        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, lean, m.ticks);
         let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
@@ -3285,6 +3297,20 @@ fn frame(data: &FD4TaskData) {
                     timing::mikiri_done();
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                // a MAX finisher: its show (maxfin.rs), and the one going on
+                if let Some((attack, at)) = m.combat.take_max() {
+                    let p = to_er(m.origin, state.position);
+                    let dir = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
+                    maxfin::fire(attack, at, glam::Vec3::new(p.0, p.1, p.2), dir, &mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
+                }
+                maxfin::tick(&mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
+                // (the MAX ready: a twinkle at his hand now and then)
+                if style::max_ready() && m.ticks % 8 == 0 {
+                    if let Some(p) = m.parts.as_ref() {
+                        let feet = to_er(m.origin, state.position);
+                        impact::max_glow(glam::Vec3::new(feet.0, feet.1, feet.2) + p[9].pos);
+                    }
+                }
                 // co-op host: the guest's blows (coop.rs)
                 m.combat.remote_hits(m.ticks);
                 {

@@ -1155,6 +1155,11 @@ impl ImguiRenderLoop for Overlay {
                 let (x0, y0) = (right - w, y + 9.0 * px);
                 dl.add_rect([x0, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * st.alpha)).filled(true).build();
                 dl.add_rect([right - w * st.left, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(t[0], t[1], t[2], 0.9 * st.alpha)).filled(true).build();
+                // the MAX finisher ready: MAX in gold under the bar, pulsing
+                if crate::style::max_ready() {
+                    let pulse = 0.75 + 0.25 * (clock * 6.0).sin();
+                    line("MAX", right, y0 + 9.0 * px, 10.0 * px * (1.0 + 0.08 * pulse), 0.8, [1.0, 0.78 * pulse + 0.1, 0.25, st.alpha]);
+                }
                 // the star finish: its banner over the middle of the screen
                 if let Some(a) = st.star_age {
                     let pop = (1.0 - a / 0.15).max(0.0);

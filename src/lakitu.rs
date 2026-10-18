@@ -900,6 +900,33 @@ pub fn shake(strength: f32) {
     }
 }
 
+/// A finisher punches the camera in towards Mario a little (s, how far in m), then it eases back:
+/// the blow's weight in the picture (Devil May Cry's, God of War's).
+static PUNCH: Mutex<Option<(std::time::Instant, f32)>> = Mutex::new(None);
+const PUNCH_IN: f32 = 0.06;
+const PUNCH_OUT: f32 = 0.3;
+
+/// Punches the camera in by `metres` (game thread, impact.rs); a bigger one isn't cut short.
+pub fn punch(metres: f32) {
+    let mut p = PUNCH.lock().unwrap_or_else(|e| e.into_inner());
+    if p.is_none_or(|(t, m)| punch_now(t, m) < metres * 0.8) {
+        *p = Some((std::time::Instant::now(), metres.min(0.6)));
+    }
+}
+
+/// How far in the punch has the camera now (m): in fast, back out eased.
+fn punch_now(since: std::time::Instant, metres: f32) -> f32 {
+    let t = since.elapsed().as_secs_f32();
+    if t < PUNCH_IN {
+        metres * t / PUNCH_IN
+    } else if t < PUNCH_IN + PUNCH_OUT {
+        let k = 1.0 - (t - PUNCH_IN) / PUNCH_OUT;
+        metres * k * k * (3.0 - 2.0 * k)
+    } else {
+        0.0
+    }
+}
+
 fn shake_left(since: std::time::Instant, strength: f32) -> f32 {
     let p = 1.0 - since.elapsed().as_secs_f32() / (SHAKE_TIME * (1.0 + strength * 0.5));
     if p > 0.0 { strength * p * p } else { 0.0 }
@@ -922,6 +949,10 @@ fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
             let (t, amp) = (since.elapsed().as_secs_f32(), shake_left(since, k) * SHAKE_SIZE);
             pos + right * (t * 71.0).sin() * amp + up * (t * 53.0 + 1.3).sin() * amp
         }
+        None => pos,
+    };
+    let pos = match *PUNCH.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some((since, m)) => pos + fwd * punch_now(since, m),
         None => pos,
     };
     let mm = &mut render.matrix;

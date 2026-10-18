@@ -127,6 +127,11 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Bowled => (0, 0.9, false),
         Attack::Tether => (0, 1.4, true),
         Attack::SwingKick => (4, 1.3, true),
+        // (MAX's own shows: no hold on Mario, maxfin.rs draws them)
+        Attack::MaxFlurry => (0, 0.8, false),
+        Attack::MaxUpper => (0, 1.6, true),
+        Attack::MaxQuake => (0, 1.2, true),
+        Attack::MaxCyclone => (2, 1.4, true),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -134,6 +139,10 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     let (stop, size, heavy) = if mega { (stop + stop / 2 + 1, size * 1.6, true) } else { (stop, size, heavy) };
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
+    // a finisher punches the camera in a little, the heavier the further
+    if attack.finisher() {
+        crate::lakitu::punch(0.18 + 0.08 * size);
+    }
     if heavy {
         crate::lakitu::shake(if mega { size * 0.6 } else { size - 0.4 });
     } else if matches!(attack, Attack::Hammer | Attack::HammerAir) {
@@ -527,6 +536,48 @@ pub fn rock(feet: Vec3, on: bool) {
     crate::lakitu::shake(if on { 0.5 } else { 0.3 });
 }
 
+/// A MAX finisher goes off: a golden flash, a burst, rings.
+pub fn max_burst(at: Vec3) {
+    flash([1.0, 0.75, 0.25], 0.32, 0.4);
+    crate::lakitu::punch(0.45);
+    spark(at, 2.4, GOLD);
+    ring(at, 2.0, 0.3, GOLD);
+    burst(at, 6, Bit::Star);
+    crate::lakitu::shake(1.0);
+}
+
+/// One of the MAX flurry's phantom blows (the last: bigger).
+pub fn max_blow(at: Vec3, last: bool) {
+    spark(at, if last { 2.0 } else { 1.0 }, if last { GOLD } else { WHITE });
+    if last {
+        ring(at, 1.6, 0.3, GOLD);
+        burst(at, 4, Bit::Star);
+    }
+}
+
+/// A step of the MAX hammer's cross quake.
+pub fn max_quake(at: Vec3) {
+    ring(at + Vec3::Y * 0.05, 1.7, 0.4, GOLD);
+    puffs(at, 4, 0.7);
+    burst(at + Vec3::Y * 0.3, 1, Bit::Star);
+}
+
+/// The MAX Chomp cyclone's ring of fire.
+pub fn max_cyclone(feet: Vec3) {
+    let fire = [1.0, 0.45, 0.12, 1.0];
+    ring(feet + Vec3::Y * 0.1, 6.5, 0.5, fire);
+    ring(feet + Vec3::Y * 0.6, 4.5, 0.4, GOLD);
+    ring(feet + Vec3::Y * 1.2, 2.5, 0.3, fire);
+    puffs(feet, 10, 2.2);
+    burst(feet + Vec3::Y * 1.0, 6, Bit::Star);
+}
+
+/// The MAX finisher is ready: now and then a twinkle at Mario's weapon hand.
+pub fn max_glow(hand: Vec3) {
+    burst(hand, 1, Bit::Star);
+    spark(hand, 0.5, GOLD);
+}
+
 /// The tether's crash: two enemies into each other, a ring, stars, the camera shaken.
 pub fn tether(at: Vec3) {
     spark(at, 2.0, WHITE);
@@ -719,6 +770,7 @@ pub fn screen_flash() -> ([f32; 3], f32) {
 /// rings, stars and coins everywhere, more from each rank up.
 pub fn star_finish(at: Vec3, rank: usize) {
     let more = rank.saturating_sub(4);
+    crate::lakitu::punch(0.35);
     flash([1.0, 0.85, 0.4], 0.28 + 0.06 * more as f32, 0.45);
     crate::lakitu::shake(1.4);
     let ground = at - Vec3::Y * 0.8;

@@ -105,11 +105,17 @@ pub enum Attack {
     Bowled,
     Tether,
     SwingKick,
+    /// MAX finishers (maxfin.rs): the fists' phantom blows and their last, a step of the hammer's
+    /// cross, the Chomp's ring of fire
+    MaxFlurry,
+    MaxUpper,
+    MaxQuake,
+    MaxCyclone,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 56] = [
+const CODES: [Attack; 60] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -119,7 +125,8 @@ const CODES: [Attack; 56] = [
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
-    Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick,
+    Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
+    Attack::MaxQuake, Attack::MaxCyclone,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -189,6 +196,8 @@ impl Attack {
             Attack::HomeRun | Attack::SwingKick => Attack::Stomp.spec(),
             Attack::Bowled => Attack::Sweep.spec(),
             Attack::Tether => Attack::GroundPound.spec(),
+            Attack::MaxFlurry => Attack::Punch.spec(),
+            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => Attack::GroundPound.spec(),
         }
     }
 
@@ -284,6 +293,11 @@ impl Attack {
             Attack::Bowled => (8.0, "damage_bowled"),
             Attack::Tether => (12.0, "damage_tether"),
             Attack::SwingKick => (18.0, "damage_swing_kick"),
+            // MAX: a finisher's worth again, spread over its show
+            Attack::MaxFlurry => (3.0, "damage_max_flurry"),
+            Attack::MaxUpper => (10.0, "damage_max_upper"),
+            Attack::MaxQuake => (9.0, "damage_max_quake"),
+            Attack::MaxCyclone => (14.0, "damage_max_cyclone"),
         }
     }
 
@@ -349,6 +363,7 @@ impl Attack {
             Attack::RockSlam => 1.2,
             Attack::HomeRun | Attack::Bowled | Attack::Tether => 1.0,
             Attack::SwingKick => 1.3,
+            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
         }
     }
 
@@ -372,6 +387,7 @@ impl Attack {
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
+            Attack::MaxFlurry => 1,
             // (one bowling a second: it rolls on over them)
             Attack::Rock => 30,
             Attack::FireSweep | Attack::Ember | Attack::Trample => 1,
@@ -606,6 +622,8 @@ pub struct Combat {
     /// blows on each enemy in the current string, and the tick of the last one (their damage fades
     /// in a long string: a showy combo isn't over in a second)
     string: HashMap<u64, (u32, u32)>,
+    /// a MAX finisher that just landed: the blow and where (maxfin.rs takes it from here)
+    max: Option<(Attack, glam::Vec3)>,
 }
 
 /// What an Elden Ring hit does to Mario.
@@ -618,7 +636,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None }
     }
 }
 
@@ -2040,6 +2058,11 @@ impl Combat {
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
                 let chest = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                // a finisher with the MAX ready (twelve blows without a hit): its MAX version
+                // (maxfin.rs; the boomerang's is its big throw, boomerang.rs)
+                if attack.finisher() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
+                    self.max = Some((attack, chest));
+                }
                 // the action command: X right on the blow (timing.rs)
                 if let Some(extra) = crate::timing::landed(handle, attack, chest, tick) {
                     self.extra_share(handle, attack, extra * fade, tick);
@@ -2109,6 +2132,11 @@ impl Combat {
 }
 
 impl Combat {
+    /// A MAX finisher that just landed (its blow, where), for maxfin.rs.
+    pub fn take_max(&mut self) -> Option<(Attack, glam::Vec3)> {
+        self.max.take()
+    }
+
     /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
     /// command's bonus, timing.rs), with its own kill if it's the one that ends him.
     pub fn extra_share(&mut self, handle: &FieldInsHandle, attack: Attack, extra: f32, tick: u32) {

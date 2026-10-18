@@ -329,7 +329,16 @@ impl Boomerang {
         let (kind, n, range, out_time) = match kind {
             moves::THROW_STORM => (Kind::Normal, 3, RANGE, OUT_TIME),
             moves::THROW_UPPER => (Kind::Upper, 1, reach.map_or(UPPER_RANGE, |r| (r + 1.0).min(UPPER_RANGE)), OUT_TIME * 0.9),
-            moves::THROW_BIG => (Kind::Big, 1, reach.map_or(BIG_RANGE * 0.75, |r| r.min(BIG_RANGE)), BIG_OUT_TIME),
+            // (with the MAX ready, three of them, a fan: style.rs, maxfin.rs)
+            moves::THROW_BIG => {
+                let max = free >= 2 && crate::style::take_max();
+                if max {
+                    log("max: three big boomerangs");
+                    crate::style::callout("MAX!", Some(hand + Vec3::Y * 0.5), [1.0, 0.75, 0.2], true, 4.0);
+                    crate::impact::max_burst(hand + face * 0.8);
+                }
+                (Kind::Big, if max { 3 } else { 1 }, reach.map_or(BIG_RANGE * 0.75, |r| r.min(BIG_RANGE)), BIG_OUT_TIME)
+            }
             _ => (Kind::Normal, 1, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
         };
         // (off it goes: a whoosh)
