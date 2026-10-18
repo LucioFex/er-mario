@@ -1,7 +1,8 @@
-//! The boss ride (Monster Hunter's wirebug mount): hooked to a big enemy with R2 held, A jumps
-//! Mario onto its back. Up there the stick steers it (it's pushed along where it points, turned
-//! that way), R2 let go or A jumps off; driven into a wall at speed it crashes there, staggered and
-//! left open (its stance broken: grab its tail). A few seconds at most, and a long wait after.
+//! The ride (Monster Hunter's wirebug mount): hooked to a big enemy with R2 held, A jumps Mario
+//! onto its back. Up there the stick steers it (it's pushed along where it points, turned that
+//! way), A or R2 pressed again hops him off behind it; driven into a wall at speed it crashes
+//! there, staggered and left open (its stance broken: grab its tail). A few seconds at most, and
+//! a long wait after. Not a boss with its health bar up: those are fought, not driven.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -26,6 +27,8 @@ const CRASH_SPEED: f32 = 3.5;
 /// crashes open it), and the ride it takes first (s: a run-up, not a nudge into the wall)
 const CRASH_STANCE: f32 = 70.0;
 const CRASH_AFTER: f32 = 1.0;
+/// how fast he hops off behind it (SM64 units a frame: well clear of its back)
+const HOP_OFF: f32 = 26.0;
 
 pub const ACT_ER_BOSS_RIDE: u32 = 0x0000_035C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
@@ -38,6 +41,8 @@ struct Ride {
     mob: FieldInsHandle,
     since: Instant,
     speed: f32,
+    /// R2 came up since he got on (pressed again after that, he hops off)
+    let_go: bool,
 }
 
 struct State {
@@ -77,12 +82,12 @@ pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
     let mut s = state();
     let ready = s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none();
     // (co-op guest: the host owns the enemies; a boss in a scripted moment isn't ridden)
-    if !ready || crate::coop::guest() || combat::hands_off(h) || seat(h).is_none() {
+    if !ready || crate::coop::guest() || combat::hands_off(h) || combat::is_boss_now(h) || seat(h).is_none() {
         drop(s);
         worker::call("ride buzz", |_| unsafe { sm64::sm64_play_sound_global(SOUND_BUZZ) });
         return false;
     }
-    s.ride = Some(Ride { mob: *h, since: Instant::now(), speed: 0.0 });
+    s.ride = Some(Ride { mob: *h, since: Instant::now(), speed: 0.0, let_go: false });
     drop(s);
     log("boss ride: on its back");
     crate::style::callout("RIDE!", None, [1.0, 0.8, 0.35], true, 3.0);
@@ -110,12 +115,16 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, action: u32, id: i32
     let Some(r) = s.ride.as_mut() else { return };
     let Some((seat_at, fwd, radius)) = seat(&r.mob) else {
         drop(s);
-        off(id, "it's gone");
+        off(id, "it's gone", None);
         return;
     };
-    if !hold || jump || r.since.elapsed().as_secs_f32() > TIME {
+    // (R2 needn't stay held up there: letting it go on getting on ended the ride at once, and his
+    // hop off landed on the enemy's head, a ground pound)
+    r.let_go |= !hold;
+    let again = hold && r.let_go;
+    if again || jump || r.since.elapsed().as_secs_f32() > TIME {
         drop(s);
-        off(id, if jump { "jumped off" } else { "let go" });
+        off(id, if jump { "jumped off" } else if again { "R2 again" } else { "time" }, Some(fwd));
         return;
     }
     // driven where the stick points: turned that way, pushed along
@@ -159,12 +168,13 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, action: u32, id: i32
     });
     if let Some(at) = crashed {
         crash(&mob, at, origin, combat, player, tick);
-        off(id, "crashed it into a wall");
+        off(id, "crashed it into a wall", Some(fwd));
     }
 }
 
-/// Off its back: a hop off, the wait starts.
-fn off(id: i32, why: &str) {
+/// Off its back: a hop off (behind it, `fwd` its facing in Elden Ring, so he doesn't come down on
+/// its head), the wait starts.
+fn off(id: i32, why: &str, fwd: Option<Vec3>) {
     let mut s = state();
     if s.ride.take().is_none() {
         return;
@@ -172,9 +182,18 @@ fn off(id: i32, why: &str) {
     s.ready_at = Some(Instant::now() + std::time::Duration::from_secs_f32(RECHARGE));
     drop(s);
     log(format!("boss ride: off ({why})"));
+    // (SM64's axes: x the other way round)
+    let away = fwd.map(|f| Vec3::new(f.x, 0.0, -f.z).normalize_or_zero());
     worker::call("ride off", move |_| unsafe {
         sm64::sm64_set_mario_action(id, ACT_DOUBLE_JUMP);
-        sm64::sm64_set_mario_velocity(id, 0.0, 44.0, 0.0);
+        match away {
+            Some(a) if a != Vec3::ZERO => {
+                sm64::sm64_set_mario_faceangle(id, a.x.atan2(a.z));
+                sm64::sm64_set_mario_forward_velocity(id, HOP_OFF);
+                sm64::sm64_set_mario_velocity(id, a.x * HOP_OFF, 44.0, a.z * HOP_OFF);
+            }
+            _ => sm64::sm64_set_mario_velocity(id, 0.0, 44.0, 0.0),
+        }
     });
 }
 
