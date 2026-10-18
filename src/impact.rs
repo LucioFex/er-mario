@@ -92,6 +92,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::Shockwave => (3, 1.0, true),
         // (the giant fireball's burn and Mega's steps: no hold, they come again and again)
         Attack::FireSweep => (0, 0.7, false),
+        Attack::Ember => (0, 0.5, false),
         Attack::Trample => (1, 0.9, false),
         // (a short one: bouncing up a boss, it held him in mid-air)
         Attack::Stomp => (1, 0.9, false),
@@ -405,6 +406,21 @@ pub fn fire_blast(at: Vec3, reach: f32) {
     ring(at + Vec3::Y * 1.2, reach * 0.7, 0.45, GOLD);
     puffs(at, 10, reach * 0.4);
     flash([1.0, 0.55, 0.2], 0.35, 0.45);
+}
+
+/// The 20 s fireball's (the sun's) explosion, reaching `reach` m: rings of fire rolling out on the
+/// ground one inside the other, a ring of gold up high, a wall of smoke, a white-hot flash.
+pub fn sun_blast(at: Vec3, reach: f32) {
+    const FIRE: [f32; 4] = [1.0, 0.5, 0.15, 1.0];
+    const LAVA: [f32; 4] = [0.9, 0.2, 0.05, 1.0];
+    ring(at + Vec3::Y * 0.1, reach, 0.9, FIRE);
+    ring(at + Vec3::Y * 0.1, reach * 0.6, 0.7, LAVA);
+    ring(at + Vec3::Y * 0.4, reach * 1.2, 1.1, LAVA);
+    ring(at + Vec3::Y * 2.0, reach * 0.8, 0.6, GOLD);
+    ring(at + Vec3::Y * 4.0, reach * 0.5, 0.5, WHITE);
+    puffs(at, 16, reach * 0.45);
+    puffs(at, 12, reach * 0.8);
+    flash([1.0, 0.85, 0.6], 0.7, 0.8);
 }
 
 /// Mega Mario's step (or landing, `heavy`): dust around his feet, a ring of it.

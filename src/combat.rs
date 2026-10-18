@@ -32,6 +32,8 @@ pub enum Attack {
     Fire(u8),
     /// the giant fireball (fireball.rs) sweeping enemies along: a little at a time, then it blows
     FireSweep,
+    /// the 20 s fireball's lava embers on the ground (fireball.rs): whoever stands in them burns
+    Ember,
     /// Mega Mario's steps: whoever is under his feet
     Trample,
     /// Y in the air: the twirl, hitting all around him (moves.rs)
@@ -102,7 +104,7 @@ impl Attack {
             Attack::Fire(0 | 1) => Attack::Kick.spec(),
             Attack::Fire(2) => Attack::Stomp.spec(),
             Attack::Fire(_) => Attack::GroundPound.spec(),
-            Attack::FireSweep | Attack::Trample => Attack::Punch.spec(),
+            Attack::FireSweep | Attack::Ember | Attack::Trample => Attack::Punch.spec(),
             Attack::Spin => Attack::Sweep.spec(),
             Attack::Shockwave => Attack::Stomp.spec(),
             Attack::Rush => Attack::Punch.spec(),
@@ -144,10 +146,13 @@ impl Attack {
             Attack::Fire(2) => (22.0, "damage_fire_charged_2"),
             Attack::Fire(3) => (33.0, "damage_fire_max"),
             // the giant one (10 s): kills a regular enemy outright
-            Attack::Fire(_) => (85.0, "damage_fire_giant"),
+            Attack::Fire(4) => (85.0, "damage_fire_giant"),
+            // the sun (20 s): a little more, the most is in its burn, its blast and its embers
+            Attack::Fire(_) => (100.0, "damage_fire_sun"),
             // (the giant one's sweep: a tick every few tenths while it carries them or sticks to a
             // boss, the explosion is the finisher)
             Attack::FireSweep => (8.0, "damage_fire_sweep"),
+            Attack::Ember => (5.0, "damage_fire_ember"),
             Attack::Trample => (4.0, "damage_mega_step"),
             Attack::Spin => (7.5, "damage_spin"),
             Attack::Shockwave => (21.0, "damage_shockwave"),
@@ -199,7 +204,7 @@ impl Attack {
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
-        matches!(self, Attack::Fire(_) | Attack::FireSweep | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
+        matches!(self, Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::Egg | Attack::Hook | Attack::Tongue)
     }
 
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
@@ -213,6 +218,7 @@ impl Attack {
             // from afar and safe: on bosses only the charged ones count for more
             Attack::Fire(level) => 1.0 + 0.15 * level as f32,
             Attack::FireSweep => 1.6,
+            Attack::Ember => 1.2,
             Attack::Trample => 1.2,
             Attack::Spin => 1.2,
             Attack::Shockwave => 1.4,
@@ -256,7 +262,7 @@ impl Attack {
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
-            Attack::FireSweep | Attack::Trample => 1,
+            Attack::FireSweep | Attack::Ember | Attack::Trample => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
@@ -501,7 +507,7 @@ pub struct Target {
     /// body size in SM64 units (horizontal radius, height)
     pub radius: f32,
     pub height: f32,
-    er: HavokPosition,
+    pub er: HavokPosition,
     pub sm: [f32; 3],
     /// an enemy Mario's punches turn to (not a friendly NPC, an ally or a prop)
     hostile: bool,
@@ -1566,7 +1572,7 @@ impl Combat {
             }
             // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
             // burn and Mega's steps come at their own pace and leave Mario's blows free)
-            if !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Trample) {
+            if !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample) {
                 self.cooldown.insert(target.key, tick);
             }
             if let Some(handle) = &target.handle {
@@ -1596,7 +1602,7 @@ impl Combat {
                     crate::juggle::try_launch(handle, me, target.radius * crate::scale(), target.height * crate::scale(), regular, stunned, high);
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Trample | Attack::Egg | Attack::Tongue) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -1604,7 +1610,7 @@ impl Combat {
                 }
                 // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
                 // is there (not a fireball from afar), and not up in the air with him
-                if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Trample | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
+                if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Hook | Attack::Tongue | Attack::Egg | Attack::YoshiStomp) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
                     self.victims.insert(target.key, (*handle, tick));
                     continue;
                 }
@@ -1638,7 +1644,7 @@ impl Combat {
                     run.0 = 0;
                 }
                 // (the giant fireball's burn and Mega's steps aren't blows of a string)
-                if !matches!(attack, Attack::FireSweep | Attack::Trample) {
+                if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
                     run.0 += 1;
                     run.1 = tick;
                 }
@@ -1655,11 +1661,11 @@ impl Combat {
                 }
             }
             let (bullet, ..) = attack.spec();
-            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Trample) {
+            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
                 crate::style::hit(attack);
             }
             // (breaking a jar or a crate is no blow to stop for)
-            if !matches!(attack, Attack::Fire(_) | Attack::FireSweep) && !target.is_prop() {
+            if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember) && !target.is_prop() {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
@@ -1672,7 +1678,7 @@ impl Combat {
             // nor wake. So a bullet only where it matters: a heavy blow or a finisher, else at most
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
-            let light = matches!(attack, Attack::FireSweep | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
+            let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
             let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..));
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {

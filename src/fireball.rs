@@ -6,11 +6,16 @@
 //! - each step hits harder; the full one goes through enemies and knocks them back
 //! - held on for 10 s it keeps growing into a giant one, lifted over his head: it hits twice as
 //!   hard as the full one and blows regular enemies away (knock.rs), in a shower of flames
+//! - held on for 20 s it grows into the sun: immense and slow, it burns harder, blows up far wider
+//!   (a blast in waves that flings the regular enemies near its heart) and leaves lava embers on
+//!   the ground for 2-3 s that burn whoever steps in them
+//! - a blow on Mario (or a knockback, a grab) puts the charge out: RB has to come up again
 //! - after a shot, a short cooldown (released too early: Lakitu's buzz)
 //! - thrown with a move of its own (er_moves.c's throws): a palm thrust standing, pushing him back
 //!   the harder the shot, the giant one from over his head; in the air it holds him up a moment;
 //!   running he shoots on the move. The flame leaves his hand when the throw lets go.
-//! Shots fly straight, turned to the nearest enemy in front, and burst on walls and bodies. The
+//! Shots leave turned to the nearest enemy in front and home in on it a little on the way (a gentle
+//! curve, never a U-turn), and burst on walls and bodies. The
 //! damage goes through combat.rs like Mario's other hits.
 
 use std::sync::Mutex;
@@ -25,43 +30,62 @@ use crate::combat::{self, Attack, Combat};
 use crate::collision::sm_to_er;
 use crate::{log, scale, sm64, worker};
 
-/// held this many SM64 ticks (30 a second): charge levels 1, 2, 3 and the giant one
-const CHARGE_TICKS: [u32; 4] = [30, 60, 120, 300];
+/// held this many SM64 ticks (30 a second): charge levels 1, 2, 3, the giant one and the sun
+const CHARGE_TICKS: [u32; 5] = [30, 60, 120, 300, 600];
 const GIANT: u8 = 4;
+const SUN: u8 = 5;
 /// a tap shows no charge (the sparks start after this)
 const SHOW_CHARGE_AFTER: u32 = 7;
 /// ticks between shots, by level
-const COOLDOWN: [u32; 5] = [36, 40, 44, 54, 80];
+const COOLDOWN: [u32; 6] = [36, 40, 44, 54, 80, 120];
 /// how far every shot flies before it fizzles (SM64 units: 48 m), the small ones fast and the big
 /// ones slow
 const RANGE: f32 = 4800.0;
 /// by level: hit radius (SM64 units), speed (units per tick), drawn size (m)
-const RADIUS: [f32; 5] = [26.0, 40.0, 58.0, 100.0, 170.0];
-const SPEED: [f32; 5] = [80.0, 66.0, 54.0, 44.0, 30.0];
-const SIZE: [f32; 5] = [0.5, 0.8, 1.15, 2.0, 4.2];
+const RADIUS: [f32; 6] = [26.0, 40.0, 58.0, 100.0, 170.0, 260.0];
+const SPEED: [f32; 6] = [80.0, 66.0, 54.0, 44.0, 30.0, 22.0];
+const SIZE: [f32; 6] = [0.5, 0.8, 1.15, 2.0, 4.2, 7.0];
 /// turned to the nearest enemy within this range (m) and cone (cos 35°) in front
 const AIM_RANGE: f32 = 35.0;
 const AIM_CONE_COS: f32 = 0.82;
+/// homing on the way: the nearest enemy within this range (m) and cone (cos 60°) ahead of the shot,
+/// looked for again every this many ticks; the most it turns a tick (radians, by level: the big
+/// ones turn slower); past this angle (cos 80°) it lets him go
+const HOME_RANGE: f32 = 22.0;
+const HOME_CONE_COS: f32 = 0.5;
+const HOME_EVERY: u32 = 6;
+const HOME_TURN: [f32; 6] = [0.055, 0.05, 0.045, 0.04, 0.025, 0.02];
+const HOME_LOSE_COS: f32 = 0.17;
 /// the full shot knocks regular enemies back this far (m), over this many ticks
 const PUSH: f32 = 3.0;
 const PUSH_TICKS: u32 = 9;
-/// a burst's ticks (the giant one's)
-const BURST_TICKS: [u32; 2] = [10, 22];
+/// a burst's ticks (the giant one's, the sun's)
+const BURST_TICKS: [u32; 3] = [10, 22, 34];
 /// running faster than this (SM64 units per tick), Mario shoots without stopping to throw
 const RUN_SHOT_SPEED: f32 = 14.0;
 /// the giant one: it clings to a boss this long (ticks), burns whoever it carries every this many
-/// ticks, and blows up reaching this far (m)
-const STICK_TICKS: u32 = 48;
+/// ticks, and blows up reaching this far (m); the giant one's, then the sun's
+const STICK_TICKS: [u32; 2] = [48, 60];
 const BURN_EVERY: u32 = 8;
-const EXPLODE_REACH: f32 = 5.0;
+const EXPLODE_REACH: [f32; 2] = [5.0, 9.0];
+/// the sun's blast: regular enemies this close to its heart (share of the reach) are flung away;
+/// its waves, this many ticks apart
+const SUN_FLING: f32 = 0.6;
+const SUN_WAVES: [u32; 2] = [5, 11];
+/// its lava embers: how many, how wide (m), how long (ticks: 2.5 s and up to 0.4 s more), how
+/// often they burn whoever stands in them (ticks)
+const EMBERS: u32 = 14;
+const EMBER_RADIUS: f32 = 1.3;
+const EMBER_TICKS: u32 = 75;
+const EMBER_BURN_EVERY: u32 = 15;
 
 // SM64 sounds
 const SOUND_FLAME_BLOWN: i32 = 0x5055_8081;
 const SOUND_VOLCANO: i32 = 0x300C_8081;
 const SOUND_FLAME_OUT: i32 = 0x3003_8081;
 const SOUND_BOMB: i32 = 0x802E_2081_u32 as i32;
-/// charge steps: menu tick, short star, the secret jingle
-const SOUND_CHARGE: [i32; 4] = [0x7000_F881_u32 as i32, 0x3016_0091, 0x7030_2081, SOUND_VOLCANO];
+/// charge steps: menu tick, short star, the secret jingle, the volcano, a boom
+const SOUND_CHARGE: [i32; 5] = [0x7000_F881_u32 as i32, 0x3016_0091, 0x7030_2081, SOUND_VOLCANO, SOUND_BOMB];
 const SOUND_BUZZ: i32 = 0x700E_0081;
 
 /// running, he throws it with a punch on the move
@@ -76,6 +100,8 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 /// swimming, hanging, on a pole, riding a shell
 const ACT_NO_THROW: u32 = 0x2000 | 0x0020_0000 | 0x0010_0000 | 0x0001_0000;
 const ACT_GROUP_MASK: u32 = 0x1C0;
+/// SM64's bumps into a wall (soft bonk, ground bonk, the air knockback off a wall): no blow
+const BONKS: [u32; 3] = [0x0102_08B6, 0x0002_0466, 0x0102_08B0];
 const ACT_GROUP_CUTSCENE: u32 = 0x100;
 
 /// flame colours: deep orange, hot orange, red-orange with a white core, and the full charge's
@@ -92,7 +118,21 @@ fn tint(level: u8, tick: u32) -> [f32; 4] {
 }
 
 fn burst_ticks(level: u8) -> u32 {
-    BURST_TICKS[(level >= GIANT) as usize]
+    BURST_TICKS[(level >= GIANT) as usize + big(level)]
+}
+
+/// how high over Mario's feet a shot leaves (SM64 units): the big ones over his head
+fn hand_height(level: u8) -> f32 {
+    match level {
+        SUN.. => 300.0,
+        GIANT => 150.0,
+        _ => 75.0,
+    }
+}
+
+/// the giant one's (0) or the sun's (1) row in the tables above
+fn big(level: u8) -> usize {
+    (level >= SUN) as usize
 }
 
 struct Shot {
@@ -108,12 +148,21 @@ struct Shot {
     swept: Vec<FieldInsHandle>,
     stuck: Option<(u64, u32)>,
     last_burn: u32,
+    /// the enemy it homes in on (its key)
+    homing: Option<u64>,
 }
 
 struct Burst {
     pos: Vec3,
     level: u8,
     born: u32,
+}
+
+/// a pool of lava the sun left on the ground (Elden Ring)
+struct Ember {
+    pos: Vec3,
+    born: u32,
+    life: u32,
 }
 
 struct Push {
@@ -132,9 +181,13 @@ pub struct Fire {
     /// a shot waiting for its throw to let go (its level, when it was asked for)
     pending: Option<(u8, u32)>,
     level: u8,
+    /// the charge was put out (a blow on Mario): nothing more until RB comes up
+    doused: bool,
     shots: Vec<Shot>,
     bursts: Vec<Burst>,
     pushes: Vec<Push>,
+    embers: Vec<Ember>,
+    last_ember_burn: u32,
 }
 
 /// A flame to draw (hud.rs): Elden Ring position, velocity (m/s, to move it between ticks), size
@@ -188,7 +241,36 @@ fn er_vel(v: [f32; 3]) -> Vec3 {
 
 impl Fire {
     pub fn new() -> Self {
-        Fire { held_since: None, ready_at: 0, run_throw: None, pending: None, level: 0, shots: Vec::new(), bursts: Vec::new(), pushes: Vec::new() }
+        Fire {
+            held_since: None,
+            ready_at: 0,
+            run_throw: None,
+            pending: None,
+            level: 0,
+            doused: false,
+            shots: Vec::new(),
+            bursts: Vec::new(),
+            pushes: Vec::new(),
+            embers: Vec::new(),
+            last_ember_burn: 0,
+        }
+    }
+
+    /// Mario was hit (lib.rs): a charge in his hand goes out with a fizzle.
+    pub fn douse(&mut self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
+        self.pending = None;
+        let Some(since) = self.held_since.take() else { return };
+        let level = std::mem::take(&mut self.level);
+        self.doused = true;
+        // (not for a tap's first ticks: nothing showed yet)
+        if tick.saturating_sub(since.max(self.ready_at)) < SHOW_CHARGE_AFTER && level == 0 {
+            return;
+        }
+        let m = state.position;
+        let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+        self.bursts.push(Burst { pos: er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]), level: 0, born: tick });
+        worker::call("fireball doused", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_FLAME_OUT, 0.6) });
+        log(format!("fireball: charge put out by a blow (level {level})"));
     }
 
     /// Game thread, every SM64 tick: RB held now (`b`, and whether Mario may shoot at all: not on
@@ -211,9 +293,18 @@ impl Fire {
         let action = state.action;
         // hurt, or in one of SM64's cutscene actions: the charge waits (not in the dash)
         let busy = (action & ACT_FLAG_INVULNERABLE != 0 && !crate::moves::dodging(action)) || action & ACT_GROUP_MASK == ACT_GROUP_CUTSCENE;
+        // (knocked back, grabbed, burning...: the charge goes out; not bumping into a wall)
+        if busy && action & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE && !BONKS.contains(&action) {
+            self.douse(state, origin, tick);
+        }
+        if !b {
+            self.doused = false;
+        }
         if !allowed {
             self.held_since = None;
             self.level = 0;
+        } else if b && self.doused {
+            // (put out: RB has to come up first)
         } else if b {
             let since = *self.held_since.get_or_insert(tick);
             let held = tick.saturating_sub(since.max(self.ready_at));
@@ -243,7 +334,9 @@ impl Fire {
 
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);
-        self.bursts.retain(|b| tick.wrapping_sub(b.born) < burst_ticks(b.level));
+        self.burn_embers(origin, tick, player, combat);
+        // (the sun's later waves wait their turn)
+        self.bursts.retain(|b| b.born > tick || tick - b.born < burst_ticks(b.level));
         self.publish(state, origin, tick, &ray);
     }
 
@@ -262,7 +355,7 @@ impl Fire {
     /// running or dashing.
     fn shoot(&mut self, id: i32, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         self.ready_at = tick + COOLDOWN[level as usize];
-        let (dir, _) = self.aim(state, origin);
+        let (dir, _) = self.aim(state, origin, level);
         let on_ground = state.action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0 && state.action & ACT_NO_THROW == 0;
         // the throw's kind: by charge level (er_moves.c ER_THROW_FIRE*)
         let kind = crate::moves::THROW_FIRE + match level {
@@ -299,10 +392,10 @@ impl Fire {
 
     /// Where a shot from his hand goes: the nearest enemy in front (its chest), else straight ahead;
     /// and whether one was found.
-    fn aim(&self, state: &sm64::SM64MarioState, origin: [f32; 3]) -> (Vec3, bool) {
+    fn aim(&self, state: &sm64::SM64MarioState, origin: [f32; 3], level: u8) -> (Vec3, bool) {
         let m = state.position;
         let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-        let hand = [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0];
+        let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
         let here = sm_to_er(origin, m);
         let aim = combat::nearby(&here, AIM_RANGE, origin)
             .iter()
@@ -326,10 +419,10 @@ impl Fire {
     fn spawn(&mut self, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         let m = state.position;
         let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-        let hand = [m[0] + fx * 45.0, m[1] + if level >= GIANT { 150.0 } else { 75.0 }, m[2] + fz * 45.0];
-        let (dir, aimed) = self.aim(state, origin);
+        let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
+        let (dir, aimed) = self.aim(state, origin, level);
         let vel = dir * SPEED[level as usize];
-        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick });
+        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None });
         log(format!("fireball: level {level} shot{}", if aimed { ", aimed" } else { "" }));
         // a puff of flame at his hand as it leaves
         self.bursts.push(Burst { pos: er(origin, hand), level: 0, born: tick });
@@ -341,9 +434,12 @@ impl Fire {
             // the giant one's recoil: a boom, and Mario holds still a moment
             if level >= GIANT {
                 sm64::sm64_play_sound_global(SOUND_BOMB);
-                sm64::sm64_er_hitstop(4);
+                sm64::sm64_er_hitstop(if level >= SUN { 7 } else { 4 });
             }
         });
+        if level >= SUN {
+            crate::lakitu::shake(1.0);
+        }
         if level >= GIANT {
             self.bursts.push(Burst { pos: er(origin, hand), level, born: tick });
         }
@@ -352,6 +448,7 @@ impl Fire {
     fn fly(&mut self, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         let mut shots = std::mem::take(&mut self.shots);
         shots.retain_mut(|shot| {
+            home(shot, origin);
             if shot.level >= GIANT {
                 return self.giant(shot, origin, tick, player, combat, ray);
             }
@@ -428,7 +525,7 @@ impl Fire {
         if let Some((key, ticks)) = shot.stuck.as_mut() {
             *ticks += 1;
             match combat::chest_by_key(*key) {
-                Some(chest) if *ticks < STICK_TICKS => {
+                Some(chest) if *ticks < STICK_TICKS[big(shot.level)] => {
                     let c = crate::collision::er_to_sm(origin, &HavokPosition(chest.x, chest.y, chest.z, 0.0));
                     let dir = Vec3::from(shot.vel).with_y(0.0).normalize_or(Vec3::Z);
                     shot.pos = [c[0] - dir.x * r * 0.5, c[1], c[2] - dir.z * r * 0.5];
@@ -456,7 +553,7 @@ impl Fire {
                 } else {
                     log(format!("fireball: the giant one clings to a big one ({} carried)", shot.swept.len()));
                     shot.stuck = Some((t.key(), 0));
-                    crate::lakitu::shake(0.8);
+                    crate::lakitu::shake(if shot.level >= SUN { 1.4 } else { 0.8 });
                     break;
                 }
             }
@@ -511,19 +608,92 @@ impl Fire {
         }
         // the explosion: everyone around it, and the ones it carried fly off
         let at = er(origin, shot.pos);
-        let ground = ray(at, at - Vec3::Y * 6.0).unwrap_or(at - Vec3::Y * reach.min(2.0));
-        let n = combat.blast(player, ground, EXPLODE_REACH, Attack::Fire(shot.level), origin, tick);
+        let ground = ray(at, at - Vec3::Y * 8.0).unwrap_or(at - Vec3::Y * reach.min(2.0));
+        let blast = EXPLODE_REACH[big(shot.level)];
+        let n = combat.blast(player, ground, blast, Attack::Fire(shot.level), origin, tick);
         let away = er_vel(shot.vel).with_y(0.0).normalize_or(Vec3::Z);
         for h in shot.swept.drain(..) {
             crate::knock::launch(&h, away);
         }
         self.bursts.push(Burst { pos: at, level: shot.level, born: tick });
-        crate::impact::fire_blast(ground, EXPLODE_REACH);
-        crate::lakitu::shake(1.6);
+        if shot.level >= SUN {
+            self.sun_blast(ground, blast, origin, tick, ray);
+        } else {
+            crate::impact::fire_blast(ground, blast);
+            crate::lakitu::shake(1.6);
+        }
         sound(SOUND_BOMB);
         sound(SOUND_VOLCANO);
-        log(format!("fireball: the giant one blows up ({n} caught in it)"));
+        log(format!("fireball: the {} blows up ({n} caught in it)", if shot.level >= SUN { "sun" } else { "giant one" }));
         false
+    }
+
+    /// The sun's blast on top of the explosion: regular enemies near its heart flung away, waves
+    /// of fire rolling out after it, and lava embers left on the ground all round.
+    fn sun_blast(&mut self, ground: Vec3, reach: f32, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let here = HavokPosition(ground.x, ground.y, ground.z, 0.0);
+        let mut flung = 0;
+        for t in combat::nearby(&here, reach + 4.0, origin) {
+            let Some(h) = t.shootable() else { continue };
+            let off = Vec3::new(t.er.0, t.er.1, t.er.2) - ground;
+            if off.with_y(0.0).length() <= reach * SUN_FLING && off.y.abs() <= 2.0 && combat::blowable(h) && crate::knock::launch(h, off.with_y(0.0).normalize_or(Vec3::Z)) {
+                flung += 1;
+            }
+        }
+        // (the waves: smaller bursts rolling out, a ring each)
+        for (k, &delay) in SUN_WAVES.iter().enumerate() {
+            let n = 5 + 2 * k;
+            for i in 0..n {
+                let a = i as f32 * std::f32::consts::TAU / n as f32 + k as f32 * 0.6;
+                let d = reach * (0.45 + 0.3 * k as f32);
+                self.bursts.push(Burst { pos: ground + Vec3::new(a.cos() * d, 0.6, a.sin() * d), level: 3, born: tick + delay });
+            }
+        }
+        // the embers: pools of lava on the ground, the nearest to its heart first
+        let before = self.embers.len();
+        for i in 0..EMBERS {
+            let a = i as f32 * 2.399;
+            let d = reach * 0.85 * ((i as f32 + 0.5) / EMBERS as f32).sqrt();
+            let top = ground + Vec3::new(a.cos() * d, 2.5, a.sin() * d);
+            // (on the ground, and not through a wall from the blast's heart)
+            let Some(p) = ray(top, top - Vec3::Y * 6.0) else { continue };
+            if ray(ground + Vec3::Y * 1.0, p + Vec3::Y * 0.5).is_some() {
+                continue;
+            }
+            self.embers.push(Ember { pos: p, born: tick, life: EMBER_TICKS + (i % 3) * 6 });
+        }
+        crate::impact::sun_blast(ground, reach);
+        crate::lakitu::shake(2.6);
+        log(format!("fireball: the sun flings {flung} away, {} embers on the ground", self.embers.len() - before));
+    }
+
+    /// The embers burn whoever stands in them, every EMBER_BURN_EVERY ticks (once each however
+    /// many he stands in), and go out after their time.
+    fn burn_embers(&mut self, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat) {
+        self.embers.retain(|e| tick.wrapping_sub(e.born) < e.life);
+        if self.embers.is_empty() || tick.wrapping_sub(self.last_ember_burn) < EMBER_BURN_EVERY {
+            return;
+        }
+        self.last_ember_burn = tick;
+        let (lo, hi) = self.embers.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), e| (lo.min(e.pos), hi.max(e.pos)));
+        let mid = (lo + hi) * 0.5;
+        let near = combat::nearby(&HavokPosition(mid.x, mid.y, mid.z, 0.0), (hi - lo).length() * 0.5 + EMBER_RADIUS + 4.0, origin);
+        let burning: Vec<(usize, Attack, bool)> = near
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.shootable().is_some())
+            .filter(|(_, t)| {
+                let p = Vec3::new(t.er.0, t.er.1, t.er.2);
+                let r = t.radius * scale();
+                self.embers.iter().any(|e| (p - e.pos).with_y(0.0).length() <= EMBER_RADIUS + r && (p.y - e.pos.y).abs() <= 0.8)
+            })
+            .map(|(i, _)| (i, Attack::Ember, false))
+            .collect();
+        if !burning.is_empty() {
+            combat.deal(player, &near, &burning, tick);
+            // (soft: it comes again and again)
+            worker::call("fireball ember", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_FLAME_OUT, 0.2) });
+        }
     }
 
     /// The full shot's knockback: regular enemies slide away from Mario (bosses stand their ground)
@@ -571,16 +741,17 @@ impl Fire {
                 let pulse = 1.0 + 0.12 * (tick as f32 * 0.9).sin();
                 let grow = match level {
                     0 => (held as f32 / CHARGE_TICKS[0] as f32).clamp(0.3, 1.0),
-                    // from 4 s on it keeps growing towards the giant one
-                    3 => {
-                        let k = (held - CHARGE_TICKS[2]) as f32 / (CHARGE_TICKS[3] - CHARGE_TICKS[2]) as f32;
-                        1.0 + k.clamp(0.0, 1.0) * (SIZE[4] / SIZE[3] - 1.0) * 0.85
+                    // from 4 s on it keeps growing towards the giant one, from 10 s towards the sun
+                    3 | 4 => {
+                        let k = (held - CHARGE_TICKS[level - 1]) as f32 / (CHARGE_TICKS[level] - CHARGE_TICKS[level - 1]) as f32;
+                        1.0 + k.clamp(0.0, 1.0) * (SIZE[level + 1] / SIZE[level] - 1.0) * 0.85
                     }
                     _ => 1.0,
                 };
                 let size = SIZE[level] * 0.7 * pulse * grow;
                 // (a big one is held up over his head, not around him)
-                let hand = hand + Vec3::Y * (size * 0.5 - 0.3).max(0.0);
+                // (the sun, higher still: he holds it up, not stands in it)
+                let hand = hand + Vec3::Y * ((size * 0.5 - 0.3).max(0.0) + (size - 3.0).max(0.0) * 0.5);
                 if self.level >= GIANT {
                     giant(&mut out, hand, vel, size, tick, tick);
                 } else {
@@ -588,7 +759,7 @@ impl Fire {
                     ball(&mut out, hand, vel, size, self.level, tick, tick, Vec3::Y);
                 }
                 // (more, faster sparks with each level)
-                let (count, period) = [(4, 10), (6, 8), (8, 7), (10, 6), (18, 5)][level];
+                let (count, period) = [(4, 10), (6, 8), (8, 7), (10, 6), (18, 5), (28, 4)][level];
                 for i in 0..count {
                     let phase = ((tick + i * period / count) % period) as f32 / period as f32;
                     let angle = i as f32 * 2.399 + (tick / period) as f32 * 0.9;
@@ -621,7 +792,7 @@ impl Fire {
             ball(&mut out, pos, vel, size, shot.level, shot.age, tick, (-vel).normalize_or(Vec3::Y));
         }
         for b in &self.bursts {
-            if !seen(b.pos, SIZE[b.level as usize]) {
+            if b.born > tick || !seen(b.pos, SIZE[b.level as usize]) {
                 continue;
             }
             let age = tick.wrapping_sub(b.born) as f32 / burst_ticks(b.level) as f32;
@@ -631,7 +802,7 @@ impl Fire {
             c[3] = 1.0 - age;
             out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (1.2 - 0.6 * age), frame: (age * 8.0) as usize % 8, tint: c });
             // (the giant one: a bigger ring and a column of fire rising)
-            let ring = if b.level >= GIANT { 16 } else { 6 };
+            let ring = [6, 16, 24][(b.level >= GIANT) as usize + big(b.level)];
             if b.level >= GIANT {
                 out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (1.5 + 2.0 * age), frame: FRAME_GLOW, tint: [1.0, 0.55, 0.15, 0.7 * (1.0 - age)] });
                 for i in 0..14 {
@@ -639,7 +810,11 @@ impl Fire {
                     let dir = Vec3::new(a.cos(), 0.4 + 0.6 * ((a * 3.1).sin() * 0.5 + 0.5), a.sin());
                     out.push(Sprite { pos: b.pos + dir * spread * 1.4, vel: Vec3::ZERO, size: 0.18, frame: FRAME_GLOW, tint: [1.0, 0.85, 0.4, 1.0 - age] });
                 }
-                for i in 0..8 {
+                // (the sun: a white-hot core and a taller column)
+                if b.level >= SUN {
+                    out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (0.9 - 0.6 * age), frame: FRAME_GLOW, tint: [1.0, 0.97, 0.85, 0.9 * (1.0 - age)] });
+                }
+                for i in 0..[8, 12][big(b.level)] {
                     let up = Vec3::Y * spread * (0.2 + 0.25 * i as f32) * (0.5 + age);
                     out.push(Sprite { pos: b.pos + up, vel: Vec3::ZERO, size: SIZE[level] * 0.5 * (1.0 - age), frame: (i + (age * 8.0) as usize) % 8, tint: c });
                 }
@@ -648,6 +823,31 @@ impl Fire {
                 let a = i as f32 * std::f32::consts::TAU / ring as f32 + level as f32;
                 let off = Vec3::new(a.cos(), 0.5 + 0.4 * (a * 2.0).sin(), a.sin()) * spread * 0.6;
                 out.push(Sprite { pos: b.pos + off, vel: Vec3::ZERO, size: SIZE[level] * 0.45 * (1.0 - age * 0.5), frame: (i + (age * 8.0) as usize) % 8, tint: c });
+            }
+        }
+        // the embers: a dark red pool glowing, small flames licking up from it and sparks rising,
+        // dimming in its last half second
+        for (n, e) in self.embers.iter().enumerate() {
+            let age = tick.wrapping_sub(e.born);
+            let fade = ((e.life - age.min(e.life)) as f32 / 15.0).min(1.0);
+            if !seen(e.pos + Vec3::Y * 0.3, EMBER_RADIUS) {
+                continue;
+            }
+            let n = n as u32;
+            let throb = 1.0 + 0.08 * ((tick + n * 5) as f32 * 0.5).sin();
+            out.push(Sprite { pos: e.pos + Vec3::Y * 0.12, vel: Vec3::ZERO, size: EMBER_RADIUS * 2.4 * throb, frame: FRAME_GLOW, tint: [0.85, 0.18, 0.04, 0.55 * fade] });
+            out.push(Sprite { pos: e.pos + Vec3::Y * 0.18, vel: Vec3::ZERO, size: EMBER_RADIUS * 1.3 * throb, frame: FRAME_GLOW, tint: [1.0, 0.5, 0.12, 0.7 * fade] });
+            for i in 0..3u32 {
+                let t = ((age + i * 7 + n * 3) % 20) as f32 / 20.0;
+                let a = (i + n) as f32 * 2.399;
+                let off = Vec3::new(a.cos(), 0.0, a.sin()) * EMBER_RADIUS * 0.55 + Vec3::Y * (0.25 + t * 0.8);
+                out.push(Sprite { pos: e.pos + off, vel: Vec3::ZERO, size: 0.55 * (1.0 - t * 0.6) * fade, frame: (age as usize / 2 + i as usize * 3) % 8, tint: [1.0, 0.75 - 0.3 * t, 0.3, 0.85 * (1.0 - t) * fade] });
+            }
+            for i in 0..2u32 {
+                let t = ((age + i * 11 + n * 7) % 26) as f32 / 26.0;
+                let a = (i * 3 + n) as f32 * 1.7;
+                let off = Vec3::new(a.cos(), 0.0, a.sin()) * EMBER_RADIUS * 0.7 * (0.3 + t) + Vec3::Y * (0.3 + t * 1.8);
+                out.push(Sprite { pos: e.pos + off, vel: Vec3::ZERO, size: 0.07, frame: FRAME_GLOW, tint: [1.0, 0.85, 0.4, (1.0 - t) * fade] });
             }
         }
         // Mega Mario's fireballs are a giant's (their reach and speed are in his scaled units already)
@@ -665,6 +865,50 @@ impl Fire {
         }
         *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (out, Some(Instant::now()));
     }
+}
+
+/// Homing: the shot picks the nearest enemy ahead of it (again every HOME_EVERY ticks) and turns
+/// a little towards his chest each tick, keeping its speed. Not while clinging to a boss.
+fn home(shot: &mut Shot, origin: [f32; 3]) {
+    if shot.stuck.is_some() {
+        return;
+    }
+    let vel = Vec3::from(shot.vel);
+    let speed = vel.length();
+    if speed < 1e-3 {
+        return;
+    }
+    let dir = vel / speed;
+    let p = shot.pos;
+    if shot.homing.is_none() || shot.age % HOME_EVERY == 0 {
+        let here = sm_to_er(origin, p);
+        shot.homing = combat::nearby(&here, HOME_RANGE, origin)
+            .iter()
+            .filter(|t| t.shootable().is_some() && !shot.hit.contains(&t.key()))
+            .filter_map(|t| {
+                let to = Vec3::new(t.sm[0] - p[0], t.sm[1] + t.height.min(300.0) * 0.45 - p[1], t.sm[2] - p[2]);
+                let d = to.length();
+                (d > 1.0 && to.dot(dir) / d >= HOME_CONE_COS).then_some((d, t.key()))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, k)| k);
+    }
+    let Some(key) = shot.homing else { return };
+    let Some(chest) = combat::chest_by_key(key) else {
+        shot.homing = None;
+        return;
+    };
+    let c = crate::collision::er_to_sm(origin, &HavokPosition(chest.x, chest.y, chest.z, 0.0));
+    let want = Vec3::new(c[0] - p[0], c[1] - p[1], c[2] - p[2]).normalize_or_zero();
+    let cos = want.dot(dir);
+    if want == Vec3::ZERO || cos < HOME_LOSE_COS {
+        shot.homing = None;
+        return;
+    }
+    let angle = cos.clamp(-1.0, 1.0).acos();
+    let turn = HOME_TURN[shot.level as usize];
+    let new = if angle <= turn { want } else { dir.lerp(want, turn / angle).normalize_or(dir) };
+    shot.vel = (new * speed).to_array();
 }
 
 /// Where the game's render camera is (Lakitu's, when on).

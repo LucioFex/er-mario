@@ -43,6 +43,7 @@ mod names;
 mod notes;
 mod pads;
 mod save_backup;
+mod shove;
 mod paths;
 mod perf;
 mod sm64;
@@ -2772,6 +2773,9 @@ fn frame(data: &FD4TaskData) {
             let (attacker, scale) = combat::last_attacker(&player_ref.chr_ins);
             let damaged = m.combat.took_damage(data.hp, data.max_hp, scale);
             let was_damaged = damaged.is_some();
+            if was_damaged {
+                shove::hurt();
+            }
             let from_held = was_damaged && (carry::harmless(here) || swing::harmless(here));
             // the game's own lava damage: Mario already pays for lava with SM64's lava boost
             // (also for a moment after: the burn keeps ticking while he's bounced up)
@@ -2817,6 +2821,19 @@ fn frame(data: &FD4TaskData) {
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
             style::hurt();
+            // (a blow puts out the fireball he was charging)
+            m.fire.douse(&m.state, m.origin, m.ticks);
+        }
+        // a blow that cost him nothing (a push, a bash): the Tarnished's damage animation says so
+        let shoved = {
+            let p = player_ref.chr_ins.modules.physics.position;
+            let nearest = targets.iter().filter(|t| !t.friendly() && !t.is_prop()).map(|t| glam::Vec3::new(t.er.0 - p.0, t.er.1 - p.1, t.er.2 - p.2).length()).min_by(f32::total_cmp);
+            let calm = hurt.is_none() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::dodging(m.state.action) && !mega::active() && !blown::flying();
+            let calm = calm && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
+            shove::check(current_anim(&player_ref.chr_ins), nearest, calm)
+        };
+        if shoved {
+            m.fire.douse(&m.state, m.origin, m.ticks);
         }
         // healing: enemies Mario defeated drop coins (a wedge each when he touches one); a grace
         // or a boss's star refills him
@@ -2863,6 +2880,7 @@ fn frame(data: &FD4TaskData) {
         let alive = !m.dead;
         let hurt_from = targets
             .iter()
+            .filter(|t| !shoved || (!t.friendly() && !t.is_prop()))
             .min_by(|a, b| {
                 let d = |t: &combat::Target| glam::Vec3::from(t.sm).distance(glam::Vec3::from(m.state.position));
                 d(a).total_cmp(&d(b))
@@ -2994,6 +3012,8 @@ fn frame(data: &FD4TaskData) {
                     }
                 },
                 Some(combat::Hurt::Drain) => unsafe { sm64::sm64_set_mario_health(id, (health_before - 0x100).max(0xFF) as u16) },
+                // (a shove: SM64's soft knockback, no wedge)
+                None if shoved => unsafe { sm64::sm64_mario_take_damage(id, 0, 0, hurt_from[0], hurt_from[1], hurt_from[2]) },
                 None => {}
             }
             if kills > 0 {

@@ -64,7 +64,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one (see below). Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). A blow on Mario puts the charge out. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
 | D-pad left / up | Metal and Wing caps (they recharge in about 55-60 s) |
@@ -228,6 +228,15 @@ stops it and it clings to him, burning, for a second and a half; then it blows u
 everyone within 5 m, and the enemies it carried fly off. It also blows up against a wall or at the
 end of its range.
 
+**The sun.** Held on for 20 s (and not hit once: any blow on Mario, even a push that costs no
+health, puts out whatever he's charging), the giant one grows into an immense ball held high over
+his head. It flies slowly and works the same way, clings longer, and its explosion reaches 9 m:
+waves of fire roll out, the regular enemies near its heart are flung away, and pools of lava are
+left on the ground for 2-3 s, burning whoever steps in them.
+
+**Shoves.** An enemy's blow that costs no health (a push, a shield bash) now makes Mario reel back
+too (SM64's soft knockback, no wedge lost).
+
 **Big blows hurt more than wedges.** A heavy hit from a boss or a big brute sometimes (a roll of
 the dice, never twice in a row) sends Mario flying far off, screaming; if a wall is in the way he
 smacks into it with stars and a bonk (`src/blown.rs`). And a fall from very high up (over 22 m)
@@ -247,7 +256,7 @@ close and risky hits.
 | Long strings | — | Past 10 hits on the same enemy each hit is worth 5% less than the one before (down to 40%, finishers 70%), so long combos last instead of melting the enemy |
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
-| Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m |
+| Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -338,7 +347,7 @@ replaces this fork's DLL with the original one.
 | X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive (into an enemy's back or side it picks the enemy up) |
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X or A out of it |
-| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up |
+| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools |
 | D-pad | | Caps: left Metal, up Wing, down take it off (and interact); right Mega Mushroom |
 | RT | Middle mouse button | The hook (see above) |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
