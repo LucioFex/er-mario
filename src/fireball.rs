@@ -28,12 +28,13 @@ use glam::Vec3;
 
 use crate::combat::{self, Attack, Combat};
 use crate::collision::sm_to_er;
+use crate::fx::{Blast, FireFx, Orb, Pool, BLAST_LAUNCH, ORB_CHARGE, ORB_REFLECTED, ORB_STUCK};
 use crate::{log, scale, sm64, worker};
 
 /// held this many SM64 ticks (30 a second): charge levels 1, 2, 3, the giant one and the sun
 const CHARGE_TICKS: [u32; 5] = [30, 60, 120, 300, 600];
-const GIANT: u8 = 4;
-const SUN: u8 = 5;
+pub const GIANT: u8 = 4;
+pub const SUN: u8 = 5;
 /// a tap shows no charge (the sparks start after this)
 const SHOW_CHARGE_AFTER: u32 = 7;
 /// ticks between shots, by level
@@ -67,7 +68,7 @@ const RUN_SHOT_SPEED: f32 = 14.0;
 /// ticks, and blows up reaching this far (m); the giant one's, then the sun's
 const STICK_TICKS: [u32; 2] = [48, 60];
 const BURN_EVERY: u32 = 8;
-const EXPLODE_REACH: [f32; 2] = [5.0, 9.0];
+pub const EXPLODE_REACH: [f32; 2] = [5.0, 9.0];
 /// the sun's blast: regular enemies this close to its heart (share of the reach) are flung away;
 /// its waves, this many ticks apart
 const SUN_FLING: f32 = 0.6;
@@ -104,22 +105,56 @@ const ACT_GROUP_MASK: u32 = 0x1C0;
 const BONKS: [u32; 3] = [0x0102_08B6, 0x0002_0466, 0x0102_08B0];
 const ACT_GROUP_CUTSCENE: u32 = 0x100;
 
-/// flame colours: deep orange, hot orange, red-orange with a white core, and the full charge's
-/// flashing (Mega Man's buster cycles its colours)
-const TINT: [[f32; 4]; 3] = [[1.0, 0.62, 0.25, 1.0], [1.0, 0.5, 0.18, 1.0], [1.0, 0.35, 0.12, 1.0]];
-const FLASH: [[f32; 4]; 3] = [[1.0, 1.0, 1.0, 1.0], [1.0, 0.85, 0.3, 1.0], [1.0, 0.3, 0.1, 1.0]];
+pub fn burst_ticks(level: u8) -> u32 {
+    BURST_TICKS[(level >= GIANT) as usize + big(level)]
+}
 
-fn tint(level: u8, tick: u32) -> [f32; 4] {
+/// how long a burst is kept for its looks (ticks): the big ones' smoke and shock wave outlast
+/// their flames
+pub fn blast_life(level: u8) -> u32 {
     match level {
-        GIANT.. => FLASH[(tick % 3) as usize],
-        3 => FLASH[(tick / 2 % 3) as usize],
-        _ => TINT[level as usize],
+        SUN.. => 96,
+        GIANT => 66,
+        _ => burst_ticks(level),
     }
 }
 
-fn burst_ticks(level: u8) -> u32 {
-    BURST_TICKS[(level >= GIANT) as usize + big(level)]
+/// How much of a ball at `p` (radius `r`) the camera at `eye` sees past the map: its heart and
+/// four points round its rim across the view (0-1). A wall cutting off half a big one leaves half.
+/// (`grounded`: one lying on the ground, its rim's lowest point under it isn't looked at)
+fn visibility(eye: Vec3, p: Vec3, r: f32, grounded: bool, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> f32 {
+    let open = |q: Vec3, slack: f32| ray(eye, q).is_none_or(|h| (h - q).length() < slack);
+    if r < 0.6 {
+        return open(p, r + 0.2) as u8 as f32;
+    }
+    let d = (p - eye).normalize_or(Vec3::Z);
+    let side = d.cross(Vec3::Y).normalize_or(Vec3::X);
+    let up = side.cross(d);
+    let mut seen = 2.0 * open(p, r + 0.2) as u8 as f32;
+    let mut of = 2.0;
+    for q in [side, -side, up, -up] {
+        if grounded && q.y < -0.3 {
+            continue;
+        }
+        seen += open(p + q * r * 0.8, r * 0.3 + 0.2) as u8 as f32;
+        of += 1.0;
+    }
+    seen / of
 }
+
+/// A burst's or a pool's visibility, looked at every few ticks (fewer rays) and eased; at once
+/// the first time.
+fn eased(vis: &mut f32, at: &mut u32, tick: u32, look: impl FnOnce() -> f32) -> f32 {
+    if *vis < 0.0 || tick.wrapping_sub(*at) >= VIS_EVERY {
+        let seen = look();
+        *vis = if *vis < 0.0 { seen } else { *vis + (seen - *vis) * 0.5 };
+        *at = tick;
+    }
+    *vis
+}
+
+/// bursts and pools are looked at every this many ticks, the shots' ground under them too
+const VIS_EVERY: u32 = 3;
 
 /// how high over Mario's feet a shot leaves (SM64 units): the big ones over his head
 fn hand_height(level: u8) -> f32 {
@@ -131,7 +166,7 @@ fn hand_height(level: u8) -> f32 {
 }
 
 /// the giant one's (0) or the sun's (1) row in the tables above
-fn big(level: u8) -> usize {
+pub fn big(level: u8) -> usize {
     (level >= SUN) as usize
 }
 
@@ -152,12 +187,29 @@ struct Shot {
     homing: Option<u64>,
     /// an enemy's projectile sent back (parry.rs): drawn blue-white
     reflected: bool,
+    /// how much of it the camera sees (eased; below 0: not looked yet), the ground under it
+    /// (looked for every few ticks)
+    vis: f32,
+    ground: Option<f32>,
 }
 
 struct Burst {
     pos: Vec3,
     level: u8,
     born: u32,
+    /// the ground under it (the big ones': None, not looked for yet)
+    ground: Option<Option<f32>>,
+    /// the flames at his hand as a big one leaves it (no explosion of its own)
+    launch: bool,
+    /// how much of it the camera sees (eased; below 0: not looked yet) and when it was looked at
+    vis: f32,
+    vis_at: u32,
+}
+
+impl Burst {
+    fn new(pos: Vec3, level: u8, born: u32) -> Self {
+        Burst { pos, level, born, ground: None, launch: false, vis: -1.0, vis_at: 0 }
+    }
 }
 
 /// a pool of lava the sun left on the ground (Elden Ring)
@@ -165,6 +217,8 @@ struct Ember {
     pos: Vec3,
     born: u32,
     life: u32,
+    vis: f32,
+    vis_at: u32,
 }
 
 struct Push {
@@ -192,39 +246,27 @@ pub struct Fire {
     last_ember_burn: u32,
 }
 
-/// A flame to draw (hud.rs): Elden Ring position, velocity (m/s, to move it between ticks), size
-/// (m), frame (0-7 SM64's flame, then FRAME_GLOW and the FRAME_ORB ones), tint.
-#[derive(Clone, Copy)]
-pub struct Sprite {
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub size: f32,
-    pub frame: usize,
-    pub tint: [f32; 4],
-}
+static LOOKS: Mutex<(FireFx, Option<Instant>)> = Mutex::new((FireFx { orbs: Vec::new(), blasts: Vec::new(), pools: Vec::new() }, None));
 
-/// a soft round glow (halos, embers, smoke), and the giant shot's ball of fire (4 frames of its
-/// surface churning)
-pub const FRAME_GLOW: usize = 8;
-pub const FRAME_ORB: usize = 9;
-
-static SPRITES: Mutex<(Vec<Sprite>, Option<Instant>)> = Mutex::new((Vec::new(), None));
-
-/// The flames to draw now, moved on since the last tick.
-pub fn sprites() -> Vec<Sprite> {
-    let guard = SPRITES.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(at) = guard.1 else { return Vec::new() };
+/// The fireballs to draw now, the balls moved on since the last tick.
+pub fn looks() -> FireFx {
+    let guard = LOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(at) = guard.1 else { return FireFx::default() };
     let dt = at.elapsed().as_secs_f32();
     // (the SM64 ticks stopped: menus, loading)
     if dt > 0.25 {
-        return Vec::new();
+        return FireFx::default();
     }
     let dt = dt.min(1.0 / 30.0);
-    guard.0.iter().map(|s| Sprite { pos: s.pos + s.vel * dt, ..*s }).collect()
+    let mut fx = guard.0.clone();
+    for o in &mut fx.orbs {
+        o.pos += o.vel * dt;
+    }
+    fx
 }
 
 pub fn clear() {
-    *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (Vec::new(), None);
+    *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = (FireFx::default(), None);
 }
 
 fn sound(id: i32) {
@@ -271,8 +313,8 @@ impl Fire {
         let b = crate::collision::er_to_sm(origin, &HavokPosition(tip.x, tip.y, tip.z, 0.0));
         let dir = Vec3::new(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize_or(Vec3::Z);
         let level = 3u8;
-        self.shots.push(Shot { pos: a, vel: (dir * SPEED[level as usize]).to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: target, reflected: true });
-        self.bursts.push(Burst { pos: from, level: 0, born: tick });
+        self.shots.push(Shot { pos: a, vel: (dir * SPEED[level as usize]).to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: target, reflected: true, vis: -1.0, ground: None });
+        self.bursts.push(Burst::new(from, 0, tick));
     }
 
     /// Another attack pressed while RB charges (lib.rs): the charge goes out, a shot already let go
@@ -295,7 +337,7 @@ impl Fire {
         }
         let m = state.position;
         let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-        self.bursts.push(Burst { pos: er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]), level: 0, born: tick });
+        self.bursts.push(Burst::new(er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]), 0, tick));
         worker::call("fireball doused", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_FLAME_OUT, 0.6) });
         log(format!("fireball: charge put out by a blow (level {level})"));
     }
@@ -363,7 +405,7 @@ impl Fire {
         self.push(&ray);
         self.burn_embers(origin, tick, player, combat);
         // (the sun's later waves wait their turn)
-        self.bursts.retain(|b| b.born > tick || tick - b.born < burst_ticks(b.level));
+        self.bursts.retain(|b| b.born > tick || tick - b.born < if b.launch { burst_ticks(b.level) } else { blast_life(b.level) });
         self.publish(state, origin, tick, &ray);
     }
 
@@ -449,10 +491,10 @@ impl Fire {
         let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
         let (dir, aimed) = self.aim(state, origin, level);
         let vel = dir * SPEED[level as usize];
-        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false });
+        self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false, vis: -1.0, ground: None });
         log(format!("fireball: level {level} shot{}", if aimed { ", aimed" } else { "" }));
         // a puff of flame at his hand as it leaves
-        self.bursts.push(Burst { pos: er(origin, hand), level: 0, born: tick });
+        self.bursts.push(Burst::new(er(origin, hand), 0, tick));
         worker::call("fireball shot", move |_| unsafe {
             sm64::sm64_play_sound_global(SOUND_FLAME_BLOWN);
             if level >= 3 {
@@ -468,7 +510,7 @@ impl Fire {
             crate::lakitu::shake(1.0);
         }
         if level >= GIANT {
-            self.bursts.push(Burst { pos: er(origin, hand), level, born: tick });
+            self.bursts.push(Burst { launch: true, ..Burst::new(er(origin, hand), level, tick) });
         }
     }
 
@@ -511,7 +553,7 @@ impl Fire {
                     combat.deal(player, &near, &[(i, Attack::Fire(shot.level), false)], tick);
                 }
                 let at = [prev[0] + shot.vel[0] * k, prev[1] + shot.vel[1] * k, prev[2] + shot.vel[2] * k];
-                self.bursts.push(Burst { pos: er(origin, at), level: shot.level, born: tick });
+                self.bursts.push(Burst::new(er(origin, at), shot.level, tick));
                 if shot.level >= 3 {
                     sound(SOUND_BOMB);
                     // (co-op guest: no push, the host owns the enemies)
@@ -525,13 +567,13 @@ impl Fire {
             }
             // the map: a burst where it hits
             if let Some(p) = ray(er(origin, prev), er(origin, next)) {
-                self.bursts.push(Burst { pos: p, level: shot.level, born: tick });
+                self.bursts.push(Burst::new(p, shot.level, tick));
                 sound(if shot.level >= 3 { SOUND_BOMB } else { SOUND_FLAME_OUT });
                 return false;
             }
             shot.pos = next;
             if shot.age as f32 * SPEED[shot.level as usize] >= RANGE {
-                self.bursts.push(Burst { pos: er(origin, next), level: 0, born: tick });
+                self.bursts.push(Burst::new(er(origin, next), 0, tick));
                 return false;
             }
             true
@@ -575,7 +617,7 @@ impl Fire {
                 let Some(h) = t.shootable().copied() else { continue };
                 shot.hit.push(t.key());
                 worker::call("fireball sweep", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BOMB, 0.4) });
-                self.bursts.push(Burst { pos: center, level: 3, born: tick });
+                self.bursts.push(Burst::new(center, 3, tick));
                 if combat::blowable(&h) && !crate::coop::guest() {
                     shot.swept.push(h);
                 } else {
@@ -643,7 +685,7 @@ impl Fire {
         for h in shot.swept.drain(..) {
             crate::knock::launch(&h, away);
         }
-        self.bursts.push(Burst { pos: at, level: shot.level, born: tick });
+        self.bursts.push(Burst::new(at, shot.level, tick));
         if shot.level >= SUN {
             self.sun_blast(ground, blast, origin, tick, ray);
         } else {
@@ -674,7 +716,7 @@ impl Fire {
             for i in 0..n {
                 let a = i as f32 * std::f32::consts::TAU / n as f32 + k as f32 * 0.6;
                 let d = reach * (0.45 + 0.3 * k as f32);
-                self.bursts.push(Burst { pos: ground + Vec3::new(a.cos() * d, 0.6, a.sin() * d), level: 3, born: tick + delay });
+                self.bursts.push(Burst::new(ground + Vec3::new(a.cos() * d, 0.6, a.sin() * d), 3, tick + delay));
             }
         }
         // the embers: pools of lava on the ground, the nearest to its heart first
@@ -688,7 +730,7 @@ impl Fire {
             if ray(ground + Vec3::Y * 1.0, p + Vec3::Y * 0.5).is_some() {
                 continue;
             }
-            self.embers.push(Ember { pos: p, born: tick, life: EMBER_TICKS + (i % 3) * 6 });
+            self.embers.push(Ember { pos: p, born: tick, life: EMBER_TICKS + (i % 3) * 6, vis: -1.0, vis_at: 0 });
         }
         crate::impact::sun_blast(ground, reach);
         crate::lakitu::shake(2.6);
@@ -751,20 +793,21 @@ impl Fire {
         });
     }
 
-    fn publish(&self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
-        let mut out = Vec::new();
-        // (the camera: a shot behind a wall isn't drawn over it, and the flames are drawn back to
-        // front)
+    /// The fireballs as hud.rs draws them (flame.rs gives them their looks): the charge in his
+    /// hand, the shots, their bursts and the lava pools, with how much of each the camera sees
+    /// past the map and the ground under the big ones.
+    fn publish(&mut self, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let mut out = FireFx::default();
         let eye = camera();
-        let seen = |p: Vec3, size: f32| eye.is_none_or(|e| ray(e, p).is_none_or(|h| (h - p).length() < size * 0.5 + 0.2));
-        // the charge: sparks of flame gathering at Mario's hand, the flame there growing
+        // Mega Mario's fireballs are a giant's (their reach and speed are in his scaled units already)
+        let k = crate::size_factor();
+        // the charge: the flame in his hand growing
         if let Some(since) = self.held_since {
             let held = tick.saturating_sub(since.max(self.ready_at));
             if held >= SHOW_CHARGE_AFTER || self.level > 0 {
                 let m = state.position;
                 let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
                 let hand = er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]);
-                let vel = er_vel(state.velocity);
                 let level = self.level as usize;
                 let pulse = 1.0 + 0.12 * (tick as f32 * 0.9).sin();
                 let grow = match level {
@@ -779,126 +822,56 @@ impl Fire {
                 let size = SIZE[level] * 0.7 * pulse * grow;
                 // (a big one is held up over his head, not around him)
                 // (the sun, higher still: he holds it up, not stands in it)
-                let hand = hand + Vec3::Y * ((size * 0.5 - 0.3).max(0.0) + (size - 3.0).max(0.0) * 0.5);
-                if self.level >= GIANT {
-                    giant(&mut out, hand, vel, size, tick, tick);
-                } else {
-                    // (held still in his hand, its flames rise)
-                    ball(&mut out, hand, vel, size, self.level, tick, tick, Vec3::Y);
-                }
-                // (more, faster sparks with each level)
-                let (count, period) = [(4, 10), (6, 8), (8, 7), (10, 6), (18, 5), (28, 4)][level];
-                for i in 0..count {
-                    let phase = ((tick + i * period / count) % period) as f32 / period as f32;
-                    let angle = i as f32 * 2.399 + (tick / period) as f32 * 0.9;
-                    let reach = (1.1 * (1.0 - phase) + 0.1) * size.max(1.0);
-                    let off = Vec3::new(angle.cos() * reach, (angle * 1.7).sin() * reach * 0.6, angle.sin() * reach);
-                    out.push(Sprite {
-                        pos: hand + off,
-                        vel,
-                        size: 0.12 + 0.1 * level as f32 * phase,
-                        frame: (i as usize + tick as usize) % 8,
-                        tint: { let mut c = tint(self.level, tick + i); c[3] = 0.35 + 0.65 * phase; c },
-                    });
-                }
+                let hand = hand + Vec3::Y * ((size * 0.5 - 0.3).max(0.0) + (size - 3.0).max(0.0) * 0.5) * k;
+                let ground = (self.level >= 3).then(|| ray(hand, hand - Vec3::Y * size * k * 3.0).map(|g| g.y)).flatten();
+                out.orbs.push(Orb { pos: hand, vel: er_vel(state.velocity), size: size * k, level: self.level, age: held, flags: ORB_CHARGE, ground, vis: 1.0 });
             }
         }
-        for shot in &self.shots {
+        for shot in &mut self.shots {
             let pos = er(origin, shot.pos);
             // (clinging to a boss it stands still, churning bigger)
             let stuck = shot.stuck.is_some();
             let vel = if stuck { Vec3::ZERO } else { er_vel(shot.vel) };
-            let level = shot.level as usize;
-            let size = SIZE[level] * if stuck { 1.12 + 0.12 * (tick as f32 * 2.1).sin() } else { 1.0 + 0.08 * (tick as f32 * 1.3 + shot.age as f32).sin() };
-            if !seen(pos, size) {
+            let size = k * SIZE[shot.level as usize] * if stuck { 1.12 + 0.12 * (tick as f32 * 2.1).sin() } else { 1.0 + 0.08 * (tick as f32 * 1.3 + shot.age as f32).sin() };
+            // (eased: a ball passing behind a post fades, it doesn't blink; hidden at once if it
+            // leaves his hand out of sight)
+            let seen = eye.map_or(1.0, |e| visibility(e, pos, size * 0.5, false, ray));
+            shot.vis = if shot.vis < 0.0 { seen } else { shot.vis + (seen - shot.vis) * 0.4 };
+            if shot.vis < 0.02 {
                 continue;
             }
-            if shot.level >= GIANT {
-                giant(&mut out, pos, vel, size, shot.age, tick);
+            if shot.level >= 3 && shot.age % VIS_EVERY == 0 {
+                shot.ground = ray(pos, pos - Vec3::Y * size * 3.0).map(|g| g.y);
+            }
+            let ground = shot.ground.filter(|_| shot.level >= 3);
+            let flags = if stuck { ORB_STUCK } else { 0 } | if shot.reflected { ORB_REFLECTED } else { 0 };
+            out.orbs.push(Orb { pos, vel, size, level: shot.level, age: shot.age, flags, ground, vis: shot.vis });
+        }
+        for b in &mut self.bursts {
+            if b.born > tick {
                 continue;
             }
-            let first = out.len();
-            ball(&mut out, pos, vel, size, shot.level, shot.age, tick, (-vel).normalize_or(Vec3::Y));
-            // (a deflected one: the flame's colours turned to blue, its white core stays)
-            if shot.reflected {
-                for s in &mut out[first..] {
-                    s.tint = [s.tint[2], s.tint[1] * 0.95, s.tint[0], s.tint[3]];
-                }
-            }
-        }
-        for b in &self.bursts {
-            if b.born > tick || !seen(b.pos, SIZE[b.level as usize]) {
+            let size = SIZE[b.level as usize] * k;
+            let (pos, r) = (b.pos, size * 0.5);
+            let vis = eased(&mut b.vis, &mut b.vis_at, tick, || eye.map_or(1.0, |e| visibility(e, pos, r, b.level >= 3, ray)));
+            if vis < 0.02 {
                 continue;
             }
-            let age = tick.wrapping_sub(b.born) as f32 / burst_ticks(b.level) as f32;
-            let level = b.level as usize;
-            let spread = SIZE[level] * (0.4 + 1.2 * age);
-            let mut c = tint(b.level, tick);
-            c[3] = 1.0 - age;
-            out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (1.2 - 0.6 * age), frame: (age * 8.0) as usize % 8, tint: c });
-            // (the giant one: a bigger ring and a column of fire rising)
-            let ring = [6, 16, 24][(b.level >= GIANT) as usize + big(b.level)];
-            if b.level >= GIANT {
-                out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (1.5 + 2.0 * age), frame: FRAME_GLOW, tint: [1.0, 0.55, 0.15, 0.7 * (1.0 - age)] });
-                for i in 0..14 {
-                    let a = i as f32 * 2.399;
-                    let dir = Vec3::new(a.cos(), 0.4 + 0.6 * ((a * 3.1).sin() * 0.5 + 0.5), a.sin());
-                    out.push(Sprite { pos: b.pos + dir * spread * 1.4, vel: Vec3::ZERO, size: 0.18, frame: FRAME_GLOW, tint: [1.0, 0.85, 0.4, 1.0 - age] });
-                }
-                // (the sun: a white-hot core and a taller column)
-                if b.level >= SUN {
-                    out.push(Sprite { pos: b.pos, vel: Vec3::ZERO, size: SIZE[level] * (0.9 - 0.6 * age), frame: FRAME_GLOW, tint: [1.0, 0.97, 0.85, 0.9 * (1.0 - age)] });
-                }
-                for i in 0..[8, 12][big(b.level)] {
-                    let up = Vec3::Y * spread * (0.2 + 0.25 * i as f32) * (0.5 + age);
-                    out.push(Sprite { pos: b.pos + up, vel: Vec3::ZERO, size: SIZE[level] * 0.5 * (1.0 - age), frame: (i + (age * 8.0) as usize) % 8, tint: c });
-                }
+            // (the big ones' ground, looked for once)
+            if b.level >= GIANT && b.ground.is_none() {
+                b.ground = Some(ray(b.pos + Vec3::Y * 0.5, b.pos - Vec3::Y * 8.0).map(|g| g.y));
             }
-            for i in 0..ring {
-                let a = i as f32 * std::f32::consts::TAU / ring as f32 + level as f32;
-                let off = Vec3::new(a.cos(), 0.5 + 0.4 * (a * 2.0).sin(), a.sin()) * spread * 0.6;
-                out.push(Sprite { pos: b.pos + off, vel: Vec3::ZERO, size: SIZE[level] * 0.45 * (1.0 - age * 0.5), frame: (i + (age * 8.0) as usize) % 8, tint: c });
+            let flags = if b.launch { BLAST_LAUNCH } else { 0 };
+            out.blasts.push(Blast { pos: b.pos, level: b.level, age: tick - b.born, size, ground: b.ground.flatten(), flags, vis });
+        }
+        for e in &mut self.embers {
+            let pos = e.pos + Vec3::Y * 0.3;
+            let vis = eased(&mut e.vis, &mut e.vis_at, tick, || eye.map_or(1.0, |c| visibility(c, pos, EMBER_RADIUS * k, true, ray)));
+            if vis >= 0.02 {
+                out.pools.push(Pool { pos: e.pos, age: tick.wrapping_sub(e.born), life: e.life, radius: EMBER_RADIUS * k, vis });
             }
         }
-        // the embers: a dark red pool glowing, small flames licking up from it and sparks rising,
-        // dimming in its last half second
-        for (n, e) in self.embers.iter().enumerate() {
-            let age = tick.wrapping_sub(e.born);
-            let fade = ((e.life - age.min(e.life)) as f32 / 15.0).min(1.0);
-            if !seen(e.pos + Vec3::Y * 0.3, EMBER_RADIUS) {
-                continue;
-            }
-            let n = n as u32;
-            let throb = 1.0 + 0.08 * ((tick + n * 5) as f32 * 0.5).sin();
-            out.push(Sprite { pos: e.pos + Vec3::Y * 0.12, vel: Vec3::ZERO, size: EMBER_RADIUS * 2.4 * throb, frame: FRAME_GLOW, tint: [0.85, 0.18, 0.04, 0.55 * fade] });
-            out.push(Sprite { pos: e.pos + Vec3::Y * 0.18, vel: Vec3::ZERO, size: EMBER_RADIUS * 1.3 * throb, frame: FRAME_GLOW, tint: [1.0, 0.5, 0.12, 0.7 * fade] });
-            for i in 0..3u32 {
-                let t = ((age + i * 7 + n * 3) % 20) as f32 / 20.0;
-                let a = (i + n) as f32 * 2.399;
-                let off = Vec3::new(a.cos(), 0.0, a.sin()) * EMBER_RADIUS * 0.55 + Vec3::Y * (0.25 + t * 0.8);
-                out.push(Sprite { pos: e.pos + off, vel: Vec3::ZERO, size: 0.55 * (1.0 - t * 0.6) * fade, frame: (age as usize / 2 + i as usize * 3) % 8, tint: [1.0, 0.75 - 0.3 * t, 0.3, 0.85 * (1.0 - t) * fade] });
-            }
-            for i in 0..2u32 {
-                let t = ((age + i * 11 + n * 7) % 26) as f32 / 26.0;
-                let a = (i * 3 + n) as f32 * 1.7;
-                let off = Vec3::new(a.cos(), 0.0, a.sin()) * EMBER_RADIUS * 0.7 * (0.3 + t) + Vec3::Y * (0.3 + t * 1.8);
-                out.push(Sprite { pos: e.pos + off, vel: Vec3::ZERO, size: 0.07, frame: FRAME_GLOW, tint: [1.0, 0.85, 0.4, (1.0 - t) * fade] });
-            }
-        }
-        // Mega Mario's fireballs are a giant's (their reach and speed are in his scaled units already)
-        let k = crate::size_factor();
-        if k != 1.0 {
-            for s in &mut out {
-                s.size *= k;
-            }
-        }
-        // back to front (a halo a little behind its fire), so the flames licking round a ball's far
-        // side go behind it and the near ones over it: it reads as a ball, not a flat picture
-        if let Some(e) = eye {
-            let depth = |s: &Sprite| (s.pos - e).length() + if s.frame == FRAME_GLOW && s.tint[3] < 0.6 { s.size * 0.5 } else { 0.0 };
-            out.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
-        }
-        *SPRITES.lock().unwrap_or_else(|e| e.into_inner()) = (out, Some(Instant::now()));
+        *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = (out, Some(Instant::now()));
     }
 }
 
@@ -954,101 +927,7 @@ fn camera() -> Option<Vec3> {
     Some(Vec3::new(m.3.0, m.3.1, m.3.2))
 }
 
-/// A shot (or the charge in his hand): a lit ball of fire in its glow with a white-hot heart,
-/// flames licking all round it on a sphere turning about its flight (some pass in front of it,
-/// some behind: publish draws them back to front), a tail of flames shed behind it (`tail`: the way
-/// back), cooling as they go (yellow, orange, red, a wisp of smoke), and embers flying off.
-#[allow(clippy::too_many_arguments)]
-fn ball(out: &mut Vec<Sprite>, pos: Vec3, vel: Vec3, size: f32, level: u8, age: u32, tick: u32, tail: Vec3) {
-    let l = level.min(3) as usize;
-    let flicker = 1.0 + 0.07 * (tick as f32 * 2.3).sin();
-    let hot = tint(level, tick);
-    out.push(Sprite { pos, vel, size: size * 2.3 * flicker, frame: FRAME_GLOW, tint: [hot[0], hot[1] * 0.75, hot[2] * 0.6, 0.28] });
-    out.push(Sprite { pos, vel, size: size * 1.45 * flicker, frame: FRAME_GLOW, tint: [1.0, 0.68, 0.28, 0.5] });
-    out.push(Sprite { pos, vel, size: size * 0.8, frame: FRAME_ORB + (age / 2) as usize % 4, tint: [1.0, 1.0, 1.0, 1.0] });
-    out.push(Sprite { pos, vel, size: size * 0.5, frame: (age / 2 + 4) as usize % 8, tint: [1.0, 0.97, 0.82, 0.9] });
-    // (a frame about the way back: the licks turn round it)
-    let axis = tail.normalize_or(Vec3::Y);
-    let u = axis.any_orthonormal_vector();
-    let w = axis.cross(u);
-    let licks = [6, 7, 8, 10][l];
-    for i in 0..licks {
-        let a = i as f32 * std::f32::consts::TAU / licks as f32 + age as f32 * 0.5;
-        let lat = (i as f32 * 2.399).sin() * 0.7;
-        let dir = (u * a.cos() + w * a.sin()) * lat.cos() + axis * (lat.sin() * 0.6);
-        let reach = size * (0.36 + 0.06 * ((age + i) as f32 * 1.7).sin());
-        out.push(Sprite {
-            pos: pos + dir * reach + axis * size * 0.18,
-            vel,
-            size: size * (0.38 + 0.08 * (i % 3) as f32),
-            frame: (i as usize + age as usize / 2) % 8,
-            tint: [1.0, 0.72 + 0.1 * (i % 2) as f32, 0.32, 0.88],
-        });
-    }
-    // the tail: older flames farther back, smaller, cooler, rising a little and swaying
-    let step = (vel.length() / 30.0).max(size * 0.3);
-    let tail_n = [5, 6, 7, 8][l];
-    for k in 1..=tail_n {
-        let t = k as f32 / tail_n as f32;
-        let sway = (u * ((age + k) as f32 * 0.9).sin() + w * ((age + k) as f32 * 1.3).cos()) * size * 0.12 * t;
-        let p = pos + axis * step * k as f32 * 0.8 + Vec3::Y * t * t * size * 0.5 + sway;
-        let c = [1.0, 0.85 - 0.55 * t, 0.45 - 0.37 * t, 0.85 * (1.0 - t) + 0.1];
-        out.push(Sprite { pos: p, vel, size: size * (0.85 - 0.5 * t), frame: (age as usize + k as usize * 3) % 8, tint: c });
-    }
-    if l >= 2 {
-        let p = pos + axis * step * (tail_n as f32 + 1.5) * 0.8 + Vec3::Y * size * 0.5;
-        out.push(Sprite { pos: p, vel: vel * 0.5, size: size * 0.9, frame: FRAME_GLOW, tint: [0.12, 0.08, 0.06, 0.25] });
-    }
-    // embers
-    for i in 0..(3 + 2 * l as u32) {
-        let t = ((age + i * 7) % 18) as f32 / 18.0;
-        let a = i as f32 * 2.399;
-        let side = (u * a.cos() + w * a.sin()) * size * 0.6 * (0.4 + t);
-        out.push(Sprite {
-            pos: pos + axis * step * t * 4.0 + side + Vec3::Y * t * size * 0.7,
-            vel: vel * 0.4,
-            size: 0.05 + 0.04 * (1.0 - t) * (1.0 + l as f32 * 0.5),
-            frame: FRAME_GLOW,
-            tint: [1.0, 0.85 - 0.35 * t, 0.4 - 0.25 * t, 1.0 - t],
-        });
-    }
-}
-
 /// In the air, in an action SM64's air throw can take over (not a ground pound, not hurt).
 fn action_air(action: u32) -> bool {
     action & ACT_FLAG_AIR != 0 && action != ACT_GROUND_POUND && action & (ACT_FLAG_INVULNERABLE | ACT_NO_THROW) == 0
-}
-
-/// The giant shot (or its charge): a churning ball of fire in a glow, flames licking round its
-/// rim, embers shed behind it drifting up and a little smoke, Elden Ring's fire more than SM64's.
-/// `age` drives its churn, `tick` the flicker.
-fn giant(out: &mut Vec<Sprite>, pos: Vec3, vel: Vec3, size: f32, age: u32, tick: u32) {
-    let flicker = 1.0 + 0.06 * (tick as f32 * 2.1).sin();
-    // (a smudge of smoke behind it, then the glow, the ball, the flames on top)
-    let back = (-vel).normalize_or(Vec3::Y);
-    for i in 0..5u32 {
-        let t = ((age + i * 4) % 20) as f32 / 20.0;
-        let off = back * size * (0.4 + t * 1.6) + Vec3::Y * t * size * 0.6;
-        out.push(Sprite { pos: pos + off, vel: vel * 0.6, size: size * (0.6 + t * 0.8), frame: FRAME_GLOW, tint: [0.12, 0.08, 0.06, 0.35 * (1.0 - t)] });
-    }
-    out.push(Sprite { pos, vel, size: size * 2.0 * flicker, frame: FRAME_GLOW, tint: [1.0, 0.45, 0.1, 0.35] });
-    out.push(Sprite { pos, vel, size: size * 1.4 * flicker, frame: FRAME_GLOW, tint: [1.0, 0.65, 0.25, 0.55] });
-    out.push(Sprite { pos, vel, size, frame: FRAME_ORB + (age / 3) as usize % 4, tint: [1.0, 1.0, 1.0, 1.0] });
-    for i in 0..8u32 {
-        let a = i as f32 * std::f32::consts::TAU / 8.0 + age as f32 * 0.35;
-        let off = Vec3::new(a.cos(), (a * 1.3).sin() * 0.7, a.sin()) * size * 0.42;
-        out.push(Sprite { pos: pos + off, vel, size: size * 0.32, frame: (i + age) as usize % 8, tint: [1.0, 0.7, 0.3, 0.85] });
-    }
-    for i in 0..16u32 {
-        let t = ((age + i * 5) % 16) as f32 / 16.0;
-        let a = i as f32 * 2.399;
-        let side = Vec3::new(a.cos(), (a * 0.7).sin(), a.sin()) * size * 0.5;
-        out.push(Sprite {
-            pos: pos + back * size * t * 2.0 + side * (1.0 + t) + Vec3::Y * t * size * 0.8,
-            vel: vel * 0.3,
-            size: 0.07 + 0.08 * (1.0 - t),
-            frame: FRAME_GLOW,
-            tint: [1.0, 0.8 - 0.3 * t, 0.35 - 0.2 * t, 1.0 - t],
-        });
-    }
 }

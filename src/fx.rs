@@ -7,13 +7,67 @@
 
 use glam::Vec3;
 
-/// A flame, glow or orb (fireball.rs's frames: FRAME_GLOW, FRAME_ORB on)
+/// A fireball (fireball.rs): a shot, or the charge in Mario's hand. flame.rs gives it its looks.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Fire {
+pub struct Orb {
     pub pos: Vec3,
+    /// m/s (to move it between ticks; its tail streams the other way)
+    pub vel: Vec3,
+    /// across (m)
     pub size: f32,
-    pub frame: u8,
-    pub tint: [f32; 4],
+    pub level: u8,
+    /// ticks since it left his hand (the charge: since it began)
+    pub age: u32,
+    /// ORB_CHARGE, ORB_STUCK, ORB_REFLECTED
+    pub flags: u8,
+    /// the ground under it (Elden Ring height), if near
+    pub ground: Option<f32>,
+    /// how much of it the camera sees past the map (0-1; a partner's: 1)
+    pub vis: f32,
+}
+
+pub const ORB_CHARGE: u8 = 1;
+pub const ORB_STUCK: u8 = 2;
+pub const ORB_REFLECTED: u8 = 4;
+
+/// A fireball's burst: where, its level, ticks since, its shot's size (m), the ground under it,
+/// BLAST_LAUNCH
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blast {
+    pub pos: Vec3,
+    pub level: u8,
+    pub age: u32,
+    pub size: f32,
+    pub ground: Option<f32>,
+    pub flags: u8,
+    pub vis: f32,
+}
+
+/// the flames at Mario's hand as a big one leaves it: no explosion of its own
+pub const BLAST_LAUNCH: u8 = 1;
+
+/// A pool of lava the sun left: ticks since, how long it lasts, its radius (m)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pool {
+    pub pos: Vec3,
+    pub age: u32,
+    pub life: u32,
+    pub radius: f32,
+    pub vis: f32,
+}
+
+/// Mario's fireballs: their shots and charge, the bursts, the lava pools
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct FireFx {
+    pub orbs: Vec<Orb>,
+    pub blasts: Vec<Blast>,
+    pub pools: Vec<Pool>,
+}
+
+impl FireFx {
+    pub fn is_empty(&self) -> bool {
+        self.orbs.is_empty() && self.blasts.is_empty() && self.pools.is_empty()
+    }
 }
 
 /// A star burst where a blow landed (`t` 0-1 through its life)
@@ -46,7 +100,7 @@ pub struct Bit {
 
 #[derive(Clone, Default, Debug, PartialEq)]
 pub struct WorldFx {
-    pub fire: Vec<Fire>,
+    pub fire: FireFx,
     /// enemies flying through the air: points along each one's path and how old (0-1)
     pub streaks: Vec<Vec<(Vec3, f32)>>,
     /// each boomerang's streak: its points up to it, and its size
@@ -80,7 +134,7 @@ impl WorldFx {
         let ride = crate::ride::sprites();
         let chomp_hook = crate::chomp::hooking();
         WorldFx {
-            fire: crate::fireball::sprites().into_iter().map(|f| Fire { pos: f.pos, size: f.size, frame: f.frame.min(255) as u8, tint: f.tint }).collect(),
+            fire: crate::fireball::looks(),
             streaks: crate::impact::enemy_streaks(),
             rangs: rangs.into_iter().map(|r| (r.trail.iter().copied().chain(std::iter::once(r.pos)).collect(), r.size)).collect(),
             tongue: ride.tongue,
@@ -105,9 +159,15 @@ impl WorldFx {
 
     /// Every position moved by `d`.
     pub fn shifted(mut self, d: Vec3) -> Self {
-        for f in &mut self.fire {
-            f.pos += d;
+        for o in &mut self.fire.orbs {
+            o.pos += d;
+            o.ground = o.ground.map(|g| g + d.y);
         }
+        for b in &mut self.fire.blasts {
+            b.pos += d;
+            b.ground = b.ground.map(|g| g + d.y);
+        }
+        self.fire.pools.iter_mut().for_each(|p| p.pos += d);
         for s in &mut self.streaks {
             s.iter_mut().for_each(|p| p.0 += d);
         }
@@ -153,11 +213,30 @@ impl WorldFx {
     /// At most `most` of each kind and points per trail (the newest).
     fn encode_most(&self, here: Vec3, out: &mut Vec<u8>, most: usize) {
         let mut w = Writer { out, here, most };
-        w.list(&self.fire, |w, f| {
-            w.pos(f.pos);
-            w.unit(f.size / 8.0);
-            w.out.push(f.frame);
-            w.tint(f.tint);
+        // (the fireballs as what they are, flame.rs draws them on the other side: a few bytes a
+        // ball; records sized, so later fields can be added and older readers skip them)
+        w.records(&self.fire.orbs, |w, o| {
+            w.pos(o.pos);
+            w.vel(o.vel);
+            w.age(o.size);
+            w.out.push(o.level);
+            w.ticks(o.age);
+            w.out.push(o.flags);
+            w.drop_to(o.pos, o.ground);
+        });
+        w.records(&self.fire.blasts, |w, b| {
+            w.pos(b.pos);
+            w.out.push(b.level);
+            w.ticks(b.age);
+            w.age(b.size);
+            w.drop_to(b.pos, b.ground);
+            w.out.push(b.flags);
+        });
+        w.records(&self.fire.pools, |w, p| {
+            w.pos(p.pos);
+            w.ticks(p.age);
+            w.ticks(p.life);
+            w.age(p.radius);
         });
         w.list(&self.streaks, |w, s| w.list(s, |w, p| {
             w.pos(p.0);
@@ -226,7 +305,16 @@ impl WorldFx {
     /// them). None if it doesn't read.
     pub fn decode(b: &[u8]) -> Option<WorldFx> {
         let mut r = Reader { b, at: 0 };
-        let mut fx = WorldFx { fire: r.list(|r| Some(Fire { pos: r.pos()?, size: r.unit()? * 8.0, frame: r.u8()?, tint: r.tint()? }))?, ..Default::default() };
+        let orbs = r.records(|r| {
+            let pos = r.pos()?;
+            Some(Orb { pos, vel: r.vel()?, size: r.age()?, level: r.u8()?, age: r.ticks()?, flags: r.u8()?, ground: r.drop_to(pos)?, vis: 1.0 })
+        })?;
+        let blasts = r.records(|r| {
+            let pos = r.pos()?;
+            Some(Blast { pos, level: r.u8()?, age: r.ticks()?, size: r.age()?, ground: r.drop_to(pos)?, flags: r.u8()?, vis: 1.0 })
+        })?;
+        let pools = r.records(|r| Some(Pool { pos: r.pos()?, age: r.ticks()?, life: r.ticks()?, radius: r.age()?, vis: 1.0 }))?;
+        let mut fx = WorldFx { fire: FireFx { orbs, blasts, pools }, ..Default::default() };
         fx.streaks = r.list(|r| r.list(|r| Some((r.pos()?, r.unit()?))))?;
         fx.rangs = r.list(|r| Some((r.list(|r| r.pos())?, r.unit()? * 8.0)))?;
         fx.tongue = r.opt(|r| Some((r.pos()?, r.pos()?)))?;
@@ -266,6 +354,37 @@ impl Writer<'_> {
     }
     fn age(&mut self, s: f32) {
         self.out.extend_from_slice(&((s.max(0.0) * 1000.0).min(u16::MAX as f32) as u16).to_le_bytes());
+    }
+    /// a velocity (m/s, to 3276 each way, in 0.1)
+    fn vel(&mut self, v: Vec3) {
+        for c in [v.x, v.y, v.z] {
+            let c = if c.is_finite() { (c * 10.0).round().clamp(i16::MIN as f32, i16::MAX as f32) } else { 0.0 };
+            self.out.extend_from_slice(&(c as i16).to_le_bytes());
+        }
+    }
+    /// (an age in ticks: wraps after 36 min, which only turns a flame's flicker)
+    fn ticks(&mut self, t: u32) {
+        self.out.extend_from_slice(&(t as u16).to_le_bytes());
+    }
+    /// how far below `p` the ground is (to 31.75 m in 1/8; 255: none near)
+    fn drop_to(&mut self, p: Vec3, ground: Option<f32>) {
+        self.out.push(ground.map_or(255, |g| ((p.y - g).max(0.0) * 8.0).round().min(254.0) as u8));
+    }
+    /// A list whose records all take the same bytes, that size after the count: a reader that
+    /// knows fewer of their fields skips the rest (the newest `most`, as `list`)
+    fn records<T>(&mut self, items: &[T], f: impl Fn(&mut Self, &T)) {
+        let from = items.len().saturating_sub(self.most);
+        self.out.push((items.len() - from) as u8);
+        let size_at = self.out.len();
+        self.out.push(0);
+        let start = self.out.len();
+        for it in &items[from..] {
+            f(self, it);
+        }
+        let n = items.len() - from;
+        if n > 0 {
+            self.out[size_at] = ((self.out.len() - start) / n).min(255) as u8;
+        }
     }
     fn angle(&mut self, a: f32) {
         self.out.extend_from_slice(&((a.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * 65535.0) as u16).to_le_bytes());
@@ -321,6 +440,33 @@ impl Reader<'_> {
     fn angle(&mut self) -> Option<f32> {
         Some(self.u16()? as f32 / 65535.0 * std::f32::consts::TAU)
     }
+    fn vel(&mut self) -> Option<Vec3> {
+        Some(Vec3::new(self.u16()? as i16 as f32, self.u16()? as i16 as f32, self.u16()? as i16 as f32) / 10.0)
+    }
+    fn ticks(&mut self) -> Option<u32> {
+        Some(self.u16()? as u32)
+    }
+    fn drop_to(&mut self, p: Vec3) -> Option<Option<f32>> {
+        let d = self.u8()?;
+        Some((d != 255).then(|| p.y - d as f32 / 8.0))
+    }
+    /// `records`'s: each record read where it starts, the bytes it has past what's read skipped
+    /// (a newer sender's fields); one shorter than what's read doesn't read
+    fn records<T>(&mut self, f: impl Fn(&mut Self) -> Option<T>) -> Option<Vec<T>> {
+        let n = self.u8()? as usize;
+        let size = self.u8()? as usize;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let start = self.at;
+            let end = start.checked_add(size).filter(|&e| e <= self.b.len())?;
+            out.push(f(self)?);
+            if self.at > end {
+                return None;
+            }
+            self.at = end;
+        }
+        Some(out)
+    }
     fn tint(&mut self) -> Option<[f32; 4]> {
         Some([self.unit()?, self.unit()?, self.unit()?, self.unit()?])
     }
@@ -346,7 +492,11 @@ mod tests {
         let here = Vec3::new(1000.0, 50.0, -300.0);
         let at = |x: f32| here + Vec3::new(x, 1.0, -x);
         let fx = WorldFx {
-            fire: vec![Fire { pos: at(3.0), size: 1.5, frame: 9, tint: [1.0, 0.5, 0.0, 0.8] }],
+            fire: FireFx {
+                orbs: vec![Orb { pos: at(3.0), vel: Vec3::new(-12.5, 0.3, 40.0), size: 7.0, level: 5, age: 77, flags: ORB_REFLECTED, ground: Some(at(3.0).y - 4.25), vis: 0.3 }],
+                blasts: vec![Blast { pos: at(1.0), level: 4, age: 20, size: 4.2, ground: None, flags: BLAST_LAUNCH, vis: 1.0 }],
+                pools: vec![Pool { pos: at(2.0), age: 30, life: 81, radius: 1.3, vis: 1.0 }],
+            },
             streaks: vec![vec![(at(1.0), 0.2), (at(2.0), 0.6)]],
             rangs: vec![(vec![at(4.0), at(5.0)], 0.55)],
             tongue: Some((at(0.5), at(6.0))),
@@ -366,7 +516,13 @@ mod tests {
         let mut out = Vec::new();
         fx.encode(here, &mut out);
         let got = WorldFx::decode(&out).expect("reads").shifted(here);
-        assert!(close(got.fire[0].pos, fx.fire[0].pos) && got.fire[0].frame == 9 && (got.fire[0].size - 1.5).abs() < 0.05);
+        let (o, want) = (got.fire.orbs[0], fx.fire.orbs[0]);
+        assert!(close(o.pos, want.pos) && close(o.vel, want.vel) && (o.size - 7.0).abs() < 0.002 && o.level == 5 && o.age == 77 && o.flags == ORB_REFLECTED);
+        assert!((o.ground.expect("ground") - want.ground.expect("ground")).abs() < 0.07 && o.vis == 1.0);
+        let b = got.fire.blasts[0];
+        assert!(close(b.pos, at(1.0)) && b.level == 4 && b.age == 20 && b.ground.is_none() && b.flags == BLAST_LAUNCH);
+        let p = got.fire.pools[0];
+        assert!(close(p.pos, at(2.0)) && p.age == 30 && p.life == 81 && (p.radius - 1.3).abs() < 0.002);
         assert!(close(got.streaks[0][1].0, fx.streaks[0][1].0));
         assert!(close(got.rangs[0].0[1], at(5.0)) && (got.rangs[0].1 - 0.55).abs() < 0.05);
         assert!(close(got.tongue.expect("tongue").1, at(6.0)));
@@ -390,7 +546,7 @@ mod tests {
         // everything at once, every list full: cut down to the budget, still readable, newest kept
         let p = |k: usize| Vec3::new(k as f32 * 0.1, 1.0, 0.0);
         let fx = WorldFx {
-            fire: (0..30).map(|k| Fire { pos: p(k), size: 1.0, frame: 1, tint: [1.0; 4] }).collect(),
+            fire: FireFx { orbs: (0..30).map(|k| Orb { pos: p(k), vel: Vec3::X, size: 1.0, level: 1, age: 0, flags: 0, ground: None, vis: 1.0 }).collect(), ..Default::default() },
             streaks: (0..30).map(|_| (0..30).map(|k| (p(k), 0.5)).collect()).collect(),
             rangs: (0..3).map(|_| ((0..30).map(p).collect(), 0.5)).collect(),
             sparks: (0..30).map(|k| Spark { pos: p(k), size: 1.0, tint: [1.0; 4], t: 0.5 }).collect(),
@@ -407,6 +563,25 @@ mod tests {
         assert!(out.len() - 3 <= 1000, "fit {}", out.len());
         let got = WorldFx::decode(&out[3..]).expect("reads");
         assert!(!got.bits.is_empty() && close(got.bits.last().expect("bit").pos, p(39)));
+    }
+
+    #[test]
+    fn a_newer_senders_longer_records_still_read() {
+        // (a later build adding a field to each ball: this one reads what it knows, skips the rest)
+        let fx = WorldFx { fire: FireFx { orbs: vec![Orb { pos: Vec3::ONE, vel: Vec3::Z, size: 2.0, level: 3, age: 5, flags: 0, ground: None, vis: 1.0 }; 2], ..Default::default() }, ..Default::default() };
+        let mut out = Vec::new();
+        fx.encode(Vec3::ZERO, &mut out);
+        let (n, size) = (out[0] as usize, out[1] as usize);
+        assert_eq!(n, 2);
+        let mut longer = vec![out[0], out[1] + 2];
+        for k in 0..n {
+            longer.extend_from_slice(&out[2 + k * size..2 + (k + 1) * size]);
+            longer.extend_from_slice(&[0xAB, 0xCD]);
+        }
+        longer.extend_from_slice(&out[2 + n * size..]);
+        let got = WorldFx::decode(&longer).expect("reads");
+        assert_eq!(got.fire.orbs.len(), 2);
+        assert!(close(got.fire.orbs[1].pos, Vec3::ONE) && got.fire.orbs[1].level == 3);
     }
 
     #[test]

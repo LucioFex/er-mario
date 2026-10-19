@@ -437,6 +437,7 @@ pub fn fire_blast(at: Vec3, reach: f32) {
     ring(at + Vec3::Y * 0.1, reach, 0.6, FIRE);
     ring(at + Vec3::Y * 1.2, reach * 0.7, 0.45, GOLD);
     puffs(at, 10, reach * 0.4);
+    burst(at + Vec3::Y * 1.0, 5, Bit::Star);
     flash([1.0, 0.55, 0.2], 0.35, 0.45);
 }
 
@@ -452,6 +453,7 @@ pub fn sun_blast(at: Vec3, reach: f32) {
     ring(at + Vec3::Y * 4.0, reach * 0.5, 0.5, WHITE);
     puffs(at, 16, reach * 0.45);
     puffs(at, 12, reach * 0.8);
+    burst(at + Vec3::Y * 1.5, 9, Bit::Star);
     flash([1.0, 0.85, 0.6], 0.7, 0.8);
 }
 

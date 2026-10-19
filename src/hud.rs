@@ -579,20 +579,8 @@ static BAG_START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instan
 /// sparks, rings on the ground, stars and coins flying off the blows. `bodies`: spheres the 3D
 /// tongue and eggs are hidden behind.
 fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fx: &crate::fx::WorldFx, bodies: &[(Vec3, f32)]) {
-    // Mario's fireball: the charge at his hand, the shots and their bursts
-    for f in &fx.fire {
-        let (Some((c, z)), Some((top, _))) = (project(f.pos, size), project(f.pos + Vec3::Y * f.size * 0.5, size)) else { continue };
-        let h = (c[1] - top[1]) * 2.0;
-        if z > 60.0 || h < 1.0 {
-            continue;
-        }
-        let img = match f.frame as usize {
-            crate::fireball::FRAME_GLOW => IMG_GLOW,
-            n if n >= crate::fireball::FRAME_ORB => IMG_ORB + (n - crate::fireball::FRAME_ORB) % 4,
-            n => IMG_FLAME + n % 8,
-        };
-        dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col(f.tint).build();
-    }
+    // Mario's fireball: the charge at his hand, the shots, their bursts, the lava pools
+    draw_fire(dl, textures, size, &fx.fire);
 
     // enemies flying through the air (juggle.rs): a white streak behind each, fading
     for streak in &fx.streaks {
@@ -809,6 +797,165 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
         let img = if b.coin { IMG_COIN_FRAMES + (age * 15.0) as usize % 4 } else { IMG_STAR };
         dl.add_image(textures[img], [c[0] - h * 0.5, c[1] - h * 0.5], [c[0] + h * 0.5, c[1] + h * 0.5]).col([1.0, 1.0, 1.0, fade]).build();
     }
+}
+
+/// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
+/// pixels a metre spans 1 m off.
+struct View {
+    eye: Vec3,
+    right: Vec3,
+    up: Vec3,
+    fwd: Vec3,
+    kx: f32,
+    ky: f32,
+    px: f32,
+    size: [f32; 2],
+}
+
+/// nearer than this to the camera a face is cut off (m), farther than this not drawn
+const NEAR: f32 = 0.3;
+const FIRE_FAR: f32 = 160.0;
+
+impl View {
+    fn now(size: [f32; 2]) -> Option<View> {
+        let cam = unsafe { CSCamera::instance() }.ok()?;
+        let pers = &cam.pers_cam_1;
+        let v = |d: eldenring::position::PositionDelta| Vec3::new(d.0, d.1, d.2);
+        let c = pers.position();
+        let ky = (pers.fov * 0.5).tan();
+        if !(ky > 0.0) || size[1] < 1.0 {
+            return None;
+        }
+        Some(View {
+            eye: Vec3::new(c.0, c.1, c.2),
+            right: v(pers.right()).normalize_or_zero(),
+            up: v(pers.up()).normalize_or_zero(),
+            fwd: v(pers.forward()).normalize_or_zero(),
+            kx: ky * size[0] / size[1],
+            ky,
+            px: size[1] * 0.5 / ky,
+            size,
+        })
+    }
+    /// a world point in the camera's terms (x right, y up, z ahead)
+    fn cam(&self, p: Vec3) -> Vec3 {
+        let d = p - self.eye;
+        Vec3::new(d.dot(self.right), d.dot(self.up), d.dot(self.fwd))
+    }
+    fn screen(&self, c: Vec3) -> [f32; 2] {
+        [self.size[0] * 0.5 * (1.0 + c.x / (c.z * self.kx)), self.size[1] * 0.5 * (1.0 - c.y / (c.z * self.ky))]
+    }
+}
+
+/// What the fireballs' looks come down to on screen, drawn far to near: a face (its corners, its
+/// colour, solid) or a sprite (its image, corners, tint)
+enum FireItem {
+    Tri([[f32; 2]; 3], imgui::ImColor32, bool),
+    Img(usize, [f32; 2], [f32; 2], [f32; 4]),
+}
+
+thread_local! {
+    /// (kept from frame to frame: no allocating once they've grown)
+    static FIRE: std::cell::RefCell<(crate::flame::Look, Vec<(f32, FireItem)>)> = std::cell::RefCell::new((crate::flame::Look::default(), Vec::new()));
+}
+
+/// The fireballs (flame.rs's looks): 3D faces cut at the camera's near plane (a sun at arm's
+/// length isn't lost, nor flattened) and SM64's sprites, all drawn far to near together; the
+/// screen warming as a big one fills it, all fire inside one.
+fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fire: &crate::fx::FireFx) {
+    if fire.is_empty() {
+        return;
+    }
+    let Some(view) = View::now(size) else { return };
+    FIRE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let (look, items) = &mut *guard;
+        look.clear();
+        items.clear();
+        crate::flame::build(look, fire, &crate::flame::Eye { pos: view.eye, px: view.px, screen: size[1] }, crate::flame::clock());
+        // (the light on the ground first, under all the rest)
+        let under = look.under.len();
+        for (i, t) in look.under.iter().chain(look.tris.iter()).enumerate() {
+            let c = [view.cam(t.p[0]), view.cam(t.p[1]), view.cam(t.p[2])];
+            let depth = if i < under { f32::MAX } else { (c[0].z + c[1].z + c[2].z) / 3.0 };
+            if (depth > FIRE_FAR && i >= under) || c.iter().all(|v| v.z < NEAR || v.z > FIRE_FAR) {
+                continue;
+            }
+            let solid = t.col[3] >= 0.98;
+            let col = imgui::ImColor32::from_rgba_f32s(t.col[0], t.col[1], t.col[2], t.col[3]);
+            // (cut at the near plane: what's left is a triangle or a four-sided piece)
+            let mut poly = [Vec3::ZERO; 4];
+            let mut n = 0;
+            for k in 0..3 {
+                let (a, b) = (c[k], c[(k + 1) % 3]);
+                if a.z >= NEAR {
+                    poly[n] = a;
+                    n += 1;
+                }
+                if (a.z >= NEAR) != (b.z >= NEAR) && n < 4 {
+                    poly[n] = a + (b - a) * ((NEAR - a.z) / (b.z - a.z));
+                    n += 1;
+                }
+            }
+            for k in 1..n.saturating_sub(1) {
+                items.push((depth, FireItem::Tri([view.screen(poly[0]), view.screen(poly[k]), view.screen(poly[k + 1])], col, solid)));
+            }
+        }
+        for s in &look.sprites {
+            let c = view.cam(s.pos);
+            if c.z < NEAR || c.z > FIRE_FAR {
+                continue;
+            }
+            let h = s.size * view.px / c.z;
+            // (one right at the camera would cover the screen: it fades as it grows that big)
+            let fade = ((size[1] * 2.2 - h) / (size[1] * 0.9)).clamp(0.0, 1.0);
+            if h < 0.75 || fade <= 0.0 {
+                continue;
+            }
+            let img = match s.frame {
+                crate::flame::FRAME_GLOW => IMG_GLOW,
+                n if n >= crate::flame::FRAME_ORB => IMG_ORB + (n - crate::flame::FRAME_ORB) % 4,
+                n => IMG_FLAME + n % 8,
+            };
+            // (a halo a little behind its fire, so the flames licking round a ball's far side go
+            // behind it and the near ones over it)
+            let depth = c.z + if s.frame == crate::flame::FRAME_GLOW && s.tint[3] < 0.6 { s.size * 0.5 } else { 0.0 };
+            let p = view.screen(c);
+            let mut tint = s.tint;
+            tint[3] *= fade;
+            items.push((depth, FireItem::Img(img, [p[0] - h * 0.5, p[1] - h * 0.5], [p[0] + h * 0.5, p[1] + h * 0.5], tint)));
+        }
+        items.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, item) in items.iter() {
+            match item {
+                FireItem::Tri(p, col, solid) => {
+                    dl.add_triangle(p[0], p[1], p[2], *col).filled(true).build();
+                    // (solid faces' seams closed)
+                    if *solid {
+                        dl.add_triangle(p[0], p[1], p[2], *col).thickness(1.0).build();
+                    }
+                }
+                FireItem::Img(img, a, b, tint) => {
+                    dl.add_image(textures[*img], *a, *b).col(*tint).build();
+                }
+            }
+        }
+        // the heat of a big one filling the screen: its edges glow; inside one, all fire
+        let [w, h] = size;
+        if look.heat > 0.01 {
+            let col = |a: f32| imgui::ImColor32::from_rgba_f32s(1.0, 0.5, 0.15, a);
+            dl.add_rect([0.0, 0.0], [w, h], col(0.07 * look.heat)).filled(true).build();
+            let edge = h * 0.2;
+            let (on, off) = (col(0.32 * look.heat), col(0.0));
+            dl.add_rect_filled_multicolor([0.0, 0.0], [w, edge], on, on, off, off);
+            dl.add_rect_filled_multicolor([0.0, h - edge], [w, h], off, off, on, on);
+            dl.add_rect_filled_multicolor([0.0, 0.0], [edge, h], on, off, off, on);
+            dl.add_rect_filled_multicolor([w - edge, 0.0], [w, h], off, on, on, off);
+        }
+        if look.inside > 0.01 {
+            dl.add_rect([0.0, 0.0], [w, h], imgui::ImColor32::from_rgba_f32s(1.0, 0.72, 0.35, 0.75 * look.inside.min(1.0))).filled(true).build();
+        }
+    });
 }
 
 fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {

@@ -490,7 +490,7 @@ pub fn own_blow(player: &eldenring::cs::ChrIns) -> bool {
 pub fn own_throw(player: &eldenring::cs::ChrIns) -> bool {
     let Some(mob) = with(|s| s.ride.as_ref().map(|r| r.mob)) else { return false };
     let holder = &player.modules.throw.throw_node.pair_anim_node.counter_party;
-    (combat::handle_key(holder) == combat::handle_key(&mob) && struck_within(STRIKE_TAIL + 1.0)) || own_window(STRIKE_TAIL + 0.3)
+    combat::handle_key(holder) == combat::handle_key(&mob) || own_window(STRIKE_TAIL + 0.3)
 }
 
 /// Game thread: a blow meant for Mario while he rides (`halves` of his wedges): it lands on his

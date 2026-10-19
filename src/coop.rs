@@ -26,12 +26,13 @@ const MAGIC: [u8; 3] = *b"ERM";
 /// effects around the player after it; 6: the effects in a packet of their own (with them in the
 /// pose a fight's poses outgrew one network packet and were lost whole: the partner froze mid
 /// combo), the status's REVIVABLE, BOSS and BUSY flags and how long a downed player has left, the
-/// revive; 7: the mod's own sounds (weapons, blows, power-ups) with their volume, the Bros. Attack)
+/// revive; 7: the mod's own sounds (weapons, blows, power-ups) with their volume, the Bros. Attack; 10: the fireballs as balls, bursts and lava pools in sized records, flame.rs
+/// drawing them in 3D on the other side, not their sprites)
 /// From 4 on, a kind of packet a build doesn't know is skipped, and one longer than it expects is
 /// read as far as it knows: a later build of the same version can add kinds (grabbing and throwing
 /// the partner: the status's CARRYING and CARRIED are kept for it) or fields at the end without
 /// breaking an older one's co-op.
-const VERSION: u8 = 9;
+const VERSION: u8 = 10;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
@@ -1166,6 +1167,13 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
                     s.stats.lost_fx += u32::from(seq.wrapping_sub(last)).saturating_sub(1).min(100);
                 }
                 r.fx_seq = Some(seq);
+                // (the first of their fireballs: the 3D ones, from their few numbers)
+                if let Some(o) = fx.fire.orbs.iter().max_by_key(|o| o.level) {
+                    static SEEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+                    if SEEN.fetch_max(o.level.saturating_add(1), std::sync::atomic::Ordering::Relaxed) <= o.level {
+                        log(format!("coop: partner's fireball level {} in 3D ({} balls, {} bursts, {} lava pools)", o.level, fx.fire.orbs.len(), fx.fire.blasts.len(), fx.fire.pools.len()));
+                    }
+                }
                 r.add_fx(ms as f64 / 1000.0, fx);
             }
             Packet::Revive { target } => {
@@ -2171,10 +2179,10 @@ mod tests {
         let Some(Packet::Pose { place: got, .. }) = decode(&bytes) else { panic!("no pose") };
         assert_eq!(got, None);
         // the effects on their own
-        let fx = crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::new(1.0, 2.0, 3.0), size: 1.0, frame: 3, tint: [1.0; 4] }], ..Default::default() };
+        let fx = crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0 }], ..Default::default() }, ..Default::default() };
         let Some(Packet::Fx { seq, ms, fx: got }) = decode(&encode(&Packet::Fx { seq: 65535, ms: 42, fx: std::sync::Arc::new(fx.clone()) })) else { panic!("no effects") };
         assert_eq!((seq, ms), (65535, 42));
-        assert!(got.fire.len() == 1 && got.fire[0].pos.distance(fx.fire[0].pos) < 0.01);
+        assert!(got.fire.orbs.len() == 1 && got.fire.orbs[0].pos.distance(fx.fire.orbs[0].pos) < 0.01);
         let Some(Packet::Revive { target }) = decode(&encode(&Packet::Revive { target: 0x1100_0011_0FA2_E86 })) else { panic!("no revive") };
         assert_eq!(target, 0x1100_0011_0FA2_E86);
         // a boomerang 60 m off still fits
@@ -2368,7 +2376,7 @@ mod tests {
         let mut r = Remote::new(1, 0, 0x880, false);
         let pose = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
         r.add(Some(clock()), pose, None);
-        let fx = std::sync::Arc::new(crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::ONE, size: 1.0, frame: 0, tint: [1.0; 4] }], ..Default::default() });
+        let fx = std::sync::Arc::new(crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0 }], ..Default::default() }, ..Default::default() });
         // a moment ago (behind the time they're shown at): shown
         r.add_fx(clock() - 0.1, fx.clone());
         assert!(r.fx().is_some());

@@ -36,6 +36,9 @@ const SOUND_WAAAOOOW: i32 = 0x2410_C081_u32 as i32;
 const SOUND_MAMA_MIA: i32 = 0x2420_8081;
 const SOUND_BUBBA_CHOMP: i32 = 0x5073_4081;
 
+/// up on a captured enemy, a throw waits this long (s) to be told apart from its own
+const RIDING_WAIT: f32 = 0.15;
+
 struct State {
     /// the throw state last seen (logged when it changes)
     last: Option<u32>,
@@ -50,10 +53,12 @@ struct State {
     swallowed: bool,
     /// the holder (character id), for the log
     holder: Option<u32>,
+    /// up on a captured enemy: since when a throw has been waiting to be told apart (its own?)
+    riding_wait: Option<Instant>,
 }
 
 static STATE: Mutex<State> =
-    Mutex::new(State { last: None, ignore: None, release: None, released_at: None, held_since: None, inside_since: None, swallowed: false, holder: None });
+    Mutex::new(State { last: None, ignore: None, release: None, released_at: None, held_since: None, inside_since: None, swallowed: false, holder: None, riding_wait: None });
 
 /// Being let go: thrown off, and whether he was swallowed (spat out).
 #[derive(Clone, Copy)]
@@ -99,11 +104,20 @@ pub fn update(player: &ChrIns) -> bool {
         s.ignore = None;
     }
     let held = (state == IN_THROW_TARGET || state == DEATH_TARGET) && s.ignore.is_none();
-    // (a throw of the enemy he rides: not one, he stays on its back)
-    if held && s.held_since.is_none() && crate::bossride::own_throw(player) {
-        log(format!("grab: a throw by the enemy Mario rides (state {state}), ignored"));
-        s.ignore = Some(state);
-        return false;
+    // (a throw of the enemy he rides: not one, he stays on its back; the game may name the one
+    // holding him a frame or two late, so a throw up there waits a moment to be told apart)
+    if !held || !crate::bossride::active() {
+        s.riding_wait = None;
+    } else if s.held_since.is_none() {
+        if crate::bossride::own_throw(player) {
+            log(format!("grab: a throw by the enemy Mario rides (state {state}), ignored"));
+            s.ignore = Some(state);
+            s.riding_wait = None;
+            return false;
+        }
+        if s.riding_wait.get_or_insert_with(Instant::now).elapsed().as_secs_f32() < RIDING_WAIT {
+            return false;
+        }
     }
     if s.last != Some(state) {
         if s.last.is_some() || held {
