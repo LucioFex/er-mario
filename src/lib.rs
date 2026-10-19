@@ -22,6 +22,7 @@ mod coop;
 mod dodge;
 mod engine_mario;
 mod fireball;
+mod flame;
 mod fx;
 mod grab;
 mod equip;
@@ -43,6 +44,7 @@ mod noise;
 mod moves;
 mod collision_geometry;
 mod throw_collision;
+mod tough;
 mod trample;
 mod names;
 mod net;
@@ -442,6 +444,8 @@ unsafe fn patch_import(name: &std::ffi::CStr, ordinal: u16, replacement: usize) 
 
 struct MarioState {
     id: i32,
+    /// his toughness: SM64's losses of health cut (tough.rs)
+    tough: tough::Tough,
     filter: u32,
     ticks: u32,
     no_ground: u32,
@@ -2439,6 +2443,7 @@ fn frame(data: &FD4TaskData) {
             traps: traps::Traps::new(),
             combo: sm64::SM64ErMove::default(),
             dead: false,
+            tough: tough::Tough::default(),
             moving,
             stuck_ticks: 0,
             prev_parts: None,
@@ -3625,6 +3630,14 @@ fn frame(data: &FD4TaskData) {
             }
         }
         let leash_fix = LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(_, t)| t.wrapping_add(1) == m.ticks).map(|(p, _)| collision::er_to_sm(m.origin, &HavokPosition(p.x, p.y, p.z, 0.0)));
+        // the blows whose health the mod takes itself (not SM64's knockback), cut now (tough.rs)
+        let direct = match hurt {
+            Some(combat::Hurt::Hit(w)) if still_flying || grab::just_released() || bled => Some(w as i32 * 0x100),
+            Some(combat::Hurt::Hit(w)) if rocking => Some(w as i32 * 0x80),
+            Some(combat::Hurt::Drain) => Some(0x100),
+            _ => None,
+        }
+        .map(|lost| m.tough.cut(health_before, lost));
         let result = worker::call("tick", move |ctx| {
             // (the co-op leash held him back last tick, or he warped: from there)
             if let Some([x, y, z]) = leash_fix {
@@ -3654,12 +3667,9 @@ fn frame(data: &FD4TaskData) {
             match hurt {
                 // (flying off already: the blow costs health, SM64's knockback would end the flight)
                 // (let go by an enemy: thrown off it already, the same)
-                Some(combat::Hurt::Hit(wedges)) if still_flying || grab::just_released() || bled => unsafe {
-                    sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x100).max(0xFF) as u16)
-                },
                 // (the boulder: half of it, and it rolls on)
-                Some(combat::Hurt::Hit(wedges)) if rocking => unsafe {
-                    sm64::sm64_set_mario_health(id, (health_before as i32 - wedges as i32 * 0x80).max(0xFF) as u16)
+                Some(combat::Hurt::Hit(_)) if still_flying || grab::just_released() || bled || rocking => unsafe {
+                    sm64::sm64_set_mario_health(id, direct.unwrap_or(health_before) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
                     sm64::sm64_mario_take_damage(id, wedges, 0, hurt_from[0], hurt_from[1], hurt_from[2]);
@@ -3667,7 +3677,7 @@ fn frame(data: &FD4TaskData) {
                         blown::launch(id, mario_at, hurt_from);
                     }
                 },
-                Some(combat::Hurt::Drain) => unsafe { sm64::sm64_set_mario_health(id, (health_before - 0x100).max(0xFF) as u16) },
+                Some(combat::Hurt::Drain) => unsafe { sm64::sm64_set_mario_health(id, direct.unwrap_or(health_before) as u16) },
                 // (a shove: SM64's soft knockback, no wedge)
                 None if shoved => unsafe { sm64::sm64_mario_take_damage(id, 0, 0, hurt_from[0], hurt_from[1], hurt_from[2]) },
                 None if pushed.is_some() => {
@@ -3986,6 +3996,15 @@ fn frame(data: &FD4TaskData) {
                     log(format!("MARIO JUMP {jump:.0} units in one tick: {:?} -> {:?}", m.state, state));
                 }
                 m.state = state;
+                // (tougher than SM64's: this tick's loss of health cut, tough.rs; the mod's own
+                // losses were cut before it)
+                if !m.dead {
+                    if let Some(h) = m.tough.take(m.state.health) {
+                        m.state.health = h;
+                        let id = m.id;
+                        worker::call("tough", move |_| unsafe { sm64::sm64_set_mario_health(id, h as u16) });
+                    }
+                }
                 m.mesh = mesh;
                 // co-op: past the leash's pull the way out from the partner gets stiffer (leash.rs)
                 if coop::active() && !m.dead {
@@ -4016,7 +4035,7 @@ fn frame(data: &FD4TaskData) {
                     }
                 }
                 // out of health: the Tarnished dies too (the game's death, Bowser and respawn follow)
-                if !m.dead && state.health < 0x100 && !revive::downed() {
+                if !m.dead && m.state.health < 0x100 && !revive::downed() {
                     log("Mario is out of health");
                     out_of_health(m.id, state.action);
                 }
@@ -4209,7 +4228,7 @@ fn frame(data: &FD4TaskData) {
                 None => 0,
             };
             if halves > 0 {
-                let health = (m.state.health as i32 - halves * 0x80).max(0xFF);
+                let health = m.tough.cut(m.state.health, halves * 0x80) as i32;
                 m.state.health = health as i16;
                 let id = m.id;
                 worker::call("ride hurt", move |_| unsafe { sm64::sm64_set_mario_health(id, health as u16) });

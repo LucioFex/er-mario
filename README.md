@@ -197,8 +197,18 @@ and a longer slow motion. A finisher that takes an enemy out, or any kill from r
 world down for a moment (`src/style.rs`).
 
 Hits come with hit-stop, star bursts, shockwave rings, a swing trail and a camera shake on the
-heavy ones (`src/impact.rs`). Fireballs are lit balls of fire with flames licking all around them
-(drawn back to front, so they turn with the camera), a cooling tail and embers, hidden behind walls.
+heavy ones (`src/impact.rs`). Fireballs are balls of fire in 3D (`src/flame.rs`), low-poly like
+SM64's own, in layers: a churning heart (the giant one's magma, dark crust over glowing cracks; the
+sun's white-hot plasma), a shell of flame glowing at its rim, tongues of flame streaming back, a
+tail, and SM64's flame sprites, embers and smoke round it all. Each charge level is grander than
+the last: from the full charge on, rays of light round its rim and its light on the ground; the big
+ones' heat ripples off them and warms the screen as they fill it (inside the sun, all fire), and the
+sun has arcs of fire looping off its face. Their bursts swell in a flash of fire; the giant one's
+and the sun's raise a dome of fire over the ground and billowing smoke (the sun's a mushroom, a
+white shock wave racing ahead), with stars. A wall in the way fades a ball by how much of it it
+hides (rays to its heart and rim), and faces are cut at the camera instead of lost, so a sun held
+right by the camera never vanishes or goes flat. Far off they use fewer faces, and one too small on
+screen is a single sprite.
 
 **The camera indoors.** Lakitu senses the room around Mario (walls all around, the ceiling): in a
 corridor or a small room it comes closer and lower and stays under the ceiling, a wall right behind
@@ -313,7 +323,7 @@ close and risky hits.
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
-| Elden Ring hits on Mario | 1 or 2 full wedges | **half a wedge** or a whole one, on foot and on Yoshi |
+| Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |
 | Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |
 | Action command | — | **+30%** of the blow (every third **+50%**) |
 | Dash strike | — | **12%** |
@@ -463,7 +473,8 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Their effects show too, around where they're shown: fireballs, the hook's line, the boomerangs'
   streaks, the hammer's and the Chain Chomp's ribbons and sparks, the blows' star bursts, stars and
   coins, rings on the ground, the dash, Yoshi's tongue and eggs. They go in a packet of their own,
-  20 times a second, at most 1000 bytes (the newest of each kind kept): with them in the pose, a
+  20 times a second, at most 1000 bytes (the newest of each kind kept; fireballs go as what they
+  are, about 20 bytes a ball, and are drawn in 3D on the other side): with them in the pose, a
   fight's poses outgrew one network packet and were lost whole, and the partner froze mid combo.
   The pose alone is 873 bytes. Every 20 s the log sums up what went out and came in
   (`net: last 20 s sent ...; got ...; lost poses N, effects M`).
@@ -515,7 +526,7 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - The Metal cap is retired (D-pad left is the Rock Mushroom), so its look isn't sent. Packets are
-  version 9: both players need the same build.
+  version 10: both players need the same build.
 
 
 Co-op touches (nothing of this shows alone):
@@ -546,10 +557,11 @@ Co-op touches (nothing of this shows alone):
   "BROS x N" under the style meter (the word only on the first and every fifth).
 - Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO), "1UP" over the one you
   revive. Down yourself: HELP and your seconds left up top. A downed partner's edge arrow is green.
-- Both players need the same build: the packets are version 9 (the status packet: health, coins,
+- Both players need the same build: the packets are version 10 (the status packet: health, coins,
   power, style, last enemy hit, coin bag, down and its seconds left, boss fight, busy, a few times
   a second; the effects; the revive; the mod's own sounds with their volume; the Bros. Attack's
-  leap and blow). From version 4 on a build skips a
+  leap and blow; the fireballs as balls, bursts and lava pools, each list's records sized so a later
+  build can add fields an older one skips). From version 4 on a build skips a
   kind of packet it doesn't know and reads a longer one as far as it knows, so later additions
   (grabbing and throwing your partner) can come without breaking it.
 
