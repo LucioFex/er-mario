@@ -438,11 +438,14 @@ pub fn tick() {
                     log(format!("yoshi: Torrent anim -> {theirs} (airborne {airborne})"));
                 }
             }
-            (c as *mut ChrIns as usize, c.field_ins_handle.clone(), c.modules.physics.position, airborne, theirs, mounted)
+            // (out or not: where he can't be called the whistle still loads him, hidden, and he's
+            // kept by the player: walking, as it were, wherever the player goes)
+            let shown = c.chr_flags1c5.enable_render() && c.chr_flags1c4.is_render_group_enabled();
+            (c as *mut ChrIns as usize, c.field_ins_handle.clone(), c.modules.physics.position, airborne, theirs, mounted, shown)
         })
     });
     others(yoshi);
-    let (Some((chr, handle, p, airborne, theirs, ridden)), Some(yoshi)) = (torrent, yoshi) else {
+    let (Some((chr, handle, p, airborne, theirs, ridden, shown)), Some(yoshi)) = (torrent, yoshi) else {
         *state = None;
         return;
     };
@@ -461,8 +464,15 @@ pub fn tick() {
             log(format!("yoshi: going {:.1} m/s", s.vel.length()));
         }
     }
-    // his steps, on the two frames of the walk SM64 plays them on
-    if s.animate(yoshi, pos, airborne, theirs, now) {
+    // his steps, on the two frames of the walk SM64 plays them on: only while he's out (drawn)
+    let step = s.animate(yoshi, pos, airborne, theirs, now);
+    {
+        static HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if HIDDEN.swap(!shown, std::sync::atomic::Ordering::Relaxed) != !shown {
+            log(format!("yoshi: Torrent {} (ridden {ridden})", if shown { "drawn: his steps heard" } else { "loaded but not drawn: his steps muted" }));
+        }
+    }
+    if step && shown {
         crate::worker::call("yoshi step", |_| unsafe { crate::sm64::sm64_play_sound_global(SOUND_YOSHI_WALK) });
     }
     // his moves in a fight (ride.rs): the mouth open for the tongue, a nod with each egg and on a
