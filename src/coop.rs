@@ -618,10 +618,11 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
         return (*parts, here, Quat::IDENTITY, false);
     }
     // their place in our physics position: in the open world by its chunk position, in a dungeon
-    // or a building by its block position (both the same on both games). Through our own Tarnished
-    // first (where our game has us is always up to date: the game's copy of them can stand on a
-    // stale block or chunk, at a join it stood on the host), trusted within PLACE_TRUST_OPEN of
-    // us; else, in the open world, through their copy, else the map's.
+    // or a building by its block position (both the same on both games), through our own
+    // Tarnished (where our game has us is always up to date), trusted within PLACE_TRUST_OPEN of
+    // us; else, in the open world, the map's. Never through the game's copy of them: it can stand
+    // on a stale block or chunk (at a join it stood on the host), and it's moved to their place
+    // here (frame), its chunk position then not with it.
     let me = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.main_player.as_deref());
     let raw = place.and_then(|pl| {
         let mine = me.and_then(|o| {
@@ -635,9 +636,8 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
             };
             at.filter(|a| a.is_finite() && a.distance(feet) < PLACE_TRUST_OPEN)
         });
-        let theirs = || chunk_through(c, pl).filter(|a| a.is_finite() && a.distance(here) < PLACE_TRUST_OPEN);
-        let map = || if pl.local { None } else { crate::coins::place(pl.origin, pl.chunk).filter(|a| a.is_finite() && a.distance(here) < PLACE_TRUST_OPEN) };
-        mine.or_else(theirs).or_else(map).map(|a| (a, pl))
+        let map = || if pl.local { None } else { crate::coins::place(pl.origin, pl.chunk).filter(|a| a.is_finite() && own_feet().is_some_and(|f| a.distance(f) < PLACE_TRUST_OPEN)) };
+        mine.or_else(map).map(|a| (a, pl))
     });
     let at = raw.map(|(a, pl)| (a - here, Quat::from_rotation_y(pl.yaw)));
     // (between their own place and where the game has them, a moment's blend: no jump; a moment
@@ -648,7 +648,7 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
             Some(i) => i,
             None => {
                 let goal = at.unwrap_or((Vec3::ZERO, rot));
-                all.push(Handover { steam, own: at.is_some(), from: goal, last: goal, since: None, lost: None, logged: false });
+                all.push(Handover { steam, own: at.is_some(), from: goal, last: goal, shown: here + goal.0, since: None, lost: None, logged: false });
                 all.len() - 1
             }
         };
@@ -659,6 +659,9 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
         }
         let held = lost && h.lost.get_or_insert_with(Instant::now).elapsed().as_secs_f32() < PLACE_HOLD;
         if held {
+            // (where they were shown, wherever the game's copy of them is now: it can be pulled
+            // back, or moved there, frame)
+            h.last.0 = h.shown - here;
             (h.last.0, h.last.1, true)
         } else {
             if h.own != at.is_some() || !h.logged {
@@ -686,6 +689,7 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
             let u = u * u * (3.0 - 2.0 * u);
             let now = (h.from.0.lerp(goal.0, u), h.from.1.slerp(goal.1, u).normalize());
             h.last = now;
+            h.shown = here + now.0;
             (now.0, now.1, h.own && u >= 1.0)
         }
     };
@@ -694,8 +698,8 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + moved, ..p }), here + shift, face, own)
 }
 
-/// A place in the open world sent by a partner in our physics position, through a character on
-/// our game (`o`: its chunk and physics positions together). None in a block, off its map.
+/// A place in the open world sent by a partner in our physics position, through our Tarnished
+/// (`o`: its chunk and physics positions together). None in a block, off its map.
 fn chunk_through(o: &eldenring::cs::ChrIns, pl: Place) -> Option<Vec3> {
     if pl.local {
         return None;
@@ -720,6 +724,8 @@ struct Handover {
     own: bool,
     from: (Vec3, Quat),
     last: (Vec3, Quat),
+    /// where they were last shown (our physics position: a held place holds this)
+    shown: Vec3,
     since: Option<Instant>,
     lost: Option<Instant>,
     logged: bool,
@@ -1285,16 +1291,17 @@ pub fn apply_remote() {
         crate::engine_mario::clear_remote();
         return;
     }
-    let poses: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool)> = {
+    let poses: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool, u8)> = {
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_ref() else { return };
         s.remotes
             .iter()
             .filter_map(|r| {
                 let vanish = s.mates.iter().any(|m| m.steam == r.steam && m.st.power == POWER_VANISH);
+                let flags = s.mates.iter().find(|m| m.steam == r.steam).map_or(0, |m| m.st.flags);
                 s.chrs.iter().find(|c| c.0 == r.steam).map(|c| {
                     let (parts, place) = r.now();
-                    (r.steam, c.1, parts, place, vanish)
+                    (r.steam, c.1, parts, place, vanish, flags)
                 })
             })
             .collect()
@@ -1303,9 +1310,29 @@ pub fn apply_remote() {
     // (only characters still there: one may have left since the session was looked at)
     let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
     let mut vanished = Vec::new();
-    for (steam, chr, parts, place, vanish) in poses.iter().filter(|p| live.contains(&p.1)) {
+    for (steam, chr, parts, place, vanish, flags) in poses.iter().filter(|p| live.contains(&p.1)) {
         let player = unsafe { &mut *(*chr as *mut PlayerIns) };
-        let (pose, ..) = placed(*steam, player, parts, *place);
+        let (mut pose, feet, _, own) = placed(*steam, player, parts, *place);
+        // The game's copy of them taken to where they really are: Mario is drawn on its model, and
+        // the game draws that (or leaves it out, off screen, too far) by where the copy stands,
+        // which in Mario mode lags far behind (hundreds of metres in a legacy dungeon): they went
+        // invisible. Also where our enemies see them. Not while the game moves them (Torrent, a
+        // door, a ladder, a cutscene).
+        if own && flags & BUSY == 0 && feet.is_finite() {
+            let ph = &mut player.chr_ins.modules.physics;
+            let here = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
+            let off = here.distance(feet);
+            if off > SNAP_FROM {
+                ph.position = eldenring::position::HavokPosition(feet.x, feet.y, feet.z, ph.position.3);
+                pose = placed(*steam, player, parts, *place).0;
+                static LOGGED: Mutex<Option<Instant>> = Mutex::new(None);
+                let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+                if off > SNAP_LOG && logged.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
+                    *logged = Some(Instant::now());
+                    log(format!("coop: partner {steam:x}'s character moved {off:.1} m to their own place"));
+                }
+            }
+        }
         // the Vanish cap: see-through, as they see themselves
         if *vanish {
             let c = &mut player.chr_ins;
@@ -1318,6 +1345,10 @@ pub fn apply_remote() {
     }
     unfade(&vanished);
 }
+
+/// the game's copy of a partner this far (m) from their own place is moved there; this far, logged
+const SNAP_FROM: f32 = 0.1;
+const SNAP_LOG: f32 = 10.0;
 
 /// The partners made see-through by their Vanish cap (PlayerIns addresses).
 static FADED: Mutex<Vec<usize>> = Mutex::new(Vec::new());

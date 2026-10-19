@@ -467,11 +467,13 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   fight's poses outgrew one network packet and were lost whole, and the partner froze mid combo.
   The pose alone is 873 bytes. Every 20 s the log sums up what went out and came in
   (`net: last 20 s sent ...; got ...; lost poses N, effects M`).
-- Their place is their own: in the open world (map chunk coordinates, the same on both games)
-  however far the game's slower copy of them lags (at a join it stands on the host); in dungeons
-  and buildings the block's position, within 40 m. A pose without a place holds where they were
-  for half a second, and a change between their own place and the game's blends instead of
-  jumping. The log says which one is used (`coop: partner ... shown at their own place ...`).
+- Their place is their own: in the open world map chunk coordinates, in dungeons and buildings
+  the position in the block (both the same on both games; physics positions aren't), worked out
+  through your own Tarnished however far the game's slower copy of them lags (at a join it stands
+  on the host). That copy is then moved there too: Mario is drawn on its model, and the game
+  leaves it out by where it stands (they went invisible), and your enemies see them there. A pose
+  without a place holds where they were for half a second, and a change between their own place
+  and the game's blends instead of jumping. The log says which one is used (`coop: partner ... shown at their own place ...`).
 - **Revive**: out of health with a partner who can help, you don't die: you go down (SM64's death
   pose, stars circling over your head, untouchable) and have 30 s. Your partner comes over and
   holds **D-pad down** next to you for a second (a ▼ RESCUE prompt and a ring filling): you're
