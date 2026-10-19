@@ -787,6 +787,7 @@ fn own_place() -> Option<Place> {
     if !yaw.is_finite() {
         return None;
     }
+    probe_self(player);
     // (off the open world's chunks, in a dungeon: its block and the position in it)
     if ck.length_squared() < 1e-6 || !ck.is_finite() {
         let b = &player.block_position;
@@ -796,6 +797,68 @@ fn own_place() -> Option<Place> {
     }
     Some(Place { origin: i32::from(c.block_origin), chunk: ck, yaw, local: false })
 }
+
+/// Diagnostics (every PROBE_EVERY, PROBE_MAX lines): our own positions as the game has them, and
+/// how the chunk and block positions sit against the physics one (the place sent is worked out
+/// from them: an offset that changes while we stay in one block means it doesn't follow us).
+fn probe_self(player: &PlayerIns) {
+    static LAST: Mutex<(Option<Instant>, u32, Option<(Vec3, Vec3, Vec3)>)> = Mutex::new((None, 0, None));
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.1 >= PROBE_MAX || last.0.is_some_and(|t| t.elapsed() < PROBE_EVERY) {
+        return;
+    }
+    last.0 = Some(Instant::now());
+    last.1 += 1;
+    let c = &player.chr_ins;
+    let p = c.modules.physics.position;
+    let phys = Vec3::new(p.0, p.1, p.2);
+    let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
+    let b = &player.block_position;
+    let blk = Vec3::new(b.x, b.y, b.z);
+    let m = c.chr_ctrl.model_matrix.3;
+    let (dck, dblk, moved) = match last.2 {
+        Some((p0, ck0, b0)) => ((ck - phys).distance(ck0 - p0), (blk - phys).distance(b0 - p0), phys.distance(p0)),
+        None => (0.0, 0.0, 0.0),
+    };
+    last.2 = Some((phys, ck, blk));
+    log(format!(
+        "coop probe: me phys {phys:.1?} model ({:.1}, {:.1}, {:.1}) chunk {ck:.1?} origin {} block {} blockpos {blk:.1?}; moved {moved:.1} m, chunk-phys drifted {dck:.2} m, block-phys drifted {dblk:.2} m",
+        m.0,
+        m.1,
+        m.2,
+        i32::from(c.block_origin),
+        i32::from(player.current_block_id),
+    ));
+}
+
+/// Diagnostics (every PROBE_EVERY, PROBE_MAX lines): a partner's place as sent, as we work it out,
+/// as worked out through the game's copy of them, and where that copy's physics and model are.
+fn probe_partner(steam: u64, chr: &PlayerIns, place: Option<Place>, feet: Vec3) {
+    static LAST: Mutex<(Option<Instant>, u32)> = Mutex::new((None, 0));
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.1 >= PROBE_MAX || last.0.is_some_and(|t| t.elapsed() < PROBE_EVERY) {
+        return;
+    }
+    last.0 = Some(Instant::now());
+    last.1 += 1;
+    let c = &chr.chr_ins;
+    let p = c.modules.physics.position;
+    let phys = Vec3::new(p.0, p.1, p.2);
+    let m = c.chr_ctrl.model_matrix.3;
+    let model = Vec3::new(m.0, m.1, m.2);
+    let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
+    let through = place.and_then(|pl| chunk_through(c, pl));
+    log(format!(
+        "coop probe: partner {steam:x} sent {place:.1?}; ours {feet:.1?}; through their copy {through:.1?}; copy phys {phys:.1?} model {model:.1?} chunk {ck:.1?} origin {} block {}; ours-copy {:.1} m, through-copy {:.1} m",
+        i32::from(c.block_origin),
+        i32::from(chr.current_block_id),
+        feet.distance(phys),
+        through.map_or(f32::NAN, |t| t.distance(phys)),
+    ));
+}
+
+const PROBE_EVERY: Duration = Duration::from_secs(3);
+const PROBE_MAX: u32 = 120;
 
 #[derive(Default)]
 struct State {
@@ -1315,6 +1378,7 @@ pub fn apply_remote() {
     for (steam, chr, parts, place, vanish, flags) in poses.iter().filter(|p| live.contains(&p.1)) {
         let player = unsafe { &mut *(*chr as *mut PlayerIns) };
         let (mut pose, feet, _, own) = placed(*steam, player, parts, *place);
+        probe_partner(*steam, player, *place, feet);
         // The game's copy of them taken to where they really are: Mario is drawn on its model, and
         // the game draws that (or leaves it out, off screen, too far) by where the copy stands,
         // which in Mario mode lags far behind (hundreds of metres in a legacy dungeon): they went
