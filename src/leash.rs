@@ -3,9 +3,11 @@
 //! always free); left more than WARP_AT apart for WARP_AFTER (a fall, a zip, Torrent, a warp), the
 //! one who isn't fighting (both or neither: the guest) pops over to the other in a puff of smoke.
 //! Never in a boss fight (theirs or ours: fog walls), while either is down, busy (the game moving
-//! them, a menu) or not in Mario mode. Alone none of this runs.
+//! them, a menu) or not in Mario mode. Alone none of this runs. L3 held (`call`) warps there at
+//! once, whoever's fighting, however close (stuck behind a wall, lost): under the same rules else.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use glam::Vec3;
@@ -39,10 +41,31 @@ struct Leash {
 
 static LEASH: Mutex<Leash> = Mutex::new(Leash { partner: None, far_since: None, warped: None });
 
+/// the player asked for the warp (L3 held), for the next frame
+static CALLED: AtomicBool = AtomicBool::new(false);
+/// an asked-for warp only this far off at least (m: right beside them there's nothing to fix)
+const CALL_FROM: f32 = 1.5;
+/// Lakitu's buzz: no warp now
+const SOUND_BUZZ: i32 = 0x700E_0081;
+
+/// Input: the player held L3: Mario warps to the partner on the next frame, if he may.
+pub fn call() {
+    CALLED.store(true, Ordering::Relaxed);
+}
+
 /// Game thread, every frame: our feet (Elden Ring); whether the leash holds us now (Mario mode, on
 /// his feet, not down, the game not moving him); fighting, in a boss fight, busy. Some: warp there
 /// (feet, Elden Ring) now.
 pub fn frame(me: Vec3, free: bool, fighting: bool, boss: bool, busy: bool) -> Option<Vec3> {
+    let called = CALLED.swap(false, Ordering::Relaxed);
+    let to = hold(me, free, fighting, boss, busy, called);
+    if called && to.is_none() {
+        crate::worker::call("warp buzz", |_| unsafe { crate::sm64::sm64_play_sound_global(SOUND_BUZZ) });
+    }
+    to
+}
+
+fn hold(me: Vec3, free: bool, fighting: bool, boss: bool, busy: bool, called: bool) -> Option<Vec3> {
     let mut l = LEASH.lock().unwrap_or_else(|e| e.into_inner());
     // (the nearest partner on their feet; one down is gone to, not held to)
     let partner = coop::partners()
@@ -53,12 +76,34 @@ pub fn frame(me: Vec3, free: bool, fighting: bool, boss: bool, busy: bool) -> Op
     // on the host)
     let held = partner.filter(|p| free && !boss && !busy && p.own_place && p.flags & (coop::BOSS | coop::BUSY) == 0 && p.feet.is_finite());
     let Some(p) = held else {
+        if called {
+            log(format!(
+                "leash: no warp asked for now ({})",
+                match partner {
+                    None => "no partner on their feet",
+                    Some(_) if !free => "Mario down or not in Mario mode",
+                    Some(_) if boss || busy => "a boss fight, or the game moving him",
+                    Some(p) if !p.own_place => "their place not known yet",
+                    Some(_) => "the partner in a boss fight or busy",
+                }
+            ));
+        }
         l.partner = None;
         l.far_since = None;
         return None;
     };
     let d = (p.feet - me).length();
     l.partner = Some((p.feet, d));
+    if called {
+        if d < CALL_FROM {
+            log(format!("leash: no warp asked for now (the partner {d:.1} m off)"));
+            return None;
+        }
+        l.far_since = None;
+        l.warped = Some(Instant::now());
+        log(format!("leash: L3 held, {d:.0} m apart: Mario warps to the partner"));
+        return Some(p.feet + Vec3::Y * WARP_UP);
+    }
     if !(WARP_AT..WARP_MAX).contains(&d) {
         l.far_since = None;
         return None;
@@ -112,6 +157,7 @@ fn pull(partner: Vec3, before: Vec3, after: Vec3) -> Option<Vec3> {
 
 /// Out of a session, out of Mario mode: nothing held.
 pub fn clear() {
+    CALLED.store(false, Ordering::Relaxed);
     let mut l = LEASH.lock().unwrap_or_else(|e| e.into_inner());
     l.partner = None;
     l.far_since = None;

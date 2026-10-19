@@ -617,20 +617,24 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     if !rot.is_finite() || !here.is_finite() {
         return (*parts, here, Quat::IDENTITY, false);
     }
-    // their place in our physics position: in the open world by its chunk position (through their
-    // Tarnished's own on our game, else ours: map chunk coordinates are the same on both games, so
-    // it's trusted however far the game's copy of them lags); in a dungeon or a building, the same
-    // block's physics position as is (trusted within PLACE_TRUST)
+    // their place in our physics position: in the open world by its chunk position (map chunk
+    // coordinates are the same on both games), in a dungeon or a building the same block's physics
+    // position as is. Through our own Tarnished first (where our game has us is always up to date:
+    // the game's copy of them can stand on a stale block or chunk, at a join it stood on the host,
+    // and their place worked out through it came out wrong or missing), trusted within
+    // PLACE_TRUST_OPEN of us; else through their copy (within PLACE_TRUST of it in a dungeon), else
+    // the map's.
+    let me = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.main_player.as_ref()).map(|p| &p.chr_ins);
     let raw = place.and_then(|pl| {
-        let at = if pl.local {
-            (i32::from(c.block_id) == pl.origin).then_some(pl.chunk)
-        } else {
-            let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
-            if i32::from(c.block_origin) == pl.origin && ck.length_squared() > 1e-6 { Some(pl.chunk - (ck - here)) } else { crate::coins::place(pl.origin, pl.chunk) }
-        };
-        at.filter(|a| a.is_finite()).map(|a| (a, pl))
+        let mine = me.and_then(|o| {
+            let feet = o.modules.physics.position;
+            place_through(o, pl).filter(|a| a.is_finite() && a.distance(Vec3::new(feet.0, feet.1, feet.2)) < PLACE_TRUST_OPEN)
+        });
+        let theirs = || place_through(c, pl).filter(|a| a.is_finite() && a.distance(here) < if pl.local { PLACE_TRUST } else { PLACE_TRUST_OPEN });
+        let map = || if pl.local { None } else { crate::coins::place(pl.origin, pl.chunk).filter(|a| a.is_finite() && a.distance(here) < PLACE_TRUST_OPEN) };
+        mine.or_else(theirs).or_else(map).map(|a| (a, pl))
     });
-    let at = raw.filter(|(a, pl)| a.distance(here) < if pl.local { PLACE_TRUST } else { PLACE_TRUST_OPEN }).map(|(a, pl)| (a - here, Quat::from_rotation_y(pl.yaw)));
+    let at = raw.map(|(a, pl)| (a - here, Quat::from_rotation_y(pl.yaw)));
     // (between their own place and where the game has them, a moment's blend: no jump; a moment
     // without their own place, a pose that came without it, holds where they were)
     let (shift, face, own) = {
@@ -683,6 +687,17 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     let turn = (rot.inverse() * face).normalize();
     let moved = rot.inverse() * shift;
     (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + moved, ..p }), here + shift, face, own)
+}
+
+/// A place sent by a partner in our physics position, through a character on our game (`o`: its
+/// block, or its chunk and physics positions together). None off that character's block or map.
+fn place_through(o: &eldenring::cs::ChrIns, pl: Place) -> Option<Vec3> {
+    if pl.local {
+        return (i32::from(o.block_id) == pl.origin).then_some(pl.chunk);
+    }
+    let ck = Vec3::new(o.chunk_position.0, o.chunk_position.1, o.chunk_position.2);
+    let p = o.modules.physics.position;
+    (i32::from(o.block_origin) == pl.origin && ck.length_squared() > 1e-6).then(|| pl.chunk - (ck - Vec3::new(p.0, p.1, p.2)))
 }
 
 /// Our Tarnished's feet (Elden Ring).

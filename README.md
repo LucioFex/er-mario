@@ -426,7 +426,7 @@ replaces this fork's DLL with the original one.
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom). It presses the game's own interact button, Y; if you moved it in the game's controls, set `pad_interact = A` (B, Y, LB, RB, BACK, START) in `er_mario.ini` |
-| L3 (left stick click) | R | Whistle for Yoshi |
+| L3 (left stick click) | R | Whistle for Yoshi (co-op: on release; held 0.6 s, warp to your partner) |
 | Menu > Inventory > Use | same | Any item used from the inventory (Seamless Co-op's Tiny Great Pot and Effigy of Malenia, too): the game gets its use-item request while the menu is up and a second after it closes. A button still held from confirming in a menu (or ending a talk) doesn't make Mario jump: it's ignored until let go |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |
@@ -482,7 +482,8 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   40 m (coming back is always free); more than 48 m apart for 2 s (a fall, a zip, Torrent), the
   one who isn't fighting (both or neither: the guest) warps to the other through SM64's pipe in a
   puff of smoke. Never in a boss fight, while either is down, riding, in a menu, a door or a
-  cutscene.
+  cutscene. Holding **L3** (R) for 0.6 s warps you to your partner right away (stuck behind a
+  wall, lost), under the same rules; a quick tap still whistles for Yoshi.
 - Lakitu frames your partner close by too: the view leans their way and backs off a little (it
   never turns for them: you keep the camera).
 - The host owns the enemies: the guest's blows are sent to the host, who takes them off and deals

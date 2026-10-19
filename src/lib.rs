@@ -1718,9 +1718,12 @@ fn input_task() {
         *bits(a) &= keep;
     }
     // L3 (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
-    // (RB is the fireball, RT the hook)
+    // (RB is the fireball, RT the hook). With a partner (co-op) the whistle waits for the release:
+    // held WARP_HOLD instead, Mario warps to the partner (leash.rs: stuck, lost, a wall between).
     {
         static HELD: AtomicBool = AtomicBool::new(false);
+        static PRESSED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        const WARP_HOLD: f32 = 0.6;
         let rb = kbd::focused()
             && !MENU_OPEN.load(Ordering::Relaxed)
             && (pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_LEFT_THUMB))
@@ -1730,17 +1733,38 @@ fn input_task() {
         static FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let busy = ride_busy;
         let giant = mega::active() || mega::changing();
-        if rb && giant && !HELD.swap(rb, Ordering::Relaxed) {
-            // (Yoshi can't carry a giant: Lakitu's buzz)
-            worker::call("whistle buzz", |_| unsafe { sm64::sm64_play_sound_global(0x700E_0081) });
-        } else if rb && !giant && !HELD.swap(rb, Ordering::Relaxed) && !busy && equip::select_whistle() {
+        let was = HELD.swap(rb, Ordering::Relaxed);
+        let whistle = {
+            let mut pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner());
+            if rb && !was {
+                if giant {
+                    // (Yoshi can't carry a giant: Lakitu's buzz)
+                    worker::call("whistle buzz", |_| unsafe { sm64::sm64_play_sound_global(0x700E_0081) });
+                    false
+                } else if coop::active() && !coop::partners().is_empty() {
+                    *pressed = Some(std::time::Instant::now());
+                    false
+                } else {
+                    true
+                }
+            } else if rb {
+                if pressed.is_some_and(|t| t.elapsed().as_secs_f32() >= WARP_HOLD) {
+                    *pressed = None;
+                    log("input: L3 held: warp to the partner asked for");
+                    leash::call();
+                }
+                false
+            } else {
+                // (let go before WARP_HOLD: the whistle after all)
+                was && pressed.take().is_some()
+            }
+        };
+        if whistle && !busy && equip::select_whistle() {
             log("input: whistle (use item) requested");
             FRAMES.store(8, Ordering::Relaxed);
             if !mounted {
                 yoshi::call();
             }
-        } else if !rb {
-            HELD.store(false, Ordering::Relaxed);
         }
         if busy && FRAMES.swap(0, Ordering::Relaxed) > 1 {
             kbd::use_item_key(false);

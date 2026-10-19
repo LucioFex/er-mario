@@ -25,6 +25,9 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
   (volver siempre se puede). Si quedan a más de 48 m durante 2 s (caída, Torrent, gancho), el que
   no está peleando (si están iguales, el invitado) aparece al lado del otro con humo y el sonido de
   la tubería. Nunca en peleas de jefe, caído, a caballo, en menús, puertas o escenas.
+- **Teleport**: mantener **L3** (apretar el stick izquierdo) 0,6 s te lleva al lado del compañero
+  (trabado en una pared, perdido). Con las mismas reglas que la correa; si no se puede, suena el
+  zumbido de Lakitu. Un toque corto de L3 sigue llamando a Yoshi (al soltar).
 - La cámara de Lakitu se abre un poco y mira hacia el compañero cuando está cerca.
 - **Luigi es Luigi**: tiene una **L** en la gorra y es un poco más flaco. Salta más alto, patina más
   al frenar o girar, si mantenés **A** mientras baja de un salto patalea y se queda flotando un
@@ -186,6 +189,7 @@ a sí misma.
 | `revive: down ...` / `revive: revived by ...` / `revive: reviving ...` | Quedaste caído / te revivieron / revivís al otro |
 | `revive: nobody came in time` / `nobody left to revive` | Se acabó el tiempo o cayeron los dos: muerte normal |
 | `leash: N m apart for 2 s: Mario warps to the partner` | La correa te llevó al lado del compañero |
+| `leash: L3 held, N m apart: Mario warps to the partner` / `leash: no warp asked for now (...)` | Teleport con L3 mantenido / por qué no se pudo |
 | `input: interact (D-pad down) pressed, no event animation ... possible actions ...` | La flecha abajo no hizo nada: dice qué acciones permitía el juego, tipo de personaje, si está en el piso y a qué distancia de Mario está el Tarnished |
 | `follow: interact started anim N ... on D-pad down (allowed ...)` | La flecha abajo sí abrió una puerta/agarró algo |
 | `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
