@@ -26,6 +26,7 @@ mod grab;
 mod equip;
 mod kbd;
 mod knock;
+mod leash;
 mod lakitu;
 mod mega;
 mod menu_mario;
@@ -50,6 +51,7 @@ mod save_backup;
 mod shove;
 mod paths;
 mod perf;
+mod revive;
 mod sm64;
 mod squish;
 mod status;
@@ -320,8 +322,15 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
         let interact = g.wButtons.contains(XINPUT_GAMEPAD_DPAD_DOWN);
         let button = interact_button();
         g.wButtons &= !(XINPUT_GAMEPAD_Y | button);
-        if interact {
+        // (next to a downed co-op partner D-pad down revives them, revive.rs: not the game's)
+        if interact && !revive::owns_dpad_down() {
             g.wButtons |= button;
+        }
+        // (down for the partner to revive: the game gets nothing but its menus, no whistle, no
+        // Torrent, no items)
+        if revive::downed() {
+            g.wButtons &= XINPUT_GAMEPAD_START | XINPUT_GAMEPAD_BACK;
+            g.bLeftTrigger = 0;
         }
         // the D-pad changes Mario's caps (caps.rs), not the game's items and spells
         g.wButtons &= !(XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT);
@@ -743,6 +752,62 @@ fn flat_floor(p: [f32; 3]) -> [sm64::SM64Surface; 2] {
         sm64::SM64Surface::grass([[x - e, y, z - e], [x + e, y, z + e], [x + e, y, z - e]]),
         sm64::SM64Surface::grass([[x - e, y, z - e], [x - e, y, z + e], [x + e, y, z + e]]),
     ]
+}
+
+/// Mario is out of health: the Tarnished dies with him, unless he goes down for the co-op partner
+/// to revive (revive.rs). Only on his own feet (not on Torrent or Yoshi, as the Rock, Mega Mario,
+/// up on a captured enemy, or while the game walks him through a door): SM64's death pose is
+/// forced (standing, or falling into it in the air; in water SM64 has its own).
+fn out_of_health(id: i32, action: u32) {
+    const ACT_FLAG_AIR: u32 = 0x800;
+    const ACT_FLAG_SWIMMING: u32 = 0x2000;
+    const ACT_STANDING_DEATH: u32 = 0x0002_1311;
+    let on_foot = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !yoshi::active() && !mega::active() && !rock::active() && !bossride::active();
+    if !on_foot || !revive::go_down() {
+        set_player_hp(0);
+        return;
+    }
+    // (already dying SM64's way: left be)
+    if action & 0x1C0 == 0x100 && action & 0x0002_0000 != 0 || action & ACT_FLAG_SWIMMING != 0 {
+        return;
+    }
+    let to = if action & ACT_FLAG_AIR != 0 { ACT_FREEFALL } else { ACT_STANDING_DEATH };
+    worker::call("down", move |_| unsafe { sm64::sm64_set_mario_action(id, to) });
+}
+
+/// The co-op leash's fix to Mario's position (feet, Elden Ring: re-centring and rescaling in
+/// between don't move it), and the tick it was worked out on: only the next tick takes it.
+static LEASH_FIX: Mutex<Option<(glam::Vec3, u32)>> = Mutex::new(None);
+
+/// Co-op: Mario warps to `to` (feet, Elden Ring) by the partner (leash.rs): a puff where he leaves
+/// and lands, SM64's warp pipe. His SM64 world starts over there (a re-centre on the spot, its
+/// collision read there, a floor under him while the place streams in), falling from standing.
+fn warp_to(m: &mut MarioState, to: glam::Vec3, player_ref: &PlayerIns) {
+    let from = to_er(m.origin, m.state.position);
+    impact::warp_puff(glam::Vec3::new(from.0, from.1, from.2));
+    impact::warp_puff(to);
+    m.hook.drop();
+    m.moving.clear(&mut m.havok);
+    m.origin = [to.x, to.y, to.z];
+    m.state.position = [0.0; 3];
+    m.prev_pos = [0.0; 3];
+    m.last_query = None;
+    *LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let floor = [0.0, -leash::WARP_UP / scale(), 0.0];
+    let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
+    let mut surfaces = havok_surfaces(&mut m.havok, m.origin, [0.0; 3], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0; 3]));
+    surfaces.extend(flat_floor(floor));
+    load_surfaces(&surfaces);
+    m.surfaces = surfaces;
+    *FOLLOW_ENDED.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), floor));
+    let id = m.id;
+    worker::call("warp", move |_| unsafe {
+        sm64::sm64_set_mario_position(id, 0.0, 0.0, 0.0);
+        sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0);
+        sm64::sm64_set_mario_action(id, ACT_FREEFALL);
+        sm64::sm64_play_sound_volume(leash::SOUND_PIPE_IN, 0.6);
+        sm64::sm64_play_sound_volume(leash::SOUND_PIPE_OUT, 0.6);
+    });
 }
 
 /// Sets the Tarnished's HP.
@@ -1397,6 +1462,28 @@ static INTERACT_PRESSED: AtomicBool = AtomicBool::new(false);
 /// ...and what the game made of it then: interact allowed by the Tarnished's animation, blocked,
 /// queued (a door once didn't open on Y: logged when no event animation follows)
 static INTERACT_STATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// ...and every action the game allowed then (possible_action_inputs), for the log
+static INTERACT_POSSIBLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What the game knows of the Tarnished when interact is pressed, for the log (the co-op guest's
+/// interact never got an event animation): the actions it allowed, his character type and team,
+/// whether it has him on the ground, how far he is from Mario's feet, his map block, co-op role.
+fn interact_diag(chr: &eldenring::cs::ChrIns, mario: HavokPosition) -> String {
+    let ph = &chr.modules.physics;
+    let p = ph.position;
+    let off = ((p.0 - mario.0).powi(2) + (p.1 - mario.1).powi(2) + (p.2 - mario.2).powi(2)).sqrt();
+    format!(
+        "possible actions {:#x}, chr type {:?}, team {}, on ground {} (falling {}, gravity off {}), {off:.2} m from Mario, block {:?}, co-op {}",
+        INTERACT_POSSIBLE.load(Ordering::Relaxed),
+        chr.chr_type,
+        chr.team_type,
+        ph.is_touching_ground,
+        ph.is_falling,
+        ph.gravity_disabled,
+        chr.block_id,
+        if !coop::active() { "no" } else if coop::guest() { "guest" } else { "host" }
+    )
+}
 /// Elden Ring's ladder animations (getting on, climbing, sliding, getting off).
 fn ladder_anim(anim: i32) -> bool {
     (28000..29000).contains(&anim) || (51100..51200).contains(&anim)
@@ -1584,6 +1671,7 @@ fn input_task() {
         let flag = |a: &mut eldenring::cs::ChrActions, bit: u32| if *bits(a) & ACTION != 0 { bit } else { 0 };
         let state = flag(&mut req.possible_action_inputs, 1) | flag(&mut req.disabled_action_inputs, 2) | flag(&mut req.queued_action_inputs, 4);
         INTERACT_STATE.store(state, Ordering::Relaxed);
+        INTERACT_POSSIBLE.store(*bits(&mut req.possible_action_inputs), Ordering::Relaxed);
     }
     // on Torrent the game needs the rider's buttons: dash (5), jump (6) and getting off (13)
     const USE_ITEM: u64 = 1 << 7;
@@ -2136,6 +2224,11 @@ fn frame(data: &FD4TaskData) {
             }
         }
         if let Some(mut m) = guard.take() {
+            // (down for the partner: switching Mario off doesn't escape the death)
+            if revive::downed() {
+                revive::clear();
+                set_player_hp(0);
+            }
             m.moving.clear(&mut m.havok);
             if let Some(saved) = SAVED_LOADOUT.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 equip::leave(&saved);
@@ -2238,6 +2331,10 @@ fn frame(data: &FD4TaskData) {
                 equip::enforce(player_ref);
             }
         }
+        // (a new Mario is on his feet: not down, not held)
+        revive::clear();
+        leash::clear();
+        *LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let id = worker::call("create", move |_| unsafe { sm64::sm64_mario_create(0.0, start_y + 1.0, 0.0) }).unwrap_or(-1);
         log(format!("mario created id={id} at {:?}", (p.0, p.1, p.2)));
         // which collision is under his feet (a layer SM64 doesn't get would drop him through)
@@ -2576,9 +2673,45 @@ fn frame(data: &FD4TaskData) {
             }
         });
         let feet = to_er(m.origin, m.state.position);
-        hud::set_partners(coop::hud(glam::Vec3::new(feet.0, feet.1, feet.2), data.delta_time.time));
+        let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+        hud::set_partners(coop::hud(feet, data.delta_time.time));
+        // down for the partner to revive (revive.rs): back up, or the real death
+        match revive::tick() {
+            revive::Outcome::Up => {
+                let id = m.id;
+                worker::call("revived", move |_| unsafe {
+                    sm64::sm64_set_mario_health(id, revive::HEALTH);
+                    sm64::sm64_set_mario_action(id, revive::ACT_SPAWN_SPIN_AIRBORNE);
+                    sm64::sm64_set_mario_velocity(id, 0.0, revive::SPIN_UP, 0.0);
+                });
+                revive::sounds();
+                impact::one_up(feet);
+            }
+            revive::Outcome::Die => set_player_hp(0),
+            revive::Outcome::Wait => {}
+        }
+        // the leash (leash.rs): the game moving him, or a menu up, leaves both free
+        let busy = RIDING.load(Ordering::Relaxed) || FOLLOWING.load(Ordering::Relaxed) || MENU_OPEN.load(Ordering::Relaxed) || CUTSCENE_HIDE.load(Ordering::Relaxed);
+        let boss = !combat::boss_handles().is_empty();
+        coop::set_busy(busy);
+        coop::set_boss(boss);
+        let free = !m.dead && !revive::downed();
+        if busy {
+            *LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        if let Some(to) = leash::frame(feet, free, coop::fighting_now(), boss, busy) {
+            warp_to(m, to, player_ref);
+        }
+        hud::set_coop(revive::left().map(|left| (feet + glam::Vec3::Y * 1.7 * size_factor(), left)), leash::warning());
+        // Lakitu frames the partner close by too
+        let mate = coop::partners().into_iter().map(|p| (p.feet + p.head) * 0.5).min_by(|a, b| (*a - feet).length().total_cmp(&(*b - feet).length()));
+        lakitu::set_mate(mate);
     } else {
         hud::set_partners(Vec::new());
+        hud::set_coop(None, None);
+        lakitu::set_mate(None);
+        revive::clear();
+        leash::clear();
     }
     hud::set_bosses(combat::bosses());
     if gameover::update(!m.dead) {
@@ -2661,6 +2794,7 @@ fn frame(data: &FD4TaskData) {
         let id = m.id;
         worker::call("kill", move |_| unsafe { sm64::sm64_mario_kill(id) });
         log("the Tarnished died: Mario dies");
+        revive::clear();
         stats::update(|s| s.deaths += 1);
         coins::clear();
         // (half the purse stays in a bag where he fell)
@@ -2825,6 +2959,22 @@ fn frame(data: &FD4TaskData) {
             (b_fire, b_dash, y_move, x_move, l_hammer, b_hook) = (false, false, false, false, false, false);
             dpad = [false; 4];
         }
+        // co-op: down, waiting for the partner (revive.rs): no moving; next to a downed partner,
+        // D-pad down held revives them (and isn't the cap's)
+        if revive::downed() {
+            inputs = sm64::SM64MarioInputs::default();
+            (b_fire, b_dash, y_move, x_move, l_hammer, b_hook) = (false, false, false, false, false, false);
+            dpad = [false; 4];
+        }
+        if coop::active() {
+            let feet = to_er(m.origin, m.state.position);
+            let free = gameplay && !revive::downed() && !RIDING.load(Ordering::Relaxed) && !mega::active();
+            revive::hold(dpad[1], glam::Vec3::new(feet.0, feet.1, feet.2), free, size_factor());
+            // (and while it's still held after a revive: no cap off)
+            if revive::owns_dpad_down() {
+                dpad[1] = false;
+            }
+        }
         if let Ok(cam) = unsafe { CSCamera::instance() } {
             // the SM64 camera's direction when it's on (the game's own camera keeps running
             // underneath and may face elsewhere)
@@ -2967,7 +3117,8 @@ fn frame(data: &FD4TaskData) {
             flags.player_no_dead = !m.dead;
             // the Vanish cap: enemy hits go through Mario
             // (and while he dashes)
-            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::untouchable(m.state.action));
+            // (and while he's down for the co-op partner to revive)
+            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::untouchable(m.state.action) || revive::downed());
         }
         // Elden Ring's ailments and burns setting in on him (before his hurt: blood loss's wedge
         // costs no knockback)
@@ -3002,7 +3153,7 @@ fn frame(data: &FD4TaskData) {
             // full of lava every one of them was thrown away with it)
             let from_lava = on_lava.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0) && combat::boss_handles().is_empty();
             drop(on_lava);
-            let hurt = damaged.filter(|_| !m.dead && !from_held && !from_lava);
+            let hurt = damaged.filter(|_| !m.dead && !from_held && !from_lava && !revive::downed());
             if debug() && was_damaged {
                 log(format!(
                     "hurt: {} by {} (last carried {:#x}), hp {} of {}, mario action {:#x}",
@@ -3432,7 +3583,12 @@ fn frame(data: &FD4TaskData) {
                 inputs.button_z = 0;
             }
         }
+        let leash_fix = LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(_, t)| t.wrapping_add(1) == m.ticks).map(|(p, _)| collision::er_to_sm(m.origin, &HavokPosition(p.x, p.y, p.z, 0.0)));
         let result = worker::call("tick", move |ctx| {
+            // (the co-op leash held him back last tick, or he warped: from there)
+            if let Some([x, y, z]) = leash_fix {
+                unsafe { sm64::sm64_set_mario_position(id, x, y, z) };
+            }
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
             }
@@ -3791,6 +3947,14 @@ fn frame(data: &FD4TaskData) {
                 }
                 m.state = state;
                 m.mesh = mesh;
+                // co-op: past the leash's pull the way out from the partner gets stiffer (leash.rs)
+                if coop::active() && !m.dead {
+                    let (b, a) = (to_er(m.origin, m.prev_pos), to_er(m.origin, m.state.position));
+                    if let Some(f) = leash::restrain(glam::Vec3::new(b.0, b.1, b.2), glam::Vec3::new(a.0, a.1, a.2)) {
+                        m.state.position = collision::er_to_sm(m.origin, &HavokPosition(f.x, f.y, f.z, 0.0));
+                        *LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()) = Some((f, m.ticks));
+                    }
+                }
                 // Mega Mario's steps crush whoever is under his feet, his landings shake them all
                 if let Some((feet, landing)) = mega::take_quake() {
                     let (reach, attack) = if landing { (mega::LANDING_REACH, combat::Attack::Shockwave) } else { (mega::STEP_REACH, combat::Attack::Trample) };
@@ -3812,9 +3976,9 @@ fn frame(data: &FD4TaskData) {
                     }
                 }
                 // out of health: the Tarnished dies too (the game's death, Bowser and respawn follow)
-                if !m.dead && state.health < 0x100 {
+                if !m.dead && state.health < 0x100 && !revive::downed() {
                     log("Mario is out of health");
-                    set_player_hp(0);
+                    out_of_health(m.id, state.action);
                 }
             }
             None => {
@@ -4010,9 +4174,9 @@ fn frame(data: &FD4TaskData) {
                 let id = m.id;
                 worker::call("ride hurt", move |_| unsafe { sm64::sm64_set_mario_health(id, health as u16) });
                 log(format!("ride: hit in the saddle, {} wedge(s), health {health:#x}", halves as f32 / 2.0));
-                if health < 0x100 {
+                if health < 0x100 && !revive::downed() {
                     log("Mario is out of health");
-                    set_player_hp(0);
+                    out_of_health(m.id, m.state.action);
                 }
             }
             if hp > 0 && m.state.health >= 0x100 {
@@ -4029,8 +4193,12 @@ fn frame(data: &FD4TaskData) {
         }
         let mut armed = ARMED.lock().unwrap_or_else(|e| e.into_inner());
         let mut follow = FOLLOW.lock().unwrap_or_else(|e| e.into_inner());
+        // (armed by a press or by an animation the game started itself: only a press's is logged
+        // with what the game made of it)
+        static ARMED_PRESS: AtomicBool = AtomicBool::new(false);
         if INTERACT_PRESSED.swap(false, Ordering::Relaxed) && follow.is_none() {
             *armed = Some((std::time::Instant::now(), cur));
+            ARMED_PRESS.store(true, Ordering::Relaxed);
         }
         // an enemy grabbed him: the game holds and moves him, Mario follows at once
         if follow.is_none() && grabbed {
@@ -4043,13 +4211,19 @@ fn frame(data: &FD4TaskData) {
         // any event animation (6xxxx: fog walls, doors, levers...) is game-driven
         if follow.is_none() && armed.is_none() && (game_driven(cur) || riding) {
             *armed = Some((std::time::Instant::now(), LAST_FREE_ANIM.load(Ordering::Relaxed)));
+            ARMED_PRESS.store(false, Ordering::Relaxed);
         }
         if !game_driven(cur) && follow.is_none() {
             LAST_FREE_ANIM.store(cur, Ordering::Relaxed);
         }
         if let Some((t, before)) = *armed {
             if (cur != before && game_driven(cur)) || riding {
-                log(format!("follow: interact started anim {cur} (was {before})"));
+                if ARMED_PRESS.swap(false, Ordering::Relaxed) {
+                    let st = INTERACT_STATE.load(Ordering::Relaxed);
+                    log(format!("follow: interact started anim {cur} (was {before}) on D-pad down (allowed {}, {})", st & 1 != 0, interact_diag(&player_ref.chr_ins, to_er(m.origin, m.state.position))));
+                } else {
+                    log(format!("follow: interact started anim {cur} (was {before})"));
+                }
                 FOLLOW_STARTED.store(true, Ordering::Relaxed);
                 // no moving / dynamic collision (the fog wall itself) while the game walks him
                 m.moving.clear(&mut m.havok);
@@ -4064,11 +4238,12 @@ fn frame(data: &FD4TaskData) {
                     *last = Some(std::time::Instant::now());
                     let st = INTERACT_STATE.load(Ordering::Relaxed);
                     log(format!(
-                        "input: interact (D-pad down) pressed, no event animation after 1 s (allowed {}, blocked {}, queued {}; tarnished anim {before} -> {cur}, Mario action {:#x})",
+                        "input: interact (D-pad down) pressed, no event animation after 1 s (allowed {}, blocked {}, queued {}; tarnished anim {before} -> {cur}, Mario action {:#x}; {})",
                         st & 1 != 0,
                         st & 2 != 0,
                         st & 4 != 0,
-                        m.state.action
+                        m.state.action,
+                        interact_diag(&player_ref.chr_ins, to_er(m.origin, m.state.position))
                     ));
                 }
             }

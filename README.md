@@ -446,16 +446,37 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   chunk coordinates) and their clock. The other game shows them a moment back in time, between the
   two poses around then (snapshot interpolation, 50 ms or more if packets come unevenly), at their
   own place, not where the game's slower updates have their Tarnished: no stutter or lag.
+- The partner's pose is put back right after the game animates their Tarnished, as your own is
+  (it used to flicker into the Tarnished's shape now and then, their shadow too).
 - Each one's Mario sounds (voice, steps, blows) go to the other too, always softer than your own
   and fading with the distance (none past 50 m).
 - The partner's wing cap shows its wings (drawn over their model), the Vanish cap makes them
   see-through, the Mega Mushroom makes them big.
 - Their effects show too, around where they're shown: fireballs, the hook's line, the boomerangs'
   streaks, the hammer's and the Chain Chomp's ribbons and sparks, the blows' star bursts, stars and
-  coins, rings on the ground, the dash, Yoshi's tongue and eggs (they go with every pose).
-- Their place is their own also in dungeons and buildings (the block's position there), and when
-  it can't be used (over 40 m from where the game has them) they blend over to the game's place
-  instead of jumping.
+  coins, rings on the ground, the dash, Yoshi's tongue and eggs. They go in a packet of their own,
+  20 times a second, at most 1000 bytes (the newest of each kind kept): with them in the pose, a
+  fight's poses outgrew one network packet and were lost whole, and the partner froze mid combo.
+  The pose alone is 873 bytes. Every 20 s the log sums up what went out and came in
+  (`net: last 20 s sent ...; got ...; lost poses N, effects M`).
+- Their place is their own: in the open world (map chunk coordinates, the same on both games)
+  however far the game's slower copy of them lags (at a join it stands on the host); in dungeons
+  and buildings the block's position, within 40 m. A pose without a place holds where they were
+  for half a second, and a change between their own place and the game's blends instead of
+  jumping. The log says which one is used (`coop: partner ... shown at their own place ...`).
+- **Revive**: out of health with a partner who can help, you don't die: you go down (SM64's death
+  pose, stars circling over your head, untouchable) and have 30 s. Your partner comes over and
+  holds **D-pad down** next to you for a second (a ▼ RESCUE prompt and a ring filling): you're
+  back up with three wedges, SM64's 1-UP, a spin into the air, stars and coins. Nobody in time,
+  both down, or a death the game deals itself (a fall into the void): the real death, Seamless
+  Co-op's spectating and respawn as before.
+- **Leash**: past 30 m a TOO FAR warning, from 35 m the way out gets stiffer until it stops at
+  40 m (coming back is always free); more than 48 m apart for 2 s (a fall, a zip, Torrent), the
+  one who isn't fighting (both or neither: the guest) warps to the other through SM64's pipe in a
+  puff of smoke. Never in a boss fight, while either is down, riding, in a menu, a door or a
+  cutscene.
+- Lakitu frames your partner close by too: the view leans their way and backs off a little (it
+  never turns for them: you keep the camera).
 - The host owns the enemies: the guest's blows are sent to the host, who takes them off and deals
   the final blow. As the guest you can't grab enemies or launch them (they'd jump back to where
   the host has them), but every blow counts.
@@ -483,7 +504,7 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - Not synced yet: the Metal cap's look, Yoshi's model, sounds the mod adds itself (weapons,
-  callouts). Packets are version 5: both players need the same build.
+  callouts). Packets are version 6: both players need the same build.
 
 
 Co-op touches (nothing of this shows alone):
@@ -498,9 +519,11 @@ Co-op touches (nothing of this shows alone):
   their colour).
 - **BROS!** over an enemy you both hit within 1.5 s (style points); a streak of them counts as
   "BROS x N" under the style meter (the word only on the first and every fifth).
-- Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO).
-- Both players need the same build: the packets are version 4 (the status packet: health, coins,
-  power, style, last enemy hit, coin bag, a few times a second). From version 4 on a build skips a
+- Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO), "1UP" over the one you
+  revive. Down yourself: HELP and your seconds left up top. A downed partner's edge arrow is green.
+- Both players need the same build: the packets are version 6 (the status packet: health, coins,
+  power, style, last enemy hit, coin bag, down and its seconds left, boss fight, busy, a few times
+  a second; the effects; the revive). From version 4 on a build skips a
   kind of packet it doesn't know and reads a longer one as far as it knows, so later additions
   (grabbing and throwing your partner) can come without breaking it.
 

@@ -399,6 +399,11 @@ pub struct PartnerHud {
     pub bag: Option<(Vec3, u16)>,
     /// their wing cap on: their head part's centre, which way they face, their size there
     pub wings: Option<(Vec3, glam::Quat, f32)>,
+    /// down for us to revive (revive.rs), the seconds they have left, and our revive on them (0-1:
+    /// within reach, how long D-pad down has been held)
+    pub revivable: bool,
+    pub down_left: Option<u8>,
+    pub revive: Option<f32>,
 }
 
 /// (Seamless Co-op takes up to four players)
@@ -416,6 +421,14 @@ pub fn set_kit(ready: Option<[f32; 4]>) {
         (Some(r), None) => Some((r, Instant::now())),
         (None, _) => None,
     };
+}
+
+/// Co-op, ours: down for the partner to revive (over our head, the seconds left); the partner too
+/// far off (m, leash.rs).
+static COOP: Mutex<(Option<(Vec3, u8)>, Option<f32>)> = Mutex::new((None, None));
+
+pub fn set_coop(down: Option<(Vec3, u8)>, far: Option<f32>) {
+    *COOP.lock().unwrap_or_else(|e| e.into_inner()) = (down, far);
 }
 
 pub fn set_partners(partners: Vec<PartnerHud>) {
@@ -1690,6 +1703,15 @@ impl ImguiRenderLoop for Overlay {
                 }
                 cx - x
             };
+            // three stars circling over a head (dazed, down: revive.rs) at screen point x, y
+            let dizzy = |x: f32, y: f32, k: f32| {
+                for i in 0..3 {
+                    let a = clock * 3.5 + i as f32 * std::f32::consts::TAU / 3.0;
+                    let (sx, sy) = (x + a.cos() * k * 1.4, y - k * 0.8 + a.sin() * k * 0.45);
+                    let front = 0.7 + 0.3 * a.sin();
+                    img(IMG_STAR, sx - k * 0.5, sy - k * 0.5, k, k, [1.0, 1.0, 1.0, front]);
+                }
+            };
             // their wing cap's wings (their model is the plain one: the wings are drawn over it), in
             // 3D: three white feathers a side, out of the cap's sides, sweeping back, beating softly
             for (head, face, k) in partners.iter().flatten().filter_map(|p| p.wings) {
@@ -1778,6 +1800,35 @@ impl ImguiRenderLoop for Overlay {
                 }
                 let Some(at) = p.head else { continue };
                 let on_screen = project(at, size).filter(|(c, _)| c[0] >= 0.0 && c[0] <= size[0] && c[1] >= 0.0 && c[1] <= size[1]);
+                // down for us to revive: stars circling over their head and their seconds left;
+                // within reach the D-pad down prompt and a ring filling as it's held
+                if let Some(([hx, hy], _)) = on_screen.filter(|(_, z)| p.revivable && *z < 60.0) {
+                    dizzy(hx, hy, s * 0.55);
+                    if let Some(k) = p.revive {
+                        let (cx, cy) = (hx, hy - s * 1.7);
+                        let r = s * 0.75;
+                        dl.add_circle([cx, cy], r, imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45)).filled(true).build();
+                        if k > 0.0 {
+                            let steps = (k * 32.0).ceil() as usize;
+                            let arc: Vec<[f32; 2]> = (0..=steps)
+                                .map(|i| {
+                                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * k * i as f32 / steps as f32;
+                                    [cx + a.cos() * r, cy + a.sin() * r]
+                                })
+                                .collect();
+                            dl.add_polyline(arc, imgui::ImColor32::from_rgba_f32s(0.45, 1.0, 0.5, 1.0)).thickness(px * 3.0).build();
+                        }
+                        let a = s * 0.8;
+                        img(IMG_ARROW_DOWN, cx - a * 0.5, cy - a * 0.5, a, a, [1.0, 1.0, 1.0, pulse.max(0.85)]);
+                        let g = 9.0 * px;
+                        print("RESCUE", cx - 6.0 * g * 0.4, cy + r + g * 0.9, g, [0.45, 1.0, 0.5, 1.0]);
+                    } else if let Some(left) = p.down_left {
+                        let mut buf = [0u8; 5];
+                        let t = digits_of(left as u16, &mut buf);
+                        let g = 10.0 * px;
+                        print(t, hx - t.len() as f32 * g * 0.4, hy - s * 1.4, g, [1.0, 1.0, 1.0, 0.9]);
+                    }
+                }
                 // in danger and in sight: their pie over their head
                 if let (Some(([hx, hy], z)), true) = (on_screen, p.danger) {
                     if z < 60.0 && p.wedges > 0 {
@@ -1806,7 +1857,9 @@ impl ImguiRenderLoop for Overlay {
                     let tip = [edge[0] + ax * k * 0.7, edge[1] + ay * k * 0.7];
                     let l = [edge[0] - ay * k * 0.45, edge[1] + ax * k * 0.45];
                     let rr = [edge[0] + ay * k * 0.45, edge[1] - ax * k * 0.45];
-                    let (fill, alpha) = if p.down {
+                    let (fill, alpha) = if p.revivable {
+                        ([0.45, 1.0, 0.5], 0.95 * pulse)
+                    } else if p.down {
                         ([0.55, 0.55, 0.55], 0.7)
                     } else if p.danger {
                         ([1.0, 0.25, 0.2], 0.95 * pulse)
@@ -1821,6 +1874,33 @@ impl ImguiRenderLoop for Overlay {
                     let n = metres.len() as f32;
                     print(metres, edge[0] - ax * k * 0.9 - n * g * 0.4, edge[1] - ay * k * 0.9, g, [1.0, 1.0, 1.0, 1.0]);
                 }
+            }
+            // ours: down for the partner to revive (stars over our head, HELP and the seconds left
+            // up top); the partner too far off (TOO FAR and the distance, pulsing)
+            let (own_down, far) = *COOP.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((head, left)) = own_down {
+                let s = 16.0 * px;
+                if let Some(([hx, hy], _)) = project(head, size) {
+                    dizzy(hx, hy, s * 0.55);
+                }
+                let g = 16.0 * px;
+                let mut buf = [0u8; 5];
+                let t = digits_of(left as u16, &mut buf);
+                let w = (5.0 + t.len() as f32) * g * 0.8;
+                let (x, y) = (size[0] * 0.5 - w * 0.5, size[1] * 0.2);
+                let pulse = 0.75 + 0.25 * (clock * if left <= 5 { 8.0 } else { 3.0 }).sin();
+                let x = x + print("HELP", x, y, g, [1.0, 0.85, 0.3, pulse]) + g * 0.8;
+                print(t, x, y, g, if left <= 5 { [1.0, 0.35, 0.3, 1.0] } else { [1.0, 1.0, 1.0, 1.0] });
+            }
+            if let Some(d) = far.filter(|_| own_down.is_none()) {
+                let g = 11.0 * px;
+                let mut buf = [0u8; 6];
+                let metres = metres_of(d.round().min(999.0) as u16, &mut buf);
+                let w = (8.0 + metres.len() as f32) * g * 0.8;
+                let (x, y) = (size[0] * 0.5 - w * 0.5, size[1] * 0.16);
+                let pulse = 0.6 + 0.4 * (clock * 5.0).sin();
+                let x = x + print("TOO FAR", x, y, g, [1.0, 0.85, 0.3, pulse]) + g * 0.8;
+                print(metres, x, y, g, [1.0, 1.0, 1.0, 0.85]);
             }
             // the BROS! streak (blows by both on one enemy), under the style meter while it lasts
             if let Some((n, age)) = crate::coop::bros_streak() {

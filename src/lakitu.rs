@@ -204,6 +204,9 @@ struct Cam {
     /// how far it backs off for a group of enemies (m, eased), and to fit the fight in
     crowd: f32,
     fit: f32,
+    /// co-op: how far it backs off to fit the partner in (m, eased), and the view's lean to them
+    mate: f32,
+    mate_frame: Vec3,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -232,6 +235,28 @@ static CROWD: Mutex<Vec<Vec3>> = Mutex::new(Vec::new());
 pub fn set_crowd(chests: Vec<Vec3>) {
     *CROWD.lock().unwrap_or_else(|e| e.into_inner()) = chests;
 }
+
+/// The co-op partner nearest Mario (their chest), set every frame (lib.rs): close by, the view
+/// leans their way and backs off a little, so the two share the screen (it never turns for them:
+/// the player keeps the camera).
+static MATE: Mutex<Option<Vec3>> = Mutex::new(None);
+
+pub fn set_mate(chest: Option<Vec3>) {
+    *MATE.lock().unwrap_or_else(|e| e.into_inner()) = chest;
+}
+
+/// the partner's framing: from MATE_NEAR m it comes in (over MATE_EASE m), it's gone by MATE_FAR
+/// (fading over MATE_EASE m before); the view leans this share of the way to them (at most
+/// MATE_FRAME_MAX m) and backs off this much per metre past MATE_NEAR (at most MATE_BACK_MAX); in
+/// a fight it's this share of that (the fight's framing comes first)
+const MATE_NEAR: f32 = 2.5;
+const MATE_FAR: f32 = 18.0;
+const MATE_EASE: f32 = 3.0;
+const MATE_LEAN: f32 = 0.3;
+const MATE_FRAME_MAX: f32 = 3.5;
+const MATE_BACK_PER_M: f32 = 0.3;
+const MATE_BACK_MAX: f32 = 3.5;
+const MATE_IN_FIGHT: f32 = 0.4;
 
 /// When Mario last threw a blow (set by the combat code): the fight's camera turns to the enemy
 /// only while he fights, not as he runs away from it.
@@ -339,6 +364,8 @@ pub fn update(
             run_dir: Vec3::ZERO,
             crowd: 0.0,
             fit: 0.0,
+            mate: 0.0,
+            mate_frame: Vec3::ZERO,
         }
     });
 
@@ -668,6 +695,19 @@ pub fn update(
         v.clamp_length_max(FIGHT_FRAME_MAX)
     });
     cam.fight_frame += (want_fight - cam.fight_frame) * rate(2.0);
+    // co-op: the partner close by shares the screen (a lean their way, a little farther back)
+    let (want_mate, want_mate_frame) = MATE.lock().unwrap_or_else(|e| e.into_inner()).map_or((0.0, Vec3::ZERO), |c| {
+        let d = (c - mario).with_y(0.0).length();
+        let w = ((d - MATE_NEAR) / MATE_EASE).clamp(0.0, 1.0) * ((MATE_FAR - d) / MATE_EASE).clamp(0.0, 1.0);
+        let w = w * if fighting_now { MATE_IN_FIGHT } else { 1.0 };
+        let back = ((d - MATE_NEAR) * MATE_BACK_PER_M).clamp(0.0, MATE_BACK_MAX) * FIT_ZOOM[cam.zoom] * ks * w;
+        let to = c - head;
+        (back, Vec3::new(to.x, to.y * 0.5, to.z) * MATE_LEAN * w)
+    });
+    let want_mate_frame = want_mate_frame.clamp_length_max(MATE_FRAME_MAX);
+    cam.mate += (want_mate - cam.mate) * if want_mate > cam.mate { rate(1.2) } else { rate(0.5) };
+    cam.mate_frame += (want_mate_frame - cam.mate_frame) * rate(1.5);
+    let (dist, height) = (dist + cam.mate * (1.0 - 0.5 * enc), height + cam.mate * 0.3 * (1.0 - 0.5 * enc));
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
     // uphill ahead (in the view direction): look up the slope, the camera a bit lower
     // (the ground ahead, measured from a point in the open near head height: from high up it
@@ -787,8 +827,8 @@ pub fn update(
     cam.pos = pos;
 
     // (the big body's framing wins over the fight's: both lean the view, the bigger counts)
-    let (a, b) = (cam.frame.length(), cam.fight_frame.length());
-    let frame = if a + b > 1e-4 { (cam.frame * a + cam.fight_frame * b) / (a + b) } else { Vec3::ZERO };
+    let (a, b, c) = (cam.frame.length(), cam.fight_frame.length(), cam.mate_frame.length());
+    let frame = if a + b + c > 1e-4 { (cam.frame * a + cam.fight_frame * b + cam.mate_frame * c) / (a + b + c) } else { Vec3::ZERO };
     let fwd = (cam.focus + frame + cam.lead + Vec3::Y * cam.look_up - cam.pos).normalize_or(Vec3::Z);
     write(render, fwd, cam.pos);
 }

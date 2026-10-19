@@ -372,6 +372,7 @@ pub unsafe fn install_anim_hook() {
 
 /// Our pose was overwritten (the head bone isn't where we put it): write it again.
 fn reassert() {
+    reassert_remote();
     if !crate::ENABLED.load(std::sync::atomic::Ordering::Relaxed) || POSE.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
         return;
     }
@@ -427,6 +428,46 @@ pub fn apply(chr: usize) {
     }
 }
 
+/// Each co-op partner's last written pose: their character, its layout and bone map, where the
+/// head bone was put, the pose, when. The animation job hook puts it back when the game's own
+/// animation of their Tarnished overwrote it (their model flickered into the Tarnished's shape,
+/// their shadow too), as it does the player's; a pose not renewed for REMOTE_KEEP is let go.
+type RemoteLast = (usize, PoseLayout, [usize; PARTS], [f32; 3], [PartPose; PARTS], std::time::Instant);
+static REMOTE_LAST: Mutex<Vec<RemoteLast>> = Mutex::new(Vec::new());
+const REMOTE_KEEP: f32 = 0.25;
+
+/// The animation workers, after each character's animation: each partner's pose back where the
+/// game's animation overwrote it.
+fn reassert_remote() {
+    // (never wait here: the pose task may be writing the list)
+    let Ok(list) = REMOTE_LAST.try_lock() else { return };
+    if list.is_empty() {
+        return;
+    }
+    use fromsoftware_shared::FromStatic;
+    let Ok(wcm) = (unsafe { eldenring::cs::WorldChrMan::instance() }) else { return };
+    let raw = |a: usize| unsafe { *(a as *const usize) };
+    for (chr, l, bones, want, pose, at) in list.iter() {
+        let b = bones[HEAD];
+        if at.elapsed().as_secs_f32() > REMOTE_KEEP || b >= l.count {
+            continue;
+        }
+        // (only a character still there, with the same pose buffers)
+        if !wcm.player_chr_set.characters().any(|p| &p.chr_ins as *const _ as usize == *chr) || raw(chr + 0x398) != l.imp || raw(l.imp + 0x60) != l.model {
+            continue;
+        }
+        let now = unsafe { *((l.model + b * 0x30) as *const [f32; 3]) };
+        if Vec3::from(now).distance(Vec3::from(*want)) > 1e-4 {
+            write_pose(l, bones, pose, false, false);
+        }
+    }
+}
+
+/// Partners' poses no more (out of a session, out of Mario mode).
+pub fn clear_remote() {
+    REMOTE_LAST.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
 /// A co-op partner's layouts and bone maps (coop.rs), apart from the player's.
 static REMOTE_LAYOUTS: Mutex<Vec<(usize, Option<(usize, PoseLayout)>)>> = Mutex::new(Vec::new());
 static REMOTE_BONES: Mutex<Vec<(usize, Option<[usize; PARTS]>)>> = Mutex::new(Vec::new());
@@ -459,7 +500,19 @@ pub fn apply_remote(chr: usize, pose: &[PartPose; PARTS]) {
         }
     };
     if let Some(bones) = bones {
-        write_pose(&layout, &bones, pose, false, false);
+        if let Some(head) = write_pose(&layout, &bones, pose, false, false) {
+            let mut last = REMOTE_LAST.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = (chr, layout, bones, head, *pose, std::time::Instant::now());
+            match last.iter_mut().find(|e| e.0 == chr) {
+                Some(e) => *e = entry,
+                None => {
+                    if last.len() >= 4 {
+                        last.remove(0);
+                    }
+                    last.push(entry);
+                }
+            }
+        }
     }
 }
 

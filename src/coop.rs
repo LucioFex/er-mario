@@ -23,12 +23,15 @@ const MAGIC: [u8; 3] = *b"ERM";
 /// (2: the pose carries the player's health and character, for the partner's HUD; 3: the trap kit's
 /// parts; 4: the status, for the partner's HUD and the BROS!; 5: the pose's parts in 2 mm steps (out
 /// to 65 m: a boomerang far off), its clock and place always, a place in a dungeon too, and the
-/// effects around the player after it)
+/// effects around the player after it; 6: the effects in a packet of their own (with them in the
+/// pose a fight's poses outgrew one network packet and were lost whole: the partner froze mid
+/// combo), the status's REVIVABLE, BOSS and BUSY flags and how long a downed player has left, the
+/// revive)
 /// From 4 on, a kind of packet a build doesn't know is skipped, and one longer than it expects is
 /// read as far as it knows: a later build of the same version can add kinds (grabbing and throwing
 /// the partner: the status's CARRYING and CARRIED are kept for it) or fields at the end without
 /// breaking an older one's co-op.
-const VERSION: u8 = 5;
+const VERSION: u8 = 6;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
@@ -39,6 +42,12 @@ const KIND_HELLO: u8 = 4;
 const KIND_STATUS: u8 = 5;
 /// the sounds Mario's body made (his voice, steps, blows), for the partner to hear
 const KIND_SOUNDS: u8 = 6;
+/// the effects around the player (fx.rs), on their own: seq u16, the sender's clock (ms) u32, the
+/// effects around their Tarnished; at most FX_BUDGET bytes, FX_EVERY apart
+const KIND_FX: u8 = 7;
+/// "you're back on your feet": the reviver sends it to the downed partner (revive.rs), their Steam
+/// id u64
+const KIND_REVIVE: u8 = 8;
 /// at most this many sounds in one packet
 const SOUNDS_MAX: usize = 32;
 const HEADER: usize = 5;
@@ -50,14 +59,25 @@ const POS_STEP: f32 = 0.002;
 const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
 const PARTS_AT: usize = HEADER + 7;
 /// after the parts: the sender's clock (ms), the place's kind (u8: 0 none, 1 map chunk, 2 in its
-/// block), its block i32, its position f32 x3, yaw f32; then the effects around them (fx.rs)
+/// block), its block i32, its position f32 x3, yaw f32
 const POSE_EXT_BYTES: usize = 4 + 1 + 4 + 12 + 4;
 const HIT_BYTES: usize = HEADER + 8 + 4 + 12 + 1 + 4;
 const SHOVE_BYTES: usize = HEADER + 8;
 /// seq u16, health u16, character u8, coins u16, power u8, weapon u8, rank u8 (0xFF none), hits
 /// u16, flags u8, last enemy hit: handle key u64 and ms ago u16 (0xFFFF none), the coin bag: coins
-/// u16 (0 none), its origin block i32, its chunk position f32 x3
-const STATUS_BYTES: usize = HEADER + 2 + 2 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 12;
+/// u16 (0 none), its origin block i32, its chunk position f32 x3, then the seconds a downed player has
+/// left to be revived u8 (0xFF not down)
+const STATUS_BYTES: usize = HEADER + 2 + 2 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 12 + 1;
+const FX_HEAD: usize = HEADER + 2 + 4;
+const REVIVE_BYTES: usize = HEADER + 8;
+/// the effects go out this often, in at most this many bytes (a pose and its effects each fit in
+/// one network packet, ~1200 B: a bigger message goes out in pieces and is lost whole if one is),
+/// and the partner's are let go this long after their time (s: they stopped)
+const FX_EVERY: Duration = Duration::from_millis(50);
+const FX_BUDGET: usize = 1000;
+const FX_STALE: f64 = 0.3;
+/// what went out and came in is logged this often in a session (packets, sizes, lost poses)
+const STATS_EVERY: Duration = Duration::from_secs(20);
 
 /// how often the pose goes out (a frame early is close enough: at 60 fps every second frame, not
 /// now two and now three)
@@ -73,10 +93,14 @@ const EXTRAPOLATE: f64 = 0.1;
 /// little), and a jump this big (s) means they restarted
 const OFFSET_DRIFT: f64 = 0.002;
 const OFFSET_RESET: f64 = 2.0;
-/// poses kept
+/// poses kept, effects kept
 const SAMPLES: usize = 12;
-/// their own place is trusted within this far (m) of where the game has their Tarnished
+const FX_SAMPLES: usize = 6;
+/// their own place is trusted within this far (m) of where the game has their Tarnished: in a
+/// dungeon (block positions), in the open world (map chunk coordinates, the same on both games:
+/// only a sanity bound, the game's copy of them can lag far behind, at a join it stood on the host)
 const PLACE_TRUST: f32 = 40.0;
+const PLACE_TRUST_OPEN: f32 = 400.0;
 /// their sounds: at most this loud next to us (ours are 1: theirs never drown ours out), fading
 /// with the distance at this rate (per m past PARTNER_NEAR), none past PARTNER_FAR (m)
 const PARTNER_LOUD: f32 = 0.55;
@@ -113,6 +137,12 @@ pub const DOWN: u8 = 4;
 pub const CARRYING: u8 = 8;
 #[allow(dead_code)]
 pub const CARRIED: u8 = 16;
+/// down but not out: waiting for the partner to revive them (revive.rs)
+pub const REVIVABLE: u8 = 32;
+/// in a boss fight (its health bar up)
+pub const BOSS: u8 = 64;
+/// the game moves them (Torrent, a door, a ladder, a cutscene, a menu): the leash leaves them be
+pub const BUSY: u8 = 128;
 
 /// Status powers: what the player is using
 pub const POWER_NONE: u8 = 0;
@@ -141,6 +171,8 @@ pub struct Status {
     pub hit: Option<(u64, u16)>,
     /// their coin bag: its coins, its map origin block, its chunk position
     pub bag: Option<(u16, i32, [f32; 3])>,
+    /// down and waiting to be revived: the seconds left
+    pub down_left: Option<u8>,
 }
 
 /// Where a player's Tarnished is and faces (the pose's parts are around it), in map chunk
@@ -168,9 +200,12 @@ impl Place {
 }
 
 pub enum Packet {
-    /// `ms`: the sender's clock; `place`: where its parts are; `fx`: the effects around them
-    /// (encoded from the effects around `here`, their Tarnished; read: around it)
-    Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]>, ms: Option<u32>, place: Option<Place>, fx: Option<std::sync::Arc<crate::fx::WorldFx>> },
+    /// `ms`: the sender's clock; `place`: where its parts are
+    Pose { seq: u32, health: u16, luigi: bool, parts: Box<[PartPose; PARTS]>, ms: Option<u32>, place: Option<Place> },
+    /// the effects around them (positions around their Tarnished), at their clock's `ms`
+    Fx { seq: u16, ms: u32, fx: std::sync::Arc<crate::fx::WorldFx> },
+    /// the player with this Steam id is revived
+    Revive { target: u64 },
     Sounds(Vec<u32>),
     Hit(Hit),
     Shove { dir: [f32; 2] },
@@ -196,8 +231,8 @@ fn u16k(v: f32) -> [u8; 2] {
 
 pub fn encode(p: &Packet) -> Vec<u8> {
     match p {
-        Packet::Pose { seq, health, luigi, parts, ms, place, fx } => {
-            let mut out = header(KIND_POSE, POSE_BYTES + POSE_EXT_BYTES + 256);
+        Packet::Pose { seq, health, luigi, parts, ms, place } => {
+            let mut out = header(KIND_POSE, POSE_BYTES + POSE_EXT_BYTES);
             out.extend_from_slice(&seq.to_le_bytes());
             out.extend_from_slice(&health.to_le_bytes());
             out.push(*luigi as u8);
@@ -224,10 +259,19 @@ pub fn encode(p: &Packet) -> Vec<u8> {
             for v in [p.chunk.x, p.chunk.y, p.chunk.z, p.yaw] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
-            // (the effects are written by frame(), around our Tarnished: see encode_pose)
-            if let Some(fx) = fx {
-                fx.encode(Vec3::ZERO, &mut out);
-            }
+            out
+        }
+        Packet::Fx { seq, ms, fx } => {
+            let mut out = header(KIND_FX, FX_HEAD + 64);
+            out.extend_from_slice(&seq.to_le_bytes());
+            out.extend_from_slice(&ms.to_le_bytes());
+            // (already around the Tarnished: ours go out through encode_fx, cut to the budget)
+            fx.encode(Vec3::ZERO, &mut out);
+            out
+        }
+        Packet::Revive { target } => {
+            let mut out = header(KIND_REVIVE, REVIVE_BYTES);
+            out.extend_from_slice(&target.to_le_bytes());
             out
         }
         Packet::Sounds(ids) => {
@@ -277,6 +321,7 @@ pub fn encode(p: &Packet) -> Vec<u8> {
             for v in chunk {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            out.push(s.down_left.map_or(0xFF, |s| s.min(0xFE)));
             out
         }
     }
@@ -304,8 +349,8 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 p.scale = u16at(o + 14);
                 p.stretch = Vec3::new(u16at(o + 16), u16at(o + 18), u16at(o + 20));
             }
-            // the clock and the place, then the effects
-            let (ms, place, fx) = if b.len() >= POSE_BYTES + POSE_EXT_BYTES {
+            // the clock and the place
+            let (ms, place) = if b.len() >= POSE_BYTES + POSE_EXT_BYTES {
                 let o = POSE_BYTES;
                 let ms = u32::from_le_bytes(b[o..o + 4].try_into().ok()?);
                 let chunk = Vec3::new(f32at(o + 9), f32at(o + 13), f32at(o + 17));
@@ -313,13 +358,17 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 let kind = b[o + 4];
                 let ok = matches!(kind, 1 | 2) && chunk.is_finite() && yaw.is_finite();
                 let place = ok.then(|| Place { origin: i32::from_le_bytes([b[o + 5], b[o + 6], b[o + 7], b[o + 8]]), chunk, yaw, local: kind == 2 });
-                let fx = crate::fx::WorldFx::decode(&b[o + POSE_EXT_BYTES..]).filter(|f| !f.is_empty()).map(std::sync::Arc::new);
-                (Some(ms), place, fx)
+                (Some(ms), place)
             } else {
-                (None, None, None)
+                (None, None)
             };
-            Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts), ms, place, fx })
+            Some(Packet::Pose { seq, health, luigi, parts: Box::new(parts), ms, place })
         }
+        KIND_FX if b.len() >= FX_HEAD => {
+            let fx = crate::fx::WorldFx::decode(&b[FX_HEAD..])?;
+            Some(Packet::Fx { seq: u16::from_le_bytes([b[5], b[6]]), ms: u32::from_le_bytes(b[7..11].try_into().ok()?), fx: std::sync::Arc::new(fx) })
+        }
+        KIND_REVIVE if b.len() >= REVIVE_BYTES => Some(Packet::Revive { target: u64::from_le_bytes(b[5..13].try_into().ok()?) }),
         KIND_SOUNDS if b.len() > HEADER => {
             let n = (b[HEADER] as usize).min(SOUNDS_MAX);
             (b.len() >= HEADER + 1 + n * 4).then(|| Packet::Sounds((0..n).map(|k| u32::from_le_bytes([b[HEADER + 1 + k * 4], b[HEADER + 2 + k * 4], b[HEADER + 3 + k * 4], b[HEADER + 4 + k * 4]])).collect()))
@@ -360,6 +409,7 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 flags: b[17],
                 hit: (ago != u16::MAX).then_some((key, ago)),
                 bag: (bag_coins > 0 && chunk.iter().all(|v| v.is_finite())).then_some((bag_coins, i32::from_le_bytes(b[30..34].try_into().ok()?), chunk)),
+                down_left: (b[46] != 0xFF).then_some(b[46]),
             };
             Some(Packet::Status { seq: u16at(5), status })
         }
@@ -373,7 +423,6 @@ struct Sample {
     t: f64,
     parts: [PartPose; PARTS],
     place: Option<Place>,
-    fx: Option<std::sync::Arc<crate::fx::WorldFx>>,
 }
 
 /// A partner's poses as they come in, shown a little back in time between the two around it
@@ -389,6 +438,9 @@ struct Remote {
     /// our clock minus theirs (s: the smallest seen, the quickest trip), how much the trips vary (s)
     offset: Option<f64>,
     jitter: f64,
+    /// their effects as they come in (their clock's time, the effects), the last one's seq
+    fx: std::collections::VecDeque<(f64, std::sync::Arc<crate::fx::WorldFx>)>,
+    fx_seq: Option<u16>,
 }
 
 /// Our clock (s, since the mod started).
@@ -403,11 +455,11 @@ fn clock_ms() -> u32 {
 
 impl Remote {
     fn new(steam: u64, seq: u32, health: u16, luigi: bool) -> Self {
-        Remote { steam, samples: std::collections::VecDeque::with_capacity(SAMPLES + 1), seq, at: Instant::now(), health, luigi, offset: None, jitter: 0.01 }
+        Remote { steam, samples: std::collections::VecDeque::with_capacity(SAMPLES + 1), seq, at: Instant::now(), health, luigi, offset: None, jitter: 0.01, fx: std::collections::VecDeque::with_capacity(FX_SAMPLES + 1), fx_seq: None }
     }
 
     /// A pose came in: `t` their clock's time for it (s; None, an older build's: when it came).
-    fn add(&mut self, t: Option<f64>, parts: [PartPose; PARTS], place: Option<Place>, fx: Option<std::sync::Arc<crate::fx::WorldFx>>) {
+    fn add(&mut self, t: Option<f64>, parts: [PartPose; PARTS], place: Option<Place>) {
         let local = clock();
         let t = t.unwrap_or(local);
         let d = local - t;
@@ -421,10 +473,11 @@ impl Remote {
             _ => {
                 self.offset = Some(d);
                 self.samples.clear();
+                self.fx.clear();
             }
         }
         let at = self.samples.iter().position(|s| s.t > t).unwrap_or(self.samples.len());
-        self.samples.insert(at, Sample { t, parts, place, fx });
+        self.samples.insert(at, Sample { t, parts, place });
         while self.samples.len() > SAMPLES {
             self.samples.pop_front();
         }
@@ -446,10 +499,21 @@ impl Remote {
         clock() - self.offset.unwrap_or(0.0) - self.delay()
     }
 
-    /// Their effects now: the last pose's at or before then (effects aren't blended).
+    /// Their effects came in (`t` their clock's time for them, s).
+    fn add_fx(&mut self, t: f64, fx: std::sync::Arc<crate::fx::WorldFx>) {
+        let at = self.fx.iter().position(|s| s.0 > t).unwrap_or(self.fx.len());
+        self.fx.insert(at, (t, fx));
+        while self.fx.len() > FX_SAMPLES {
+            self.fx.pop_front();
+        }
+    }
+
+    /// Their effects now: the last ones at or before then (effects aren't blended), none if those
+    /// are old (they stopped sending: nothing going on).
     fn fx(&self) -> Option<std::sync::Arc<crate::fx::WorldFx>> {
         let t = self.target();
-        self.samples.iter().rev().find(|s| s.t <= t).or(self.samples.front()).and_then(|s| s.fx.clone())
+        let s = self.fx.iter().rev().find(|s| s.0 <= t).or(self.fx.front())?;
+        (t - s.0 < FX_STALE && !s.1.is_empty()).then(|| s.1.clone())
     }
 }
 
@@ -487,8 +551,9 @@ fn sample_at(s: &std::collections::VecDeque<Sample>, t: f64) -> ([PartPose; PART
 /// Their pose put where they really are (their own place, smoothed), not where the game shows
 /// their Tarnished (its own updates come slower and jerkier, and Mario moves faster than it):
 /// the parts turned and moved from that Tarnished's place to theirs. Also where their feet are
-/// shown (Elden Ring), and which way they face.
-fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<Place>) -> ([PartPose; PARTS], Vec3, Quat) {
+/// shown (Elden Ring), which way they face, and whether that's their own place (not the game's copy
+/// of them, which can lag far behind).
+fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<Place>) -> ([PartPose; PARTS], Vec3, Quat, bool) {
     let c = &chr.chr_ins;
     let ph = &c.modules.physics;
     let here = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
@@ -496,71 +561,116 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     let rot = Quat::from_xyzw(o.0, o.1, o.2, o.3).normalize();
     // (no orientation yet, a character still loading: as the game has it)
     if !rot.is_finite() || !here.is_finite() {
-        return (*parts, here, Quat::IDENTITY);
+        return (*parts, here, Quat::IDENTITY, false);
     }
     // their place in our physics position: in the open world by its chunk position (through their
-    // Tarnished's own on our game, else ours); in a dungeon or a building, the same block's
-    // physics position as is
-    let at = place.and_then(|pl| {
+    // Tarnished's own on our game, else ours: map chunk coordinates are the same on both games, so
+    // it's trusted however far the game's copy of them lags); in a dungeon or a building, the same
+    // block's physics position as is (trusted within PLACE_TRUST)
+    let raw = place.and_then(|pl| {
         let at = if pl.local {
             (i32::from(c.block_id) == pl.origin).then_some(pl.chunk)
         } else {
             let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
             if i32::from(c.block_origin) == pl.origin && ck.length_squared() > 1e-6 { Some(pl.chunk - (ck - here)) } else { crate::coins::place(pl.origin, pl.chunk) }
         };
-        at.filter(|a| a.is_finite() && a.distance(here) < PLACE_TRUST).map(|a| (a - here, Quat::from_rotation_y(pl.yaw)))
+        at.filter(|a| a.is_finite()).map(|a| (a, pl))
     });
-    // (between their own place and where the game has them, a moment's blend: no jump)
-    let (shift, face) = {
+    let at = raw.filter(|(a, pl)| a.distance(here) < if pl.local { PLACE_TRUST } else { PLACE_TRUST_OPEN }).map(|(a, pl)| (a - here, Quat::from_rotation_y(pl.yaw)));
+    // (between their own place and where the game has them, a moment's blend: no jump; a moment
+    // without their own place, a pose that came without it, holds where they were)
+    let (shift, face, own) = {
         let mut all = HANDOVER.lock().unwrap_or_else(|e| e.into_inner());
-        let goal = at.unwrap_or((Vec3::ZERO, rot));
         let i = match all.iter().position(|h| h.steam == steam) {
             Some(i) => i,
             None => {
-                all.push(Handover { steam, own: at.is_some(), from: goal, last: goal, since: None });
+                let goal = at.unwrap_or((Vec3::ZERO, rot));
+                all.push(Handover { steam, own: at.is_some(), from: goal, last: goal, since: None, lost: None, logged: false });
                 all.len() - 1
             }
         };
         let h = &mut all[i];
-        if h.own != at.is_some() {
-            h.own = at.is_some();
-            h.from = h.last;
-            h.since = Some(Instant::now());
+        let lost = at.is_none() && h.own;
+        if !lost {
+            h.lost = None;
         }
-        let u = h.since.map_or(1.0, |t| (t.elapsed().as_secs_f32() / HANDOVER_TIME).min(1.0));
-        let u = u * u * (3.0 - 2.0 * u);
-        let now = (h.from.0.lerp(goal.0, u), h.from.1.slerp(goal.1, u).normalize());
-        h.last = now;
-        now
+        let held = lost && h.lost.get_or_insert_with(Instant::now).elapsed().as_secs_f32() < PLACE_HOLD;
+        if held {
+            (h.last.0, h.last.1, true)
+        } else {
+            if h.own != at.is_some() || !h.logged {
+                let off = raw.map(|(a, _)| a.distance(here));
+                log(format!(
+                    "coop: partner {steam:x} shown {} (their own place {}, their character here {:.1} m from us)",
+                    if at.is_some() { "at their own place" } else { "where the game has them" },
+                    match (place, off) {
+                        (None, _) => "not sent".to_string(),
+                        (Some(_), None) => "not on this map".to_string(),
+                        (Some(pl), Some(d)) => format!("{d:.1} m from their character{}", if pl.local { ", in a dungeon" } else { "" }),
+                    },
+                    own_feet().map_or(f32::NAN, |me| me.distance(here)),
+                ));
+                h.logged = true;
+            }
+            let goal = at.unwrap_or((Vec3::ZERO, rot));
+            if h.own != at.is_some() {
+                h.own = at.is_some();
+                h.from = h.last;
+                h.since = Some(Instant::now());
+                h.lost = None;
+            }
+            let u = h.since.map_or(1.0, |t| (t.elapsed().as_secs_f32() / HANDOVER_TIME).min(1.0));
+            let u = u * u * (3.0 - 2.0 * u);
+            let now = (h.from.0.lerp(goal.0, u), h.from.1.slerp(goal.1, u).normalize());
+            h.last = now;
+            (now.0, now.1, h.own && u >= 1.0)
+        }
     };
     let turn = (rot.inverse() * face).normalize();
     let moved = rot.inverse() * shift;
-    (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + moved, ..p }), here + shift, face)
+    (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + moved, ..p }), here + shift, face, own)
+}
+
+/// Our Tarnished's feet (Elden Ring).
+fn own_feet() -> Option<Vec3> {
+    let p = unsafe { WorldChrMan::instance() }.ok()?.main_player.as_ref()?.chr_ins.modules.physics.position;
+    Some(Vec3::new(p.0, p.1, p.2)).filter(|v| v.is_finite())
 }
 
 /// Each partner shown at their own place or where the game has them, and the blend between the
 /// two when that changes (a far zip, into a dungeon): where they're shown (the shift from the
-/// game's place, the facing) as last worked out, the blend's start.
+/// game's place, the facing) as last worked out, the blend's start, since when their own place is
+/// missing, whether where they're shown was logged.
 struct Handover {
     steam: u64,
     own: bool,
     from: (Vec3, Quat),
     last: (Vec3, Quat),
     since: Option<Instant>,
+    lost: Option<Instant>,
+    logged: bool,
 }
 
 static HANDOVER: Mutex<Vec<Handover>> = Mutex::new(Vec::new());
-/// the blend's length (s)
+/// the blend's length (s), and how long a missing place holds where they were (s)
 const HANDOVER_TIME: f32 = 0.35;
+const PLACE_HOLD: f32 = 0.5;
 
-/// Our pose for the partner: the parts, our place, and our effects around our Tarnished.
+/// Our pose for the partner: the parts and our place.
 fn encode_pose(seq: u32, parts: [PartPose; PARTS]) -> Vec<u8> {
-    let mut out = encode(&Packet::Pose { seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts), ms: Some(clock_ms()), place: own_place(), fx: None });
-    let here = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.main_player.as_ref().map(|p| p.chr_ins.modules.physics.position)).map(|p| Vec3::new(p.0, p.1, p.2));
-    if let Some(here) = here.filter(|h| h.is_finite()) {
-        crate::fx::WorldFx::local().encode(here, &mut out);
-    }
-    out
+    encode(&Packet::Pose { seq, health: own_health(), luigi: crate::equip::luigi(), parts: Box::new(parts), ms: Some(clock_ms()), place: own_place() })
+}
+
+/// Our effects for the partner, around our Tarnished, in at most FX_BUDGET bytes (the newest of
+/// each kind kept): None without a Tarnished. Also whether there were any.
+fn encode_fx(seq: u16) -> Option<(Vec<u8>, bool)> {
+    let here = own_feet()?;
+    let fx = crate::fx::WorldFx::local();
+    let mut out = header(KIND_FX, FX_HEAD + 256);
+    out.extend_from_slice(&seq.to_le_bytes());
+    out.extend_from_slice(&clock_ms().to_le_bytes());
+    fx.encode_fit(here, &mut out, FX_BUDGET - FX_HEAD);
+    Some((out, !fx.is_empty()))
 }
 
 /// Where our Tarnished is and faces (the pose's parts are around it), for the partner.
@@ -607,6 +717,57 @@ struct State {
     status_seq: u16,
     /// the partners' sounds come in, to play (who, which)
     sounds_in: Vec<(u64, u32)>,
+    /// our Steam id
+    me: u64,
+    /// our effects: last sent when, whether there were any, their seq
+    fx_sent: Option<Instant>,
+    fx_any: bool,
+    fx_seq: u16,
+    stats: Stats,
+}
+
+/// What went out and came in since `since`, by kind: packets and bytes sent (and the biggest), packets
+/// received; the poses and effects that never came (gaps in their seq).
+#[derive(Default)]
+struct Stats {
+    since: Option<Instant>,
+    sent: [(u32, u64, usize); 9],
+    got: [u32; 9],
+    lost_poses: u32,
+    lost_fx: u32,
+}
+
+impl Stats {
+    fn sent(&mut self, bytes: &[u8]) {
+        if let Some(e) = bytes.get(4).and_then(|&k| self.sent.get_mut(k as usize)) {
+            e.0 += 1;
+            e.1 += bytes.len() as u64;
+            e.2 = e.2.max(bytes.len());
+        }
+    }
+
+    fn got(&mut self, bytes: &[u8]) {
+        if let Some(e) = bytes.get(4).and_then(|&k| self.got.get_mut(k as usize)) {
+            *e += 1;
+        }
+    }
+
+    /// Logged every STATS_EVERY, then started over.
+    fn tick(&mut self) {
+        let since = *self.since.get_or_insert_with(Instant::now);
+        let secs = since.elapsed().as_secs_f32();
+        if secs < STATS_EVERY.as_secs_f32() {
+            return;
+        }
+        let name = |k: usize| ["?", "pose", "hit", "shove", "hello", "status", "sounds", "fx", "revive"][k];
+        let sent: Vec<String> = (1..9).filter(|&k| self.sent[k].0 > 0).map(|k| {
+            let (n, bytes, max) = self.sent[k];
+            format!("{} {n} (avg {} B, max {max})", name(k), bytes / n as u64)
+        }).collect();
+        let got: Vec<String> = (1..9).filter(|&k| self.got[k] > 0).map(|k| format!("{} {:.1}/s", name(k), self.got[k] as f32 / secs)).collect();
+        log(format!("net: last {secs:.0} s sent {}; got {}; lost poses {}, effects {}", sent.join(", "), got.join(", "), self.lost_poses, self.lost_fx));
+        *self = Stats { since: Some(Instant::now()), ..Stats::default() };
+    }
 }
 
 /// A partner's status, and what their HUD card makes of it.
@@ -664,7 +825,9 @@ fn loopback() {
         if !t.seen.contains(&kind) {
             t.seen.push(kind);
             let what = match decode(data) {
-                Some(Packet::Pose { seq, health, luigi, parts, ms, place, fx }) => format!("pose seq {seq}, health {health:#x}, luigi {luigi}, head at {:.2} m, clock {ms:?}, place {place:?}, effects {}", parts[3].pos.length(), fx.is_some()),
+                Some(Packet::Pose { seq, health, luigi, parts, ms, place }) => format!("pose seq {seq}, health {health:#x}, luigi {luigi}, head at {:.2} m, clock {ms:?}, place {place:?}", parts[3].pos.length()),
+                Some(Packet::Fx { seq, ms, fx }) => format!("effects seq {seq}, clock {ms}, any {}", !fx.is_empty()),
+                Some(Packet::Revive { target }) => format!("revive {target:x}"),
                 Some(Packet::Sounds(ids)) => format!("{} sounds", ids.len()),
                 Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
                 Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
@@ -691,6 +854,8 @@ fn loopback() {
     let packets = [
         (encode(&Packet::Hello), false),
         (encode_pose(t.sent + 1, pose), false),
+        (encode_fx(t.sent as u16).map_or_else(|| encode(&Packet::Fx { seq: 0, ms: 0, fx: Default::default() }), |f| f.0), false),
+        (encode(&Packet::Revive { target: me }), true),
         (encode(&Packet::Sounds(vec![0x2404_8081])), false),
         (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
         (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
@@ -795,6 +960,7 @@ fn refresh(s: &mut State) {
         s.host = host;
         s.host_id = host_id;
     }
+    s.me = me;
     // (who's who changes rarely: looked up with the session, checked for life where used)
     s.chrs = if s.peers.is_empty() { Vec::new() } else { partner_chrs(&s.peers, &mut s.unpaired) };
     ACTIVE.store(!s.peers.is_empty(), Ordering::Relaxed);
@@ -807,6 +973,7 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
         if !s.peers.contains(&from) {
             continue;
         }
+        s.stats.got(&data);
         let Some(p) = decode(&data) else {
             // (our version but a kind we don't know: a later build's, fine)
             if data.len() > 3 && data[..3] == MAGIC && data[3] != VERSION && !s.old_version {
@@ -816,7 +983,7 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             continue;
         };
         match p {
-            Packet::Pose { seq, health, luigi, parts, ms, place, fx } => {
+            Packet::Pose { seq, health, luigi, parts, ms, place } => {
                 let r = match s.remotes.iter().position(|r| r.steam == from) {
                     Some(i) => &mut s.remotes[i],
                     None => {
@@ -833,11 +1000,31 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
                 // (one seen already: dropped; an older one, out of order, still goes in its place)
                 if seq != r.seq && seq.wrapping_sub(r.seq).min(r.seq.wrapping_sub(seq)) < 1000 {
                     if seq.wrapping_sub(r.seq) < u32::MAX / 2 {
+                        // (the ones skipped: lost on the way, or still to come out of order)
+                        s.stats.lost_poses += seq.wrapping_sub(r.seq) - 1;
                         r.seq = seq;
                         r.health = health;
                         r.luigi = luigi;
                     }
-                    r.add(ms.map(|m| m as f64 / 1000.0), *parts, place, fx);
+                    r.add(ms.map(|m| m as f64 / 1000.0), *parts, place);
+                }
+            }
+            Packet::Fx { seq, ms, fx } => {
+                // (before their first pose: no clock to show them by yet)
+                let Some(r) = s.remotes.iter_mut().find(|r| r.steam == from) else { continue };
+                let newer = r.fx_seq.is_none_or(|last| seq != last && seq.wrapping_sub(last) < u16::MAX / 2);
+                if !newer {
+                    continue;
+                }
+                if let Some(last) = r.fx_seq {
+                    s.stats.lost_fx += u32::from(seq.wrapping_sub(last)).saturating_sub(1).min(100);
+                }
+                r.fx_seq = Some(seq);
+                r.add_fx(ms as f64 / 1000.0, fx);
+            }
+            Packet::Revive { target } => {
+                if target == s.me {
+                    crate::revive::revived(from);
                 }
             }
             Packet::Sounds(ids) => {
@@ -909,6 +1096,20 @@ pub fn frame() {
             s.seq = s.seq.wrapping_add(1);
             out.push(encode_pose(s.seq, parts));
         }
+        // our effects, on their own (only in Mario mode; while there are any, and once more when
+        // they're over)
+        if pose.is_some() && s.fx_sent.is_none_or(|t| t.elapsed() + POSE_SLACK >= FX_EVERY) {
+            let seq = s.fx_seq.wrapping_add(1);
+            // (looked at that often even when there's nothing: gathering them isn't free)
+            s.fx_sent = Some(Instant::now());
+            if let Some((bytes, any)) = encode_fx(seq) {
+                if any || s.fx_any {
+                    s.fx_seq = seq;
+                    out.push(bytes);
+                }
+                s.fx_any = any;
+            }
+        }
         if !sounds.is_empty() && pose.is_some() {
             out.push(encode(&Packet::Sounds(sounds)));
         }
@@ -931,6 +1132,10 @@ pub fn frame() {
             s.hello = Some(Instant::now());
             out.push(encode(&Packet::Hello));
         }
+        for bytes in &out {
+            s.stats.sent(bytes);
+        }
+        s.stats.tick();
         out
     };
     for bytes in out {
@@ -953,6 +1158,7 @@ pub fn apply_remote() {
     // Tarnished is left alone)
     if !crate::equip::partner_row_on() {
         unfade(&[]);
+        crate::engine_mario::clear_remote();
         return;
     }
     let poses: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool)> = {
@@ -1031,6 +1237,23 @@ pub fn set_power(power: u8) {
 
 pub fn set_fighting(fighting: bool) {
     FIGHTING_NOW.store(fighting, Ordering::Relaxed);
+}
+
+/// We're in a fight (for the leash: the one fighting stays put).
+pub fn fighting_now() -> bool {
+    FIGHTING_NOW.load(Ordering::Relaxed) || crate::style::show().is_some()
+}
+
+/// In a boss fight; the game moving the player (lib.rs, every frame): for the status (the leash)
+static BOSS_NOW: AtomicBool = AtomicBool::new(false);
+static BUSY_NOW: AtomicBool = AtomicBool::new(false);
+
+pub fn set_boss(boss: bool) {
+    BOSS_NOW.store(boss, Ordering::Relaxed);
+}
+
+pub fn set_busy(busy: bool) {
+    BUSY_NOW.store(busy, Ordering::Relaxed);
 }
 
 /// how often the status goes out, and at most how often when it changes
@@ -1176,6 +1399,16 @@ fn own_status() -> Status {
     if health >> 8 == 0 {
         flags |= DOWN;
     }
+    let down_left = crate::revive::left();
+    if down_left.is_some() {
+        flags |= REVIVABLE;
+    }
+    if BOSS_NOW.load(Ordering::Relaxed) {
+        flags |= BOSS;
+    }
+    if BUSY_NOW.load(Ordering::Relaxed) {
+        flags |= BUSY;
+    }
     let hit = last_own_hit().filter(|h| h.1.elapsed().as_secs_f32() < BROS_WINDOW + 0.5).map(|(k, t)| (k, t.elapsed().as_millis().min(60_000) as u16));
     let bag = crate::coins::bag_chunk().map(|(block, chunk, n)| (n.clamp(1, u16::MAX as u32) as u16, block, chunk.to_array()));
     Status {
@@ -1189,6 +1422,7 @@ fn own_status() -> Status {
         flags,
         hit,
         bag,
+        down_left,
     }
 }
 
@@ -1223,7 +1457,7 @@ fn mate_status(s: &mut State, from: u64, seq: u16, st: Status) {
     let (low, down_text, back) = if st.luigi { ("LUIGI!", "LUIGI DOWN", "LUIGI IS BACK") } else { ("MARIO!", "MARIO DOWN", "MARIO IS BACK") };
     let down = st.flags & DOWN != 0 || wedges == 0;
     if down && !m.down {
-        log(format!("coop: partner {from:x} is down"));
+        log(format!("coop: partner {from:x} is down{}", if st.flags & REVIVABLE != 0 { ": they can be revived (D-pad down next to them)" } else { "" }));
         crate::style::callout(down_text, None, [0.85, 0.35, 0.3], true, 0.0);
     } else if !down && m.down {
         log(format!("coop: partner {from:x} is back"));
@@ -1294,6 +1528,9 @@ pub fn hud(me: Vec3, dt: f32) -> Vec<crate::hud::PartnerHud> {
             bag,
             // (their wing cap's wings: their model has none, they're drawn over it)
             wings: p.filter(|_| m.st.power == POWER_WING).map(|p| (p.head_part, p.face, p.size)),
+            revivable: m.st.flags & REVIVABLE != 0,
+            down_left: m.st.down_left,
+            revive: crate::revive::progress().filter(|r| r.0 == m.steam).map(|r| r.1),
         });
     }
     out
@@ -1315,22 +1552,42 @@ pub struct Partner {
     pub head_part: Vec3,
     pub face: Quat,
     pub size: f32,
+    /// their status's flags (FIGHTING, DOWN, REVIVABLE...), 0 before one came
+    pub flags: u8,
+    /// shown at their own place (where they really are), not the game's lagging copy of them
+    pub own_place: bool,
 }
 
-/// Game thread: the partners in Mario mode near us (their pose coming in), where they are.
+/// Game thread: the partners in Mario mode near us (their pose coming in), where they are. (Asked
+/// for by the HUD, the leash, Lakitu and every SM64 tick: worked out once a frame.)
 pub fn partners() -> Vec<Partner> {
     if !active() {
         return Vec::new();
     }
-    let list: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool)> = {
+    static CACHE: Mutex<Option<(Instant, Vec<Partner>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, list)) = cache.as_ref().filter(|(at, _)| at.elapsed() < PARTNERS_FRESH) {
+        return list.clone();
+    }
+    let list = partners_now();
+    *cache = Some((Instant::now(), list.clone()));
+    list
+}
+
+/// a frame's worth (s): partners() asked again within it gets the same answer
+const PARTNERS_FRESH: Duration = Duration::from_millis(4);
+
+fn partners_now() -> Vec<Partner> {
+    let list: Vec<(u64, usize, [PartPose; PARTS], Option<Place>, bool, u8)> = {
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_ref() else { return Vec::new() };
         s.remotes
             .iter()
             .filter_map(|r| {
+                let flags = s.mates.iter().find(|m| m.steam == r.steam).map_or(0, |m| m.st.flags);
                 s.chrs.iter().find(|c| c.0 == r.steam).map(|c| {
                     let (parts, place) = r.now();
-                    (r.steam, c.1, parts, place, r.luigi)
+                    (r.steam, c.1, parts, place, r.luigi, flags)
                 })
             })
             .collect()
@@ -1339,13 +1596,13 @@ pub fn partners() -> Vec<Partner> {
     let live: Vec<usize> = wcm.player_chr_set.characters().map(|p| p as *const PlayerIns as usize).collect();
     list.into_iter()
         .filter(|(_, chr, ..)| live.contains(chr))
-        .map(|(steam, chr, parts, place, luigi)| {
+        .map(|(steam, chr, parts, place, luigi, flags)| {
             let player = unsafe { &*(chr as *const PlayerIns) };
-            let (_, feet, face) = placed(steam, player, &parts, place);
+            let (_, feet, face, own) = placed(steam, player, &parts, place);
             // (the head part's centre, and a little over it: its top)
             let head = parts[3];
             let head_y = head.pos.y.clamp(0.4, 4.0) + 0.25 * head.scale.clamp(0.5, 3.0);
-            Partner { steam, feet, head: feet + Vec3::Y * head_y, luigi, head_part: feet + face * head.pos, face, size: head.scale.clamp(0.3, 4.0) }
+            Partner { steam, feet, head: feet + Vec3::Y * head_y, luigi, head_part: feet + face * head.pos, face, size: head.scale.clamp(0.3, 4.0), flags, own_place: own }
         })
         .collect()
 }
@@ -1488,6 +1745,25 @@ pub fn send_hit(handle: &FieldInsHandle, attack: u8, pct: f32) {
     }
 }
 
+/// We revive the partner `steam` (revive.rs): they're told (reliably).
+pub fn send_revive(steam: u64) {
+    let bytes = encode(&Packet::Revive { target: steam });
+    if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        s.stats.sent(&bytes);
+    }
+    net::send(steam, &bytes, true);
+}
+
+/// Someone in the session could still revive us: a partner whose status is coming in and who
+/// isn't down themselves.
+pub fn partner_can_revive() -> bool {
+    if !active() {
+        return false;
+    }
+    let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().is_some_and(|s| s.mates.iter().any(|m| s.peers.contains(&m.steam) && m.at.elapsed().as_secs_f32() < MATE_STALE && !m.down))
+}
+
 /// Host: the guests' blows since last time (not the ones that waited too long).
 pub fn take_hits() -> Vec<Hit> {
     let hits = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut().map(|s| std::mem::take(&mut s.hits)).unwrap_or_default();
@@ -1555,21 +1831,28 @@ mod tests {
     fn pose_round_trip() {
         let a = pose();
         let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(-1234.5, 88.25, 4096.0), yaw: -2.5, local: false };
-        let fx = crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::new(1.0, 2.0, 3.0), size: 1.0, frame: 3, tint: [1.0; 4] }], ..Default::default() };
-        let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(123_456), place: Some(place), fx: Some(std::sync::Arc::new(fx.clone())) });
-        assert!(bytes.len() > POSE_BYTES + POSE_EXT_BYTES);
-        let Some(Packet::Pose { seq, health, luigi, parts, ms, place: got, fx: got_fx }) = decode(&bytes) else { panic!("no pose") };
+        let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(123_456), place: Some(place) });
+        // (one network packet, with room to spare)
+        assert_eq!(bytes.len(), POSE_BYTES + POSE_EXT_BYTES);
+        assert!(bytes.len() < 1000, "pose {} B", bytes.len());
+        let Some(Packet::Pose { seq, health, luigi, parts, ms, place: got }) = decode(&bytes) else { panic!("no pose") };
         assert_eq!((seq, health, luigi, ms, got), (7, 0x580, true, Some(123_456), Some(place)));
-        assert!(got_fx.is_some_and(|f| f.fire.len() == 1 && f.fire[0].pos.distance(fx.fire[0].pos) < 0.01));
         // in a dungeon: the block's own place
         let local = Place { local: true, ..place };
-        let bytes = encode(&Packet::Pose { seq: 8, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(1), place: Some(local), fx: None });
-        let Some(Packet::Pose { place: got, fx, .. }) = decode(&bytes) else { panic!("no pose") };
-        assert_eq!((got, fx.is_none()), (Some(local), true));
+        let bytes = encode(&Packet::Pose { seq: 8, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(1), place: Some(local) });
+        let Some(Packet::Pose { place: got, .. }) = decode(&bytes) else { panic!("no pose") };
+        assert_eq!(got, Some(local));
+        // the effects on their own
+        let fx = crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::new(1.0, 2.0, 3.0), size: 1.0, frame: 3, tint: [1.0; 4] }], ..Default::default() };
+        let Some(Packet::Fx { seq, ms, fx: got }) = decode(&encode(&Packet::Fx { seq: 65535, ms: 42, fx: std::sync::Arc::new(fx.clone()) })) else { panic!("no effects") };
+        assert_eq!((seq, ms), (65535, 42));
+        assert!(got.fire.len() == 1 && got.fire[0].pos.distance(fx.fire[0].pos) < 0.01);
+        let Some(Packet::Revive { target }) = decode(&encode(&Packet::Revive { target: 0x1100_0011_0FA2_E86 })) else { panic!("no revive") };
+        assert_eq!(target, 0x1100_0011_0FA2_E86);
         // a boomerang 60 m off still fits
         let mut far = a;
         far[crate::engine_mario::RANG].pos = Vec3::new(60.0, -5.0, 0.0);
-        let Some(Packet::Pose { parts: got, .. }) = decode(&encode(&Packet::Pose { seq: 9, health: 0, luigi: false, parts: Box::new(far), ms: None, place: None, fx: None })) else { panic!("no pose") };
+        let Some(Packet::Pose { parts: got, .. }) = decode(&encode(&Packet::Pose { seq: 9, health: 0, luigi: false, parts: Box::new(far), ms: None, place: None })) else { panic!("no pose") };
         assert!(got[crate::engine_mario::RANG].pos.distance(Vec3::new(60.0, -5.0, 0.0)) < 0.002);
         for (x, y) in a.iter().zip(parts.iter()) {
             assert!(x.rot.angle_between(y.rot) < 0.001);
@@ -1604,6 +1887,7 @@ mod tests {
             flags: FIGHTING | HURT,
             hit: Some((0x0012_3456_0000_00AB, 420)),
             bag: Some((17, 0x3C2C_2400, [-1234.5, 88.25, 4096.0])),
+            down_left: Some(23),
         };
         let bytes = encode(&Packet::Status { seq: 65535, status: st });
         assert_eq!(bytes.len(), STATUS_BYTES);
@@ -1705,8 +1989,8 @@ mod tests {
         let mut s = std::collections::VecDeque::new();
         let pose = |x: f32| [PartPose { rot: Quat::IDENTITY, pos: Vec3::new(x, 1.0, 0.0), scale: 1.0, stretch: Vec3::ONE }; PARTS];
         let at = |x: f32, yaw: f32| Some(Place { origin: 5, chunk: Vec3::new(x, 0.0, 0.0), yaw, local: false });
-        s.push_back(Sample { t: 1.0, parts: pose(0.0), place: at(0.0, 3.0), fx: None });
-        s.push_back(Sample { t: 1.1, parts: pose(0.1), place: at(1.0, -3.0), fx: None });
+        s.push_back(Sample { t: 1.0, parts: pose(0.0), place: at(0.0, 3.0) });
+        s.push_back(Sample { t: 1.1, parts: pose(0.1), place: at(1.0, -3.0) });
         // halfway: halfway there, the yaw the short way round (across +-pi)
         let (parts, place) = sample_at(&s, 1.05);
         assert!((parts[0].pos.x - 0.05).abs() < 1e-4);
@@ -1725,16 +2009,34 @@ mod tests {
         let mut r = Remote::new(1, 0, 0x880, false);
         let pose = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
         for k in 0..6 {
-            r.add(Some(100.0 + k as f64 * 0.033), pose, None, None);
+            r.add(Some(100.0 + k as f64 * 0.033), pose, None);
         }
         assert_eq!(r.samples.len(), 6);
         assert!(r.samples.iter().zip(r.samples.iter().skip(1)).all(|(a, b)| a.t < b.t));
         // one out of order goes in its place
-        r.add(Some(100.05), pose, None, None);
+        r.add(Some(100.05), pose, None);
         assert!(r.samples.iter().zip(r.samples.iter().skip(1)).all(|(a, b)| a.t <= b.t));
         // they restarted (their clock jumped back): started over
-        r.add(Some(1.0), pose, None, None);
+        r.add(Some(1.0), pose, None);
         assert_eq!(r.samples.len(), 1);
+    }
+
+    #[test]
+    fn effects_show_by_their_time_and_go_stale() {
+        let mut r = Remote::new(1, 0, 0x880, false);
+        let pose = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
+        r.add(Some(clock()), pose, None);
+        let fx = std::sync::Arc::new(crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::ONE, size: 1.0, frame: 0, tint: [1.0; 4] }], ..Default::default() });
+        // a moment ago (behind the time they're shown at): shown
+        r.add_fx(clock() - 0.1, fx.clone());
+        assert!(r.fx().is_some());
+        // nothing going on any more (the empty packet after the last): none
+        r.add_fx(clock() - 0.09, std::sync::Arc::new(crate::fx::WorldFx::default()));
+        assert!(r.fx().is_none());
+        // they stopped sending long ago: none
+        r.fx.clear();
+        r.add_fx(clock() - 2.0, fx);
+        assert!(r.fx().is_none());
     }
 
     #[test]

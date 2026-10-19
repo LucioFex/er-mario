@@ -1,8 +1,9 @@
 //! The effects hud.rs draws in the world around a Mario (his fireballs, the hook's line, the
 //! boomerangs' streaks, the hammer's and the Chain Chomp's ribbons, the blows' star bursts, stars
 //! and coins, the rings on the ground, the dash's streaks, Yoshi's tongue and eggs), gathered in
-//! one place: hud.rs draws ours and each co-op partner's alike, and coop.rs sends ours with every
-//! pose (positions around the Tarnished, so the other game puts them around where it shows us).
+//! one place: hud.rs draws ours and each co-op partner's alike, and coop.rs sends ours in a packet
+//! of their own (positions around the Tarnished, so the other game puts them around where it shows
+//! us).
 
 use glam::Vec3;
 
@@ -134,7 +135,24 @@ impl WorldFx {
 
     /// Ours for the partner (positions around `here`, our Tarnished), appended to `out`.
     pub fn encode(&self, here: Vec3, out: &mut Vec<u8>) {
-        let mut w = Writer { out, here };
+        self.encode_most(here, out, MAX);
+    }
+
+    /// As `encode`, in at most `budget` bytes: fewer of each kind (the newest), down to none.
+    pub fn encode_fit(&self, here: Vec3, out: &mut Vec<u8>, budget: usize) {
+        let start = out.len();
+        for most in [MAX, 12, 6, 3, 1, 0] {
+            out.truncate(start);
+            self.encode_most(here, out, most);
+            if out.len() - start <= budget {
+                return;
+            }
+        }
+    }
+
+    /// At most `most` of each kind and points per trail (the newest).
+    fn encode_most(&self, here: Vec3, out: &mut Vec<u8>, most: usize) {
+        let mut w = Writer { out, here, most };
         w.list(&self.fire, |w, f| {
             w.pos(f.pos);
             w.unit(f.size / 8.0);
@@ -232,6 +250,7 @@ impl WorldFx {
 struct Writer<'a> {
     out: &'a mut Vec<u8>,
     here: Vec3,
+    most: usize,
 }
 
 impl Writer<'_> {
@@ -256,9 +275,9 @@ impl Writer<'_> {
             self.unit(v);
         }
     }
-    /// (the newest MAX: the lists go oldest first)
+    /// (the newest `most`: the lists go oldest first)
     fn list<T>(&mut self, items: &[T], f: impl Fn(&mut Self, &T)) {
-        let from = items.len().saturating_sub(MAX);
+        let from = items.len().saturating_sub(self.most);
         self.out.push((items.len() - from) as u8);
         for it in &items[from..] {
             f(self, it);
@@ -364,6 +383,30 @@ mod tests {
         assert!(WorldFx::decode(&none).expect("reads").is_empty());
         // cut short: doesn't read
         assert!(WorldFx::decode(&out[..out.len() - 1]).is_none());
+    }
+
+    #[test]
+    fn a_big_fight_fits_its_budget() {
+        // everything at once, every list full: cut down to the budget, still readable, newest kept
+        let p = |k: usize| Vec3::new(k as f32 * 0.1, 1.0, 0.0);
+        let fx = WorldFx {
+            fire: (0..30).map(|k| Fire { pos: p(k), size: 1.0, frame: 1, tint: [1.0; 4] }).collect(),
+            streaks: (0..30).map(|_| (0..30).map(|k| (p(k), 0.5)).collect()).collect(),
+            rangs: (0..3).map(|_| ((0..30).map(p).collect(), 0.5)).collect(),
+            sparks: (0..30).map(|k| Spark { pos: p(k), size: 1.0, tint: [1.0; 4], t: 0.5 }).collect(),
+            dash: (0..30).map(|k| (p(k), 0.5)).collect(),
+            swing: (0..30).map(|k| (p(k), p(k + 1), 0.5)).collect(),
+            bits: (0..40).map(|k| Bit { coin: k % 2 == 0, pos: p(k), size: 0.4, t: 0.5, age: 0.2 }).collect(),
+            ..Default::default()
+        };
+        let mut full = Vec::new();
+        fx.encode(Vec3::ZERO, &mut full);
+        assert!(full.len() > 1000, "full {}", full.len());
+        let mut out = vec![9u8; 3];
+        fx.encode_fit(Vec3::ZERO, &mut out, 1000);
+        assert!(out.len() - 3 <= 1000, "fit {}", out.len());
+        let got = WorldFx::decode(&out[3..]).expect("reads");
+        assert!(!got.bits.is_empty() && close(got.bits.last().expect("bit").pos, p(39)));
     }
 
     #[test]

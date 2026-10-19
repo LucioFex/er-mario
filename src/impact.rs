@@ -634,6 +634,23 @@ pub fn bros_jump(head: Vec3) {
 const SOUND_BOUNCE_OFF_OBJECT: i32 = 0x0459_B081;
 const SOUND_YAHOO: i32 = 0x2404_8081;
 
+/// Co-op: a downed partner back on their feet (revive.rs): a green ring on the ground, a gold one
+/// round them, a fountain of stars and a puff (the 1-UP plays with it). `feet`: Elden Ring.
+pub fn one_up(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.1, 1.6, 0.45, [0.45, 1.0, 0.5, 1.0]);
+    ring(feet + Vec3::Y * 0.9, 1.0, 0.3, GOLD);
+    burst(feet + Vec3::Y * 0.8, 8, Bit::Star);
+    puffs(feet + Vec3::Y * 0.2, 4, 0.4);
+}
+
+/// Co-op: Mario warps to the partner (leash.rs): a puff of smoke, a ring and a few stars where he
+/// leaves and where he lands. `feet`: Elden Ring.
+pub fn warp_puff(feet: Vec3) {
+    puffs(feet + Vec3::Y * 0.3, 6, 0.5);
+    ring(feet + Vec3::Y * 0.1, 1.2, 0.3, WHITE);
+    burst(feet + Vec3::Y * 0.6, 3, Bit::Star);
+}
+
 /// A weapon switched in the middle of a fight (moves.rs's swap strike): a golden ring round Mario
 /// and a flash of stars at his chest. `feet`: Elden Ring.
 pub fn swap(feet: Vec3) {

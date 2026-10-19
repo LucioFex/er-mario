@@ -16,6 +16,16 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
   - El invitado no agarra enemigos (ni Bob-omb ni cola de Bowser) y tampoco los lanza por el aire.
   - Sus golpes igual pegan, y la barra de vida se ve bajar al instante.
 - Un golpe al compañero lo empuja un poco. No le hace daño.
+- **Revivir**: si te quedás sin vida y el compañero puede ayudarte, no morís: quedás tirado con
+  estrellitas sobre la cabeza durante 30 s (arriba dice HELP y los segundos). El otro se acerca y
+  mantiene **flecha abajo** un segundo (aparece ▼ RESCUE y un anillo que se llena): volvés con 3
+  cuñas, el sonido del 1-UP y un giro en el aire. Si nadie llega, si caen los dos o si es una caída
+  al vacío, es la muerte normal de Seamless (espectador y respawn).
+- **Correa**: a más de 30 m aparece TOO FAR; desde 35 m cuesta alejarse y a 40 m no se puede
+  (volver siempre se puede). Si quedan a más de 48 m durante 2 s (caída, Torrent, gancho), el que
+  no está peleando (si están iguales, el invitado) aparece al lado del otro con humo y el sonido de
+  la tubería. Nunca en peleas de jefe, caído, a caballo, en menús, puertas o escenas.
+- La cámara de Lakitu se abre un poco y mira hacia el compañero cuando está cerca.
 - Sin una sesión de Seamless, el mod funciona igual que en un jugador.
 
 ## Requisitos (en las dos PCs)
@@ -157,9 +167,16 @@ a sí misma.
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
-| `coop: packets of version N` | Tienen versiones distintas de ER Mario (desde la 4 hace falta el mismo build en las dos PCs) |
+| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 6) |
 | `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
 | `coop: pose from ... with its place` | El otro se ve suave y en su lugar real. Si dice `no place`, se ve donde el juego tiene a su personaje (más tironeado) |
+| `coop: partner ... shown at their own place (...)` / `where the game has them` | Dónde se dibuja al compañero y a cuántos metros está la copia del juego. Si al cargar se ven encimados, esta línea dice por qué |
+| `net: last 20 s sent pose ... fx ...; got pose 29.x/s ...; lost poses N, effects M` | Tráfico de red: lo normal es pose ~30/s y pocas perdidas. Muchas `lost` = paquetes que no llegan |
+| `revive: down ...` / `revive: revived by ...` / `revive: reviving ...` | Quedaste caído / te revivieron / revivís al otro |
+| `revive: nobody came in time` / `nobody left to revive` | Se acabó el tiempo o cayeron los dos: muerte normal |
+| `leash: N m apart for 2 s: Mario warps to the partner` | La correa te llevó al lado del compañero |
+| `input: interact (D-pad down) pressed, no event animation ... possible actions ...` | La flecha abajo no hizo nada: dice qué acciones permitía el juego, tipo de personaje, si está en el piso y a qué distancia de Mario está el Tarnished |
+| `follow: interact started anim N ... on D-pad down (allowed ...)` | La flecha abajo sí abrió una puerta/agarró algo |
 | `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
 | `coop: partner ... is down` / `is back` | El compañero cayó / volvió |
 | `coop: partner's character paired by elimination` | Normal si hay un solo compañero: el personaje no traía el SteamID donde se esperaba |
