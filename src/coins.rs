@@ -66,43 +66,41 @@ pub fn pay(cost: u32, what: &str) -> bool {
     true
 }
 
-/// Where the player is (set every frame): his map block, and how his physics position sits in the
-/// map's chunk coordinates (those don't move when the game shifts the world's origin, a load or a
-/// warp does, so the bag stays where he fell).
+/// Where the player is (set every frame): his map block, and the game's world origin shift (its
+/// "chunk position": a physics position is the place in the block plus it; a load or a warp moves
+/// it, the place in the block stays, so the bag stays where he fell).
 #[derive(Clone, Copy)]
 struct Here {
     block: BlockId,
-    origin: BlockId,
-    /// chunk position minus physics position (None: the game gave no chunk position)
-    off: Option<Vec3>,
+    shift: Vec3,
 }
 
 static HERE: Mutex<Option<Here>> = Mutex::new(None);
 
-/// A spot in the world: physics position (moved by `shift`, used if the game gave no chunk
-/// position), chunk position and its block.
+/// A spot in the world: its place in its block (physics position less the world origin shift:
+/// the same on every game, PlayerIns::block_position) and the block.
 #[derive(Clone, Copy)]
 struct Spot {
     pos: Vec3,
-    chunk: Option<Vec3>,
     block: BlockId,
-    origin: BlockId,
 }
 
 impl Spot {
     fn of(chr: &ChrIns) -> Spot {
         let (p, c) = (chr.modules.physics.position, chr.chunk_position);
-        let chunk = Vec3::new(c.0, c.1, c.2);
-        Spot { pos: Vec3::new(p.0, p.1, p.2), chunk: (chunk.length_squared() > 1e-6).then_some(chunk), block: chr.block_id, origin: chr.block_origin }
+        Spot { pos: Vec3::new(p.0, p.1, p.2) - origin_shift(c.0, c.1, c.2), block: chr.block_id }
     }
 
-    /// Where it is now in physics coordinates, if in the player's part of the map.
+    /// Where it is now in physics coordinates, if in the player's block.
     fn now(&self, here: &Here) -> Option<Vec3> {
-        match self.chunk {
-            Some(c) => (self.origin == here.origin).then_some(here.off.map(|o| c - o)).flatten(),
-            None => (self.block == here.block).then_some(self.pos),
-        }
+        (self.block == here.block).then_some(self.pos + here.shift)
     }
+}
+
+/// The game's world origin shift (a character's chunk position: none while a map loads).
+fn origin_shift(x: f32, y: f32, z: f32) -> Vec3 {
+    let s = Vec3::new(x, y, z);
+    if s.is_finite() { s } else { Vec3::ZERO }
 }
 
 /// the last spot he stood on, alive: the bag goes there (a fall into the abyss leaves it at the edge)
@@ -111,8 +109,8 @@ static GROUND: Mutex<Option<Spot>> = Mutex::new(None);
 /// Every frame: where the player is, and whether Mario stands on something.
 pub fn here(chr: &ChrIns, grounded: bool) {
     let spot = Spot::of(chr);
-    let off = spot.chunk.map(|c| c - spot.pos);
-    *HERE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Here { block: spot.block, origin: spot.origin, off });
+    let c = chr.chunk_position;
+    *HERE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Here { block: spot.block, shift: origin_shift(c.0, c.1, c.2) });
     if grounded {
         *GROUND.lock().unwrap_or_else(|e| e.into_inner()) = Some(spot);
     }
@@ -141,16 +139,12 @@ pub fn die(chr: &ChrIns) {
     let now = Spot::of(chr);
     // (the last ground, if it's in this part of the map and not far: else where he is)
     let ground = GROUND.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let near = |g: &Spot| match (g.chunk, now.chunk) {
-        (Some(a), Some(b)) => g.origin == now.origin && a.distance(b) < 150.0,
-        _ => g.block == now.block && g.pos.distance(now.pos) < 150.0,
-    };
+    let near = |g: &Spot| g.block == now.block && g.pos.distance(now.pos) < 150.0;
     let mut spot = ground.filter(near).unwrap_or(now);
     spot.pos += Vec3::Y * 0.05;
-    spot.chunk = spot.chunk.map(|c| c + Vec3::Y * 0.05);
     if lost > 0 {
         *bag = Some(Bag { spot, amount: lost });
-        crate::log(format!("coins: died, {lost} coins left in a bag ({})", if spot.chunk.is_some() { "map chunk position" } else { "no chunk position: physics position" }));
+        crate::log(format!("coins: died, {lost} coins left in a bag (block {}, at {:.1?} in it)", i32::from(spot.block), spot.pos));
     }
 }
 
@@ -160,17 +154,17 @@ pub fn bag() -> Option<(Vec3, u32)> {
     BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|b| Some((b.spot.now(&here)?, b.amount)))
 }
 
-/// The bag for the co-op partner's compass: its map origin block, its chunk position (the same on
-/// both players' games, physics positions aren't), its coins. Only a bag placed by chunk position.
+/// The bag for the co-op partner's compass: its block, its place in it (the same on both players'
+/// games, physics positions aren't), its coins.
 pub fn bag_chunk() -> Option<(i32, Vec3, u32)> {
-    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|b| b.spot.chunk.map(|c| (i32::from(b.spot.origin), c, b.amount)))
+    BAG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|b| (i32::from(b.spot.block), b.spot.pos, b.amount))
 }
 
 /// Where a partner's bag (`bag_chunk` on their game) is in our physics coordinates, if it's in our
-/// part of the map.
-pub fn place(origin: i32, chunk: Vec3) -> Option<Vec3> {
+/// block.
+pub fn place(block: i32, pos: Vec3) -> Option<Vec3> {
     let here = (*HERE.lock().unwrap_or_else(|e| e.into_inner()))?;
-    Spot { pos: Vec3::ZERO, chunk: Some(chunk), block: here.block, origin: BlockId::from(origin) }.now(&here)
+    Spot { pos, block: BlockId::from(block) }.now(&here)
 }
 
 /// Mario (feet at `mario`) touches the bag: the coins back in his purse. How many.
@@ -242,13 +236,7 @@ pub fn collect(mario: Vec3) -> u32 {
 
 /// The game re-based its physics coordinates by `d`.
 pub fn shift(d: Vec3) {
-    // (the chunk positions don't move)
-    if let Some(b) = BAG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        b.spot.pos += d;
-    }
-    if let Some(g) = GROUND.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        g.pos += d;
-    }
+    // (the bag's and the ground's places in their block don't move)
     for c in COINS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
         c.pos += d;
     }

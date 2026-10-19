@@ -31,7 +31,7 @@ const MAGIC: [u8; 3] = *b"ERM";
 /// read as far as it knows: a later build of the same version can add kinds (grabbing and throwing
 /// the partner: the status's CARRYING and CARRIED are kept for it) or fields at the end without
 /// breaking an older one's co-op.
-const VERSION: u8 = 8;
+const VERSION: u8 = 9;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
@@ -69,8 +69,8 @@ const POS_STEP: f32 = 0.002;
 const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
 const PARTS_AT: usize = HEADER + 7;
 /// after the parts: the sender's clock (ms), the place's kind (u8: 0 none, 1 map chunk, 2 in its
-/// block), its block i32, its position f32 x3 (chunk, or in the block: from version 8 the block's
-/// own coordinates, not the physics position), yaw f32
+/// block; from version 9 only 2), its block i32, its position f32 x3 (in the block: its own
+/// coordinates, PlayerIns::block_position), yaw f32
 const POSE_EXT_BYTES: usize = 4 + 1 + 4 + 12 + 4;
 const HIT_BYTES: usize = HEADER + 8 + 4 + 12 + 1 + 4;
 const SHOVE_BYTES: usize = HEADER + 8;
@@ -185,17 +185,17 @@ pub struct Status {
     pub down_left: Option<u8>,
 }
 
-/// Where a player's Tarnished is and faces (the pose's parts are around it), in map chunk
-/// coordinates (the same on both games, physics positions aren't): its origin block, its chunk
-/// position, its yaw (radians).
+/// Where a player's Tarnished is and faces (the pose's parts are around it), in its block's own
+/// coordinates (the same on both games; physics positions aren't: each game's are the place in
+/// the block plus its own world origin shift, the "chunk position"): the block, the place in it,
+/// the yaw (radians).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Place {
     pub origin: i32,
     pub chunk: Vec3,
     pub yaw: f32,
-    /// off the open world's chunks (a dungeon, a building): `origin` is its map block and `chunk`
-    /// the position in it (the block's own coordinates, the same on both games: physics positions
-    /// there aren't, each game's can sit hundreds of metres off)
+    /// `origin` is the block and `chunk` the place in it (always, from version 9: before, without
+    /// it, `chunk` was the world origin shift, taken for a place)
     pub local: bool,
 }
 
@@ -391,7 +391,7 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
                 let chunk = Vec3::new(f32at(o + 9), f32at(o + 13), f32at(o + 17));
                 let yaw = f32at(o + 21);
                 let kind = b[o + 4];
-                let ok = matches!(kind, 1 | 2) && chunk.is_finite() && yaw.is_finite();
+                let ok = kind == 2 && chunk.is_finite() && yaw.is_finite();
                 let place = ok.then(|| Place { origin: i32::from_le_bytes([b[o + 5], b[o + 6], b[o + 7], b[o + 8]]), chunk, yaw, local: kind == 2 });
                 (Some(ms), place)
             } else {
@@ -619,27 +619,17 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     if !rot.is_finite() || !here.is_finite() {
         return (*parts, here, Quat::IDENTITY, false);
     }
-    // their place in our physics position: in the open world by its chunk position, in a dungeon
-    // or a building by its block position (both the same on both games), through our own
-    // Tarnished (where our game has us is always up to date), trusted within PLACE_TRUST_OPEN of
-    // us; else, in the open world, the map's. Never through the game's copy of them: it can stand
-    // on a stale block or chunk (at a join it stood on the host), and it's moved to their place
-    // here (frame), its chunk position then not with it.
+    // their place in our physics position: their place in the block plus our world origin shift
+    // (our physics position less our place in it), in the same block as us; trusted within
+    // PLACE_TRUST_OPEN of us. Never through the game's copy of them: it can stand on a stale block
+    // (at a join it stood on the host), and it's moved to their place here (frame).
     let me = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.main_player.as_deref());
-    let raw = place.and_then(|pl| {
-        let mine = me.and_then(|o| {
-            let feet = o.chr_ins.modules.physics.position;
-            let feet = Vec3::new(feet.0, feet.1, feet.2);
-            let at = if pl.local {
-                let b = &o.block_position;
-                (i32::from(o.current_block_id) == pl.origin).then(|| pl.chunk - Vec3::new(b.x, b.y, b.z) + feet)
-            } else {
-                chunk_through(&o.chr_ins, pl)
-            };
-            at.filter(|a| a.is_finite() && a.distance(feet) < PLACE_TRUST_OPEN)
-        });
-        let map = || if pl.local { None } else { crate::coins::place(pl.origin, pl.chunk).filter(|a| a.is_finite() && own_feet().is_some_and(|f| a.distance(f) < PLACE_TRUST_OPEN)) };
-        mine.or_else(map).map(|a| (a, pl))
+    let raw = place.filter(|pl| pl.local).and_then(|pl| {
+        let o = me?;
+        let p = o.chr_ins.modules.physics.position;
+        let feet = Vec3::new(p.0, p.1, p.2);
+        let at = (i32::from(o.current_block_id) == pl.origin).then(|| from_block(pl.chunk, &o.chr_ins))?;
+        (at.is_finite() && at.distance(feet) < PLACE_TRUST_OPEN).then_some((at, pl))
     });
     let at = raw.map(|(a, pl)| (a - here, Quat::from_rotation_y(pl.yaw)));
     // (between their own place and where the game has them, a moment's blend: no jump; a moment
@@ -674,7 +664,7 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
                     match (place, off) {
                         (None, _) => "not sent".to_string(),
                         (Some(_), None) => "not on this map".to_string(),
-                        (Some(pl), Some(d)) => format!("{d:.1} m from their character{}", if pl.local { ", in a dungeon" } else { "" }),
+                        (Some(_), Some(d)) => format!("{d:.1} m from their character"),
                     },
                     own_feet().map_or(f32::NAN, |me| me.distance(here)),
                 ));
@@ -700,15 +690,26 @@ fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<
     (parts.map(|p| PartPose { rot: (turn * p.rot).normalize(), pos: turn * p.pos + moved, ..p }), here + shift, face, own)
 }
 
-/// A place in the open world sent by a partner in our physics position, through our Tarnished
-/// (`o`: its chunk and physics positions together). None in a block, off its map.
-fn chunk_through(o: &eldenring::cs::ChrIns, pl: Place) -> Option<Vec3> {
-    if pl.local {
-        return None;
-    }
-    let ck = Vec3::new(o.chunk_position.0, o.chunk_position.1, o.chunk_position.2);
-    let p = o.modules.physics.position;
-    (i32::from(o.block_origin) == pl.origin && ck.length_squared() > 1e-6).then(|| pl.chunk - (ck - Vec3::new(p.0, p.1, p.2)))
+/// A character's place in its block: its physics position less the game's world origin shift
+/// (its "chunk position", none while a map loads). The same on every game (it's what
+/// PlayerIns::block_position holds, a frame late).
+fn in_block(c: &eldenring::cs::ChrIns) -> Vec3 {
+    let p = c.modules.physics.position;
+    block_to_physics(Vec3::new(p.0, p.1, p.2), -origin_shift(c))
+}
+
+/// A place in the block `c` is in, in our physics coordinates (through `c`'s world origin shift).
+fn from_block(at: Vec3, c: &eldenring::cs::ChrIns) -> Vec3 {
+    block_to_physics(at, origin_shift(c))
+}
+
+fn origin_shift(c: &eldenring::cs::ChrIns) -> Vec3 {
+    let s = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
+    if s.is_finite() { s } else { Vec3::ZERO }
+}
+
+fn block_to_physics(at: Vec3, shift: Vec3) -> Vec3 {
+    at + shift
 }
 
 /// Our Tarnished's feet (Elden Ring).
@@ -755,47 +756,20 @@ fn encode_fx(seq: u16) -> Option<(Vec<u8>, bool)> {
     Some((out, !fx.is_empty()))
 }
 
-/// Logged (a few times): in a block, our physics position no longer the block position moved by
-/// the same offset (a partner's place worked out from it would be off by as much).
-fn block_check(block: i32, at: Vec3, c: &eldenring::cs::ChrIns) {
-    static LAST: Mutex<(Option<(i32, Vec3)>, u32)> = Mutex::new((None, 0));
-    let p = c.modules.physics.position;
-    let off = Vec3::new(p.0, p.1, p.2) - at;
-    if !off.is_finite() {
-        return;
-    }
-    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((b, o)) = last.0
-        && b == block
-        && o.distance(off) > 0.5
-        && last.1 < 5
-    {
-        last.1 += 1;
-        log(format!("coop: in block {block}, physics minus block position moved {:.1} m ({o:.1?} to {off:.1?})", o.distance(off)));
-    }
-    last.0 = Some((block, off));
-}
-
 /// Where our Tarnished is and faces (the pose's parts are around it), for the partner.
 fn own_place() -> Option<Place> {
     let wcm = unsafe { WorldChrMan::instance() }.ok()?;
     let player = wcm.main_player.as_deref()?;
     let c = &player.chr_ins;
-    let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
     let o = c.modules.physics.orientation;
     let (yaw, _, _) = Quat::from_xyzw(o.0, o.1, o.2, o.3).normalize().to_euler(glam::EulerRot::YXZ);
     if !yaw.is_finite() {
         return None;
     }
     probe_self(player);
-    // (off the open world's chunks, in a dungeon: its block and the position in it)
-    if ck.length_squared() < 1e-6 || !ck.is_finite() {
-        let b = &player.block_position;
-        let p = Vec3::new(b.x, b.y, b.z);
-        block_check(i32::from(player.current_block_id), p, c);
-        return p.is_finite().then(|| Place { origin: i32::from(player.current_block_id), chunk: p, yaw, local: true });
-    }
-    Some(Place { origin: i32::from(c.block_origin), chunk: ck, yaw, local: false })
+    // (its block and the place in it)
+    let p = in_block(c);
+    p.is_finite().then(|| Place { origin: i32::from(player.current_block_id), chunk: p, yaw, local: true })
 }
 
 /// Diagnostics (every PROBE_EVERY, PROBE_MAX lines): our own positions as the game has them, and
@@ -847,13 +821,10 @@ fn probe_partner(steam: u64, chr: &PlayerIns, place: Option<Place>, feet: Vec3) 
     let m = c.chr_ctrl.model_matrix.3;
     let model = Vec3::new(m.0, m.1, m.2);
     let ck = Vec3::new(c.chunk_position.0, c.chunk_position.1, c.chunk_position.2);
-    let through = place.and_then(|pl| chunk_through(c, pl));
     log(format!(
-        "coop probe: partner {steam:x} sent {place:.1?}; ours {feet:.1?}; through their copy {through:.1?}; copy phys {phys:.1?} model {model:.1?} chunk {ck:.1?} origin {} block {}; ours-copy {:.1} m, through-copy {:.1} m",
-        i32::from(c.block_origin),
+        "coop probe: partner {steam:x} sent {place:.1?}; ours {feet:.1?}; copy phys {phys:.1?} model {model:.1?} chunk {ck:.1?} block {}; ours-copy {:.1} m",
         i32::from(chr.current_block_id),
         feet.distance(phys),
-        through.map_or(f32::NAN, |t| t.distance(phys)),
     ));
 }
 
@@ -2171,20 +2142,34 @@ mod tests {
     }
 
     #[test]
+    fn places_go_through_the_block() {
+        // (from a log: physics (-7.8, -3.0, -8.2), chunk position (104, 32, 232), block position
+        // (-111.8, -35.0, -240.2))
+        let me = (Vec3::new(-7.8, -3.0, -8.2), Vec3::new(104.0, 32.0, 232.0));
+        let block = block_to_physics(me.0, -me.1);
+        assert!(block.distance(Vec3::new(-111.8, -35.0, -240.2)) < 1e-3);
+        // their game shifted its origin elsewhere: their place still comes out where they are here
+        let theirs = Vec3::new(-100.0, -35.0, -250.0);
+        let here = block_to_physics(theirs, me.1);
+        assert!(here.distance(Vec3::new(4.0, -3.0, -18.0)) < 1e-3);
+        assert!(here.distance(me.0) > 10.0);
+    }
+
+    #[test]
     fn pose_round_trip() {
         let a = pose();
-        let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(-1234.5, 88.25, 4096.0), yaw: -2.5, local: false };
+        let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(-1234.5, 88.25, 4096.0), yaw: -2.5, local: true };
         let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(123_456), place: Some(place) });
         // (one network packet, with room to spare)
         assert_eq!(bytes.len(), POSE_BYTES + POSE_EXT_BYTES);
         assert!(bytes.len() < 1000, "pose {} B", bytes.len());
         let Some(Packet::Pose { seq, health, luigi, parts, ms, place: got }) = decode(&bytes) else { panic!("no pose") };
         assert_eq!((seq, health, luigi, ms, got), (7, 0x580, true, Some(123_456), Some(place)));
-        // in a dungeon: the block's own place
-        let local = Place { local: true, ..place };
-        let bytes = encode(&Packet::Pose { seq: 8, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(1), place: Some(local) });
+        // a world origin shift (before version 9) is no place
+        let shift = Place { local: false, ..place };
+        let bytes = encode(&Packet::Pose { seq: 8, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(1), place: Some(shift) });
         let Some(Packet::Pose { place: got, .. }) = decode(&bytes) else { panic!("no pose") };
-        assert_eq!(got, Some(local));
+        assert_eq!(got, None);
         // the effects on their own
         let fx = crate::fx::WorldFx { fire: vec![crate::fx::Fire { pos: Vec3::new(1.0, 2.0, 3.0), size: 1.0, frame: 3, tint: [1.0; 4] }], ..Default::default() };
         let Some(Packet::Fx { seq, ms, fx: got }) = decode(&encode(&Packet::Fx { seq: 65535, ms: 42, fx: std::sync::Arc::new(fx.clone()) })) else { panic!("no effects") };

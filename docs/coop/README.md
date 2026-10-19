@@ -181,12 +181,12 @@ a sí misma.
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
-| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 8) |
+| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 9) |
 | `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
 | `coop: pose from ... with its place` | El otro se ve suave y en su lugar real. Si dice `no place`, se ve donde el juego tiene a su personaje (más tironeado) |
 | `coop: partner ... shown at their own place (...)` / `where the game has them` | Dónde se dibuja al compañero y a cuántos metros está la copia del juego. Si al cargar se ven encimados, esta línea dice por qué |
 | `coop: partner ...'s character moved to their own place: its model N m off, its physics M m` | La copia del juego del compañero estaba lejos y se la llevó a su lugar real (si no, se volvía invisible) |
-| `coop: in block N, physics minus block position moved ...` | Aviso: en un dungeon la posición del bloque no acompaña a la física (mandar el log) |
+| `coop probe: me ...` / `coop probe: partner ... ours-copy N m` | Diagnóstico cada 3 s (las primeras 120): posiciones propias y del compañero; `ours-copy` es cuánto se aleja la copia del juego de donde lo dibujamos |
 | `net: last 20 s sent pose ... fx ...; got pose 29.x/s ...; lost poses N, effects M` | Tráfico de red: lo normal es pose ~30/s y pocas perdidas. Muchas `lost` = paquetes que no llegan |
 | `revive: down ...` / `revive: revived by ...` / `revive: reviving ...` | Quedaste caído / te revivieron / revivís al otro |
 | `revive: nobody came in time` / `nobody left to revive` | Se acabó el tiempo o cayeron los dos: muerte normal |

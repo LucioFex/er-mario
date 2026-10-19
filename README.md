@@ -467,10 +467,10 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   fight's poses outgrew one network packet and were lost whole, and the partner froze mid combo.
   The pose alone is 873 bytes. Every 20 s the log sums up what went out and came in
   (`net: last 20 s sent ...; got ...; lost poses N, effects M`).
-- Their place is their own: in the open world map chunk coordinates, in dungeons and buildings
-  the position in the block (both the same on both games; physics positions aren't), worked out
-  through your own Tarnished however far the game's slower copy of them lags (at a join it stands
-  on the host). That copy is then moved there too: Mario is drawn on its model, and the game
+- Their place is their own: their place in their map block (physics position less the game's
+  world origin shift, its "chunk position": the same on both games, physics positions aren't),
+  worked out through your own Tarnished in the same block, however far the game's slower copy of
+  them lags (at a join it stands on the host). In another block, the game's copy shows them. That copy is then moved there too: Mario is drawn on its model, and the game
   leaves it out by where it stands (they went invisible), and your enemies see them there. A pose
   without a place holds where they were for half a second, and a change between their own place
   and the game's blends instead of jumping. The log says which one is used (`coop: partner ... shown at their own place ...`).
@@ -515,7 +515,7 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
 - The Metal cap is retired (D-pad left is the Rock Mushroom), so its look isn't sent. Packets are
-  version 8: both players need the same build.
+  version 9: both players need the same build.
 
 
 Co-op touches (nothing of this shows alone):
@@ -546,7 +546,7 @@ Co-op touches (nothing of this shows alone):
   "BROS x N" under the style meter (the word only on the first and every fifth).
 - Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO), "1UP" over the one you
   revive. Down yourself: HELP and your seconds left up top. A downed partner's edge arrow is green.
-- Both players need the same build: the packets are version 8 (the status packet: health, coins,
+- Both players need the same build: the packets are version 9 (the status packet: health, coins,
   power, style, last enemy hit, coin bag, down and its seconds left, boss fight, busy, a few times
   a second; the effects; the revive; the mod's own sounds with their volume; the Bros. Attack's
   leap and blow). From version 4 on a build skips a
