@@ -99,6 +99,12 @@ pub fn update(player: &ChrIns) -> bool {
         s.ignore = None;
     }
     let held = (state == IN_THROW_TARGET || state == DEATH_TARGET) && s.ignore.is_none();
+    // (a throw of the enemy he rides: not one, he stays on its back)
+    if held && s.held_since.is_none() && crate::bossride::own_throw(player) {
+        log(format!("grab: a throw by the enemy Mario rides (state {state}), ignored"));
+        s.ignore = Some(state);
+        return false;
+    }
     if s.last != Some(state) {
         if s.last.is_some() || held {
             log(format!("grab: throw state {:?} -> {state}, the Tarnished's anim {}", s.last, crate::current_anim(player)));

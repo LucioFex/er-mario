@@ -3150,7 +3150,8 @@ fn frame(data: &FD4TaskData) {
             // the Vanish cap: enemy hits go through Mario
             // (and while he dashes)
             // (and while he's down for the co-op partner to revive)
-            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::untouchable(m.state.action) || revive::downed());
+            // (and while the enemy he rides strikes: its own blows aren't for its rider)
+            flags.all_no_hit = !m.dead && (caps::active() == Some(caps::VANISH) || moves::untouchable(m.state.action) || revive::downed() || bossride::untouchable());
         }
         // Elden Ring's ailments and burns setting in on him (before his hurt: blood loss's wedge
         // costs no knockback)
@@ -3216,10 +3217,12 @@ fn frame(data: &FD4TaskData) {
             worker::call("metal clang", |_| unsafe { sm64::sm64_play_sound_global(SOUND_METAL_BONK) });
         }
         let hurt = hurt.filter(|_| !caps::shielded() && !moves::untouchable(m.state.action));
-        // (up on a captured enemy: its back takes the blow, not him)
+        // (up on a captured enemy: its back takes the blow, not him; its own blows nobody takes)
         let hurt = match hurt {
             Some(combat::Hurt::Hit(w)) if bossride::active() => {
-                bossride::shield(w);
+                if !bossride::own_blow(&player_ref.chr_ins) {
+                    bossride::shield(w);
+                }
                 None
             }
             Some(_) if bossride::active() => None,

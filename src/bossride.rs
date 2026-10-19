@@ -3,8 +3,10 @@
 //! stick steers it (it's pushed along where it points, turned that way), X and Y make it attack
 //! with its own moves (light and heavy), B charges, A or R2 pressed again hops him off behind it.
 //! Charmed meanwhile (the game's own team for it): its blows hurt the other enemies and they go
-//! for it; blows meant for Mario land on it instead. Driven into a wall at speed it crashes there,
-//! staggered and left open (its stance broken: grab its tail). Worn out, or its time up, he hops
+//! for it; blows meant for Mario land on it instead, and its own never touch him (while it
+//! strikes, with no other enemy striking near him, the game's hits don't land on him at all; a blow
+//! that still does, or a throw of its own, is told apart and ignored). Driven into a wall at
+//! speed it crashes there, staggered and left open (its stance broken: grab its tail). Worn out, or its time up, he hops
 //! off and it comes to its senses a little dazed (its poise gone). A long wait after. Not a boss
 //! with its health bar up: those are fought, not driven.
 //!
@@ -27,7 +29,7 @@ use crate::combat::{self, Attack, Combat};
 use crate::{log, sm64, worker};
 
 /// how long a capture lasts at most (s), the wait before the next (s)
-const TIME: f32 = 20.0;
+const TIME: f32 = 30.0;
 const RECHARGE: f32 = 20.0;
 /// how fast it's driven (m/s), how quickly it turns that way (rad/s), how fast into a wall counts
 /// as a crash (m/s: it built up speed)
@@ -62,6 +64,11 @@ const NEXT_AFTER: f32 = 0.55;
 const MISSES: u32 = 2;
 /// blows meant for Mario: at most one on his mount in this long (s; his own grace after a hit)
 const SHIELD_EVERY: f32 = 0.7;
+/// its own blows: they may still land this long after its attack's animation ends (s), and other
+/// enemies this far from Mario past their body's edge, in one of their attacks, may be the ones
+/// who hit him then (m)
+const STRIKE_TAIL: f32 = 0.4;
+const OTHERS_REACH: f32 = 6.0;
 
 pub const ACT_ER_BOSS_RIDE: u32 = 0x0000_035C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
@@ -119,6 +126,9 @@ struct Ride {
     last_charge: Option<Instant>,
     last_shield: Option<Instant>,
     keys: [bool; 3],
+    /// the last moment it was in one of its attacks; another enemy striking near Mario then
+    strike_at: Option<Instant>,
+    others: bool,
 }
 
 struct State {
@@ -328,6 +338,8 @@ pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
             last_charge: None,
             last_shield: None,
             keys: [true; 3],
+            strike_at: None,
+            others: false,
         })
     });
     log(format!("boss ride: on its back, c{kind:04} captured (team {team} -> {CHARMED})"));
@@ -428,6 +440,59 @@ pub fn pre_behavior() {
     }
 }
 
+/// Another enemy near `at` (Mario) in one of its attacks (not `mob`): a blow then may be theirs.
+fn others_striking(mob: &FieldInsHandle, at: Vec3) -> bool {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return true };
+    let me = combat::handle_key(mob);
+    wcm.chr_sets.iter().flatten().flat_map(|set| set.characters()).any(|c| {
+        let c: &eldenring::cs::ChrIns = c;
+        if c.modules.data.hp <= 0 || combat::handle_key(&c.field_ins_handle) == me || !combat::hostile(c) {
+            return false;
+        }
+        let ph = &c.modules.physics;
+        let flat = Vec3::new(ph.position.0 - at.x, 0.0, ph.position.2 - at.z).length();
+        let anim = anim_of(c).0;
+        flat <= ph.hit_radius.max(ph.chr_hit_radius).clamp(0.2, 6.0) + OTHERS_REACH && (is_attack(anim) || (30000..40000).contains(&anim))
+    })
+}
+
+/// In one of its attacks now or a moment ago, and no other enemy striking near Mario: whatever
+/// hits him then is its own blow (`tail` s after the attack).
+fn own_window(tail: f32) -> bool {
+    with(|s| s.ride.as_ref().is_some_and(|r| !r.others)) && struck_within(tail)
+}
+
+/// In one of its attacks now or less than `tail` s ago.
+fn struck_within(tail: f32) -> bool {
+    with(|s| s.ride.as_ref().and_then(|r| r.strike_at).is_some_and(|t| t.elapsed().as_secs_f32() < tail))
+}
+
+/// Game thread: its own blows can't land on him: the game's "no hits on the player" while it
+/// strikes (unless another enemy strikes near him too: then a blow is told apart by `own_blow`).
+pub fn untouchable() -> bool {
+    own_window(STRIKE_TAIL)
+}
+
+/// Game thread: the blow that just hit Mario up there was its own (the game says it was, or it was
+/// striking with nobody else near): nothing comes of it, not even on its back.
+pub fn own_blow(player: &eldenring::cs::ChrIns) -> bool {
+    let Some(mob) = with(|s| s.ride.as_ref().map(|r| r.mob)) else { return false };
+    let named = combat::handle_key(&player.last_hit_by) == combat::handle_key(&mob);
+    let own = (named && struck_within(STRIKE_TAIL + 1.0)) || own_window(STRIKE_TAIL + 0.3);
+    if own {
+        log("boss ride: its own blow on Mario, ignored");
+    }
+    own
+}
+
+/// Game thread: the throw the game just put Mario in is its own (it holds him, or it was striking
+/// with nobody else near): not taken, he stays on its back.
+pub fn own_throw(player: &eldenring::cs::ChrIns) -> bool {
+    let Some(mob) = with(|s| s.ride.as_ref().map(|r| r.mob)) else { return false };
+    let holder = &player.modules.throw.throw_node.pair_anim_node.counter_party;
+    (combat::handle_key(holder) == combat::handle_key(&mob) && struck_within(STRIKE_TAIL + 1.0)) || own_window(STRIKE_TAIL + 0.3)
+}
+
 /// Game thread: a blow meant for Mario while he rides (`halves` of his wedges): it lands on his
 /// mount.
 pub fn shield(halves: u32) {
@@ -471,6 +536,17 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
         .and_then(|w| w.chr_ins_by_handle(&mob))
         .map_or(1.0, |c| c.modules.data.hp as f32 / c.modules.data.max_hp.max(1) as f32);
     let worn = health < WORN_OUT;
+    // (its own attacks: the blows it deals now are not Mario's to take; others striking near him)
+    let striking = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&mob)).is_some_and(|c| is_attack(anim_of(c).0));
+    let others = others_striking(&mob, seat_at);
+    with(|s| {
+        if let Some(r) = s.ride.as_mut() {
+            if striking || r.ask.is_some() {
+                r.strike_at = Some(Instant::now());
+            }
+            r.others = others;
+        }
+    });
     with(|s| s.hud = Some((1.0 - since.elapsed().as_secs_f32() / TIME, health)));
     // (R2 needn't stay held up there: letting it go on getting on ended the ride at once, and his
     // hop off landed on the enemy's head, a ground pound)
