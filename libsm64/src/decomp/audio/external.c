@@ -1279,6 +1279,13 @@ static f32 get_sound_freq_scale(u8 bank, u8 item) {
 
     // Goes from 1 at the camera to 1 + 1/15 at AUDIO_MAX_DISTANCE (and continues rising
     // farther than that)
+    // (er-mario: Luigi's voice, ours or a co-op partner's, two semitones up)
+    {
+        extern int er_is_luigi_voice(const f32 *pos);
+        if (bank == SOUND_BANK_VOICE && er_is_luigi_voice(sSoundBanks[bank][item].x)) {
+            return (amount / US_FLOAT(15.0) + US_FLOAT(1.0)) * 1.12f;
+        }
+    }
     return amount / US_FLOAT(15.0) + US_FLOAT(1.0);
 }
 

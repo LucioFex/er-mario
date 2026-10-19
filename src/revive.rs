@@ -200,15 +200,20 @@ pub fn hold(held: bool, me: Vec3, free: bool, size: f32) {
     log(format!("revive: reviving {:x} ({})", p.steam, if p.luigi { "Luigi" } else { "Mario" }));
     crate::coop::send_revive(p.steam);
     crate::impact::one_up(p.feet);
+    // (a trail of stars from us to them: their side sees it through our effects)
+    crate::impact::star_trail(me + Vec3::Y * size.max(1.0), p.feet + Vec3::Y * 0.6);
     crate::style::callout("1UP", Some(p.head), [0.45, 1.0, 0.5], true, 2.0);
-    crate::worker::call("revive 1-up", |_| unsafe { crate::sm64::sm64_play_sound_volume(SOUND_1UP, VOLUME) });
+    crate::style::callout("NICE ONE!", None, [1.0, 0.85, 0.35], false, 0.0);
+    // (theirs plays on their side: not sent)
+    crate::worker::call("revive 1-up", |_| unsafe { crate::sm64::sm64_play_sound_local(SOUND_1UP, VOLUME) });
 }
 
-/// The revived side's sounds (lib.rs, with the spin up).
+/// The revived side's sounds and thanks (lib.rs, with the spin up).
 pub fn sounds() {
+    crate::style::callout("THANKS, BRO!", None, [0.45, 1.0, 0.5], true, 0.0);
     crate::worker::call("revived", |_| unsafe {
-        crate::sm64::sm64_play_sound_volume(SOUND_1UP, VOLUME);
-        crate::sm64::sm64_play_sound_volume(SOUND_LETS_GO, VOLUME);
+        crate::sm64::sm64_play_sound_local(SOUND_1UP, VOLUME);
+        crate::sm64::sm64_play_sound_local(SOUND_LETS_GO, VOLUME);
     });
 }
 

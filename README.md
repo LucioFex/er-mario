@@ -438,9 +438,14 @@ Play [Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510) as Mario and
 top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step-by-step setup
 (in Spanish): [docs/coop/README.md](docs/coop/README.md).
 
-- `character = luigi` in `er_mario.ini` makes you Luigi, in green and navy (the next two launches
-  rebuild the model). Mario wears the Vagabond chest piece, Luigi its Altered version, and every
-  install also builds the other brother, so each player sees the other as who they play.
+- `character = luigi` in `er_mario.ini` makes you Luigi, in green and navy with an **L** on his
+  cap, a touch slimmer than his brother (the next two launches rebuild the model). Mario wears the
+  Vagabond chest piece, Luigi its Altered version, and every install also builds the other brother,
+  so each player sees the other as who they play.
+- Luigi plays like Luigi: his jumps go a fifth higher, his skids on a stop or a turn are longer
+  (slippery shoes), holding **A** as a jump comes down makes his legs kick like mad and hold him up
+  for a moment (his flutter, once a jump), low on health he stands there shivering instead of
+  panting, and his voice is a little higher (on the partner's game too).
 - Each player's Mario pose goes to the other over Steam (the game's own `steam_api64`,
   SteamNetworkingMessages on a channel of the mod's), ~30 times a second, with where they are (map
   chunk coordinates) and their clock. The other game shows them a moment back in time, between the
@@ -449,9 +454,12 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
 - The partner's pose is put back right after the game animates their Tarnished, as your own is
   (it used to flicker into the Tarnished's shape now and then, their shadow too).
 - Each one's Mario sounds (voice, steps, blows) go to the other too, always softer than your own
-  and fading with the distance (none past 50 m).
+  and fading with the distance (none past 50 m), and so do the mod's own (the weapons' clinks and
+  whooshes, the hammer's quakes, fireballs, explosions, power-ups), at their own volume; the
+  player's own cues (buzzes, chimes) stay theirs.
 - The partner's wing cap shows its wings (drawn over their model), the Vanish cap makes them
-  see-through, the Mega Mushroom makes them big.
+  see-through, the Mega Mushroom makes them big, and their Torrent is Yoshi on your game too
+  (posed with Yoshi's own walk, idle and jump from how it moves, its hooves silent).
 - Their effects show too, around where they're shown: fireballs, the hook's line, the boomerangs'
   streaks, the hammer's and the Chain Chomp's ribbons and sparks, the blows' star bursts, stars and
   coins, rings on the ground, the dash, Yoshi's tongue and eggs. They go in a packet of their own,
@@ -503,12 +511,26 @@ top of [Elden Ring Reforged](https://www.nexusmods.com/eldenring/mods/541). Step
   `er_mario.ini` add exceptions, should a team come out wrong.
 - Both players need the same ER Mario build, the same Seamless version and the same regulation
   (both Reforged, or both vanilla: `docs/coop/er-mario-coop.me3` is the vanilla profile).
-- Not synced yet: the Metal cap's look, Yoshi's model, sounds the mod adds itself (weapons,
-  callouts). Packets are version 6: both players need the same build.
+- The Metal cap is retired (D-pad left is the Rock Mushroom), so its look isn't sent. Packets are
+  version 7: both players need the same build.
 
 
 Co-op touches (nothing of this shows alone):
 - Landing on your partner's head is a **Bros. Jump** (a high bounce off it).
+- **Bros. Attack** (Mario & Luigi's): three BROS! in a row and that enemy is marked, both
+  brothers' faces over its head in a ring turning red and green, for 8 s. A Bros. Jump off your
+  partner's head then (easier to land while it's up) flips you up and over onto it (12 m at most):
+  the world slows at the top, you come down in a ground pound homing in on it, and it takes a
+  team finisher's blow (about 30% of a regular enemy, a boss's own smaller share), with rings in
+  both colours, stars and a shake. The one jumped off gets **BROS POWER** for 5 s: their blows up
+  close hit 1.3 times harder. Then 25 s before the next one. `damage_bros_attack` in
+  `er_mario.ini` sets its share.
+- A boss down with your partner close by: both star dance with "SUPER BROS!", gold and both
+  brothers' rings and a fountain of stars and coins.
+- Reviving: a trail of stars from you to them, "NICE ONE!" on your side and "THANKS, BRO!" on
+  theirs.
+- Back together after over 8 s more than 30 m apart: a ring and stars at their feet and a soft
+  chime.
 - **Partner card**, bottom left, only while something's going on (a fight, either of you hurt,
   them low, down or over 30 m away), fading out 5 s after it's quiet: their head (Mario or Luigi),
   power pie, the power they're using (cap, Rock, Mega, Yoshi, a capture), coins and style rank. Red
@@ -521,9 +543,10 @@ Co-op touches (nothing of this shows alone):
   "BROS x N" under the style meter (the word only on the first and every fifth).
 - Callouts: "LUIGI!" (low), "LUIGI DOWN", "LUIGI IS BACK" (or MARIO), "1UP" over the one you
   revive. Down yourself: HELP and your seconds left up top. A downed partner's edge arrow is green.
-- Both players need the same build: the packets are version 6 (the status packet: health, coins,
+- Both players need the same build: the packets are version 7 (the status packet: health, coins,
   power, style, last enemy hit, coin bag, down and its seconds left, boss fight, busy, a few times
-  a second; the effects; the revive). From version 4 on a build skips a
+  a second; the effects; the revive; the mod's own sounds with their volume; the Bros. Attack's
+  leap and blow). From version 4 on a build skips a
   kind of packet it doesn't know and reads a longer one as far as it knows, so later additions
   (grabbing and throwing your partner) can come without breaking it.
 

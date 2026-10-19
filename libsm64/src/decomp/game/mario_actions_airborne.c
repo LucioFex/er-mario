@@ -458,6 +458,40 @@ u32 common_air_action_step(struct MarioState *m, u32 landAction, s32 animation, 
     return stepResult;
 }
 
+/* er-mario: Luigi's flutter (his scuttle): A held as a jump comes down, his legs kick like mad and
+ * hold him up for a moment, once a jump (letting go of A ends it). er_flutter_used: its ticks this
+ * time in the air (libsm64.c sets it back to 0 on the ground). */
+#define ER_FLUTTER_TICKS 22
+int er_flutter_used = 0;
+
+/* Before the air step: whether he flutters this tick (then his speed up or down is the flutter's,
+ * and the step plays MARIO_ANIM_RUNNING: his legs kicking, the same animation every tick so it
+ * runs on). */
+static s32 er_luigi_flutter(struct MarioState *m) {
+    extern int g_er_luigi;
+    extern int er_mega;
+    if (!g_er_luigi || er_mega || (m->flags & MARIO_WING_CAP) || er_flutter_used >= ER_FLUTTER_TICKS) {
+        return FALSE;
+    }
+    if (!(m->input & INPUT_A_DOWN)) {
+        // (let go mid flutter: over for this jump)
+        if (er_flutter_used > 0) {
+            er_flutter_used = ER_FLUTTER_TICKS;
+        }
+        return FALSE;
+    }
+    if (m->vel[1] > 0.0f) {
+        return FALSE;
+    }
+    if (er_flutter_used == 0) {
+        play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+    }
+    // (a little up, then slowly down: about where he was, for under a second)
+    m->vel[1] = 3.0f - 0.25f * (f32) er_flutter_used;
+    er_flutter_used++;
+    return TRUE;
+}
+
 s32 act_jump(struct MarioState *m) {
     if (check_kick_or_dive_in_air(m)) {
         return TRUE;
@@ -468,7 +502,7 @@ s32 act_jump(struct MarioState *m) {
     }
 
     play_mario_sound(m, SOUND_ACTION_TERRAIN_JUMP, 0);
-    common_air_action_step(m, ACT_JUMP_LAND, MARIO_ANIM_SINGLE_JUMP,
+    common_air_action_step(m, ACT_JUMP_LAND, er_luigi_flutter(m) ? MARIO_ANIM_RUNNING : MARIO_ANIM_SINGLE_JUMP,
                            AIR_STEP_CHECK_LEDGE_GRAB | AIR_STEP_CHECK_HANG);
     return FALSE;
 }
@@ -487,6 +521,9 @@ s32 act_double_jump(struct MarioState *m) {
     }
 
     play_mario_sound(m, SOUND_ACTION_TERRAIN_JUMP, SOUND_MARIO_HOOHOO);
+    if (er_luigi_flutter(m)) {
+        animation = MARIO_ANIM_RUNNING;
+    }
     common_air_action_step(m, ACT_DOUBLE_JUMP_LAND, animation,
                            AIR_STEP_CHECK_LEDGE_GRAB | AIR_STEP_CHECK_HANG);
     return FALSE;

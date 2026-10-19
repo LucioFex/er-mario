@@ -122,6 +122,7 @@ const ACT_TWIRLING: u32 = 0x1080_08A4;
 const ACT_FREEFALL: u32 = 0x0100_088C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
 const ACT_TRIPLE_JUMP: u32 = 0x0100_0882;
+const ACT_SIDE_FLIP: u32 = 0x0100_0887;
 /// SM64's punch sequence step for the breakdance sweep (crouch sliding + B)
 const BREAKDANCE: u32 = 9;
 /// SM64's animation: the combo's kick
@@ -246,6 +247,10 @@ pub enum Request {
     Bounce([f32; 3]),
     /// off the spring (traps.rs): a triple jump's flip at this velocity
     Spring([f32; 3]),
+    /// the Bros. Attack's leap (brosattack.rs): a triple jump's flip (a side flip with the wing cap
+    /// on: no flying off; neither cuts its rise short when A isn't held) this fast up and forward
+    /// (SM64 units per tick), facing `yaw` (SM64's radians)
+    Leap { up: f32, forward: f32, yaw: f32, flip: bool },
     /// a new velocity, the action kept (the boulder off a big body, rock.rs)
     Velocity([f32; 3]),
     /// the freeflow: a leap to (x, y, z) (SM64 units), just off another enemy's body, popping up in
@@ -273,6 +278,12 @@ impl Request {
                 Request::Spring(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TRIPLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
+                }
+                Request::Leap { up, forward, yaw, flip } => {
+                    sm64::sm64_set_mario_action(id, if flip { ACT_TRIPLE_JUMP } else { ACT_SIDE_FLIP });
+                    sm64::sm64_set_mario_faceangle(id, yaw);
+                    sm64::sm64_set_mario_forward_velocity(id, forward);
+                    sm64::sm64_set_mario_velocity(id, forward * yaw.sin(), up, forward * yaw.cos());
                 }
             }
         }

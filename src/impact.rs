@@ -133,6 +133,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::MaxQuake => (0, 1.2, true),
         Attack::MaxCyclone => (2, 1.4, true),
         Attack::RideCrash => (5, 1.7, true),
+        Attack::BrosAttack => (6, 1.8, true),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
@@ -641,6 +642,59 @@ pub fn one_up(feet: Vec3) {
     ring(feet + Vec3::Y * 0.9, 1.0, 0.3, GOLD);
     burst(feet + Vec3::Y * 0.8, 8, Bit::Star);
     puffs(feet + Vec3::Y * 0.2, 4, 0.4);
+}
+
+/// The brothers' colours (co-op): Mario's red, Luigi's green.
+pub const MARIO_RED: [f32; 4] = [1.0, 0.3, 0.25, 1.0];
+pub const LUIGI_GREEN: [f32; 4] = [0.35, 0.95, 0.4, 1.0];
+
+/// Co-op: the Bros. Attack's leap off the partner's head (brosattack.rs): rings in both brothers'
+/// colours round the head, a flash of stars. `head`: Elden Ring.
+pub fn bros_leap(head: Vec3) {
+    ring(head, 1.1, 0.3, MARIO_RED);
+    ring(head + Vec3::Y * 0.1, 0.8, 0.3, LUIGI_GREEN);
+    burst(head + Vec3::Y * 0.3, 4, Bit::Star);
+    puffs(head, 4, 0.3);
+}
+
+/// Co-op: the Bros. Attack comes down on the enemy (at its chest, `at`): a white flash, a big
+/// spark, wide rings red and green, stars and dust all round, a hard shake.
+pub fn bros_attack(at: Vec3, feet: Vec3) {
+    flash([1.0, 0.95, 0.85], 0.35, 0.4);
+    crate::lakitu::punch(0.5);
+    spark(at, 3.0, WHITE);
+    ring(feet + Vec3::Y * 0.1, 4.2, 0.55, MARIO_RED);
+    ring(feet + Vec3::Y * 0.2, 3.0, 0.45, LUIGI_GREEN);
+    ring(at, 2.2, 0.3, GOLD);
+    burst(at, 8, Bit::Star);
+    puffs(feet + Vec3::Y * 0.2, 10, 1.6);
+    crate::lakitu::shake(1.3);
+}
+
+/// Co-op: the boss is down and both are there (the star dance): a gold ring and a green or red one
+/// round the player's feet, a fountain of stars. `feet`: Elden Ring.
+pub fn celebrate(feet: Vec3, luigi: bool) {
+    ring(feet + Vec3::Y * 0.1, 2.2, 0.6, GOLD);
+    ring(feet + Vec3::Y * 0.15, 1.4, 0.5, if luigi { LUIGI_GREEN } else { MARIO_RED });
+    burst(feet + Vec3::Y * 1.0, 8, Bit::Star);
+    burst(feet + Vec3::Y * 1.4, 4, Bit::Coin);
+}
+
+/// Co-op: a trail of stars from the reviver to the revived (chest to chest), sparks along it.
+pub fn star_trail(from: Vec3, to: Vec3) {
+    let steps = ((to - from).length() / 0.35).clamp(2.0, 10.0) as usize;
+    for k in 0..=steps {
+        let p = from.lerp(to, k as f32 / steps as f32) + Vec3::Y * (0.4 * (k as f32 / steps as f32 * std::f32::consts::PI).sin());
+        spark(p, 0.5 + 0.4 * (k % 2) as f32, if k % 2 == 0 { GOLD } else { WHITE });
+    }
+    burst(to, 4, Bit::Star);
+}
+
+/// Co-op: the partner back by our side after a long time apart: a soft ring and a couple of stars
+/// at their feet.
+pub fn reunion(feet: Vec3, luigi: bool) {
+    ring(feet + Vec3::Y * 0.1, 1.3, 0.45, if luigi { LUIGI_GREEN } else { MARIO_RED });
+    burst(feet + Vec3::Y * 1.0, 3, Bit::Star);
 }
 
 /// Co-op: Mario warps to the partner (leash.rs): a puff of smoke, a ring and a few stars where he

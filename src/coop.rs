@@ -26,12 +26,12 @@ const MAGIC: [u8; 3] = *b"ERM";
 /// effects around the player after it; 6: the effects in a packet of their own (with them in the
 /// pose a fight's poses outgrew one network packet and were lost whole: the partner froze mid
 /// combo), the status's REVIVABLE, BOSS and BUSY flags and how long a downed player has left, the
-/// revive)
+/// revive; 7: the mod's own sounds (weapons, blows, power-ups) with their volume, the Bros. Attack)
 /// From 4 on, a kind of packet a build doesn't know is skipped, and one longer than it expects is
 /// read as far as it knows: a later build of the same version can add kinds (grabbing and throwing
 /// the partner: the status's CARRYING and CARRIED are kept for it) or fields at the end without
 /// breaking an older one's co-op.
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
 const KIND_POSE: u8 = 1;
 const KIND_HIT: u8 = 2;
 const KIND_SHOVE: u8 = 3;
@@ -48,6 +48,16 @@ const KIND_FX: u8 = 7;
 /// "you're back on your feet": the reviver sends it to the downed partner (revive.rs), their Steam
 /// id u64
 const KIND_REVIVE: u8 = 8;
+/// the mod's own sounds (weapons, blows, power-ups: not Mario's body's, those are KIND_SOUNDS):
+/// count u8, then id u32 and volume u8 (/255) each
+const KIND_WORLD_SOUNDS: u8 = 9;
+/// the Bros. Attack (brosattack.rs): phase u8 (BROS_LAUNCH, BROS_HIT), the enemy's handle key u64,
+/// where it is f32 x3 (Elden Ring world), the Steam id of the partner jumped off u64
+const KIND_BROS: u8 = 10;
+pub const BROS_LAUNCH: u8 = 1;
+pub const BROS_HIT: u8 = 2;
+/// kinds there are (for the counts)
+const KINDS: usize = 11;
 /// at most this many sounds in one packet
 const SOUNDS_MAX: usize = 32;
 const HEADER: usize = 5;
@@ -70,6 +80,7 @@ const SHOVE_BYTES: usize = HEADER + 8;
 const STATUS_BYTES: usize = HEADER + 2 + 2 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 12 + 1;
 const FX_HEAD: usize = HEADER + 2 + 4;
 const REVIVE_BYTES: usize = HEADER + 8;
+const BROS_BYTES: usize = HEADER + 1 + 8 + 12 + 8;
 /// the effects go out this often, in at most this many bytes (a pose and its effects each fit in
 /// one network packet, ~1200 B: a bigger message goes out in pieces and is lost whole if one is),
 /// and the partner's are let go this long after their time (s: they stopped)
@@ -207,6 +218,10 @@ pub enum Packet {
     /// the player with this Steam id is revived
     Revive { target: u64 },
     Sounds(Vec<u32>),
+    /// the mod's own sounds and their volumes (0-1)
+    WorldSounds(Vec<(u32, f32)>),
+    /// a Bros. Attack's phase on the enemy `key` at `pos`, off the head of the player `base`
+    Bros { phase: u8, key: u64, pos: [f32; 3], base: u64 },
     Hit(Hit),
     Shove { dir: [f32; 2] },
     Hello,
@@ -281,6 +296,26 @@ pub fn encode(p: &Packet) -> Vec<u8> {
             for id in ids {
                 out.extend_from_slice(&id.to_le_bytes());
             }
+            out
+        }
+        Packet::WorldSounds(list) => {
+            let list = &list[..list.len().min(SOUNDS_MAX)];
+            let mut out = header(KIND_WORLD_SOUNDS, HEADER + 1 + list.len() * 5);
+            out.push(list.len() as u8);
+            for (id, volume) in list {
+                out.extend_from_slice(&id.to_le_bytes());
+                out.push((volume.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+            out
+        }
+        Packet::Bros { phase, key, pos, base } => {
+            let mut out = header(KIND_BROS, BROS_BYTES);
+            out.push(*phase);
+            out.extend_from_slice(&key.to_le_bytes());
+            for v in pos {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&base.to_le_bytes());
             out
         }
         Packet::Hit(h) => {
@@ -372,6 +407,25 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
         KIND_SOUNDS if b.len() > HEADER => {
             let n = (b[HEADER] as usize).min(SOUNDS_MAX);
             (b.len() >= HEADER + 1 + n * 4).then(|| Packet::Sounds((0..n).map(|k| u32::from_le_bytes([b[HEADER + 1 + k * 4], b[HEADER + 2 + k * 4], b[HEADER + 3 + k * 4], b[HEADER + 4 + k * 4]])).collect()))
+        }
+        KIND_WORLD_SOUNDS if b.len() > HEADER => {
+            let n = (b[HEADER] as usize).min(SOUNDS_MAX);
+            (b.len() >= HEADER + 1 + n * 5).then(|| {
+                Packet::WorldSounds(
+                    (0..n)
+                        .map(|k| {
+                            let o = HEADER + 1 + k * 5;
+                            (u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]), b[o + 4] as f32 / 255.0)
+                        })
+                        .collect(),
+                )
+            })
+        }
+        KIND_BROS if b.len() >= BROS_BYTES => {
+            let pos = [f32at(14), f32at(18), f32at(22)];
+            let key = u64::from_le_bytes(b[6..14].try_into().ok()?);
+            let base = u64::from_le_bytes(b[26..34].try_into().ok()?);
+            pos.iter().all(|v| v.is_finite()).then_some(Packet::Bros { phase: b[5], key, pos, base })
         }
         KIND_HIT if b.len() >= HIT_BYTES => {
             let key = u64::from_le_bytes(b[5..13].try_into().ok()?);
@@ -715,8 +769,8 @@ struct State {
     /// our status: last sent (what, when), its seq
     status_sent: Option<(Status, Instant)>,
     status_seq: u16,
-    /// the partners' sounds come in, to play (who, which)
-    sounds_in: Vec<(u64, u32)>,
+    /// the partners' sounds come in, to play (who, which, how loud there: 0-1)
+    sounds_in: Vec<(u64, u32, f32)>,
     /// our Steam id
     me: u64,
     /// our effects: last sent when, whether there were any, their seq
@@ -724,6 +778,9 @@ struct State {
     fx_any: bool,
     fx_seq: u16,
     stats: Stats,
+    /// the partners' Bros. Attack phases come in (who, phase, enemy key, where, whether off our
+    /// head), for brosattack.rs
+    bros_in: Vec<(u64, u8, u64, Vec3, bool)>,
 }
 
 /// What went out and came in since `since`, by kind: packets and bytes sent (and the biggest), packets
@@ -731,8 +788,8 @@ struct State {
 #[derive(Default)]
 struct Stats {
     since: Option<Instant>,
-    sent: [(u32, u64, usize); 9],
-    got: [u32; 9],
+    sent: [(u32, u64, usize); KINDS],
+    got: [u32; KINDS],
     lost_poses: u32,
     lost_fx: u32,
 }
@@ -759,12 +816,12 @@ impl Stats {
         if secs < STATS_EVERY.as_secs_f32() {
             return;
         }
-        let name = |k: usize| ["?", "pose", "hit", "shove", "hello", "status", "sounds", "fx", "revive"][k];
-        let sent: Vec<String> = (1..9).filter(|&k| self.sent[k].0 > 0).map(|k| {
+        let name = |k: usize| ["?", "pose", "hit", "shove", "hello", "status", "sounds", "fx", "revive", "mod sounds", "bros"][k];
+        let sent: Vec<String> = (1..KINDS).filter(|&k| self.sent[k].0 > 0).map(|k| {
             let (n, bytes, max) = self.sent[k];
             format!("{} {n} (avg {} B, max {max})", name(k), bytes / n as u64)
         }).collect();
-        let got: Vec<String> = (1..9).filter(|&k| self.got[k] > 0).map(|k| format!("{} {:.1}/s", name(k), self.got[k] as f32 / secs)).collect();
+        let got: Vec<String> = (1..KINDS).filter(|&k| self.got[k] > 0).map(|k| format!("{} {:.1}/s", name(k), self.got[k] as f32 / secs)).collect();
         log(format!("net: last {secs:.0} s sent {}; got {}; lost poses {}, effects {}", sent.join(", "), got.join(", "), self.lost_poses, self.lost_fx));
         *self = Stats { since: Some(Instant::now()), ..Stats::default() };
     }
@@ -829,6 +886,8 @@ fn loopback() {
                 Some(Packet::Fx { seq, ms, fx }) => format!("effects seq {seq}, clock {ms}, any {}", !fx.is_empty()),
                 Some(Packet::Revive { target }) => format!("revive {target:x}"),
                 Some(Packet::Sounds(ids)) => format!("{} sounds", ids.len()),
+                Some(Packet::WorldSounds(list)) => format!("{} mod sounds", list.len()),
+                Some(Packet::Bros { phase, key, .. }) => format!("Bros. Attack phase {phase} on {key:x}"),
                 Some(Packet::Hit(h)) => format!("hit c{:04} code {} {:.1}%", h.chr_id, h.attack, h.pct),
                 Some(Packet::Shove { dir }) => format!("shove {dir:?}"),
                 Some(Packet::Hello) => "hello".into(),
@@ -857,6 +916,8 @@ fn loopback() {
         (encode_fx(t.sent as u16).map_or_else(|| encode(&Packet::Fx { seq: 0, ms: 0, fx: Default::default() }), |f| f.0), false),
         (encode(&Packet::Revive { target: me }), true),
         (encode(&Packet::Sounds(vec![0x2404_8081])), false),
+        (encode(&Packet::WorldSounds(vec![(0x312F_0081, 0.6)])), false),
+        (encode(&Packet::Bros { phase: BROS_LAUNCH, key, pos: [1.0, 2.0, 3.0], base: me }), true),
         (encode(&Packet::Hit(Hit { handle: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) }, chr_id: 4750, pos: [1.0, 2.0, 3.0], attack: 0, pct: 4.5 })), true),
         (encode(&Packet::Shove { dir: [0.6, 0.8] }), true),
         (encode(&Packet::Status { seq: t.sent as u16, status: own_status() }), false),
@@ -1029,9 +1090,21 @@ fn take_in(s: &mut State, batch: Vec<(u64, Vec<u8>)>) {
             }
             Packet::Sounds(ids) => {
                 for id in ids {
-                    if s.sounds_in.len() < SOUNDS_MAX * 2 {
-                        s.sounds_in.push((from, id));
+                    if s.sounds_in.len() < SOUNDS_MAX * 3 {
+                        s.sounds_in.push((from, id, 1.0));
                     }
+                }
+            }
+            Packet::WorldSounds(list) => {
+                for (id, volume) in list {
+                    if s.sounds_in.len() < SOUNDS_MAX * 3 {
+                        s.sounds_in.push((from, id, volume));
+                    }
+                }
+            }
+            Packet::Bros { phase, key, pos, base } => {
+                if s.bros_in.len() < 8 {
+                    s.bros_in.push((from, phase, key, Vec3::from(pos), base == s.me));
                 }
             }
             Packet::Hit(h) if s.host => {
@@ -1086,6 +1159,7 @@ pub fn frame() {
     let pose = *crate::engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner());
     let status = own_status();
     let sounds: Vec<u32> = OUT_SOUNDS.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
+    let world: Vec<(u32, f32)> = OUT_WORLD.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
     let out = {
         let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = guard.as_mut() else { return };
@@ -1112,6 +1186,9 @@ pub fn frame() {
         }
         if !sounds.is_empty() && pose.is_some() {
             out.push(encode(&Packet::Sounds(sounds)));
+        }
+        if !world.is_empty() && pose.is_some() {
+            out.push(encode(&Packet::WorldSounds(world)));
         }
         // the status: a few times a second, sooner when something changed (a blow landed since)
         let due = match &s.status_sent {
@@ -1144,6 +1221,10 @@ pub fn frame() {
         }
     }
     play_partner_sounds();
+    let bros_in = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut().map(|s| std::mem::take(&mut s.bros_in)).unwrap_or_default();
+    for (from, phase, key, pos, ours) in bros_in {
+        crate::brosattack::partner_phase(from, phase, key, pos, ours);
+    }
     if CHIME.swap(false, Ordering::Relaxed) {
         crate::worker::call("bros chime", |_| unsafe { crate::sm64::sm64_play_sound_volume(SOUND_BROS, 0.09) });
     }
@@ -1366,6 +1447,8 @@ static BROS: Mutex<Bros> = Mutex::new(Bros { key: 0, at: None, used: None, strea
 /// every fifth: the rest add to the count and the style quietly).
 fn bros(key: u64, pos: Vec3, a: Instant, b: Instant) {
     let Some(n) = BROS.lock().unwrap_or_else(|e| e.into_inner()).add(key, a, b, Instant::now()) else { return };
+    // (a streak long enough marks the enemy for a Bros. Attack)
+    crate::brosattack::streak(key, n);
     if n == 1 || n % 5 == 0 {
         if n == 1 {
             log("coop: BROS! (both on one enemy)");
@@ -1376,6 +1459,13 @@ fn bros(key: u64, pos: Vec3, a: Instant, b: Instant) {
     } else {
         crate::style::team(BROS_POINTS);
     }
+}
+
+/// A Bros. Attack landed (ours or the partner's): the streak starts over.
+pub fn bros_spent() {
+    let mut b = BROS.lock().unwrap_or_else(|e| e.into_inner());
+    b.streak = 0;
+    b.streak_at = None;
 }
 
 /// For the HUD: the streak of BROS! going (2 or more), and how long since the last (s).
@@ -1499,6 +1589,8 @@ pub fn hud(me: Vec3, dt: f32) -> Vec<crate::hud::PartnerHud> {
     }
     let near = partners();
     update_partner_fx(&near);
+    crate::brosattack::frame();
+    reunions(me, &near);
     let me_fighting = FIGHTING_NOW.load(Ordering::Relaxed) || OWN_HURT.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed().as_secs_f32() < CARD_HURT);
     let now = Instant::now();
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -1607,18 +1699,36 @@ fn partners_now() -> Vec<Partner> {
         .collect()
 }
 
-/// Our Mario's body's sounds this tick (lib.rs, after his tick), to go out with the next frame.
+/// Our Mario's body's sounds this tick (lib.rs, after his tick), and the mod's own with their
+/// volume, to go out with the next frame.
 static OUT_SOUNDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static OUT_WORLD: Mutex<Vec<(u32, f32)>> = Mutex::new(Vec::new());
 
-/// The SM64 thread, each tick: the sounds our Mario's body made (only in a session).
-pub fn own_sounds(ids: &[u32]) {
-    if ids.is_empty() || !active() {
-        return;
+/// The SM64 thread, after each tick: the sounds our Mario's body made and the mod's own since
+/// (only kept in a session, taken all the same: none left to go out late).
+pub fn take_own_sounds() {
+    let mut ids = [0u32; 32];
+    let mut volumes = [0f32; 32];
+    let n = (unsafe { crate::sm64::sm64_er_take_sounds(ids.as_mut_ptr(), ids.len() as u32) } as usize).min(ids.len());
+    if n > 0 && active() {
+        let mut out = OUT_SOUNDS.lock().unwrap_or_else(|e| e.into_inner());
+        for &id in &ids[..n] {
+            if out.len() < SOUNDS_MAX {
+                out.push(id);
+            }
+        }
     }
-    let mut out = OUT_SOUNDS.lock().unwrap_or_else(|e| e.into_inner());
-    for &id in ids {
-        if out.len() < SOUNDS_MAX {
-            out.push(id);
+    let n = (unsafe { crate::sm64::sm64_er_take_world_sounds(ids.as_mut_ptr(), volumes.as_mut_ptr(), ids.len() as u32) } as usize).min(ids.len());
+    // (the mod's sounds pile up while Mario doesn't tick, out of Mario mode, loading: those are
+    // old by now, not sent all at once)
+    static TAKEN: Mutex<Option<Instant>> = Mutex::new(None);
+    let fresh = TAKEN.lock().unwrap_or_else(|e| e.into_inner()).replace(Instant::now()).is_some_and(|t| t.elapsed() < Duration::from_millis(200));
+    if n > 0 && active() && fresh {
+        let mut out = OUT_WORLD.lock().unwrap_or_else(|e| e.into_inner());
+        for k in 0..n {
+            if out.len() < SOUNDS_MAX {
+                out.push((ids[k], volumes[k]));
+            }
         }
     }
 }
@@ -1649,19 +1759,20 @@ fn play_partner_sounds() {
         Some(Vec3::new(p.0, p.1, p.2))
     });
     let Some(ear) = ear else { return };
-    // (each partner's from a spot of their own; under SM64's quietest, not at all)
-    let play: Vec<(u32, u32, f32)> = sounds
+    // (each partner's from a spot of their own; under SM64's quietest, not at all; a Luigi's voice
+    // a little higher)
+    let play: Vec<(u32, u32, f32, bool)> = sounds
         .into_iter()
-        .filter_map(|(from, id)| {
+        .filter_map(|(from, id, volume)| {
             let slot = near.iter().position(|p| p.steam == from)?;
-            let v = partner_volume(near[slot].head_part.distance(ear));
-            (v >= 0.05).then_some((id, slot as u32, v))
+            let v = partner_volume(near[slot].head_part.distance(ear)) * volume;
+            (v >= 0.05).then_some((id, slot as u32, v, near[slot].luigi))
         })
         .collect();
     if !play.is_empty() {
         crate::worker::call("partner sounds", move |_| {
-            for (id, slot, v) in play {
-                unsafe { crate::sm64::sm64_er_play_partner(id as i32, slot, v) };
+            for (id, slot, v, luigi) in play {
+                unsafe { crate::sm64::sm64_er_play_partner(id as i32, slot, v, luigi as i32) };
             }
         });
     }
@@ -1741,6 +1852,77 @@ pub fn send_hit(handle: &FieldInsHandle, attack: u8, pct: f32) {
         if s.peers.contains(&s.host_id) { vec![s.host_id] } else { s.peers.clone() }
     };
     for peer in to {
+        net::send(peer, &bytes, true);
+    }
+}
+
+/// a partner this far off (m) for this long (s), then back this close (m): a reunion
+const APART: f32 = 30.0;
+const APART_TIME: f32 = 8.0;
+const TOGETHER: f32 = 6.0;
+/// the reunion's chime: a red coin's, a few steps up, soft
+const SOUND_REUNION: i32 = 0x782B_9081;
+
+/// Each partner's time apart from us (Steam id, since when they're far off, whether long enough).
+static APART_SINCE: Mutex<Vec<(u64, Option<Instant>, bool)>> = Mutex::new(Vec::new());
+
+/// Game thread, every frame: a partner back by our side after a long time apart: a ring and stars
+/// at their feet, a soft chime (each side sees their own, and the other's through the effects).
+fn reunions(me: Vec3, near: &[Partner]) {
+    let mut apart = APART_SINCE.lock().unwrap_or_else(|e| e.into_inner());
+    apart.retain(|a| near.iter().any(|p| p.steam == a.0));
+    for p in near.iter().filter(|p| p.own_place && p.flags & DOWN == 0) {
+        let i = match apart.iter().position(|a| a.0 == p.steam) {
+            Some(i) => i,
+            None => {
+                apart.push((p.steam, None, false));
+                apart.len() - 1
+            }
+        };
+        let a = &mut apart[i];
+        let d = (p.feet - me).length();
+        if d > APART {
+            let since = *a.1.get_or_insert_with(Instant::now);
+            a.2 |= since.elapsed().as_secs_f32() >= APART_TIME;
+        } else if d < TOGETHER {
+            if a.2 {
+                log(format!("coop: back together with {:x}", p.steam));
+                crate::impact::reunion(p.feet, p.luigi);
+                crate::worker::call("reunion", |_| unsafe { crate::sm64::sm64_play_sound_local(SOUND_REUNION, 0.12) });
+            }
+            *a = (p.steam, None, false);
+        }
+    }
+}
+
+/// The boss is down and Mario does his star dance (lib.rs, `feet` Elden Ring): with a partner close
+/// by, both brothers' rings and a fountain of stars at his feet and "SUPER BROS!" (the partner does
+/// theirs on their side).
+pub fn celebrate(feet: Vec3) {
+    if !active() {
+        return;
+    }
+    let near = partners().into_iter().any(|p| (p.feet - feet).length() < CELEBRATE_NEAR);
+    if near {
+        log("coop: boss down together: SUPER BROS!");
+        crate::impact::celebrate(feet, crate::equip::luigi());
+        crate::style::callout("SUPER BROS!", None, [1.0, 0.85, 0.35], true, 0.0);
+    }
+}
+/// (the partner this close, m)
+const CELEBRATE_NEAR: f32 = 25.0;
+
+/// A Bros. Attack's phase (brosattack.rs) off the head of `base`, to the partners (reliably: once
+/// each).
+pub fn send_bros(phase: u8, key: u64, pos: Vec3, base: u64) {
+    let bytes = encode(&Packet::Bros { phase, key, pos: pos.to_array(), base });
+    let peers = {
+        let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = guard.as_mut() else { return };
+        s.stats.sent(&bytes);
+        s.peers.clone()
+    };
+    for peer in peers {
         net::send(peer, &bytes, true);
     }
 }
@@ -1968,6 +2150,20 @@ mod tests {
         let ids = vec![0x2404_8081, 0x0442_A081, 7];
         let Some(Packet::Sounds(got)) = decode(&encode(&Packet::Sounds(ids.clone()))) else { panic!("no sounds") };
         assert_eq!(got, ids);
+        // the mod's own, with their volume (in 1/255 steps)
+        let list = vec![(0x312F_0081, 0.6), (0x0444_C081, 1.0), (5, 0.0)];
+        let Some(Packet::WorldSounds(got)) = decode(&encode(&Packet::WorldSounds(list.clone()))) else { panic!("no mod sounds") };
+        assert_eq!(got.len(), 3);
+        for ((a, va), (b, vb)) in list.iter().zip(&got) {
+            assert_eq!(a, b);
+            assert!((va - vb).abs() < 0.003);
+        }
+        let mut short = encode(&Packet::WorldSounds(list));
+        short.pop();
+        assert!(decode(&short).is_none());
+        // a Bros. Attack's phase
+        let Some(Packet::Bros { phase, key, pos, base }) = decode(&encode(&Packet::Bros { phase: BROS_HIT, key: 0x0012_3456_0000_00AB, pos: [1.0, -2.5, 300.25], base: 0x1100_0011_0FA2_E86 })) else { panic!("no bros") };
+        assert_eq!((phase, key, pos, base), (BROS_HIT, 0x0012_3456_0000_00AB, [1.0, -2.5, 300.25], 0x1100_0011_0FA2_E86));
         let mut short = encode(&Packet::Sounds(ids));
         short.pop();
         assert!(decode(&short).is_none());

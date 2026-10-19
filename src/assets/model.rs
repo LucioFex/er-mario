@@ -241,6 +241,59 @@ pub(super) fn dark_patch(atlas: &[u8]) -> Option<([f32; 2], (f32, f32))> {
     Some(([(x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / CELL as f32], (0.6 / w as f32, 0.6 / CELL as f32)))
 }
 
+/// Luigi's build (his model only, co-op's character = luigi): a touch slimmer than his brother, the
+/// body and limbs narrower across their bone (the way to the next joint), the head, hands and feet
+/// as they are. Each part's (SM64 part, its child, how much across it stays).
+/// (the pelvis and forearms least: the hips and hands they meet stay as they are)
+const SLIM: [(i32, i32, f32); 10] = [(1, 2, 0.95), (2, 3, 0.9), (4, 5, 0.86), (5, 6, 0.89), (7, 8, 0.86), (8, 9, 0.89), (10, 11, 0.88), (11, 12, 0.88), (13, 14, 0.88), (14, 15, 0.88)];
+
+/// `model` with Luigi's build (SLIM): each part's vertices drawn in towards its bone, the normals
+/// the other way round, their world positions from the bind pose again.
+pub fn slim(model: &MarioModel) -> MarioModel {
+    // each part's bone, in its own space: towards the child's joint
+    let bones: Vec<(i32, [f32; 3], f32)> = SLIM
+        .iter()
+        .filter_map(|&(part, child, keep)| {
+            let m: &[f32; 16] = model.matrices.get(part as usize)?;
+            let c = model.matrices.get(child as usize)?;
+            let v = transform(&invert(m), [c[12], c[13], c[14]], 1.0);
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            (l > 1e-3).then(|| (part, v.map(|x| x / l), keep))
+        })
+        .collect();
+    let tris = model
+        .tris
+        .iter()
+        .map(|t| {
+            let Some(&(_, axis, keep)) = bones.iter().find(|b| b.0 == t.part) else { return *t };
+            let mut t = *t;
+            let dot = |v: [f32; 3]| v[0] * axis[0] + v[1] * axis[1] + v[2] * axis[2];
+            for k in 0..3 {
+                let along = dot(t.local[k]);
+                t.local[k] = std::array::from_fn(|c| axis[c] * along + (t.local[k][c] - axis[c] * along) * keep);
+                let n = t.normal[k];
+                let along = dot(n);
+                let n: [f32; 3] = std::array::from_fn(|c| axis[c] * along + (n[c] - axis[c] * along) / keep);
+                let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+                t.normal[k] = n.map(|v| v / l);
+                if let Some(m) = model.matrices.get(t.part as usize) {
+                    t.world[k] = transform(m, t.local[k], 1.0);
+                }
+            }
+            t
+        })
+        .collect();
+    MarioModel {
+        tris,
+        matrices: model.matrices.clone(),
+        peace: model.peace.clone(),
+        wings: model.wings.clone(),
+        hammer: model.hammer.clone(),
+        gear: model.gear.clone(),
+        atlas: model.atlas.clone(),
+    }
+}
+
 /// Inverse of a 4x4 row-vector matrix (Gauss-Jordan).
 fn invert(m: &[f32]) -> [f32; 16] {
     let mut a: [[f64; 8]; 4] = std::array::from_fn(|r| std::array::from_fn(|c| if c < 4 { m[r * 4 + c] as f64 } else if c - 4 == r { 1.0 } else { 0.0 }));

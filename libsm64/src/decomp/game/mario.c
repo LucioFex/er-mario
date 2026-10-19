@@ -895,6 +895,18 @@ static u32 set_mario_action_airborne(struct MarioState *m, u32 action, u32 actio
             break;
     }
 
+    // er-mario: Luigi jumps higher than his brother (a fifth more: his own jumps, not the moves
+    // that use a jump's arc, the kicks, the dives, the long jump)
+    {
+        extern int g_er_luigi;
+        extern int er_mega;
+        if (g_er_luigi && !er_mega && m->vel[1] > 0.0f
+            && (action == ACT_JUMP || action == ACT_DOUBLE_JUMP || action == ACT_TRIPLE_JUMP || action == ACT_BACKFLIP
+                || action == ACT_SIDE_FLIP || action == ACT_WALL_KICK_AIR)) {
+            m->vel[1] *= 1.1f;
+        }
+    }
+
     // er-mario: Mega Mario (mega.rs) is heavy: his jumps go up a giant's way, not 4 times as high
     {
         extern int er_mega;

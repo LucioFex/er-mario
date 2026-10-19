@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 14";
+const VERSION: &str = "er-mario assets 15";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -179,6 +179,10 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     let _ = std::fs::remove_file(paths::file(STAMP));
     let archives = archive::Archives::open()?;
     log(format!("assets: archives indexed in {:.1} s", t0.elapsed().as_secs_f32()));
+    // Luigi a touch slimmer than his brother (model::slim): the player's own looks are built from
+    // his build, the partner's model from the other one's
+    let slim = model::slim(model);
+    let (own, partner) = if tex::luigi() { (&slim, model) } else { (model, &slim) };
     // the wing cap's model: Mario with its wings on his head, in the nearest of Mario's own colours
     // (the albedo has a row per colour, and no room for another)
     let nearest = |c: [f32; 3]| {
@@ -187,7 +191,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     };
     // each wing twice, the second facing the other way: Elden Ring draws only the front of a
     // triangle, and the flat wings vanished seen from behind
-    let wings: Vec<model::Tri> = model
+    let wings: Vec<model::Tri> = own
         .wings
         .iter()
         .flat_map(|t| {
@@ -207,7 +211,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
         })
         .collect();
     let winged = model::MarioModel {
-        tris: model.tris.iter().chain(&wings).copied().collect(),
+        tris: own.tris.iter().chain(&wings).copied().collect(),
         matrices: model.matrices.clone(),
         peace: model.peace.clone(),
         wings: Vec::new(),
@@ -218,10 +222,10 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     log(format!("assets: wing cap {} triangles", model.wings.len()));
     // (look, its mesh, its albedo, metal)
     let looks = [
-        (MODEL_MARIO, model, tex::mario_albedo(model), false),
-        (MODEL_METAL, model, tex::metal_albedo(model), true),
+        (MODEL_MARIO, own, tex::mario_albedo(own), false),
+        (MODEL_METAL, own, tex::metal_albedo(own), true),
         (MODEL_WING, &winged, tex::wing_albedo(&winged), false),
-        (MODEL_PARTNER, model, tex::mario_albedo_as(model, !tex::luigi()), false),
+        (MODEL_PARTNER, partner, tex::mario_albedo_as(partner, !tex::luigi()), false),
     ];
 
     // the armour set, as its own model 999: Mario in the chest piece, the rest empty; and the

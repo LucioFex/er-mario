@@ -161,8 +161,17 @@ unsafe extern "C" {
     /// co-op: the sounds Mario's own body made since the last call (voice, steps, blows), up to
     /// `max` into `out`; how many
     pub fn sm64_er_take_sounds(out: *mut u32, max: u32) -> u32;
-    /// co-op: a partner's sound at a share of its volume (0-1), from that partner's own spot (0-3)
-    pub fn sm64_er_play_partner(sound_bits: i32, slot: u32, volume: f32);
+    /// co-op: a partner's sound at a share of its volume (0-1), from that partner's own spot (0-3);
+    /// `luigi`: they're Luigi (his voice a little higher)
+    pub fn sm64_er_play_partner(sound_bits: i32, slot: u32, volume: f32, luigi: i32);
+    /// co-op: the mod's own sounds since the last call (weapons, blows, power-ups; not the menu
+    /// bank's buzzes and chimes, nor sm64_play_sound_local's), up to `max` into `ids` and their
+    /// volumes into `volumes`; how many
+    pub fn sm64_er_take_world_sounds(ids: *mut u32, volumes: *mut f32, max: u32) -> u32;
+    /// a sound at a share of its volume, for us alone (co-op: one the partner's game plays itself)
+    pub fn sm64_play_sound_local(sound_bits: i32, volume: f32);
+    /// the player is Luigi: higher jumps, longer skids, his flutter, shivering when low, his voice
+    pub fn sm64_er_set_luigi(on: i32);
     pub fn sm64_set_mario_action(id: i32, action: u32);
     pub fn sm64_set_mario_action_arg(id: i32, action: u32, action_arg: u32);
     pub fn sm64_set_mario_velocity(id: i32, x: f32, y: f32, z: f32);

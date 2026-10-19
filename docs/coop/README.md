@@ -26,6 +26,17 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
   no está peleando (si están iguales, el invitado) aparece al lado del otro con humo y el sonido de
   la tubería. Nunca en peleas de jefe, caído, a caballo, en menús, puertas o escenas.
 - La cámara de Lakitu se abre un poco y mira hacia el compañero cuando está cerca.
+- **Luigi es Luigi**: tiene una **L** en la gorra y es un poco más flaco. Salta más alto, patina más
+  al frenar o girar, si mantenés **A** mientras baja de un salto patalea y se queda flotando un
+  momento (una vez por salto), con poca vida tiembla en vez de jadear y su voz es más aguda.
+- **Bros. Attack**: con 3 BROS! seguidos sobre un enemigo aparecen las caras de Mario y Luigi sobre
+  su cabeza (8 s). Si en ese momento uno salta sobre la cabeza del otro, sale volando hacia el
+  enemigo, el mundo se pone en cámara lenta arriba y cae con un culetazo que le saca mucha vida. El
+  que hizo de trampolín recibe **BROS POWER** 5 s (pega más fuerte). Después hay que esperar 25 s.
+- Al matar un jefe juntos, los dos festejan (SUPER BROS!). Al revivir sale una estela de estrellas
+  (NICE ONE! / THANKS, BRO!). Al reencontrarse después de estar lejos, un anillo y un sonido suave.
+- Cada uno escucha los sonidos del otro (voz, pasos, golpes, armas, explosiones, poderes), más
+  bajo que los propios y según la distancia. El Torrent del otro también se ve como Yoshi.
 - Sin una sesión de Seamless, el mod funciona igual que en un jugador.
 
 ## Requisitos (en las dos PCs)
@@ -167,7 +178,7 @@ a sí misma.
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
-| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 6) |
+| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 7) |
 | `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
 | `coop: pose from ... with its place` | El otro se ve suave y en su lugar real. Si dice `no place`, se ve donde el juego tiene a su personaje (más tironeado) |
 | `coop: partner ... shown at their own place (...)` / `where the game has them` | Dónde se dibuja al compañero y a cuántos metros está la copia del juego. Si al cargar se ven encimados, esta línea dice por qué |
@@ -178,6 +189,14 @@ a sí misma.
 | `input: interact (D-pad down) pressed, no event animation ... possible actions ...` | La flecha abajo no hizo nada: dice qué acciones permitía el juego, tipo de personaje, si está en el piso y a qué distancia de Mario está el Tarnished |
 | `follow: interact started anim N ... on D-pad down (allowed ...)` | La flecha abajo sí abrió una puerta/agarró algo |
 | `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
+| `bros: BROS ATTACK ready on ...` | Se marcó un enemigo para el Bros. Attack (las dos caras arriba) |
+| `bros: BROS ATTACK! leap at ...` / `bros: BROS ATTACK landed on ...` | El salto desde la cabeza del otro salió / el golpe pegó |
+| `bros: partner ... landed the Bros. Attack: BROS POWER` | El otro usó tu cabeza de trampolín: pegás más fuerte 5 s |
+| `bros: ... missed` / `didn't land` / `ended on its way up` | El Bros. Attack no pegó y por qué |
+| `yoshi: a partner's Torrent here (...), shown as Yoshi` | El Torrent del otro se ve como Yoshi |
+| `coop: boss down together: SUPER BROS!` | Festejo juntos al matar un jefe |
+| `coop: back together with ...` | Reencuentro después de estar lejos |
+| `net: ... mod sounds N ...` | Se mandan los sonidos del mod (armas, poderes) al otro |
 | `coop: partner ... is down` / `is back` | El compañero cayó / volvió |
 | `coop: partner's character paired by elimination` | Normal si hay un solo compañero: el personaje no traía el SteamID donde se esperaba |
 | `combat: a partner's ... not here` | Un golpe del invitado sobre un enemigo que el anfitrión no tiene cargado (se ignora) |

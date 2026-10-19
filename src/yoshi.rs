@@ -285,6 +285,13 @@ struct State {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// The co-op partners' Torrents on our game (their c8002, the same model: Yoshi), each posed as
+/// Yoshi from how it moves, as ours is (no fight moves, nothing else touched)
+static OTHERS: Mutex<Vec<State>> = Mutex::new(Vec::new());
+/// Torrent's character (c8002: his model id, not c8000), ours and the partners' alike
+const TORRENT_ID: u32 = 8002;
+/// at most this many partners' Torrents looked after
+const OTHERS_MAX: usize = 3;
 
 /// What he costs (debug): runs, time in all and the slowest run (ns) of tick [0], apply [1] and
 /// the trample [2].
@@ -434,28 +441,18 @@ pub fn tick() {
             (c as *mut ChrIns as usize, c.field_ins_handle.clone(), c.modules.physics.position, airborne, theirs, mounted)
         })
     });
+    others(yoshi);
     let (Some((chr, handle, p, airborne, theirs, ridden)), Some(yoshi)) = (torrent, yoshi) else {
         *state = None;
         return;
     };
     let pos = Vec3::new(p.0, p.1, p.2);
     let now = Instant::now();
-    let s = state.get_or_insert_with(|| State { chr, handle: handle.clone(), pose: yoshi.pose(IDLE, 0.0), anim: IDLE, at: 0.0, last: now, pos, bones: None, theirs, vel: Vec3::ZERO, ridden: false, airborne });
+    let s = state.get_or_insert_with(|| State::new(yoshi, chr, handle.clone(), pos, theirs, airborne, now));
     if s.chr != chr {
         (s.chr, s.handle, s.bones, s.pos) = (chr, handle, None, pos);
     }
-    let dt = now.duration_since(s.last).as_secs_f32().min(0.1);
-    s.last = now;
-    let step = Vec3::new(pos.x - s.pos.x, 0.0, pos.z - s.pos.z);
-    let moved = step.length();
-    s.pos = pos;
-    // (a jump of the world's origin isn't a gallop)
-    let speed = if dt > 0.0 && moved < 5.0 { moved / dt } else { 0.0 };
-    if dt > 0.0 && moved < 5.0 {
-        s.vel = s.vel.lerp(step / dt, 0.3);
-    }
     s.ridden = ridden;
-    s.airborne = airborne;
     if crate::debug() && ridden {
         static LAST: Mutex<Option<Instant>> = Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
@@ -464,27 +461,10 @@ pub fn tick() {
             log(format!("yoshi: going {:.1} m/s", s.vel.length()));
         }
     }
-    let anim = if airborne && yoshi.anims.len() > JUMP {
-        JUMP
-    } else if speed > 0.5 {
-        WALK
-    } else {
-        IDLE
-    };
-    // (from the start again for the second jump in the air)
-    let jumped = theirs != s.theirs && JUMPS.contains(&theirs);
-    s.theirs = theirs;
-    if anim != s.anim || jumped {
-        (s.anim, s.at) = (anim, 0.0);
-    }
-    let rate = if anim == WALK { (speed / (WALK_SPEED * SIZE)).clamp(0.5, 4.0) } else { 1.0 };
-    let before = s.at;
-    s.at += dt * 30.0 * rate;
     // his steps, on the two frames of the walk SM64 plays them on
-    if anim == WALK && [0.0, 15.0].iter().any(|f| ((before - f) / 30.0).floor() != ((s.at - f) / 30.0).floor()) {
+    if s.animate(yoshi, pos, airborne, theirs, now) {
         crate::worker::call("yoshi step", |_| unsafe { crate::sm64::sm64_play_sound_global(SOUND_YOSHI_WALK) });
     }
-    s.pose = yoshi.pose(anim, s.at);
     // his moves in a fight (ride.rs): the mouth open for the tongue, a nod with each egg and on a
     // stomp (about his head, which looks down -Z: a turn about X)
     let (jaw, nod) = crate::ride::pose_hint();
@@ -499,6 +479,86 @@ pub fn tick() {
         }
         let (p, q) = s.pose[JAW];
         s.pose[JAW] = (p, (Quat::from_rotation_x(-0.6 * jaw) * q).normalize());
+    }
+}
+
+/// The co-op partners' Torrents (a c8002 that isn't ours): their pose moved on from how each
+/// moves, their hooves and tack silenced (only with Yoshi built, and in a session).
+fn others(yoshi: Option<&Yoshi>) {
+    let mut others = OTHERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(yoshi) = yoshi.filter(|_| crate::coop::active()) else {
+        others.clear();
+        return;
+    };
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
+    let now = Instant::now();
+    let mut seen: Vec<usize> = Vec::new();
+    for c in wcm.chr_sets.iter().flatten().flat_map(|set| set.characters()) {
+        let c: &mut ChrIns = c;
+        if c.character_id != TORRENT_ID || combat::is_torrent(c) || seen.len() >= OTHERS_MAX {
+            continue;
+        }
+        let chr = c as *mut ChrIns as usize;
+        seen.push(chr);
+        c.chr_flags1ca.set_sounds_active(false);
+        c.chr_flags1c7.set_mimicry_enabled(true);
+        let p = c.modules.physics.position;
+        let pos = Vec3::new(p.0, p.1, p.2);
+        let t = &c.modules.time_act;
+        let theirs = t.anim_queue[(t.read_idx % 10) as usize].anim_id;
+        let airborne = !c.modules.physics.touching_solid_ground || JUMPS.contains(&theirs);
+        let handle = c.field_ins_handle.clone();
+        match others.iter_mut().find(|s| s.chr == chr) {
+            Some(s) => {
+                s.animate(yoshi, pos, airborne, theirs, now);
+            }
+            None => {
+                log(format!("yoshi: a partner's Torrent here ({:x}), shown as Yoshi", combat::handle_key(&handle)));
+                others.push(State::new(yoshi, chr, handle, pos, theirs, airborne, now));
+            }
+        }
+    }
+    others.retain(|s| seen.contains(&s.chr));
+}
+
+impl State {
+    fn new(yoshi: &Yoshi, chr: usize, handle: eldenring::cs::FieldInsHandle, pos: Vec3, theirs: i32, airborne: bool, now: Instant) -> Self {
+        State { chr, handle, pose: yoshi.pose(IDLE, 0.0), anim: IDLE, at: 0.0, last: now, pos, bones: None, theirs, vel: Vec3::ZERO, ridden: false, airborne }
+    }
+
+    /// A frame on: idle standing, the walk cycle at the pace he's going, the jump. True on the two
+    /// frames of the walk SM64 plays his steps on.
+    fn animate(&mut self, yoshi: &Yoshi, pos: Vec3, airborne: bool, theirs: i32, now: Instant) -> bool {
+        let s = self;
+        let dt = now.duration_since(s.last).as_secs_f32().min(0.1);
+        s.last = now;
+        let step = Vec3::new(pos.x - s.pos.x, 0.0, pos.z - s.pos.z);
+        let moved = step.length();
+        s.pos = pos;
+        // (a jump of the world's origin isn't a gallop)
+        let speed = if dt > 0.0 && moved < 5.0 { moved / dt } else { 0.0 };
+        if dt > 0.0 && moved < 5.0 {
+            s.vel = s.vel.lerp(step / dt, 0.3);
+        }
+        s.airborne = airborne;
+        let anim = if airborne && yoshi.anims.len() > JUMP {
+            JUMP
+        } else if speed > 0.5 {
+            WALK
+        } else {
+            IDLE
+        };
+        // (from the start again for the second jump in the air)
+        let jumped = theirs != s.theirs && JUMPS.contains(&theirs);
+        s.theirs = theirs;
+        if anim != s.anim || jumped {
+            (s.anim, s.at) = (anim, 0.0);
+        }
+        let rate = if anim == WALK { (speed / (WALK_SPEED * SIZE)).clamp(0.5, 4.0) } else { 1.0 };
+        let before = s.at;
+        s.at += dt * 30.0 * rate;
+        s.pose = yoshi.pose(anim, s.at);
+        anim == WALK && [0.0, 15.0].iter().any(|f| ((before - f) / 30.0).floor() != ((s.at - f) / 30.0).floor())
     }
 }
 
@@ -526,18 +586,27 @@ pub fn charge() -> Option<(Vec3, Vec3)> {
     (s.ridden && s.last.elapsed().as_secs_f32() < 0.1 && s.vel.length() > CHARGE_SPEED).then_some((s.pos, s.vel))
 }
 
-/// Puts his pose on Torrent's bones (after the game's animation, in every pose task).
+/// Puts his pose on Torrent's bones (after the game's animation, in every pose task), and each
+/// co-op partner's Torrent's on theirs.
 pub fn apply() {
     let _timed = Timed(1, Instant::now());
-    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = state.as_mut() else { return };
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
+    if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        pose_on(s, wcm);
+    }
+    for s in OTHERS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+        pose_on(s, wcm);
+    }
+}
+
+/// One Torrent's bones in Yoshi's pose.
+fn pose_on(s: &mut State, wcm: &mut WorldChrMan) {
     if s.last.elapsed().as_secs_f32() > 0.1 {
         return;
     }
     // Asked from the game again every time: he can be taken out of the world between the frame
     // task that found him and this one (riding fast through loading areas), and a write to his
     // old pose buffers then lands in freed memory.
-    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
     let live = match wcm.summon_buddy_chr_set.chr_ins_by_handle_mut(&s.handle) {
         Some(c) => Some(c as *mut ChrIns as usize),
         None => wcm.chr_ins_by_handle_mut(&s.handle).map(|c| c as *mut ChrIns as usize),

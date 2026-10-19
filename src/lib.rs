@@ -8,6 +8,7 @@ mod autopad;
 mod audio;
 mod blown;
 mod boomerang;
+mod brosattack;
 mod hook;
 mod parry;
 mod ride;
@@ -869,6 +870,8 @@ fn init_sm64(export: bool) -> Option<Option<assets::model::MarioModel>> {
     let model = worker::call_timeout("init", std::time::Duration::from_secs(10), move |ctx| {
         let mut tex = vec![0u8; 4 * sm64::TEXTURE_W * sm64::TEXTURE_H];
         unsafe { sm64::sm64_global_init(rom.as_ptr(), tex.as_mut_ptr()) };
+        // (Luigi: his jumps, skids, flutter, shivers and voice; the export below is SM64's model)
+        unsafe { sm64::sm64_er_set_luigi(equip::luigi() as i32) };
         let model = if export { assets::model::export(&mut ctx.geo, tex) } else { None };
         menu_mario::still(&mut ctx.geo);
         unsafe { sm64::sm64_audio_init(rom.as_ptr()) };
@@ -2241,6 +2244,7 @@ fn frame(data: &FD4TaskData) {
             bossride::clear();
             bat::clear();
             maxfin::clear();
+            brosattack::clear();
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
             mega::clear();
             set_scale(BASE_SCALE);
@@ -2768,6 +2772,9 @@ fn frame(data: &FD4TaskData) {
                 *pending = None;
                 let id = m.id;
                 worker::call("star dance", move |_| unsafe { sm64::sm64_set_mario_action(id, 0x0000_1307) });
+                // (co-op: the partner close by, both brothers celebrate)
+                let feet = to_er(m.origin, m.state.position);
+                coop::celebrate(glam::Vec3::new(feet.0, feet.1, feet.2));
             }
         }
     }
@@ -2814,6 +2821,7 @@ fn frame(data: &FD4TaskData) {
         rock::clear(m.id);
         bat::clear();
         maxfin::clear();
+        brosattack::clear();
         skillshot::clear();
         stopwatch::clear();
         bossride::clear();
@@ -3520,10 +3528,16 @@ fn frame(data: &FD4TaskData) {
             let feet = to_er(m.origin, m.state.position);
             let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
             let k = size_factor();
-            let on = coop::partners().into_iter().find(|p| (p.feet - feet).with_y(0.0).length() < 0.45 * k && feet.y <= p.head.y + 0.4 * k && feet.y >= p.head.y - 0.25 * k)?;
+            // (with an enemy marked for the Bros. Attack the partner's head is easier to land on)
+            let reach = if brosattack::marked() { 0.75 } else { 0.45 };
+            let on = coop::partners().into_iter().find(|p| (p.feet - feet).with_y(0.0).length() < reach * k && feet.y <= p.head.y + 0.4 * k && feet.y >= p.head.y - 0.25 * k)?;
             *last = Some(std::time::Instant::now());
             log(format!("coop: Bros. Jump off the partner's head ({})", if on.luigi { "Luigi" } else { "Mario" }));
             impact::bros_jump(on.head);
+            // the Bros. Attack: off their head and over onto the enemy both marked
+            if let Some(leap) = brosattack::leap(feet, on.head, on.steam, caps::active() != Some(caps::WING)) {
+                return Some(leap);
+            }
             let v = m.state.velocity;
             Some(moves::Request::Bounce([v[0] * 0.6, 62.0, v[2] * 0.6]))
         });
@@ -3698,12 +3712,9 @@ fn frame(data: &FD4TaskData) {
                 let mut buffers = ctx.geo.buffers();
                 unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
             }
-            // the sounds his body made (voice, steps, blows): the co-op partner hears them too
-            {
-                let mut sounds = [0u32; 32];
-                let n = unsafe { sm64::sm64_er_take_sounds(sounds.as_mut_ptr(), sounds.len() as u32) } as usize;
-                coop::own_sounds(&sounds[..n.min(sounds.len())]);
-            }
+            // the sounds his body made (voice, steps, blows) and the mod's own (weapons, blows,
+            // power-ups): the co-op partner hears them too
+            coop::take_own_sounds();
             let mario_ms = job_start.elapsed().as_secs_f32() * 1000.0;
             // SM64's sound engine runs at the same 30 Hz as Mario
             let mut buf = [0i16; 544 * 2 * 2];
@@ -3772,6 +3783,8 @@ fn frame(data: &FD4TaskData) {
                     maxfin::fire(attack, at, glam::Vec3::new(p.0, p.1, p.2), dir, &mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
                 }
                 maxfin::tick(&mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
+                // a Bros. Attack on its way (co-op): its ground pound, its blow
+                brosattack::tick(id, &state, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks);
                 // (the MAX ready: a twinkle at his hand now and then)
                 if style::max_ready() && m.ticks % 8 == 0 {
                     if let Some(p) = m.parts.as_ref() {
@@ -4421,12 +4434,8 @@ fn frame(data: &FD4TaskData) {
                         let mut buffers = ctx.geo.buffers();
                         unsafe { sm64::sm64_mario_tick(id, &inputs, &mut state, &mut *buffers) };
                     }
-                    // (his body's sounds, for the co-op partner, as after the main tick)
-                    {
-                        let mut sounds = [0u32; 32];
-                        let n = unsafe { sm64::sm64_er_take_sounds(sounds.as_mut_ptr(), sounds.len() as u32) } as usize;
-                        coop::own_sounds(&sounds[..n.min(sounds.len())]);
-                    }
+                    // (his body's sounds and the mod's, for the co-op partner, as after the main tick)
+                    coop::take_own_sounds();
                     unsafe { sm64::sm64_set_mario_position(id, sm[0], sm[1], sm[2]) };
                     let mut mats = vec![0f32; 64 * 16];
                     let mut tri_part = vec![0i32; sm64::GEO_MAX_TRIANGLES];

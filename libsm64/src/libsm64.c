@@ -288,6 +288,12 @@ SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs 
         apply_mario_platform_displacement();
         bhv_mario_update();
         update_mario_platform();
+        // (er-mario: Luigi's flutter comes back on the ground)
+        {
+            extern int er_flutter_used;
+            if( !(gMarioState->action & ACT_FLAG_AIR) )
+                er_flutter_used = 0;
+        }
     }
 
     gfx_adapter_bind_output_buffers( outBuffers );
@@ -771,7 +777,10 @@ SM64_LIB_FN void sm64_play_sound(int32_t soundBits, float *pos)
 
 SM64_LIB_FN void sm64_play_sound_global(int32_t soundBits)
 {
-    play_sound(soundBits,gGlobalSoundSource);
+    u8 bank = (soundBits >> 28) & 0xF;
+    er_log_world_sound(soundBits, 1.0f);
+    // (er-mario: Luigi's voice from a spot of his own, so it's played a little higher)
+    play_sound(soundBits, g_er_luigi && bank == 2 ? g_er_luigi_spots[ER_LUIGI_GLOBAL] : gGlobalSoundSource);
 }
 
 /* er-mario: a sound at a share of its volume (0-1): played from far enough in front of the camera
@@ -783,9 +792,10 @@ void er_play_sound_volume(int32_t soundBits, float volume)
     static int next = 0;
     u8 bank = (soundBits >> 28) & 0xF;
     float reach = 20000.0f / (bank < 3 ? 2.0f : 3.0f);
-    float *pos = spots[next];
+    float *pos = g_er_luigi && bank == 2 ? g_er_luigi_spots[next] : spots[next];
     if (volume > 1.0f) volume = 1.0f;
     if (volume < 0.05f) volume = 0.05f;
+    er_log_world_sound(soundBits, volume);
     next = (next + 1) % 8;
     pos[0] = 0.0f;
     pos[1] = 0.0f;
@@ -798,15 +808,45 @@ SM64_LIB_FN void sm64_play_sound_volume(int32_t soundBits, float volume)
     er_play_sound_volume(soundBits, volume);
 }
 
+/* er-mario (co-op): a sound for us alone, not sent to the partner (one their game plays itself) */
+SM64_LIB_FN void sm64_play_sound_local(int32_t soundBits, float volume)
+{
+    g_er_local_only = 1;
+    er_play_sound_volume(soundBits, volume);
+    g_er_local_only = 0;
+}
+
+/* er-mario (co-op): the mod's own sounds since the last call (sm64_play_sound_global and
+ * er_play_sound_volume's, but not the menu bank's), up to `max` into `ids`, their volume into
+ * `volumes`; how many */
+SM64_LIB_FN uint32_t sm64_er_take_world_sounds(uint32_t *ids, float *volumes, uint32_t max)
+{
+    uint32_t n = (uint32_t)g_er_world_count < max ? (uint32_t)g_er_world_count : max;
+    for (uint32_t i = 0; i < n; i++) {
+        ids[i] = g_er_world_log[i];
+        volumes[i] = g_er_world_volume[i];
+    }
+    g_er_world_count = 0;
+    return n;
+}
+
+/* er-mario: the player is Luigi: his jumps higher, his skids longer, the flutter of his legs at
+ * a jump's top (A held), shivering when low, his voice a little higher */
+SM64_LIB_FN void sm64_er_set_luigi(int on)
+{
+    g_er_luigi = on != 0;
+}
+
 /* er-mario (co-op): a partner's sound at a share of its volume, from a spot of that partner's own
- * (`slot` 0-3): SM64 tells a sound that goes on (a slide, the wind) by where it comes from, so
+ * (`slot` 0-3; `luigi`: they're Luigi): SM64 tells a sound that goes on (a slide, the wind) by where it comes from, so
  * each refresh of it must come from the same spot, and the others' sounds aren't moved by it */
-SM64_LIB_FN void sm64_er_play_partner(int32_t soundBits, uint32_t slot, float volume)
+SM64_LIB_FN void sm64_er_play_partner(int32_t soundBits, uint32_t slot, float volume, int luigi)
 {
     static float spots[4][3];
     u8 bank = (soundBits >> 28) & 0xF;
     float reach = 20000.0f / (bank < 3 ? 2.0f : 3.0f);
-    float *pos = spots[slot & 3];
+    // (a Luigi's voice from his spot: a little higher)
+    float *pos = luigi && bank == 2 ? g_er_luigi_spots[ER_LUIGI_PARTNER + (slot & 3)] : spots[slot & 3];
     if (volume > 1.0f) volume = 1.0f;
     if (volume < 0.05f) volume = 0.05f;
     pos[0] = 0.0f;

@@ -583,9 +583,19 @@ s32 act_panting(struct MarioState *m) {
         return TRUE;
     }
 
-    if (set_mario_animation(m, MARIO_ANIM_WALK_PANTING) == 1) {
-        play_sound(SOUND_MARIO_PANTING + ((gAudioRandom % 3U) << 0x10),
-                   m->marioObj->header.gfx.cameraToObject);
+    // (er-mario: Luigi, low, stands there shivering instead, knees knocking: the panting's own
+    // way out, any input, stays)
+    {
+        extern int g_er_luigi;
+        if (g_er_luigi) {
+            s32 frame = set_mario_animation(m, MARIO_ANIM_SHIVERING);
+            if (frame == 9 || frame == 25 || frame == 44) {
+                play_sound(SOUND_ACTION_CLAP_HANDS_COLD, m->marioObj->header.gfx.cameraToObject);
+            }
+        } else if (set_mario_animation(m, MARIO_ANIM_WALK_PANTING) == 1) {
+            play_sound(SOUND_MARIO_PANTING + ((gAudioRandom % 3U) << 0x10),
+                       m->marioObj->header.gfx.cameraToObject);
+        }
     }
 
     stationary_ground_step(m);

@@ -987,8 +987,12 @@ s32 act_turning_around(struct MarioState *m) {
         return set_mario_action(m, ACT_WALKING, 0);
     }
 
-    if (apply_slope_decel(m, 2.0f)) {
-        return begin_walking_action(m, 8.0f, ACT_FINISH_TURNING_AROUND, 0);
+    // (er-mario: Luigi's turns skid a little longer)
+    {
+        extern int g_er_luigi;
+        if (apply_slope_decel(m, g_er_luigi ? 1.4f : 2.0f)) {
+            return begin_walking_action(m, 8.0f, ACT_FINISH_TURNING_AROUND, 0);
+        }
     }
 
     play_sound(SOUND_MOVING_TERRAIN_SLIDE + m->terrainSoundAddend, m->marioObj->header.gfx.cameraToObject);
@@ -1052,8 +1056,12 @@ s32 act_braking(struct MarioState *m) {
         return check_common_action_exits(m);
     }
 
-    if (apply_slope_decel(m, 2.0f)) {
-        return set_mario_action(m, ACT_BRAKING_STOP, 0);
+    // (er-mario: Luigi's shoes slip: he skids twice as far)
+    {
+        extern int g_er_luigi;
+        if (apply_slope_decel(m, g_er_luigi ? 1.0f : 2.0f)) {
+            return set_mario_action(m, ACT_BRAKING_STOP, 0);
+        }
     }
 
     if (m->input & INPUT_B_PRESSED) {

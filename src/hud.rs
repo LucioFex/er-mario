@@ -1673,6 +1673,27 @@ impl ImguiRenderLoop for Overlay {
             dl.add_image(textures[face], [cx - s * 0.5, cy - s * 0.5], [cx + s * 0.5, cy + s * 0.5]).col([1.0, 1.0, 1.0, alpha]).build();
         }
 
+        // co-op: the enemy marked for a Bros. Attack (brosattack.rs), both brothers' faces over its
+        // head in a ring that turns red and green, breathing a little; in quickly, out at the end
+        if let Some((head, age)) = crate::brosattack::mark() {
+            if let Some(([cx, cy], _)) = project(head + Vec3::Y * 0.6, size).filter(|(_, z)| *z < 60.0) {
+                let fade_in = (age / 0.2).min(1.0);
+                let fade_out = 1.0 - ((age - (crate::brosattack::MARK_TIME - 0.6)) / 0.6).clamp(0.0, 1.0);
+                let alpha = fade_in * fade_out;
+                let pop = 1.0 + 0.6 * (1.0 - fade_in).powi(2) + 0.06 * (age * 5.0).sin();
+                let r = 14.0 * px * pop;
+                let mix = 0.5 + 0.5 * (age * 3.0).sin();
+                let tint = [1.0 - 0.65 * mix, 0.3 + 0.65 * mix, 0.25 + 0.15 * mix, 0.95 * alpha];
+                dl.add_circle([cx, cy], r, [0.0, 0.0, 0.0, 0.45 * alpha]).thickness(4.0 * px).num_segments(40).build();
+                dl.add_circle([cx, cy], r, tint).thickness(2.5 * px).num_segments(40).build();
+                let s = 11.0 * px * pop;
+                for (k, face) in [IMG_HEAD, IMG_LUIGI_HEAD].into_iter().enumerate() {
+                    let x = cx + (k as f32 - 0.5) * s * 0.9;
+                    dl.add_image(textures[face], [x - s * 0.5, cy - s * 0.5], [x + s * 0.5, cy + s * 0.5]).col([1.0, 1.0, 1.0, alpha]).build();
+                }
+            }
+        }
+
         // the co-op partner (coop.rs), a small card bottom left that comes up only when something's
         // going on (a fight, either hurt, them low, down or far off) and fades out once it's quiet:
         // their head (greyed and crossed out when down), a little power pie with their wedges (red

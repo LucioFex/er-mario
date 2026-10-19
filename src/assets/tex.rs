@@ -182,10 +182,79 @@ pub fn mario_albedo(model: &MarioModel) -> Image {
     mario_albedo_as(model, luigi())
 }
 
+/// SM64's cap emblem: the atlas's third texture (32 x 32 in its cell's corner), Mario's red M on a
+/// white disc
+const LOGO_CELL: usize = 2;
+const LOGO_SIZE: usize = 32;
+
+/// The atlas with Luigi's L on the cap instead of Mario's M: the M's red painted over in the
+/// disc's white, an L in its red in the middle of where the M was (its stem and its foot), left
+/// as it is if the emblem isn't where it's expected.
+pub fn luigi_logo(atlas: &[u8]) -> Vec<u8> {
+    let mut out = atlas.to_vec();
+    let at = |x: usize, y: usize| (y * ATLAS_W + LOGO_CELL * 64 + x) * 4;
+    let px = |x: usize, y: usize| {
+        let o = at(x, y);
+        [atlas[o], atlas[o + 1], atlas[o + 2], atlas[o + 3]].map(|v| v as f32 / 255.0)
+    };
+    let red = |p: [f32; 4]| p[3] > 0.5 && p[0] > 0.4 && p[1] < 0.5 * p[0] && p[2] < 0.5 * p[0];
+    let white = |p: [f32; 4]| p[3] > 0.5 && p[0] > 0.7 && p[1] > 0.7 && p[2] > 0.7;
+    let (mut x0, mut y0, mut x1, mut y1) = (LOGO_SIZE, LOGO_SIZE, 0, 0);
+    let (mut ink, mut paper, mut n_ink, mut n_paper) = ([0.0f32; 3], [0.0f32; 3], 0.0, 0.0);
+    for y in 0..LOGO_SIZE {
+        for x in 0..LOGO_SIZE {
+            let p = px(x, y);
+            if red(p) {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                (0..3).for_each(|c| ink[c] += p[c]);
+                n_ink += 1.0;
+            } else if white(p) {
+                (0..3).for_each(|c| paper[c] += p[c]);
+                n_paper += 1.0;
+            }
+        }
+    }
+    if n_ink < 10.0 || n_paper < 10.0 || x1 <= x0 + 3 || y1 <= y0 + 3 {
+        return out;
+    }
+    let (ink, paper) = (ink.map(|v| v / n_ink), paper.map(|v| v / n_paper));
+    // the L: as tall as the M, about two thirds as wide, centred; its stem a third of that, its foot
+    // a third of its height
+    let (w, h) = ((x1 - x0 + 1) as f32, (y1 - y0 + 1) as f32);
+    let lw = w * 0.62;
+    let left = x0 as f32 + (w - lw) * 0.5;
+    let stem = lw * 0.36;
+    let foot = h * 0.32;
+    let in_l = |x: f32, y: f32| {
+        let (dx, dy) = (x - left, y - y0 as f32);
+        (0.0..lw).contains(&dx) && (0.0..h).contains(&dy) && (dx < stem || dy >= h - foot)
+    };
+    for y in 0..LOGO_SIZE {
+        for x in 0..LOGO_SIZE {
+            let p = px(x, y);
+            // (the M's soft edge a texel round it too)
+            let near_m = (x0.saturating_sub(1)..=x1 + 1).contains(&x) && (y0.saturating_sub(1)..=y1 + 1).contains(&y);
+            if p[3] <= 0.5 || !(red(p) || white(p) || near_m) {
+                continue;
+            }
+            // (2 x 2 samples a texel: the L's edges a little soft, like the M's)
+            let cover = [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)].iter().filter(|(sx, sy)| in_l(x as f32 + sx, y as f32 + sy)).count() as f32 / 4.0;
+            let rgb: [f32; 3] = std::array::from_fn(|c| paper[c] + (ink[c] - paper[c]) * cover);
+            let o = at(x, y);
+            for c in 0..3 {
+                out[o + c] = (rgb[c] * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
 /// Mario's albedo in Mario's colours or Luigi's (the co-op partner's model is the other one).
 pub fn mario_albedo_as(model: &MarioModel, luigi: bool) -> Image {
     let mut img = Image::new(SIZE, SIZE, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
-    let mut cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&model.atlas, i, INNER)).collect();
+    // (Luigi's L on the cap)
+    let atlas = if luigi { luigi_logo(&model.atlas) } else { model.atlas.clone() };
+    let mut cells: Vec<Vec<[f32; 4]>> = (0..CELLS).map(|i| cell_resized(&atlas, i, INNER)).collect();
     if luigi {
         for p in cells.iter_mut().flatten() {
             let [r, g, b] = luigi_color([p[0], p[1], p[2]]);
@@ -512,6 +581,72 @@ fn paint(t: &mut [u8], name: &str, expect: (usize, usize), (x, y): (usize, usize
 
 #[cfg(test)]
 mod tests {
+    /// An M on a white disc in the emblem's cell becomes an L: red only inside the L's stem and
+    /// foot, none left where the M's other strokes were.
+    #[test]
+    fn luigi_has_an_l() {
+        let mut atlas = vec![0u8; super::ATLAS_W * 64 * 4];
+        let set = |a: &mut Vec<u8>, x: usize, y: usize, c: [u8; 4]| {
+            let o = (y * super::ATLAS_W + super::LOGO_CELL * 64 + x) * 4;
+            a[o..o + 4].copy_from_slice(&c);
+        };
+        for y in 0..32 {
+            for x in 0..32 {
+                let (dx, dy) = (x as f32 - 15.5, y as f32 - 15.5);
+                if dx * dx + dy * dy < 13.0 * 13.0 {
+                    set(&mut atlas, x, y, [250, 250, 250, 255]);
+                }
+            }
+        }
+        // the M: two legs and a V between them, x 8-24, y 10-21
+        for y in 10..22 {
+            for x in [8, 9, 10, 22, 23, 24] {
+                set(&mut atlas, x, y, [220, 20, 20, 255]);
+            }
+            let v = 10 + (y - 10) / 2;
+            set(&mut atlas, v, y, [220, 20, 20, 255]);
+            set(&mut atlas, 32 - v, y, [220, 20, 20, 255]);
+        }
+        let out = super::luigi_logo(&atlas);
+        let red = |x: usize, y: usize| {
+            let o = (y * super::ATLAS_W + super::LOGO_CELL * 64 + x) * 4;
+            out[o] > 150 && out[o + 1] < 100
+        };
+        // the M's right leg is gone, the L's stem and foot are there
+        assert!((10..22).all(|y| !red(23, y)));
+        assert!(red(12, 12) && red(12, 20));
+        assert!(red(18, 20));
+        assert!(!red(18, 12));
+        // nothing outside the cell touched
+        assert_eq!(out[..super::LOGO_CELL * 64 * 4], atlas[..super::LOGO_CELL * 64 * 4]);
+    }
+
+    /// (by hand, with the ROM at C:\ER-Mario: prints the real emblem made into an L)
+    #[test]
+    #[ignore]
+    fn luigi_logo_from_the_rom() {
+        let Ok(rom) = std::fs::read("C:/ER-Mario/Super Mario 64 (USA).z64") else { return };
+        let seg = crate::gameover::mio0(&rom, 1132368).expect("mario's textures");
+        let mut atlas = vec![0u8; super::ATLAS_W * 64 * 4];
+        for i in 0..32 * 32 {
+            let v = u16::from_be_bytes([seg[6288 + i * 2], seg[6289 + i * 2]]);
+            let c = |s: u16| ((v >> s & 31) as u32 * 255 / 31) as u8;
+            let (x, y) = (i % 32, i / 32);
+            let o = (y * super::ATLAS_W + super::LOGO_CELL * 64 + x) * 4;
+            atlas[o..o + 4].copy_from_slice(&[c(11), c(6), c(1), if v & 1 == 1 { 255 } else { 0 }]);
+        }
+        let out = super::luigi_logo(&atlas);
+        for y in 0..32 {
+            let row: String = (0..32)
+                .map(|x| {
+                    let o = (y * super::ATLAS_W + super::LOGO_CELL * 64 + x) * 4;
+                    if out[o + 3] == 0 { '.' } else if out[o] > 150 && out[o + 1] < 100 { 'L' } else { 'o' }
+                })
+                .collect();
+            println!("{row}");
+        }
+    }
+
     /// Luigi: Mario's red green, his blue navy, his skin and white untouched.
     #[test]
     fn luigi_colors() {

@@ -113,11 +113,13 @@ pub enum Attack {
     MaxCyclone,
     /// the boss ride's crash into a wall (bossride.rs)
     RideCrash,
+    /// co-op: the Bros. Attack's ground pound on the enemy both brothers marked (brosattack.rs)
+    BrosAttack,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 61] = [
+const CODES: [Attack; 62] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -128,7 +130,7 @@ const CODES: [Attack; 61] = [
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
-    Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash,
+    Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -199,7 +201,7 @@ impl Attack {
             Attack::Bowled => Attack::Sweep.spec(),
             Attack::Tether => Attack::GroundPound.spec(),
             Attack::MaxFlurry => Attack::Punch.spec(),
-            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash => Attack::GroundPound.spec(),
+            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::BrosAttack => Attack::GroundPound.spec(),
         }
     }
 
@@ -302,6 +304,9 @@ impl Attack {
             Attack::MaxCyclone => (14.0, "damage_max_cyclone"),
             // the boss ride's crash: its worth is the open stance it leaves
             Attack::RideCrash => (15.0, "damage_ride_crash"),
+            // the Bros. Attack: a team finisher's worth, once in a while (a streak of BROS! and a
+            // wait after it)
+            Attack::BrosAttack => (30.0, "damage_bros_attack"),
         }
     }
 
@@ -369,6 +374,7 @@ impl Attack {
             Attack::SwingKick => 1.3,
             Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
             Attack::RideCrash => 1.5,
+            Attack::BrosAttack => 1.5,
         }
     }
 
@@ -1482,6 +1488,10 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     if crate::dodge::countering() && !attack.ranged() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
+    // co-op: BROS POWER, the partner just leapt off us into a Bros. Attack (brosattack.rs)
+    if crate::brosattack::powered() && !attack.ranged() {
+        pct *= crate::brosattack::POWER;
+    }
     // Mega Mario's blows are a giant's
     if crate::mega::active() {
         pct *= crate::mega::DAMAGE;
@@ -2207,6 +2217,8 @@ impl Combat {
                 }
                 let fade = STRING_FADE.powi(run.0.saturating_sub(STRING_FULL) as i32).max(STRING_FLOOR);
                 let fade = if attack.finisher() { fade.max(STRING_FINISHER_FLOOR) } else { fade };
+                // (the Bros. Attack comes out of a string on it, BROS! by BROS!: it lands whole)
+                let fade = if matches!(attack, Attack::BrosAttack) { 1.0 } else { fade };
                 if fade < 1.0 && run.0 % 5 == 0 {
                     log(format!("combat: string of {} on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
                 }
@@ -2284,7 +2296,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
