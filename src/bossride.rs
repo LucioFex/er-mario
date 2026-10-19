@@ -6,7 +6,9 @@
 //! for it; blows meant for Mario land on it instead, and its own never touch him (while it
 //! strikes, with no other enemy striking near him, the game's hits don't land on him at all; a blow
 //! that still does, or a throw of its own, is told apart and ignored). Driven into a wall at
-//! speed it crashes there, staggered and left open (its stance broken: grab its tail). Worn out, or its time up, he hops
+//! speed it crashes there, staggered and left open (its stance broken: grab its tail). One rooted
+//! to its spot (a giant plant: it never left where it stood while it was fought) only turns where
+//! the stick points, to aim its attacks; it isn't walked off. Worn out, or its time up, he hops
 //! off and it comes to its senses a little dazed (its poise gone). A long wait after. Not a boss
 //! with its health bar up: those are fought, not driven.
 //!
@@ -64,6 +66,12 @@ const NEXT_AFTER: f32 = 0.55;
 const MISSES: u32 = 2;
 /// blows meant for Mario: at most one on his mount in this long (s; his own grace after a hit)
 const SHIELD_EVERY: f32 = 0.7;
+/// walked along the ground, it steps up at most this much a tick (m; more than that over its
+/// feet is a wall, or its own body the ray met: it climbed into the sky on one before)
+const STEP_UP: f32 = 0.3;
+/// rooted: watched this long (s) while it was fought, never this far (m) from where it stood
+const ROOT_WATCH: f32 = 4.0;
+const ROOT_DRIFT: f32 = 0.75;
 /// its own blows: they may still land this long after its attack's animation ends (s), and other
 /// enemies this far from Mario past their body's edge, in one of their attacks, may be the ones
 /// who hit him then (m)
@@ -129,6 +137,8 @@ struct Ride {
     /// the last moment it was in one of its attacks; another enemy striking near Mario then
     strike_at: Option<Instant>,
     others: bool,
+    /// rooted to its spot: it turns, it isn't walked
+    rooted: bool,
 }
 
 struct State {
@@ -224,6 +234,33 @@ struct Marks {
 }
 
 static MARKS: Mutex<Marks> = Mutex::new(Marks { seen: Vec::new(), live: [None; 4], looked: None });
+
+/// Where each medium or big one around was first seen (its place past the world's origin shifts),
+/// the farthest it went from there, since when it's watched and when it was last seen.
+struct Roam {
+    anchor: Vec3,
+    drift: f32,
+    since: Instant,
+    seen: Instant,
+}
+
+static ROAMS: Mutex<Vec<(u64, Roam)>> = Mutex::new(Vec::new());
+
+/// An enemy's place that the world's origin shifts don't move (its physics position less the
+/// shift).
+fn steady_place(h: &FieldInsHandle) -> Option<Vec3> {
+    let wcm = unsafe { WorldChrMan::instance() }.ok()?;
+    let chr = wcm.chr_ins_by_handle(h)?;
+    let (p, c) = (chr.modules.physics.position, chr.chunk_position);
+    Some(Vec3::new(p.0 - c.0, p.1 - c.1, p.2 - c.2))
+}
+
+/// Watched a while as it was fought and it never left the spot it stood on: rooted (a giant plant).
+fn rooted(h: &FieldInsHandle) -> bool {
+    let key = combat::handle_key(h);
+    let roams = ROAMS.lock().unwrap_or_else(|e| e.into_inner());
+    roams.iter().find(|(k, _)| *k == key).is_some_and(|(_, r)| r.since.elapsed().as_secs_f32() >= ROOT_WATCH && r.drift < ROOT_DRIFT)
+}
 /// how often the enemies around are looked at for it (s)
 const MARK_EVERY: f32 = 0.2;
 
@@ -236,10 +273,29 @@ pub fn watch(feet: Vec3, origin: [f32; 3]) {
     let mut chime = false;
     {
         let mut m = MARKS.lock().unwrap_or_else(|e| e.into_inner());
-        if ready && m.looked.is_none_or(|t| t.elapsed().as_secs_f32() >= MARK_EVERY) {
+        if m.looked.is_none_or(|t| t.elapsed().as_secs_f32() >= MARK_EVERY) {
             m.looked = Some(Instant::now());
+            let near = combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), MARK_RANGE, origin);
+            // (how far each one around goes from where it stood: the rooted ones never do)
+            {
+                let mut roams = ROAMS.lock().unwrap_or_else(|e| e.into_inner());
+                for t in &near {
+                    let Some(h) = t.shootable() else { continue };
+                    let Some(at) = steady_place(h) else { continue };
+                    let key = combat::handle_key(h);
+                    match roams.iter_mut().find(|(k, _)| *k == key) {
+                        Some((_, r)) => {
+                            r.drift = r.drift.max((at - r.anchor).length());
+                            r.seen = Instant::now();
+                        }
+                        None => roams.push((key, Roam { anchor: at, drift: 0.0, since: Instant::now(), seen: Instant::now() })),
+                    }
+                }
+                // (out of sight a while: watched anew when it's back)
+                roams.retain(|(_, r)| r.seen.elapsed().as_secs_f32() < 3.0);
+            }
             let mut here: Vec<u64> = Vec::new();
-            for t in combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), MARK_RANGE, origin) {
+            for t in near.iter().filter(|_| ready) {
                 let Some(h) = t.shootable() else { continue };
                 // (not worn down any more, healed: marked again next time)
                 if !worn(h) {
@@ -258,7 +314,9 @@ pub fn watch(feet: Vec3, origin: [f32; 3]) {
                     log(format!("boss ride: {key:x} can be ridden now (LT + R3 next to it)"));
                 }
             }
-            m.seen.retain(|k| here.contains(k));
+            if ready {
+                m.seen.retain(|k| here.contains(k));
+            }
         }
         // (the marks follow their heads)
         for l in m.live.iter_mut() {
@@ -316,6 +374,7 @@ pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
     // charmed: on his side, its own attacks and wandering off held back (the stick and X/Y are its
     // will now)
     let (team, kind) = (chr.team_type, chr.character_id as i32);
+    let rooted = rooted(h);
     let (no_attacks, no_moving) = (chr.debug_flags.disabled_secondary_actions(), chr.debug_flags.disabled_movement());
     chr.team_type = CHARMED;
     chr.debug_flags.set_disabled_secondary_actions(true);
@@ -340,9 +399,10 @@ pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
             keys: [true; 3],
             strike_at: None,
             others: false,
+            rooted,
         })
     });
-    log(format!("boss ride: on its back, c{kind:04} captured (team {team} -> {CHARMED})"));
+    log(format!("boss ride: on its back, c{kind:04} captured (team {team} -> {CHARMED}){}", if rooted { ", rooted to its spot: it turns, it doesn't walk" } else { "" }));
     crate::style::callout("CAPTURE!", None, [1.0, 0.8, 0.35], true, 3.0);
     worker::call("boss ride", move |_| unsafe {
         sm64::sm64_set_mario_action(id, ACT_ER_BOSS_RIDE);
@@ -572,6 +632,8 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
             if let Some(a) = pick(s, kind, heavy) {
                 s.ride.as_mut().unwrap().ask = Some(Ask::new(a, heavy, 1));
             }
+        } else if free && pressed[2] && r.rooted {
+            worker::call("ride buzz", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUZZ, 0.35) });
         } else if free && pressed[2] && r.last_charge.is_none_or(|t| t.elapsed().as_secs_f32() >= CHARGE_EVERY) {
             r.charge_until = Some(Instant::now() + std::time::Duration::from_secs_f32(CHARGE_TIME));
             r.last_charge = Some(Instant::now());
@@ -590,6 +652,7 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
     let dt = dt.min(0.05);
     let want = if charging { fwd } else { steer.with_y(0.0) };
     let in_attack = with(|s| s.ride.as_ref().is_some_and(|r| r.attacking.is_some() || r.ask.is_some()));
+    let rooted = with(|s| s.ride.as_ref().is_some_and(|r| r.rooted));
     let mut crashed = None;
     let mut bowl = None;
     if let Some(chr) = unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(&mob)) {
@@ -602,20 +665,27 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
             let o = ph.orientation;
             let q = (Quat::from_rotation_y(turn) * Quat::from_xyzw(o.0, o.1, o.2, o.3)).normalize();
             ph.orientation = eldenring::rotation::Quaternion(q.x, q.y, q.z, q.w);
-            speed = if charging { CHARGE_SPEED } else { (speed + DRIVE * 2.0 * dt).min(DRIVE) };
+            // (rooted: only turned, its attacks aimed)
+            speed = if rooted { 0.0 } else if charging { CHARGE_SPEED } else { (speed + DRIVE * 2.0 * dt).min(DRIVE) };
             let next = p + dir * speed * dt;
             // into a wall: it crashes there at speed, else it just stops
             match ray(p + Vec3::Y * 1.0, next + dir * radius + Vec3::Y * 1.0) {
+                _ if rooted => {}
                 Some(_) if speed >= CRASH_SPEED && since.elapsed().as_secs_f32() >= CRASH_AFTER => crashed = Some(p + dir * radius + Vec3::Y * 1.2),
                 Some(_) => speed = 0.0,
                 None => {
-                    // (along the ground: the floor where it's going)
-                    let ground = ray(next + Vec3::Y * 2.0, next - Vec3::Y * 3.0).unwrap_or(next);
-                    ph.position = HavokPosition(next.x, ground.y, next.z, 0.0);
-                    ph.chr_proxy_pos_update_requested = true;
+                    // (along the ground: the floor where it's going, looked for from just over its
+                    // feet; a step up higher than a step is no floor of its: it stops)
+                    let ground = ray(next + Vec3::Y * 0.4, next - Vec3::Y * 3.0).map_or(p.y, |g| g.y);
+                    if ground <= p.y + STEP_UP.max(speed * dt) {
+                        ph.position = HavokPosition(next.x, ground, next.z, 0.0);
+                        ph.chr_proxy_pos_update_requested = true;
+                    } else {
+                        speed = 0.0;
+                    }
                 }
             }
-            if charging {
+            if charging && !rooted {
                 bowl = Some((p, dir));
             }
         } else {

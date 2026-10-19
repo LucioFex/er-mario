@@ -246,20 +246,36 @@ pub fn slow_down(time: f32) {
 /// MAX finishers (maxfin.rs): this many blows in a row without being hurt and the next finisher
 /// is a MAX one.
 pub const MAX_HITS: u32 = 12;
+/// a MAX finisher ready keeps this long (s) after the last blow: the fight gone quiet, it's lost
+/// (its twinkle at his hand went on and on till he died)
+const MAX_KEEP: f32 = 10.0;
 struct Max {
     streak: u32,
     ready: bool,
+    /// the last blow of the streak
+    last: Option<std::time::Instant>,
 }
-static MAX: Mutex<Max> = Mutex::new(Max { streak: 0, ready: false });
+static MAX: Mutex<Max> = Mutex::new(Max { streak: 0, ready: false, last: None });
 
 /// A MAX finisher is ready (the weapon glows).
 pub fn max_ready() -> bool {
-    MAX.lock().unwrap_or_else(|e| e.into_inner()).ready
+    let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    if m.ready && m.last.is_none_or(|t| t.elapsed().as_secs_f32() > MAX_KEEP) {
+        *m = Max { streak: 0, ready: false, last: None };
+        drop(m);
+        crate::log("style: MAX lost (the fight went quiet)");
+        return false;
+    }
+    m.ready
 }
 
 /// Uses the MAX finisher up: true if it was ready (then the streak starts over).
 pub fn take_max() -> bool {
     let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    // (gone quiet since it was ready: lost, as max_ready has it)
+    if m.ready && m.last.is_none_or(|t| t.elapsed().as_secs_f32() > MAX_KEEP) {
+        *m = Max { streak: 0, ready: false, last: None };
+    }
     let ready = std::mem::replace(&mut m.ready, false);
     if ready {
         m.streak = 0;
@@ -270,6 +286,7 @@ pub fn take_max() -> bool {
 fn max_hit() {
     let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
     m.streak += 1;
+    m.last = Some(std::time::Instant::now());
     if m.streak >= MAX_HITS && !m.ready {
         m.ready = true;
         drop(m);
@@ -449,7 +466,7 @@ pub fn hurt() {
         if m.ready {
             crate::log("style: MAX lost (hurt)");
         }
-        *m = Max { streak: 0, ready: false };
+        *m = Max { streak: 0, ready: false, last: None };
     }
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = now();
     let lost = METER.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|m| m.alive(now())).and_then(|m| m.rank);
@@ -552,7 +569,7 @@ pub fn clear() {
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = -100.0;
     *METER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CALLOUTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    *MAX.lock().unwrap_or_else(|e| e.into_inner()) = Max { streak: 0, ready: false };
+    *MAX.lock().unwrap_or_else(|e| e.into_inner()) = Max { streak: 0, ready: false, last: None };
     *SLOW.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *STAR.lock().unwrap_or_else(|e| e.into_inner()) = None;

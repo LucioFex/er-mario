@@ -3633,6 +3633,11 @@ fn frame(data: &FD4TaskData) {
             if l2_held && m.state.action & 0x800 != 0 && (Z_EATEN.load(Ordering::Relaxed) || fresh) {
                 inputs.button_z = 0;
             }
+            // (an enemy in his hands: SM64 lets go of what he holds when Z is down, and L2 was
+            // still held from the grab, L2 + R3; B throws it)
+            if carry::holding() {
+                inputs.button_z = 0;
+            }
         }
         let leash_fix = LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(_, t)| t.wrapping_add(1) == m.ticks).map(|(p, _)| collision::er_to_sm(m.origin, &HavokPosition(p.x, p.y, p.z, 0.0)));
         // the blows whose health the mod takes itself (not SM64's knockback), cut now (tough.rs;
