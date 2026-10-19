@@ -113,6 +113,9 @@ pub enum Attack {
     MaxCyclone,
     /// the boss ride's crash into a wall (bossride.rs)
     RideCrash,
+    /// the captured enemy's own blows on the others (bossride.rs): light, heavy
+    RideBlow,
+    RideSmash,
     /// co-op: the Bros. Attack's ground pound on the enemy both brothers marked (brosattack.rs)
     BrosAttack,
     /// on a colossus (colossus.rs): the star strike on a weak point, a blow anywhere else on it
@@ -122,7 +125,7 @@ pub enum Attack {
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 64] = [
+const CODES: [Attack; 66] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -134,6 +137,7 @@ const CODES: [Attack; 64] = [
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
     Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack, Attack::Sigil, Attack::SigilTap,
+    Attack::RideBlow, Attack::RideSmash,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -201,7 +205,8 @@ impl Attack {
             Attack::Rock => Attack::Sweep.spec(),
             Attack::RockSlam => Attack::GroundPound.spec(),
             Attack::HomeRun | Attack::SwingKick => Attack::Stomp.spec(),
-            Attack::Bowled => Attack::Sweep.spec(),
+            Attack::Bowled | Attack::RideBlow => Attack::Sweep.spec(),
+            Attack::RideSmash => Attack::GroundPound.spec(),
             Attack::Tether => Attack::GroundPound.spec(),
             Attack::MaxFlurry => Attack::Punch.spec(),
             Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil => Attack::GroundPound.spec(),
@@ -308,6 +313,9 @@ impl Attack {
             Attack::MaxCyclone => (14.0, "damage_max_cyclone"),
             // the boss ride's crash: its worth is the open stance it leaves
             Attack::RideCrash => (15.0, "damage_ride_crash"),
+            // its own blows on the others: a strong enemy's, more than Mario's fists
+            Attack::RideBlow => (7.0, "damage_ride_blow"),
+            Attack::RideSmash => (12.0, "damage_ride_smash"),
             // the Bros. Attack: a team finisher's worth, once in a while (a streak of BROS! and a
             // wait after it)
             Attack::BrosAttack => (30.0, "damage_bros_attack"),
@@ -382,6 +390,7 @@ impl Attack {
             Attack::SwingKick => 1.3,
             Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
             Attack::RideCrash => 1.5,
+            Attack::RideBlow | Attack::RideSmash => 1.0,
             Attack::BrosAttack => 1.5,
             Attack::Sigil => 1.5,
             Attack::SigilTap => 1.0,

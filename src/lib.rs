@@ -2620,8 +2620,28 @@ fn frame(data: &FD4TaskData) {
         None
     };
     hud::set(wedges.min(8), hide_why, true);
-    // the tail swing: watch the bosses' stance, carry / throw / fly the grabbed one
-    swing::watch_stances(&combat::boss_handles());
+    // the tail swing: watch the stance of the bosses and of every medium or big enemy near (one
+    // stunned, its stance broken, is grabbed by L2 + R3 and thrown, not ridden), carry / throw /
+    // fly the grabbed one
+    {
+        // (those near looked for a few times a second: a full look round every frame cost the most
+        // of anything; the watch itself runs every frame)
+        static OTHERS: Mutex<(u32, Vec<eldenring::cs::FieldInsHandle>)> = Mutex::new((0, Vec::new()));
+        let bosses = combat::boss_handles();
+        let mut cached = OTHERS.lock().unwrap_or_else(|e| e.into_inner());
+        if cached.0 == 0 {
+            let me = to_er(m.origin, m.state.position);
+            // (the ones that could be ridden: medium and big, juggle::pull_size)
+            cached.1 = combat::nearby(&HavokPosition(me.0, me.1, me.2, 0.0), swing::WATCH_NEAR, m.origin)
+                .iter()
+                .filter_map(|t| t.shootable().map(|h| (*h, t.radius * crate::scale(), t.height * crate::scale())))
+                .filter(|(h, r, ht)| juggle::pull_size(h, *r, *ht) != juggle::PullSize::Small && !bosses.iter().any(|b| combat::handle_key(b) == combat::handle_key(h)))
+                .map(|(h, ..)| h)
+                .collect();
+        }
+        cached.0 = (cached.0 + 1) % 8;
+        swing::watch_stances(&bosses, &cached.1);
+    }
     squish::tick();
     {
         let me = to_er(m.origin, m.state.position);
@@ -3744,8 +3764,9 @@ fn frame(data: &FD4TaskData) {
             if put_down {
                 unsafe { sm64::sm64_er_drop(id) };
             }
+            // (soft: any medium or big enemy's stance breaking cues it now, not only a boss's)
             if stagger_cue {
-                unsafe { sm64::sm64_play_sound_global(swing::SOUND_STAGGER) };
+                unsafe { sm64::sm64_play_sound_volume(swing::SOUND_STAGGER, 0.3) };
             }
             // SM64's C-up view: Mario's head looks where the camera looks
             // (and stands in SM64's first-person action: breathing, only the head moves)

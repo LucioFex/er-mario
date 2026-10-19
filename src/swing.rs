@@ -182,9 +182,10 @@ const STANCE_HOLD: f32 = 4.0;
 const STANCE_DRAIN: f32 = 15.0;
 /// SOUND_OBJ_BOWSER_DEFEATED: the cue that the boss is open for the grab
 pub const SOUND_STAGGER: i32 = 0x5006_0081;
-/// Impact damage: share of the boss's max HP, from a slow throw to a full-speed one
-const IMPACT_MIN: f32 = 8.0;
-const IMPACT_MAX: f32 = 25.0;
+/// Impact damage: share of the boss's max HP, from a slow throw to a full-speed one (a little: the
+/// fun of a grab is the throw, not the damage)
+const IMPACT_MIN: f32 = 3.0;
+const IMPACT_MAX: f32 = 8.0;
 const GRAVITY: f32 = 16.0;
 
 enum Phase {
@@ -278,8 +279,12 @@ fn key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
 
-/// Every frame: watch the bosses' stance (those with a boss bar).
-pub fn watch_stances(bosses: &[FieldInsHandle]) {
+/// Enemies whose stance is watched this near Mario (m), bosses wherever they are.
+pub const WATCH_NEAR: f32 = 25.0;
+
+/// Every frame: watch the stance of the bosses (those with a boss bar) and of the medium and big
+/// enemies near (lib.rs): broken, it's open for the grab.
+pub fn watch_stances(bosses: &[FieldInsHandle], others: &[FieldInsHandle]) {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
     st.open.retain(|(_, until)| Instant::now() < *until);
@@ -309,7 +314,9 @@ pub fn watch_stances(bosses: &[FieldInsHandle]) {
             }
         }
     }
-    for h in bosses {
+    // (only those watched now: the others' last poise forgotten)
+    st.toughness.retain(|(k, _)| bosses.iter().chain(others).any(|h| key(h) == *k));
+    for (h, boss) in bosses.iter().map(|h| (h, true)).chain(others.iter().map(|h| (h, false))) {
         let Some(chr) = wcm.chr_ins_by_handle(h) else { continue };
         // (enemies' stance is their poise: the toughness module is the player's)
         let t = &chr.modules.super_armor;
@@ -317,14 +324,17 @@ pub fn watch_stances(bosses: &[FieldInsHandle]) {
         let broken_flag = chr.modules.super_armor.poise_broken_state;
         let k = key(h);
         let last = st.toughness.iter().find(|(kk, _)| *kk == k).map(|(_, v)| *v);
-        let broke = broken_flag || (now <= 0.0 && last.is_some_and(|l| l > 0.0)) || last.is_some_and(|l| l < max * 0.3 && now >= max * 0.95);
+        // (a boss's poise back to full from near nothing is a break too; a regular enemy's poise
+        // comes back to full on its own after a while, no break)
+        let broke = broken_flag || (now <= 0.0 && last.is_some_and(|l| l > 0.0)) || (boss && last.is_some_and(|l| l < max * 0.3 && now >= max * 0.95));
         match st.toughness.iter_mut().find(|(kk, _)| *kk == k) {
             Some(e) => e.1 = now,
             None => st.toughness.push((k, now)),
         }
         if broke && !st.open.iter().any(|(o, _)| key(o) == k) {
-            log(format!("swing: boss stance broken (toughness {now:.0}/{max:.0}): grab him!"));
+            log(format!("swing: c{:04}'s stance broken (toughness {now:.0}/{max:.0}): L2 + R3 grabs him", chr.character_id));
             st.open.push((*h, Instant::now() + std::time::Duration::from_secs_f32(OPEN_FOR)));
+            CUE.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

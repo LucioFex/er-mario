@@ -85,7 +85,7 @@ const SIGILS_BACK: f32 = 45.0;
 /// plus a share of his speed), how far off a colossus's body he swings round it (m), how fast the
 /// rope's end follows its spot (share a tick: an arm's jolts eased)
 const GRAVITY: f32 = 24.0;
-const PUMP: f32 = 9.0;
+const PUMP: f32 = 10.0;
 const CLIMB: f32 = 4.5;
 const ROPE_MIN: f32 = 2.5;
 /// the rope's longest: shut in, and out in the open by a huge colossus (m)
@@ -385,6 +385,21 @@ fn part_of(name: &str) -> Option<Part> {
     })
 }
 
+/// A bone named just so (FromSoftware's own: Head, Neck, Spine2, L_Hand, R_Calf, Tail1...), not one
+/// that only has the word in it (a hair's, a cape's, a cloth's: Head_Hair03, L_Hand_Cloth): those
+/// hang off the body and the cloth's simulation moves them, their pose isn't where the body is
+/// (the rope hung from one in the sky over a giant's head).
+fn canonical(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    let n = n.strip_prefix("l_").or_else(|| n.strip_prefix("r_")).unwrap_or(&n);
+    let n = n.strip_suffix("_l").or_else(|| n.strip_suffix("_r")).unwrap_or(n);
+    let n = n.trim_end_matches(|c: char| c.is_ascii_digit());
+    const CORE: [&str; 17] = [
+        "head", "neck", "spine", "pelvis", "hips", "thigh", "clavicle", "shoulder", "upperarm", "forearm", "hand", "palm", "calf", "knee", "foot", "tail", "chest",
+    ];
+    CORE.contains(&n)
+}
+
 /// Per skeleton: its bones to hold on to (bone, part); empty: none fit.
 static PARTS: Mutex<Vec<(usize, Vec<(usize, Part)>)>> = Mutex::new(Vec::new());
 /// kinds whose bones were found out of their body (character id): spots round the body for them;
@@ -399,7 +414,11 @@ fn parts_of(skeleton: usize) -> Vec<(usize, Part)> {
         return p.clone();
     }
     let names = crate::engine_mario::bone_names(skeleton).unwrap_or_default();
-    let mut parts: Vec<(usize, Part)> = names.iter().enumerate().filter_map(|(i, n)| part_of(n).map(|p| (i, p))).collect();
+    // (the bones named just so; a skeleton named some other way, with too few of those: any bone
+    // with the word in it)
+    let canon = names.iter().filter(|n| canonical(n) && part_of(n).is_some()).count();
+    let strict = canon >= 3;
+    let mut parts: Vec<(usize, Part)> = names.iter().enumerate().filter(|(_, n)| !strict || canonical(n)).filter_map(|(i, n)| part_of(n).map(|p| (i, p))).collect();
     // (at most a few of each: the last spine bones are its back's top, a tail's every other)
     let mut kept: Vec<(usize, Part)> = Vec::new();
     for (i, p) in parts.drain(..).rev() {
@@ -416,7 +435,13 @@ fn parts_of(skeleton: usize) -> Vec<(usize, Part)> {
     if cache.len() >= 32 {
         cache.remove(0);
     }
-    log(format!("colossus: skeleton {skeleton:#x}, {} bones, {} spots to hold ({:?})", names.len(), kept.len(), kept.iter().map(|(_, p)| *p).collect::<Vec<_>>()));
+    log(format!(
+        "colossus: skeleton {skeleton:#x}, {} bones, {} spots to hold{} ({})",
+        names.len(),
+        kept.len(),
+        if strict { "" } else { ", loosely named" },
+        kept.iter().map(|(i, _)| names[*i].as_str()).collect::<Vec<_>>().join(", ")
+    ));
     cache.push((skeleton, kept.clone()));
     kept
 }
@@ -588,6 +613,11 @@ pub fn start_rope(at: Option<Vec3>, mob: Option<&FieldInsHandle>, feet: Vec3, ve
         _ => return false,
     };
     let Some(q) = pivot_at(pivot) else { return false };
+    // (which spot, how high on it: a spot in the sky over it shows here)
+    let on = match (pivot, mob.and_then(titan)) {
+        (Pivot::Spot(_, sid), Some(t)) => t.spot(sid).map(|x| format!("{:?} {:.1} m up of {:.1} m, ", x.part, x.at.y - t.feet.y, t.height)).unwrap_or_default(),
+        _ => String::new(),
+    };
     let len = (q - hand).length().clamp(ROPE_MIN, longest);
     // (from his feet: his run goes on into the swing, a little hop off the ground; no yank in
     // towards it, that swung him into its body)
@@ -597,7 +627,7 @@ pub fn start_rope(at: Option<Vec3>, mob: Option<&FieldInsHandle>, feet: Vec3, ve
         return false;
     }
     s.phase = Phase::Rope { pivot, len, hand, vel, since: Instant::now(), at: q, most: longest, climb: false };
-    log(format!("colossus: on the rope ({}, {len:.1} m)", if mob.is_some() { "a colossus" } else { "the map" }));
+    log(format!("colossus: on the rope ({}, {on}{len:.1} m)", if mob.is_some() { "a colossus" } else { "the map" }));
     true
 }
 

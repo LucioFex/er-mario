@@ -2,8 +2,9 @@
 //! down to half its health jumps Mario onto its back (the only way up) and it's his for a while. The
 //! stick steers it (it's pushed along where it points, turned that way), X and Y make it attack
 //! with its own moves (light and heavy), B charges, A or R2 pressed again hops him off behind it.
-//! Charmed meanwhile (the game's own team for it): its blows hurt the other enemies and they go
-//! for it; blows meant for Mario land on it instead, and its own never touch him (while it
+//! Charmed meanwhile (the game's own team for it): the other enemies go for it, and its blows hurt
+//! them (the mod's: the game let a charmed enemy's swings pass through them, harmless, so whoever
+//! is in its reach in front of it while an attack plays takes the blow, once an attack); blows meant for Mario land on it instead, and its own never touch him (while it
 //! strikes, with no other enemy striking near him, the game's hits don't land on him at all; a blow
 //! that still does, or a throw of its own, is told apart and ignored). Driven into a wall at
 //! speed it crashes there, staggered and left open (its stance broken: grab its tail). One rooted
@@ -62,6 +63,11 @@ const START_WITHIN: f32 = 0.35;
 const START_FRAMES: u32 = 10;
 const TRIES: u32 = 4;
 const NEXT_AFTER: f32 = 0.55;
+/// its blows hurt from this far into the attack to this far (s), whoever is within this of its body
+/// in front of it (m; a heavy one a metre more)
+const BLOW_FROM: f32 = 0.25;
+const BLOW_UNTIL: f32 = 1.6;
+const BLOW_REACH: f32 = 2.2;
 /// an id is only taken for missing after this many asks it didn't answer while it stood idle
 const MISSES: u32 = 2;
 /// blows meant for Mario: at most one on his mount in this long (s; his own grace after a hit)
@@ -126,8 +132,10 @@ struct Ride {
     no_attacks: bool,
     no_moving: bool,
     ask: Option<Ask>,
-    /// the attack it's in (its id) and since when
+    /// the attack it's in (its id) and since when, whether it's a heavy one, who it hit
     attacking: Option<(i32, Instant)>,
+    blow_heavy: bool,
+    blow_hit: Vec<u64>,
     next: [usize; 2],
     charge_until: Option<Instant>,
     charge_hit: Vec<u64>,
@@ -382,6 +390,8 @@ pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
             no_moving,
             ask: None,
             attacking: None,
+            blow_heavy: false,
+            blow_hit: Vec::new(),
             next: [0, 0],
             charge_until: None,
             charge_hit: Vec::new(),
@@ -449,6 +459,8 @@ pub fn pre_behavior() {
     // started: that one, or another of its attacks it went into instead (a variant of it)
     if (anim == ask.id && at < 0.5) || (anim != start_anim && is_attack(anim)) {
         let (id, kind) = (ask.id, r.kind);
+        r.blow_heavy = ask.heavy;
+        r.blow_hit.clear();
         r.attacking = Some((anim, Instant::now()));
         r.ask = None;
         chr.debug_flags.set_disabled_secondary_actions(true);
@@ -715,6 +727,39 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
             }
             combat.deal(player, &near, &hits, tick);
             crate::lakitu::shake(0.5);
+        }
+    }
+    // its own blows on the others (the game's own pass through them, harmless): whoever's in its
+    // reach in front of it while an attack plays, once an attack
+    let blow = with(|s| s.ride.as_ref().and_then(|r| r.attacking.map(|(_, t)| (t.elapsed().as_secs_f32(), r.blow_heavy))));
+    let body = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&mob)).map(|c| Vec3::new(c.modules.physics.position.0, c.modules.physics.position.1, c.modules.physics.position.2));
+    if let (Some((_, heavy)), Some(p)) = (blow.filter(|(age, _)| (BLOW_FROM..BLOW_UNTIL).contains(age)), body) {
+        let reach = radius + BLOW_REACH + if heavy { 1.0 } else { 0.0 };
+        let near = combat::nearby(&HavokPosition(p.x, p.y, p.z, 0.0), reach + 2.0, origin);
+        let me = combat::handle_key(&mob);
+        let attack = if heavy { Attack::RideSmash } else { Attack::RideBlow };
+        let hits: Vec<(usize, Attack, bool)> = with(|s| {
+            let r = s.ride.as_mut().unwrap();
+            let mut hits = Vec::new();
+            for (i, t) in near.iter().enumerate() {
+                if !t.shootable().is_some_and(|h| combat::handle_key(h) != me) || t.friendly() || t.is_prop() || r.blow_hit.contains(&t.key()) {
+                    continue;
+                }
+                let d = Vec3::new(t.er.0, t.er.1, t.er.2) - p;
+                let flat = d.with_y(0.0);
+                if flat.length() <= reach + t.radius * crate::scale() && flat.normalize_or_zero().dot(fwd) > 0.0 && d.y.abs() < 3.0 {
+                    r.blow_hit.push(t.key());
+                    hits.push((i, attack, false));
+                }
+            }
+            hits
+        });
+        if !hits.is_empty() {
+            if crate::debug() {
+                log(format!("boss ride: its blow hit {} enemies", hits.len()));
+            }
+            combat.deal(player, &near, &hits, tick);
+            crate::lakitu::shake(if heavy { 0.45 } else { 0.25 });
         }
     }
     // Mario rides on its back

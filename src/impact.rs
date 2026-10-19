@@ -125,6 +125,8 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::RockSlam => (4, 1.5, true),
         Attack::HomeRun => (6, 1.5, true),
         Attack::Bowled => (0, 0.9, false),
+        Attack::RideBlow => (2, 1.2, false),
+        Attack::RideSmash => (4, 1.6, true),
         Attack::Tether => (0, 1.4, true),
         Attack::SwingKick => (4, 1.3, true),
         // (MAX's own shows: no hold on Mario, maxfin.rs draws them)
