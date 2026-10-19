@@ -105,6 +105,7 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
         })
         .collect();
     found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let n = found.len();
     for (_, h, radius, height) in found {
         // (a medium or big one worn down to half: up on its back, the capture; not one with its
         // stance broken, that's the tail grab's moment)
@@ -121,6 +122,15 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
         if crate::swing::try_grab(&h, radius) {
             return true;
         }
+        log(format!(
+            "carry: L2 + R3, one {radius:.1} x {height:.1} m not taken (liftable {}, scripted {}, stance open {})",
+            crate::combat::liftable(&h),
+            crate::combat::hands_off(&h),
+            crate::swing::is_open(&h)
+        ));
+    }
+    if n == 0 {
+        log("carry: L2 + R3, nobody within reach");
     }
     false
 }

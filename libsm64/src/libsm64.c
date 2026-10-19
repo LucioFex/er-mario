@@ -996,7 +996,14 @@ SM64_LIB_FN void sm64_er_pick_up(int32_t marioId)
             set_mario_action(m, ACT_DIVE_PICKING_UP, 0);
         }
     } else {
+        // (taken at once, straight into lifting it: SM64's pickup otherwise waits for the end of
+        // whatever animation was on, crouching or standing, and the mod let go of the enemy before
+        // his hands ever closed on it)
         set_mario_action(m, ACT_PICKING_UP, 0);
+        mario_grab_used_object(m);
+        m->marioBodyState->grabPos = GRAB_POS_LIGHT_OBJ;
+        play_sound(SOUND_MARIO_HRMM, m->marioObj->header.gfx.cameraToObject);
+        m->actionState = 1;
     }
 }
 
