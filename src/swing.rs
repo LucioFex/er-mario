@@ -1,4 +1,4 @@
-//! Bowser's tail swing on bosses: break a boss's stance, and Mario's next hit grabs him like
+//! Bowser's tail swing on bosses: break a boss's stance, and L2 + R3 by him grabs him like
 //! Bowser (SM64's own grab, swing and throw: spin the stick to wind up, B to let go). The boss
 //! is carried around Mario at arm's length while he swings, then flies off where Mario faces,
 //! and whatever he hits first (a wall, a rock, the ground) hurts him badly.

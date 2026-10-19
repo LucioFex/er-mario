@@ -1,7 +1,7 @@
-//! Picking enemies up like SM64's Bob-ombs: Mario's dive into an enemy's back lifts a regular (not boss,
-//! not too big) enemy, he carries it between his hands (SM64's own carrying: walk, jump), and B
-//! throws it: a moment into the flight it goes limp (the game's death ragdoll) and whatever it
-//! hits first kills it.
+//! Picking enemies up like SM64's Bob-ombs: L2 + R3 lifts a regular (not boss, not too big) enemy,
+//! he carries it between his hands (SM64's own carrying: walk, jump), and B throws it far: it flies
+//! like the hook's home run (bat.rs), bowling over whoever it meets, and lands alive, hardly hurt.
+//! The fun is in the throw, not the damage.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,24 +20,16 @@ const ACT_AIR_THROW: u32 = 0x8300_08AB;
 /// Biggest enemy Mario can lift (m): about a soldier
 const MAX_RADIUS: f32 = 0.8;
 const MAX_HEIGHT: f32 = 2.4;
-/// Throw: speed forward and up (m/s), gravity (m/s²)
-const THROW_SPEED: f32 = 14.0;
-const THROW_UP: f32 = 5.0;
-const GRAVITY: f32 = 16.0;
-/// Impact damage: all of it (the finishing blow is the game's, see combat::impact)
-pub const IMPACT_PCT: f32 = 100.0;
-/// Damage to an enemy the thrown one crashes into (share of its max HP)
-pub const BOWLED_PCT: f32 = 50.0;
-/// Guided flight before it goes limp (the ragdoll's bodies take over the speed it has then)
-const LIMP_AFTER: f32 = 0.1;
+/// Throw: speed forward and up (m/s): far, a long arc (bat.rs flies it)
+const THROW_SPEED: f32 = 18.0;
+const THROW_UP: f32 = 6.5;
+/// its landing's damage (% of max HP): next to nothing
+const LANDING_PCT: f32 = 1.5;
 
 enum Phase {
     Idle,
     /// Mario lifts / carries it: (enemy, its height in m)
     Held { mob: FieldInsHandle, height: f32, since: Instant },
-    Flying { mob: FieldInsHandle, pos: Vec3, vel: Vec3, since: Instant, radius: f32 },
-    /// flying limp (the ragdoll carries it): smoothed speed, frames since going limp
-    Limp { mob: FieldInsHandle, last: Vec3, speed: f32, since: Instant, frames: u32 },
 }
 
 static PHASE: Mutex<Phase> = Mutex::new(Phase::Idle);
@@ -50,9 +42,8 @@ fn key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
 
-/// Mario's punch landed on `h` (a regular enemy): lifts it if Mario is behind it and it isn't too
-/// big. True: picked up (no normal damage).
-pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32, any_side: bool) -> bool {
+/// L2 + R3 on `h` (a regular enemy): lifts it if it isn't too big. True: picked up.
+fn try_pick_up(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> bool {
     // (co-op guest: no grabs, the host owns the enemies)
     if crate::coop::guest() {
         return false;
@@ -66,21 +57,10 @@ pub fn try_pick_up(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32
     if chr.modules.data.hp <= 0 {
         return false;
     }
-    let ph = &chr.modules.physics;
-    let o = ph.orientation;
-    let fwd = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(Vec3::new(0.0, 0.0, -1.0));
-    let fwd = Vec3::new(fwd.x, 0.0, fwd.z).normalize_or_zero();
-    let to_mario = Vec3::new(mario.x - ph.position.0, 0.0, mario.z - ph.position.2).normalize_or_zero();
-    // not in front of it: Mario anywhere outside its ~70° front cone (behind or beside it). Only
-    // right behind (±60°) was too hard to hit, enemies turn to face Mario quickly.
-    let behind = fwd.dot(to_mario);
-    if behind > 0.35 && !any_side {
-        if crate::debug() {
-            log(format!("carry: no pickup, Mario is in front of it (facing {behind:.2})"));
-        }
+    if crate::bat::is_flying(h) || crate::stopwatch::frozen(h) {
         return false;
     }
-    log(format!("carry: picked up an enemy from behind ({:.1} x {:.1} m, facing {behind:.2})", radius_m, height_m));
+    log(format!("carry: picked up an enemy ({radius_m:.1} x {height_m:.1} m)"));
     *phase = Phase::Held { mob: *h, height: height_m, since: Instant::now() };
     START.store(true, Ordering::Relaxed);
     true
@@ -112,7 +92,7 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
         if crate::bossride::mountable(&h) && !crate::swing::is_open(&h) && crate::bossride::mount(&h, id) {
             return true;
         }
-        if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, feet, radius, height, true) {
+        if crate::combat::liftable(&h) && !crate::combat::hands_off(&h) && try_pick_up(&h, radius, height) {
             return true;
         }
         // (one up in a juggle is let go of first: two moving it at once would tear it about)
@@ -166,8 +146,15 @@ pub fn last_mob_key() -> u64 {
 pub fn harmless(mario: Vec3) -> bool {
     let phase = PHASE.lock().unwrap_or_else(|e| e.into_inner());
     let mut last = LAST_MOB.lock().unwrap_or_else(|e| e.into_inner());
-    if let Phase::Held { mob, .. } | Phase::Flying { mob, .. } | Phase::Limp { mob, .. } = &*phase {
+    if let Phase::Held { mob, .. } = &*phase {
         *last = Some((key(mob), Instant::now()));
+    }
+    // (in the air after the throw, it can't hurt him either)
+    if let Some((k, _)) = *last {
+        let h = unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&k) };
+        if crate::bat::is_flying(&h) {
+            *last = Some((k, Instant::now()));
+        }
     }
     let Some((mob, t)) = *last else { return false };
     if t.elapsed().as_secs_f32() >= SAFE_AFTER {
@@ -199,10 +186,10 @@ pub fn harmless(mario: Vec3) -> bool {
 /// Within this distance (m) an enemy could have just hit Mario.
 const HIT_RANGE: f32 = 3.0;
 
-/// Whether this enemy is in Mario's hands or flying (no normal hits on it).
+/// Whether this enemy is in Mario's hands (no normal hits on it; once thrown, bat.rs flies it).
 pub fn is_carried(h: &FieldInsHandle) -> bool {
     match &*PHASE.lock().unwrap_or_else(|e| e.into_inner()) {
-        Phase::Held { mob, .. } | Phase::Flying { mob, .. } | Phase::Limp { mob, .. } => key(mob) == key(h),
+        Phase::Held { mob, .. } => key(mob) == key(h),
         Phase::Idle => false,
     }
 }
@@ -216,179 +203,55 @@ pub fn reset() {
     *PHASE.lock().unwrap_or_else(|e| e.into_inner()) = Phase::Idle;
 }
 
-/// Another enemy the thrown one (at `p`) runs into: within a body's width, overlapping in height.
-fn bumped(mob: &FieldInsHandle, p: Vec3) -> Option<FieldInsHandle> {
-    use eldenring::cs::ChrIns;
-    let wcm = unsafe { WorldChrMan::instance() }.ok()?;
-    for set in wcm.chr_sets.iter().flatten() {
-        for chr in set.characters() {
-            let chr: &ChrIns = chr;
-            if !crate::combat::hittable(chr.chr_type)
-                || key(&chr.field_ins_handle) == key(mob)
-                || chr.modules.data.hp <= 0
-                || crate::combat::own_side(chr.team_type)
-                || crate::combat::is_torrent(chr)
-                || crate::combat::helper(chr)
-            {
-                continue;
-            }
-            let q = chr.modules.physics.position;
-            let r = chr.modules.physics.hit_radius.max(0.3) + 0.4;
-            let (dx, dz) = (q.0 - p.x, q.2 - p.z);
-            let h = chr.modules.physics.hit_height.max(1.0);
-            if dx * dx + dz * dz < r * r && p.y > q.1 - 1.0 && p.y < q.1 + h {
-                return Some(chr.field_ins_handle);
-            }
-        }
-    }
-    None
-}
-
 /// Every frame in Mario mode. `hands`: SM64's held-object point (game coordinates) and whether
-/// Mario still holds it; `face` Mario's SM64 face angle; `action` his SM64 action; `hit` a map
-/// ray. Returns an impact: (enemy, damage share of max HP in %).
-pub fn update(
-    dt: f32,
-    hands: Option<Vec3>,
-    face: f32,
-    action: u32,
-    hit: impl Fn(Vec3, Vec3) -> Option<Vec3>,
-) -> Vec<(FieldInsHandle, f32)> {
-    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return Vec::new() };
+/// Mario still holds it; `face` Mario's SM64 face angle; `action` his SM64 action.
+pub fn update(hands: Option<Vec3>, face: f32, action: u32) {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
     let mut phase = PHASE.lock().unwrap_or_else(|e| e.into_inner());
     // Mario's forward in game coordinates (SM64 is mirrored on X)
     let fwd = Vec3::new(-face.sin(), 0.0, face.cos());
-    match *phase {
-        Phase::Idle => Vec::new(),
-        Phase::Held { mob, height, since } => {
-            let Some(chr) = wcm.chr_ins_by_handle_mut(&mob) else {
-                *phase = Phase::Idle;
-                DROP.store(true, Ordering::Relaxed);
-                return Vec::new();
-            };
-            if chr.modules.data.hp <= 0 {
-                chr.modules.physics.gravity_disabled = false;
-                *phase = Phase::Idle;
-                DROP.store(true, Ordering::Relaxed);
-                return Vec::new();
-            }
-            let ph = &mut chr.modules.physics;
-            match hands {
-                // (the pickup's first frames: SM64 hasn't placed the hands yet, keep it where it is)
-                Some(p) if p != Vec3::ZERO => {
-                    // held around its middle, facing away from Mario like a Bob-omb
-                    let at = p - Vec3::Y * (height * 0.45) + fwd * 0.25;
-                    ph.position = HavokPosition(at.x, at.y, at.z, 0.0);
-                    ph.chr_proxy_pos_update_requested = true;
-                    ph.gravity_disabled = true;
-                    let q = glam::Quat::from_rotation_y(std::f32::consts::PI - face);
-                    ph.orientation = eldenring::rotation::Quaternion(q.x, q.y, q.z, q.w);
-                    chr.modules.fall.fall_timer = 0.0;
-                    Vec::new()
-                }
-                Some(_) => Vec::new(),
-                // (SM64 starts the pickup on its next tick: not holding yet isn't letting go)
-                None if START.load(Ordering::Relaxed) || since.elapsed().as_secs_f32() < 0.25 => Vec::new(),
-                None if action == ACT_THROWING || action == ACT_AIR_THROW => {
-                    let pos = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
-                    let vel = fwd * THROW_SPEED + Vec3::Y * THROW_UP;
-                    log("carry: thrown");
-                    *phase = Phase::Flying { mob, pos, vel, since: Instant::now(), radius: 0.5 };
-                    Vec::new()
-                }
-                None => {
-                    // let go some other way (Mario got hurt, fell): just drop it
-                    ph.gravity_disabled = false;
-                    log(format!("carry: dropped without a throw (action {action:#x})"));
-                    *phase = Phase::Idle;
-                    Vec::new()
-                }
-            }
+    let Phase::Held { mob, height, since } = *phase else { return };
+    let Some(chr) = wcm.chr_ins_by_handle_mut(&mob) else {
+        *phase = Phase::Idle;
+        DROP.store(true, Ordering::Relaxed);
+        return;
+    };
+    if chr.modules.data.hp <= 0 {
+        chr.modules.physics.gravity_disabled = false;
+        *phase = Phase::Idle;
+        DROP.store(true, Ordering::Relaxed);
+        return;
+    }
+    let ph = &mut chr.modules.physics;
+    match hands {
+        // (the pickup's first frames: SM64 hasn't placed the hands yet, keep it where it is)
+        Some(p) if p != Vec3::ZERO => {
+            // held around its middle, facing away from Mario like a Bob-omb
+            let at = p - Vec3::Y * (height * 0.45) + fwd * 0.25;
+            ph.position = HavokPosition(at.x, at.y, at.z, 0.0);
+            ph.chr_proxy_pos_update_requested = true;
+            ph.gravity_disabled = true;
+            let q = glam::Quat::from_rotation_y(std::f32::consts::PI - face);
+            ph.orientation = eldenring::rotation::Quaternion(q.x, q.y, q.z, q.w);
+            chr.modules.fall.fall_timer = 0.0;
         }
-        Phase::Flying { mob, pos, vel, since, radius } => {
-            let Some(chr) = wcm.chr_ins_by_handle_mut(&mob) else {
-                *phase = Phase::Idle;
-                return Vec::new();
-            };
-            let ph = &mut chr.modules.physics;
-            let mut vel = vel;
-            vel.y -= GRAVITY * dt;
-            let next = pos + vel * dt;
-            let lead = (next - pos).normalize_or_zero() * radius;
-            let impact = hit(pos + Vec3::Y * 0.5, next + lead + Vec3::Y * 0.5).or_else(|| hit(pos + Vec3::Y * 0.5, next - Vec3::Y * 0.1));
-            if let Some(o) = bumped(&mob, next + Vec3::Y * 0.5).filter(|_| since.elapsed().as_secs_f32() > 0.05) {
-                ph.gravity_disabled = false;
-                log("carry: thrown enemy crashed into another one: dead");
-                *phase = Phase::Idle;
-                return vec![(mob, IMPACT_PCT), (o, BOWLED_PCT)];
-            }
-            match impact {
-                Some(h) if since.elapsed().as_secs_f32() > 0.05 => {
-                    let back = (h - pos).normalize_or_zero() * radius;
-                    let rest = h - back;
-                    ph.position = HavokPosition(rest.x, rest.y.max(h.y), rest.z, 0.0);
-                    ph.chr_proxy_pos_update_requested = true;
-                    ph.gravity_disabled = false;
-                    log(format!("carry: thrown enemy hit something at {:.1} m/s: {IMPACT_PCT:.0}% of its HP", vel.length()));
-                    *phase = Phase::Idle;
-                    vec![(mob, IMPACT_PCT)]
-                }
-                // flew off into nothing: the game's own fall takes it from here
-                _ if since.elapsed().as_secs_f32() > 3.0 => {
-                    ph.gravity_disabled = false;
-                    log("carry: thrown enemy flew off");
-                    *phase = Phase::Idle;
-                    Vec::new()
-                }
-                // a few frames of guided flight gave its ragdoll's bodies the throw's speed: limp
-                // from here (the game's death ragdoll: it's done for anyway)
-                _ if chr.chr_ctrl.ragdoll_ins != 0 && since.elapsed().as_secs_f32() > LIMP_AFTER => {
-                    chr.chr_ctrl.chr_ragdoll_state = 2;
-                    chr.modules.physics.gravity_disabled = false;
-                    log(format!("carry: limp at {:.1} m/s", vel.length()));
-                    *phase = Phase::Limp { mob, last: pos, speed: vel.length(), since: Instant::now(), frames: 0 };
-                    Vec::new()
-                }
-                _ => {
-                    ph.position = HavokPosition(next.x, next.y, next.z, 0.0);
-                    ph.chr_proxy_pos_update_requested = true;
-                    ph.gravity_disabled = true;
-                    *phase = Phase::Flying { mob, pos: next, vel, since, radius };
-                    Vec::new()
-                }
-            }
+        Some(_) => {}
+        // (SM64 starts the pickup on its next tick: not holding yet isn't letting go)
+        None if START.load(Ordering::Relaxed) || since.elapsed().as_secs_f32() < 0.25 => {}
+        None if action == ACT_THROWING || action == ACT_AIR_THROW => {
+            ph.gravity_disabled = false;
+            *phase = Phase::Idle;
+            drop(phase);
+            *LAST_MOB.lock().unwrap_or_else(|e| e.into_inner()) = Some((key(&mob), Instant::now()));
+            // far along his facing, a long arc: the home run's flight (bat.rs), landing alive
+            let flies = crate::bat::throw(&mob, fwd, THROW_SPEED, THROW_UP, LANDING_PCT);
+            log(format!("carry: thrown{}", if flies { "" } else { " (it can't fly: dropped)" }));
         }
-        Phase::Limp { mob, last, speed, since, frames } => {
-            let Some(chr) = wcm.chr_ins_by_handle_mut(&mob) else {
-                *phase = Phase::Idle;
-                return Vec::new();
-            };
-            let p = chr.modules.physics.position;
-            let now = Vec3::new(p.0, p.1, p.2);
-            let v = (now - last).length() / dt.max(1e-3);
-            // (the first frames jump as it snaps to the ragdoll's hips: not speed)
-            let settle = frames < 3;
-            let smooth = if settle { speed } else { speed * 0.6 + v * 0.4 };
-            let _ = smooth;
-            // contact: the map right under it or ahead of it (its position lags the ragdoll a
-            // little, so the rays reach past it), or another enemy
-            let dir = (now - last).normalize_or_zero();
-            // (the ground only on the way down: it's thrown from about hand height)
-            let ground = !settle && now.y <= last.y && hit(now + Vec3::Y * 0.3, now - Vec3::Y * 0.35).is_some();
-            let wall = !settle && hit(last + Vec3::Y * 0.5, now + dir * 0.6 + Vec3::Y * 0.5).is_some();
-            let other = if settle { None } else { bumped(&mob, now + Vec3::Y * 0.5) };
-            let age = since.elapsed().as_secs_f32();
-            if ground || wall || other.is_some() || age > 3.0 {
-                log(format!("carry: limp enemy hit something at {smooth:.1} m/s (ground {ground}, wall {wall}, enemy {}): dead", other.is_some()));
-                *phase = Phase::Idle;
-                let mut out = vec![(mob, IMPACT_PCT)];
-                if let Some(o) = other {
-                    out.push((o, BOWLED_PCT));
-                }
-                return out;
-            }
-            *phase = Phase::Limp { mob, last: now, speed: smooth, since, frames: frames + 1 };
-            Vec::new()
+        None => {
+            // let go some other way (Mario got hurt, fell): just drop it
+            ph.gravity_disabled = false;
+            log(format!("carry: dropped without a throw (action {action:#x})"));
+            *phase = Phase::Idle;
         }
     }
 }

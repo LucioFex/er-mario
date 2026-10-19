@@ -1050,6 +1050,14 @@ SM64_LIB_FN void sm64_er_set_head(int active, float pitch, float yaw)
 extern int er_aim_active;
 extern f32 er_aim_x, er_aim_z;
 
+// the moving punch that comes next keeps his run (the fireball thrown on the run)
+extern s32 er_keep_run;
+
+SM64_LIB_FN void sm64_er_keep_run(void)
+{
+    er_keep_run = 1;
+}
+
 SM64_LIB_FN void sm64_er_set_aim(int active, float x, float z)
 {
     er_aim_active = active;

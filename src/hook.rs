@@ -10,7 +10,7 @@
 //!   the map
 //! - R2 held after it took Mario to a medium or big enemy: he swings round it for 4 s, faster and
 //!   faster; let go and he's flung off along the swing with its inertia into a flying kick (from
-//!   one big enemy to the next, or to get away); held to the end, he lands on its back (Capture)
+//!   one big enemy to the next, or to get away); riding one is L2 + R3 by it only (bossride.rs)
 //! - a wall: he flies to it and clings to it a moment (A: a wall kick off it); a floor or a ledge:
 //!   he lands there
 //! It finds enemies on its own: the near ones all around him (the nearest first, those in front of
@@ -182,7 +182,6 @@ impl Hook {
         button: bool,
         l2: bool,
         x: bool,
-        a_pressed: bool,
         allowed: bool,
         mv: &sm64::SM64ErMove,
         state: &sm64::SM64MarioState,
@@ -309,32 +308,10 @@ impl Hook {
                     }
                 }
             }
-            // A on a medium or big one (zipping to it or swinging round it): up on its back
-            Phase::Zipping(_) | Phase::Swinging(_)
-                if a_pressed
-                    && allowed
-                    && !crate::coop::guest()
-                    && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
-            {
-                if let Aim::Enemy { mob, .. } = self.aim {
-                    if crate::bossride::mount_as(&mob, id, false) {
-                        log("hook: up on its back");
-                        if matches!(phase, Phase::Swinging(_)) {
-                            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
-                        }
-                        next = Some(Phase::Back);
-                    }
-                }
-            }
             Phase::Swinging(since) => {
                 let Aim::Enemy { mob, height, .. } = self.aim else { return };
                 let swinging = state.action == moves::ACT_ER_POLE_SWING || tick.wrapping_sub(since) < 2;
-                // (R2 held through the whole swing: he lands on its back, if it can be ridden)
-                if swinging && button && allowed && tick.wrapping_sub(since) == SWING_TICKS && crate::bossride::mount_as(&mob, id, false) {
-                    log("hook: up on its back (R2 held to the end of the swing)");
-                    worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
-                    next = Some(Phase::Back);
-                } else {
+                // (riding one is L2 + R3 by it only, bossride.rs: no mount off the hook)
                 match chest(&mob, height).filter(|_| swinging) {
                     Some((c, _)) => {
                         self.pos = c;
@@ -354,7 +331,6 @@ impl Hook {
                         self.swing_ready = tick + SWING_COOLDOWN;
                         next = Some(Phase::Back);
                     }
-                }
                 }
             }
             Phase::Zipping(since) => {
@@ -610,8 +586,6 @@ const SWING_HOLD: u32 = 6;
 /// ...once he's this close to its body (m): from farther the swing's circle would be a jump
 const SWING_NEAR: f32 = 3.0;
 const SWING_COOLDOWN: u32 = 90;
-/// the swing lasts 4 s (er_moves.c ER_POLE_MAX, 120 ticks): R2 held to this tick, he mounts it
-const SWING_TICKS: u32 = 116;
 /// the tether's second enemy within this far of the first (m)
 const TETHER_RANGE: f32 = 15.0;
 

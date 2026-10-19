@@ -1,6 +1,7 @@
 //! Enemies sent flying by the hook's moves (hook.rs):
 //! - the home run: batted away along the camera, bowling over whoever it meets on the way (the
-//!   game's knockdown), a thud where it lands
+//!   game's knockdown), a thud where it lands; an enemy Mario carried and threw flies the same way
+//!   (carry.rs)
 //! - the tether: two enemies yanked into each other (a small one into a big one, or both to the
 //!   middle), a crash when they meet
 //! Never a kill by itself: their landing and their crash hurt like a blow (combat.rs).
@@ -30,7 +31,8 @@ const MEET: f32 = 0.9;
 const YANK_MAX: f32 = 1.2;
 
 enum Kind {
-    HomeRun { vel: Vec3, bowled: Vec<u64> },
+    /// its speed, who it bowled over (itself first), its landing's damage (% of max HP)
+    HomeRun { vel: Vec3, bowled: Vec<u64>, landing: f32 },
     /// pulled to `to` (the other's body, or the middle), the other one's key
     Yank { to: Vec3, other: u64 },
 }
@@ -77,7 +79,7 @@ pub fn home_run(h: &FieldInsHandle, dir: Vec3) -> bool {
         mob: *h,
         pos,
         since: Instant::now(),
-        kind: Kind::HomeRun { vel: dir * BAT_SPEED + Vec3::Y * BAT_UP, bowled: vec![key(h)] },
+        kind: Kind::HomeRun { vel: dir * BAT_SPEED + Vec3::Y * BAT_UP, bowled: vec![key(h)], landing: LANDING_PCT },
     });
     crate::style::callout("HOME RUN!", Some(pos + Vec3::Y * 2.0), [1.0, 0.85, 0.3], true, 4.0);
     true
@@ -96,7 +98,26 @@ pub fn launch(h: &FieldInsHandle, dir: Vec3, speed: f32) -> bool {
         mob: *h,
         pos,
         since: Instant::now(),
-        kind: Kind::HomeRun { vel: dir * speed + Vec3::Y * (BAT_UP * speed / BAT_SPEED).min(BAT_UP * 1.3), bowled: vec![key(h)] },
+        kind: Kind::HomeRun { vel: dir * speed + Vec3::Y * (BAT_UP * speed / BAT_SPEED).min(BAT_UP * 1.3), bowled: vec![key(h)], landing: LANDING_PCT },
+    });
+    true
+}
+
+/// An enemy Mario carried, thrown (carry.rs): off along `dir` at `speed` and `up` (m/s), bowling
+/// over whoever it meets like the home run, landing with `landing` % of its max HP. False if it
+/// can't fly (it's just let go then).
+pub fn throw(h: &FieldInsHandle, dir: Vec3, speed: f32, up: f32, landing: f32) -> bool {
+    if crate::coop::guest() || is_flying(h) || crate::stopwatch::frozen(h) {
+        return false;
+    }
+    let Some(pos) = feet_of(h) else { return false };
+    crate::juggle::release(h);
+    let dir = dir.with_y(0.0).normalize_or(Vec3::Z);
+    FLYING.lock().unwrap_or_else(|e| e.into_inner()).push(Flight {
+        mob: *h,
+        pos,
+        since: Instant::now(),
+        kind: Kind::HomeRun { vel: dir * speed + Vec3::Y * up, bowled: vec![key(h)], landing },
     });
     true
 }
@@ -181,7 +202,7 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
         }
         let age = f.since.elapsed().as_secs_f32();
         let (next, keep) = match &mut f.kind {
-            Kind::HomeRun { vel, bowled } => {
+            Kind::HomeRun { vel, bowled, landing: share } => {
                 vel.y -= BAT_GRAVITY * dt;
                 let next = f.pos + *vel * dt;
                 // whoever it meets on the way goes down too
@@ -212,7 +233,7 @@ pub fn update(dt: f32, origin: [f32; 3], player: &ChrIns, combat: &mut Combat, t
                 };
                 match landing {
                     Some(at) => {
-                        landed.push((f.mob, LANDING_PCT));
+                        landed.push((f.mob, *share));
                         crate::impact::thud(at);
                         (at, false)
                     }

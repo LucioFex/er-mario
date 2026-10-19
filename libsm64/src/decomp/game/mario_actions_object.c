@@ -44,7 +44,7 @@ extern int er_mega;
 /* the lunge covers about this share of the gap, at most this fast (units per tick); the hammer
    reaches further than a fist */
 #define ER_LUNGE_SHARE 0.36f
-#define ER_LUNGE_MAX 42.0f
+#define ER_LUNGE_MAX 32.0f
 #define ER_HAMMER_EXTRA 70.0f
 
 void er_turn_lag(struct MarioState *m, s16 from);

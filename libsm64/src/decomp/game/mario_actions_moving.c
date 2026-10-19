@@ -847,6 +847,9 @@ s32 act_walking(struct MarioState *m) {
     return FALSE;
 }
 
+/* er-mario: the next moving punch keeps his run (the fireball thrown on the run: libsm64.c) */
+s32 er_keep_run = 0;
+
 s32 act_move_punching(struct MarioState *m) {
     if (should_begin_sliding(m)) {
         return set_mario_action(m, ACT_BEGIN_SLIDING, 0);
@@ -856,11 +859,19 @@ s32 act_move_punching(struct MarioState *m) {
         return set_mario_action(m, ACT_JUMP_KICK, 0);
     }
 
-    // er-mario: the combo's step forward (and aim), never slower than Mario already goes
+    // er-mario: the combo's step forward (and aim); a run going into a blow is braked over a few
+    // ticks, he plants his feet for it (at full run speed kept, a punch flew him past the enemy and
+    // made the plain blows hard to land). Not the fireball thrown on the run (it keeps his run:
+    // er_keep_run) nor the sweep (its own step).
     f32 step = er_punch_step(m);
-    mario_set_forward_vel(m, m->forwardVel > step ? m->forwardVel : step);
+    s32 keep = (er_keep_run && m->actionArg <= 2) || m->actionArg == 9;
+    f32 carried = keep ? m->forwardVel : m->forwardVel * 0.72f;
+    mario_set_forward_vel(m, carried > step ? carried : step);
 
     mario_update_punch_sequence(m);
+    if (m->action != ACT_MOVE_PUNCHING) {
+        er_keep_run = 0;
+    }
 
     if (m->forwardVel >= 0.0f) {
         apply_slope_decel(m, 0.5f);

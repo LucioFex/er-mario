@@ -799,7 +799,7 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
     }
 }
 
-/// On a colossus (colossus.rs): its weak points, gold stars glowing on it (dim on its far side),
+/// On a colossus (colossus.rs): its weak points, faint gold stars on it (barely there on its far side),
 /// the spot a leap would take him to (a faint ring), and his grip, a ring by him that empties,
 /// turns red when low and trembles while it thrashes (Shadow of the Colossus's), the star strike's
 /// charge filling inside it.
@@ -812,14 +812,16 @@ fn draw_colossus(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId],
         if z > 80.0 {
             continue;
         }
-        let px = ((c[1] - top[1]) * 2.0).max(10.0);
-        // (on the far side of its body: dim)
+        let px = ((c[1] - top[1]) * 2.0).clamp(8.0, 48.0);
+        // (subtle, a hint on its body more than a sign: faint, a touch clearer as he nears it;
+        // on the far side of its body, barely there)
         let behind = eye.is_some_and(|e| out.dot((e - p).normalize_or_zero()) < -0.15);
-        let a = if behind { 0.3 } else { 1.0 } * (0.55 + 0.45 * left);
-        let pulse = 1.0 + 0.15 * (t * 5.0).sin();
-        let g = px * 1.4 * pulse;
-        dl.add_image(textures[IMG_GLOW], [c[0] - g, c[1] - g], [c[0] + g, c[1] + g]).col([1.0, 0.8, 0.25, 0.55 * a]).build();
-        let s = px * 0.55 * pulse;
+        let near = 1.0 - ((p - h.mario).length() / 6.0).clamp(0.0, 1.0);
+        let a = if behind { 0.1 } else { 0.32 + 0.28 * near } * (0.6 + 0.4 * left);
+        let pulse = 1.0 + 0.08 * (t * 3.0).sin();
+        let g = px * 1.0 * pulse;
+        dl.add_image(textures[IMG_GLOW], [c[0] - g, c[1] - g], [c[0] + g, c[1] + g]).col([1.0, 0.85, 0.4, 0.3 * a]).build();
+        let s = px * 0.42 * pulse;
         dl.add_image(textures[IMG_STAR], [c[0] - s, c[1] - s], [c[0] + s, c[1] + s]).col([1.0, 1.0, 1.0, a]).build();
     }
     if let Some((c, _)) = h.next.and_then(|n| project(n, size)) {

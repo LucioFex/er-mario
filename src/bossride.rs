@@ -1,5 +1,5 @@
-//! The Capture (Super Mario Odyssey's, with the hook for Cappy; Monster Hunter's wirebug mount):
-//! hooked to a big enemy with R2 held, A jumps Mario onto its back and it's his for a while. The
+//! The Capture (Super Mario Odyssey's; Monster Hunter's mount): L2 + R3 next to a big enemy worn
+//! down to half its health jumps Mario onto its back (the only way up) and it's his for a while. The
 //! stick steers it (it's pushed along where it points, turned that way), X and Y make it attack
 //! with its own moves (light and heavy), B charges, A or R2 pressed again hops him off behind it.
 //! Charmed meanwhile (the game's own team for it): its blows hurt the other enemies and they go
@@ -338,15 +338,9 @@ pub fn marks() -> [Option<(Vec3, f32)>; 4] {
     m.live.map(|l| l.map(|(_, head, at)| (head, at.elapsed().as_secs_f32())).filter(|(_, age)| *age < MARK_TIME))
 }
 
-/// Game thread (hook.rs, carry.rs): A while hooked to a big one with R2 held, or the grab (LT + R3)
-/// next to one worn down: up he jumps. True if he's on.
+/// Game thread (carry.rs): the grab (LT + R3) next to one worn down, the only way up: up he jumps.
+/// True if he's on.
 pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
-    mount_as(h, id, true)
-}
-
-/// `mount`; `asked`: pressed for it (A, the grab), so a fresh one gets a "NOT YET" and a buzz; not
-/// asked (R2 held through a pole swing, the swing's own end), a fresh one just isn't ridden.
-pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
     let ready = with(|s| s.ready_at.is_none_or(|t| Instant::now() >= t) && s.ride.is_none());
     // (co-op guest: the host owns the enemies; a boss in a scripted moment isn't ridden; a fresh
     // one isn't either: worn down to half first)
@@ -355,12 +349,9 @@ pub fn mount_as(h: &FieldInsHandle, id: i32, asked: bool) -> bool {
     let tired = share <= MOUNT_AT;
     if ready && !(!guest && !hands && !boss && seated && tired) {
         log(format!("boss ride: refused (ready {ready}, guest {guest}, scripted {hands}, boss bar {boss}, seat {seated}, health {:.0}%)", share * 100.0));
-        if !tired && seated && asked {
+        if !tired && seated {
             crate::style::callout("NOT YET", None, [0.9, 0.9, 0.95], false, 0.0);
         }
-    }
-    if !asked && !tired {
-        return false;
     }
     let chr = (ready && !guest && !hands && !boss && seated && tired)
         .then(|| unsafe { WorldChrMan::instance_mut() }.ok().and_then(|w| w.chr_ins_by_handle_mut(h)))

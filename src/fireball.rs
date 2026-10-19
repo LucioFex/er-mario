@@ -454,7 +454,10 @@ impl Fire {
         // running: a punch on the move throws it, now
         if on_ground && !crate::moves::dodging(state.action) {
             self.run_throw = Some(tick);
-            worker::call("fireball run throw", move |_| unsafe { sm64::sm64_set_mario_action(id, ACT_MOVE_PUNCHING) });
+            worker::call("fireball run throw", move |_| unsafe {
+                sm64::sm64_er_keep_run();
+                sm64::sm64_set_mario_action(id, ACT_MOVE_PUNCHING);
+            });
         }
         self.spawn(level, state, origin, tick);
     }

@@ -186,6 +186,8 @@ unsafe extern "C" {
     /// er-mario patch: the last tick's per-part matrices (4x4, row-vector, SM64 units); returns the part count.
     /// er-mario patch: SM64's C-up head look (radians, relative to his body; active 0 = off)
     pub fn sm64_er_set_head(active: i32, pitch: f32, yaw: f32);
+    /// er-mario patch: the next moving punch keeps his run (the fireball thrown on the run)
+    pub fn sm64_er_keep_run();
     /// er-mario patch: the enemy (SM64 x, z) each hit of the punch combo turns Mario to (0 = none)
     pub fn sm64_er_set_aim(active: i32, x: f32, z: f32);
     /// er-mario patch: how far that enemy is beyond a blow's reach (units): an aimed blow lunges

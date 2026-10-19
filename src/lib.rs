@@ -2651,16 +2651,7 @@ fn frame(data: &FD4TaskData) {
             let fa = m.state.face_angle;
             glam::Vec3::new(me.0, me.1, me.2) + glam::Vec3::new(-fa.sin(), 0.0, fa.cos()) * 0.45 + glam::Vec3::Y * 0.75
         });
-        let impact = carry::update(data.delta_time.time, hands, m.state.face_angle, m.state.action, |from, to| {
-            let h = havok?;
-            let d = to - from;
-            h.phys_world
-                .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
-                .map(|h| glam::Vec3::new(h.0, h.1, h.2))
-        });
-        for (mob, pct) in &impact {
-            combat::impact(&mut m.combat, mob, *pct, m.ticks);
-        }
+        carry::update(hands, m.state.face_angle, m.state.action);
         // enemies up in the air with Mario (the air combos), or falling back down
         {
             let me = to_er(m.origin, m.state.position);
@@ -3991,7 +3982,7 @@ fn frame(data: &FD4TaskData) {
                         rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
-                    m.hook.tick(id, b_hook, l2_held, x_move, a_pressed, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, l2_held, x_move, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));

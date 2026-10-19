@@ -503,11 +503,16 @@ const _: () = assert!(size_of::<SpawnRequest>() == 0x110);
 
 /// The bullets' own (flat) damage: just enough to always land the final blow.
 const BULLET_DAMAGE: u16 = 10;
-/// ...and the share of the bare fist's attack they hit with (%)
-const FIST_SHARE: u16 = 100;
+/// ...and the share of the bare fist's attack they hit with (%): a touch, so the bullet is the
+/// game's own damaging hit (the reaction, the aggro, a script waiting for a hit) without adding
+/// to the blow's share. At 100% it was the whole bare fist on top of every rationed blow (some
+/// 230 HP in Reforged at a high level): a regular enemy lost a third of its health to a punch.
+/// (the last point is the finisher's, turned up for its few ticks)
+const FIST_SHARE: u16 = 5;
 /// Share of the normal damage bosses (anything with a boss health bar) take.
-/// (raised with the lower shares above, so bosses lose only a little)
-const BOSS_FACTOR: f32 = 0.065;
+/// (raised with the lower shares above, so bosses lose only a little; doubled when the bullets'
+/// whole bare fist, most of what a boss lost, went: FIST_SHARE)
+const BOSS_FACTOR: f32 = 0.13;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
 const DAMAGE_FACTOR: f32 = 0.6;
 /// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
@@ -594,11 +599,11 @@ fn patch_params() -> bool {
             a.hit_ai_sound_id(),
             if a.atk_phys() > 0 && a.atk_phys() != BULLET_DAMAGE as u16 { " (LOOKS USED by the regulation)" } else { "" }
         ));
-        // The damage that counts is a share of the target's max HP (Combat::deal). On top, the
-        // bullet is a real hit with the Tarnished's bare fist. As a flat number alone it took
-        // nothing off a boss, whatever the number, so no blow was ever the game's own: a boss
-        // at his last point had to be ended by hand, and one whose script waits for a damaging
-        // hit there (Malenia's second phase) never got it.
+        // The damage that counts is a share of the target's max HP (Combat::deal). The bullet
+        // is a real hit with a touch of the Tarnished's bare fist (FIST_SHARE). As a flat number
+        // alone it took nothing off a boss, whatever the number, so no blow was ever the game's
+        // own: a boss at his last point had to be ended by hand, and one whose script waits for
+        // a damaging hit there (Malenia's second phase) never got it.
         let _ = damage;
         a.set_atk_phys_correction(FIST_SHARE);
         a.set_atk_mag_correction(0);
@@ -1732,9 +1737,6 @@ pub fn fade_occluders(targets: &[Target], cam: glam::Vec3, chest: glam::Vec3) {
     });
 }
 
-/// Picking an enemy up (the dive) only this close: farther hits just hurt.
-const DIVE_GRAB_RADIUS: f32 = 45.0;
-
 /// Called on the libsm64 thread right after a tick: which targets Mario hits now.
 /// Stomps in a row on one enemy before Mario has to land (SM64's head bounce would juggle forever).
 const MAX_STOMPS: u32 = 1;
@@ -1907,10 +1909,6 @@ pub fn hits(
     if crate::moves::Hit::from(combo.hit) == Some(crate::moves::Hit::Mikiri) {
         return combo_hits(state, targets, crate::moves::Hit::Mikiri, swing);
     }
-    // diving (SM64's dive or its belly slide): kept with each hit, a dive into an enemy's back
-    // picks it up like diving into a Bob-omb
-    const ACT_FLAG_DIVING: u32 = 0x0008_0000;
-    let diving = state.action & ACT_FLAG_DIVING != 0;
     let mut out = Vec::new();
     let m = state.position;
     for &(t, radius, height, index) in targets {
@@ -1970,15 +1968,12 @@ pub fn hits(
         if (horizontal > body + radius && !punch_reach) || m[1] > t[1] + height || m[1] + 100.0 < t[1] {
             continue;
         }
-        // only the dive picks an enemy up (a punch that grabbed instead of hitting was hard to
-        // tell apart from one that hit)
-        let grab = diving && horizontal <= DIVE_GRAB_RADIUS + radius;
         // aim at mid-body: stomps need Mario above that (and bounce him to the top), on a body no
         // taller than STOMP_HEIGHT: a big beast's 5 m capsule left its back below "mid-body", so
         // Mario walked on it, and a stomp that landed threw him up to 5 m
         let height = if matches!(attack, Attack::Stomp) { height.min(STOMP_HEIGHT) } else { height };
         if unsafe { sm64::sm64_mario_attack(id, t[0], t[1] + height * 0.5, t[2], height * 0.5) } || punch_reach {
-            out.push((index, attack, grab));
+            out.push((index, attack, false));
         }
     }
     out
@@ -2122,7 +2117,9 @@ impl Combat {
             log(format!("combat: final blow missed, finished directly (c{:04})", chr.character_id));
             false
         });
-        for &(index, attack, grab) in hits {
+        // (no blow grabs: enemies are taken only with L2 + R3, carry::grab_nearest; a dive or a
+        // running punch that lifted one instead of hitting it got in the way of the combos)
+        for &(index, attack, _) in hits {
             let Some(target) = targets.get(index) else { continue };
             // (every bounce counts, also within the cooldown: quick climbing bounces did too)
             // (a head stomp at the top of a climb comes as a ground pound: it counts too)
@@ -2145,15 +2142,6 @@ impl Combat {
                 // which could finish a ragdolled character)
                 if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
                     continue;
-                }
-                // a regular enemy punched or dived into from behind: Mario picks it up like a
-                // Bob-omb (carry.rs)
-                if grab && liftable(handle) {
-                    let me = player.modules.physics.position;
-                    if crate::carry::try_pick_up(handle, glam::Vec3::new(me.0, me.1, me.2), target.radius * crate::scale(), target.height * crate::scale(), false) {
-                        self.victims.insert(target.key, (*handle, tick));
-                        continue;
-                    }
                 }
                 // the super jump punch lifts small enemies, and stunned strong ones not too big, up
                 // with Mario (juggle.rs); a blow on one up there keeps it up
@@ -2180,12 +2168,6 @@ impl Combat {
                     crate::juggle::shot(handle);
                 } else {
                     crate::juggle::hit(handle, me);
-                }
-                // a boss with a broken stance: this hit grabs him by the tail (swing.rs), if Mario
-                // is there (not a fireball from afar), and not up in the air with him
-                if !attack.ranged() && !matches!(attack, Attack::Trample | Attack::YoshiStomp | Attack::Rock | Attack::RockSlam) && !hands_off(handle) && !crate::juggle::is_juggled(handle) && crate::swing::try_grab(handle, target.radius * crate::scale()) {
-                    self.victims.insert(target.key, (*handle, tick));
-                    continue;
                 }
                 self.victims.insert(target.key, (*handle, tick));
                 // (a big body only dents and springs back: a giant flattened under him looked wrong,
