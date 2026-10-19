@@ -53,7 +53,10 @@ const CHARGE_EVERY: f32 = 1.6;
 const CHARMED: u8 = 15;
 /// a blow meant for Mario costs it this share of its health a wedge; this much left, he hops off
 const SHIELD_SHARE: f32 = 0.035;
+/// (or, got on below that already, this share of what it had then: one ridden at 10% threw him
+/// off at once)
 const WORN_OUT: f32 = 0.15;
+const WORN_SHARE: f32 = 0.4;
 /// its attacks by the AI's ids: light ones (X) and heavy ones (Y), tried in this order
 const LIGHT: [i32; 6] = [3000, 3001, 3002, 3003, 3004, 3005];
 const HEAVY: [i32; 10] = [3010, 3011, 3012, 3013, 3014, 3015, 3006, 3007, 3008, 3009];
@@ -147,6 +150,8 @@ struct Ride {
     others: bool,
     /// rooted to its spot: it turns, it isn't walked
     rooted: bool,
+    /// its health (share) when he got on
+    start_health: f32,
 }
 
 struct State {
@@ -401,6 +406,7 @@ pub fn mount(h: &FieldInsHandle, id: i32) -> bool {
             strike_at: None,
             others: false,
             rooted,
+            start_health: share,
         })
     });
     log(format!("boss ride: on its back, c{kind:04} captured (team {team} -> {CHARMED}){}", if rooted { ", rooted to its spot: it turns, it doesn't walk" } else { "" }));
@@ -598,7 +604,8 @@ pub fn update(dt: f32, steer: Vec3, hold: bool, jump: bool, keys: [bool; 3], act
         .ok()
         .and_then(|w| w.chr_ins_by_handle(&mob))
         .map_or(1.0, |c| c.modules.data.hp as f32 / c.modules.data.max_hp.max(1) as f32);
-    let worn = health < WORN_OUT;
+    let start = with(|s| s.ride.as_ref().map_or(1.0, |r| r.start_health));
+    let worn = health < WORN_OUT.min(start * WORN_SHARE);
     // (its own attacks: the blows it deals now are not Mario's to take; others striking near him)
     let striking = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&mob)).is_some_and(|c| is_attack(anim_of(c).0));
     let others = others_striking(&mob, seat_at);

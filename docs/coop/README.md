@@ -198,6 +198,7 @@ a sí misma.
 | `revive: nobody came in time` / `nobody left to revive` | Se acabó el tiempo o cayeron los dos: muerte normal |
 | `leash: N m apart for 2 s: Mario warps to the partner` | La correa te llevó al lado del compañero |
 | `leash: L3 held, N m apart: Mario warps to the partner` / `leash: no warp asked for now (...)` | Teleport con L3 mantenido / por qué no se pudo |
+| `input: interact (D-pad down) pressed, no event animation after 1 s (...)` | La flecha abajo llegó al juego pero no abrió nada. Los datos entre paréntesis (anim, `queue mode`, `chr type`, `team`, `block`, `co-op guest/host`) son los que hacen falta para arreglar que Luigi no pueda interactuar: mandar el log con `debug = 1` en `er_mario.ini`, contando qué se intentó abrir (puerta, gracia, objeto, NPC). `possible actions 0x0` solo no dice nada: en modo Mario también aparece en el anfitrión |
 | `input: interact (D-pad down) pressed, no event animation ... possible actions ...` | La flecha abajo no hizo nada: dice qué acciones permitía el juego, tipo de personaje, si está en el piso y a qué distancia de Mario está el Tarnished |
 | `follow: interact started anim N ... on D-pad down (allowed ...)` | La flecha abajo sí abrió una puerta/agarró algo |
 | `coop: partner's fireball level N in 3D (...)` | Llegó la bola de fuego del otro con el formato nuevo (versión 10) y se dibuja en 3D; sale una vez por nivel |

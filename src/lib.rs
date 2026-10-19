@@ -1476,15 +1476,20 @@ static INTERACT_STATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU
 static INTERACT_POSSIBLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// What the game knows of the Tarnished when interact is pressed, for the log (the co-op guest's
-/// interact never got an event animation): the actions it allowed, his character type and team,
+/// interact never got an event animation; "possible 0x0" turned out to be the host's too, solo, in
+/// Mario mode: the Tarnished plays no animation of the game's): the actions it allowed (and the
+/// queue the game keeps them in instead, when on), his character type and team,
 /// whether it has him on the ground, how far he is from Mario's feet, his map block, co-op role.
 fn interact_diag(chr: &eldenring::cs::ChrIns, mario: HavokPosition) -> String {
     let ph = &chr.modules.physics;
     let p = ph.position;
     let off = ((p.0 - mario.0).powi(2) + (p.1 - mario.1).powi(2) + (p.2 - mario.2).powi(2)).sqrt();
     format!(
-        "possible actions {:#x}, chr type {:?}, team {}, on ground {} (falling {}, gravity off {}), {off:.2} m from Mario, block {:?}, co-op {}",
+        "possible actions {:#x} (queue mode {}, its state's entries {}, cancels {:#x}), chr type {:?}, team {}, on ground {} (falling {}, gravity off {}), {off:.2} m from Mario, block {:?}, co-op {}",
         INTERACT_POSSIBLE.load(Ordering::Relaxed),
+        chr.modules.action_request.queue_mode_enabled,
+        chr.modules.action_request.action_request_queue.input_entries.len(),
+        unsafe { *(&chr.modules.action_request.possible_action_cancels as *const _ as *const u64) },
         chr.chr_type,
         chr.team_type,
         ph.is_touching_ground,
@@ -3977,7 +3982,7 @@ fn frame(data: &FD4TaskData) {
                         // (the grab is on his feet: SM64's pick-up actions are ground ones)
                         if r3_press && l2_held && free && a & 0x800 == 0 {
                             let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
-                            if !carry::grab_nearest(feet, face, m.origin, id) {
+                            if !carry::grab_nearest(feet, face, m.origin, id, &ray) {
                                 worker::call("grab buzz", |_| unsafe { sm64::sm64_play_sound_volume(0x700E_0081, 0.35) });
                             }
                         }

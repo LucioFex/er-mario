@@ -69,19 +69,40 @@ fn try_pick_up(h: &FieldInsHandle, radius_m: f32, height_m: f32) -> bool {
 /// L2 + R3: Mario grabs the nearest enemy in front of him within arm's reach: a small one (carried,
 /// B throws it) from any side, or a big one whose stance is broken (by the tail: swing.rs, spin
 /// and B); one bigger than a man worn down to half is ridden instead (bossride.rs). `feet`, `face`:
-/// his place and the way he looks (Elden Ring). True if he took one.
-pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
+/// his place and the way he looks (Elden Ring); `ray` the map's (none through a wall). True if he
+/// took one.
+pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> bool {
     let here = HavokPosition(feet.x, feet.y, feet.z, 0.0);
-    // (measured to their bodies: a wide one's centre is far off; nearest first, the next if that
-    // one can't be taken)
-    let mut found: Vec<_> = crate::combat::nearby(&here, 9.0, origin)
+    // (measured to their bodies: a wide one's centre is far off; a medium or big one's capsule is
+    // narrower than its body, a hound's or a beast's long one most of all (by its flank, its rump,
+    // Mario was "nobody within reach"): its body taken out to almost twice its radius, or half its
+    // height; nearest first, the next if that one can't be taken)
+    let near = crate::combat::nearby(&here, 9.0, origin);
+    let mut closest: Option<(f32, f32, u32)> = None;
+    let mut found: Vec<_> = near
         .iter()
         .filter_map(|t| {
             let h = *t.shootable()?;
             let (radius, height) = (t.radius * crate::scale(), t.height * crate::scale());
+            let big = crate::juggle::pull_size(&h, radius, height) != crate::juggle::PullSize::Small;
+            let body = if big { (radius * 1.8).max(height * 0.5).min(radius + 2.5) } else { radius };
             let d = Vec3::new(t.er.0 - feet.x, 0.0, t.er.2 - feet.z);
-            let gap = (d.length() - radius).max(0.0);
-            (gap <= REACH && (gap < 0.8 || d.normalize_or(face).dot(face) >= 0.3)).then_some((gap, h, radius, height))
+            let gap = (d.length() - body).max(0.0);
+            let facing = d.normalize_or(face).dot(face);
+            // (at his height: not one far below a ledge or up on one; and none through a wall)
+            if feet.y < t.er.1 - 1.0 || feet.y > t.er.1 + height + 1.0 {
+                return None;
+            }
+            let chest = Vec3::new(t.er.0, t.er.1 + (height * 0.5).min(1.5), t.er.2);
+            let from = feet + Vec3::Y * 0.8;
+            let edge = chest - (chest - from).with_y(0.0).normalize_or_zero() * body * 0.8;
+            if ray(from, edge).is_some() {
+                return None;
+            }
+            if closest.is_none_or(|c| gap < c.0) {
+                closest = Some((gap, facing, unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(&h)).map_or(0, |c| c.character_id)));
+            }
+            (gap <= REACH && (gap < if big { 1.2 } else { 0.8 } || facing >= 0.3)).then_some((gap, h, radius, height))
         })
         .collect();
     found.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -110,7 +131,10 @@ pub fn grab_nearest(feet: Vec3, face: Vec3, origin: [f32; 3], id: i32) -> bool {
         ));
     }
     if n == 0 {
-        log("carry: L2 + R3, nobody within reach");
+        match closest {
+            Some((gap, facing, c)) => log(format!("carry: L2 + R3, nobody within reach (nearest c{c:04}, {gap:.1} m off its body, facing {facing:.2})")),
+            None => log("carry: L2 + R3, nobody within reach"),
+        }
     }
     false
 }
