@@ -134,6 +134,8 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::MaxCyclone => (2, 1.4, true),
         Attack::RideCrash => (5, 1.7, true),
         Attack::BrosAttack => (6, 1.8, true),
+        Attack::Sigil => (6, 1.7, true),
+        Attack::SigilTap => (1, 0.8, false),
         Attack::Fire(_) => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst

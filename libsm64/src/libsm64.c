@@ -1132,6 +1132,19 @@ SM64_LIB_FN void sm64_er_set_hold_y(int held)
     er_hold_y = held;
 }
 
+/** er-mario: on a colossus (colossus.rs): its pose (0 hanging, 1 on top, 2 leaping, 3 a blow, 4 the
+ * charge, 5 up the hook's line, 6 on the hook's rope, 7 sliding down a limb); `start`: into it now (not dead, not holding something) */
+SM64_LIB_FN void sm64_er_cling(int32_t marioId, int mode, int start)
+{
+    extern s32 er_cling_mode;
+    struct MarioState *m = er_bind(marioId);
+    if (!m) return;
+    er_cling_mode = mode;
+    if (start && m->action != ACT_ER_CLING && m->health >= 0x100 && m->heldObj == NULL) {
+        set_mario_action(m, ACT_ER_CLING, (u32) mode);
+    }
+}
+
 /** er-mario: the share of each loss of health Mario takes (tough.rs) */
 SM64_LIB_FN void sm64_er_set_loss_share(float share)
 {

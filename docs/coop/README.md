@@ -16,6 +16,9 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
   - El invitado no agarra enemigos (ni Bob-omb ni cola de Bowser) y tampoco los lanza por el aire.
   - Sus golpes igual pegan, y la barra de vida se ve bajar al instante.
 - Un golpe al compañero lo empuja un poco. No le hace daño.
+- Los dos pueden **trepar colosos** (enemigos muy grandes: A en el aire al lado de uno, o RT tocado) y
+  usar la **soga del gancho** (RT mantenido sobre un punto alto). Cada uno ve al otro colgado o
+  balanceándose, con la línea del gancho; los golpes a las estrellas del invitado los cuenta el anfitrión.
 - Mario y Luigi aguantan más: tienen **40% más de vida** y reciben **30% menos de daño** (cada
   pérdida de vida cuenta la mitad). Las 8 cuñas siguen, pero cada una vale más. Una caída mortal
   sigue matando.

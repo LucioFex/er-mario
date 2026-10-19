@@ -228,6 +228,50 @@ fn c_str(p: usize) -> Option<String> {
     String::from_utf8(s).ok()
 }
 
+/// A skeleton's bone names (colossus.rs: an enemy's).
+pub fn bone_names(skeleton: usize) -> Option<Vec<String>> {
+    let names = explore::read_u64(skeleton + 0x30)? as usize;
+    let count = (explore::read_u64(skeleton + 0x38)? as u32 as usize).min(1024);
+    if names == 0 || !explore::readable(names, count * 16) {
+        return None;
+    }
+    Some((0..count).map(|i| c_str(unsafe { *((names + i * 16) as *const usize) } & !1).unwrap_or_default()).collect())
+}
+
+/// Another character's pose after its animation (colossus.rs: an enemy's): its skeleton, its model
+/// pose (hkQsTransform, 0x30 a bone, the translation first: model space) and its bone count,
+/// validated once per change of its buffers.
+pub fn pose_of(chr: usize) -> Option<(usize, usize, usize)> {
+    // (a slot per character; one that failed waits a while before it's looked at again)
+    type Slot = (usize, Option<(usize, PoseLayout)>, Option<std::time::Instant>);
+    static CACHE: Mutex<Vec<Slot>> = Mutex::new(Vec::new());
+    let raw = |a: usize| unsafe { *(a as *const usize) };
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let i = match cache.iter().position(|e| e.0 == chr) {
+        Some(i) => i,
+        None => {
+            if cache.len() >= 8 {
+                cache.remove(0);
+            }
+            cache.push((chr, None, None));
+            cache.len() - 1
+        }
+    };
+    if cache[i].2.is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) {
+        return None;
+    }
+    match pose_layout_in(chr, raw, &mut cache[i].1) {
+        Some(l) => {
+            cache[i].2 = None;
+            Some((l.skeleton, l.model, l.count))
+        }
+        None => {
+            cache[i].2 = Some(std::time::Instant::now());
+            None
+        }
+    }
+}
+
 fn map_bones(skeleton: usize) -> Option<BoneMap> {
     let names = explore::read_u64(skeleton + 0x30)? as usize;
     let count = (explore::read_u64(skeleton + 0x38)? as u32 as usize).min(1024);

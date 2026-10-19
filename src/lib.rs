@@ -17,6 +17,7 @@ mod carry;
 mod chomp;
 mod collision;
 mod coins;
+mod colossus;
 mod combat;
 mod coop;
 mod dodge;
@@ -791,6 +792,7 @@ fn warp_to(m: &mut MarioState, to: glam::Vec3, player_ref: &PlayerIns) {
     let from = to_er(m.origin, m.state.position);
     impact::warp_puff(glam::Vec3::new(from.0, from.1, from.2));
     impact::warp_puff(to);
+    colossus::release();
     m.hook.drop();
     m.moving.clear(&mut m.havok);
     m.origin = [to.x, to.y, to.z];
@@ -1288,6 +1290,7 @@ fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
     let here = collision::sm_to_er(m.origin, m.state.position);
     set_scale(BASE_SCALE * k);
     log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
+    colossus::release();
     m.moving.clear(&mut m.havok);
     m.origin = [here.0, here.1, here.2];
     set_mario_position(m.id, [0.0, 0.0, 0.0]);
@@ -2120,6 +2123,7 @@ fn frame(data: &FD4TaskData) {
         IN_WORLD.store(false, Ordering::Relaxed);
         // (out of the world, a load: a captured enemy is let go while its handle still names it)
         bossride::clear();
+        colossus::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2270,6 +2274,7 @@ fn frame(data: &FD4TaskData) {
             // (nothing of his left behind: an enemy stopped in time, flights, a ride, the star music)
             stopwatch::clear();
             bossride::clear();
+            colossus::clear();
             bat::clear();
             maxfin::clear();
             brosattack::clear();
@@ -2859,6 +2864,7 @@ fn frame(data: &FD4TaskData) {
         skillshot::clear();
         stopwatch::clear();
         bossride::clear();
+        colossus::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -2873,6 +2879,7 @@ fn frame(data: &FD4TaskData) {
         rock::clear(id);
         stopwatch::clear();
         bossride::clear();
+        colossus::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -2893,6 +2900,7 @@ fn frame(data: &FD4TaskData) {
                 mega::clear();
             }
             coins::shift(glam::Vec3::from(d));
+            colossus::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
@@ -3396,7 +3404,7 @@ fn frame(data: &FD4TaskData) {
                 l_hammer = false;
             }
         }
-        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
+        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             let hand = to_er(m.origin, m.state.position);
@@ -3427,6 +3435,36 @@ fn frame(data: &FD4TaskData) {
             if bossride::active() {
                 inputs.button_a = 0;
                 inputs.button_b = 0;
+            }
+        }
+        // on a colossus or on the hook's rope (colossus.rs): its own buttons, nobody else's then
+        {
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            let mag = (sx * sx + sy * sy).sqrt().min(1.0);
+            let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
+            let steer = if mag > 0.2 { glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * mag } else { glam::Vec3::ZERO };
+            let feet = to_er(m.origin, m.state.position);
+            let me = colossus::Mario { feet: glam::Vec3::new(feet.0, feet.1, feet.2), action: m.state.action, dead: m.dead, paused: fire_ok && !fire_allowed };
+            let input = colossus::Input { a: inputs.button_a != 0, b: b_dash, x: x_move, rt: b_hook, lt: inputs.button_z != 0, steer };
+            let allowed = !m.dead && !big && !rock::active() && !bossride::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
+            let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+            let out = colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
+                let d = to - from;
+                havok?
+                    .phys_world
+                    .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                    .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+            });
+            if out.consumed {
+                inputs.button_a = 0;
+                inputs.button_b = 0;
+                inputs.button_z = 0;
+                inputs.stick_x = 0.0;
+                inputs.stick_y = 0.0;
+                (x_move, y_move, b_dash, b_fire, l_hammer, b_hook, r3) = (false, false, false, false, false, false, false);
+            }
+            if out.drop_hook {
+                m.hook.drop();
             }
         }
         let kit_on = inputs.button_z != 0 && traps::crouching(m.state.action) && fire_allowed && !interacting && !big && !carry::holding() && !swing::holding() && !RIDING.load(Ordering::Relaxed);
@@ -3923,7 +3961,7 @@ fn frame(data: &FD4TaskData) {
                         // cutscene action, rolling as the Rock: the palm thrust would cut those short)
                         let a = state.action;
                         let busy = a & (0x2000 | 0x0020_0000 | 0x0010_0000 | 0x0001_0000) != 0 || a & 0x1C0 == 0x100 || a == moves::ACT_ER_ZIP || a == moves::ACT_ER_POLE_SWING || a == ACT_ER_LADDER;
-                        let free = fire_allowed && !m.dead && a & 0x0002_0000 == 0 && !busy && !mega::active() && !rock::active() && !bossride::active() && !swing::holding() && !carry::holding();
+                        let free = fire_allowed && !m.dead && a & 0x0002_0000 == 0 && !busy && !mega::active() && !rock::active() && !bossride::active() && !colossus::active() && !swing::holding() && !carry::holding();
                         // (the grab is on his feet: SM64's pick-up actions are ground ones)
                         if r3_press && l2_held && free && a & 0x800 == 0 {
                             let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());

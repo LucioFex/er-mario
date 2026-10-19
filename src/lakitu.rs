@@ -207,6 +207,9 @@ struct Cam {
     /// co-op: how far it backs off to fit the partner in (m, eased), and the view's lean to them
     mate: f32,
     mate_frame: Vec3,
+    /// on a colossus (colossus.rs): backed off by its size, sunk below Mario as he climbs
+    coloss: f32,
+    coloss_sink: f32,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -268,6 +271,26 @@ pub fn blow() {
 
 /// Bounces in a row up a big body (set every frame by the combat code).
 static CLIMB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Mario on a colossus or swinging from one (colossus.rs): its feet, height, radius and head; the
+/// camera backs off to take in the whole beast, sinks below him as he climbs to look up at it, and
+/// keeps round on his side of it.
+static COLOSSUS: Mutex<Option<(Vec3, f32, f32, Vec3)>> = Mutex::new(None);
+
+/// How open it is around Mario (0 shut in a room, 1 in the open: Lakitu's sense of the walls).
+pub fn openness() -> f32 {
+    CAM.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0.5, |c| (1.0 - c.enclosed).clamp(0.0, 1.0))
+}
+
+pub fn set_colossus(c: Option<(Vec3, f32, f32, Vec3)>) {
+    *COLOSSUS.lock().unwrap_or_else(|e| e.into_inner()) = c;
+}
+
+/// the colossus view: backed off at most this far (m), sunk this share of his climb, leaning to its
+/// head at most this much (m)
+const COLOSSUS_MAX: f32 = 16.0;
+const COLOSSUS_SINK: f32 = 0.55;
+const COLOSSUS_LEAN: f32 = 4.0;
 
 pub fn set_climb(bounces: u32) {
     CLIMB.store(bounces, std::sync::atomic::Ordering::Relaxed);
@@ -366,6 +389,8 @@ pub fn update(
             fit: 0.0,
             mate: 0.0,
             mate_frame: Vec3::ZERO,
+            coloss: 0.0,
+            coloss_sink: 0.0,
         }
     });
 
@@ -676,6 +701,26 @@ pub fn update(
         cam.climb += (want_climb - cam.climb) * rate(0.6);
     }
     let (dist, height) = (dist + cam.big + cam.climb, height + cam.big * 0.4 + cam.climb * CLIMB_RISE);
+    // on a colossus: back by its size, sunk below him by how high he's up it (looking up at the
+    // beast, Shadow of the Colossus's view), round on his side of it
+    let colossus = *COLOSSUS.lock().unwrap_or_else(|e| e.into_inner());
+    let want_coloss = colossus.map_or(0.0, |(_, h, r, _)| ((h * 0.55 + r * 0.6) * (1.0 - 0.5 * enc)).clamp(0.0, COLOSSUS_MAX));
+    cam.coloss += (want_coloss - cam.coloss) * if want_coloss > cam.coloss { rate(1.2) } else { rate(0.5) };
+    let want_sink = colossus.map_or(0.0, |(f, h, _, _)| ((mario.y - f.y).max(0.0) * COLOSSUS_SINK).min(h * 0.6));
+    cam.coloss_sink += (want_sink - cam.coloss_sink) * rate(1.0);
+    if let Some((f, _, _, top)) = colossus {
+        let out = (mario - f).with_y(0.0);
+        if out.length() > 0.3 && cam.target_yaw.is_none() && !manual {
+            let want = out.z.atan2(out.x);
+            cam.yaw += angle_diff(want, cam.yaw) * rate(0.8);
+        }
+        let lean = ((top - head) * 0.35).clamp_length_max(COLOSSUS_LEAN);
+        cam.frame += (lean - cam.frame) * rate(1.5);
+    }
+    let height = height + cam.coloss * 0.15 - cam.coloss_sink;
+    // (sunk, never below a man's height over the ground under him)
+    let height = if cam.coloss_sink > 0.01 { height.max(ground + 1.2 - cam.focus.y) } else { height };
+    let dist = dist + cam.coloss;
     // (the air fight: back a little, and lower relative to him, looking up at the fight)
     let (dist, height) = (dist + AIR_BACK * cam.air, height * (1.0 - AIR_LEVEL * cam.air));
     // the fight's framing: the view leans towards the enemy, so Mario and it share the screen

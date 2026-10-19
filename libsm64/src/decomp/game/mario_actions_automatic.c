@@ -935,6 +935,52 @@ s32 act_er_boss_ride(struct MarioState *m) {
     return FALSE;
 }
 
+// er-mario: on a colossus (colossus.rs moves him with it every tick and picks the pose, the action's
+// arg): hanging on to a limb, standing on top of it, leaping to the next, a blow, the charge of the
+// star strike (trembling), flying up the hook's line, hanging from the hook's rope, sliding down a limb
+s32 er_cling_mode = 0;
+
+s32 act_er_cling(struct MarioState *m) {
+    mario_set_forward_vel(m, 0.0f);
+    vec3f_set(m->vel, 0.0f, 0.0f, 0.0f);
+    if (m->actionArg != (u32) er_cling_mode) {
+        m->actionArg = er_cling_mode;
+        m->actionTimer = 0;
+    }
+    switch (m->actionArg) {
+        case 1: set_mario_animation(m, MARIO_ANIM_IDLE_HEAD_CENTER); break;
+        case 2:
+            set_mario_animation(m, MARIO_ANIM_FORWARD_SPINNING_FLIP);
+            if (m->actionTimer == 0) {
+                // (a different cry each leap)
+                static u32 sErLeaps = 0;
+                play_sound(SOUND_MARIO_YAHOO_WAHA_YIPPEE + ((sErLeaps++ % 5) << 16), m->marioObj->header.gfx.cameraToObject);
+            }
+            break;
+        case 3:
+            set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
+            if (m->actionTimer == 0) {
+                set_anim_to_frame(m, 0);
+                play_sound(SOUND_MARIO_PUNCH_HOO, m->marioObj->header.gfx.cameraToObject);
+            }
+            break;
+        case 4: set_mario_animation(m, MARIO_ANIM_CROUCHING); break;
+        case 5: set_mario_animation(m, MARIO_ANIM_DIVE); break;
+        case 6: set_mario_animation(m, MARIO_ANIM_HANG_ON_CEILING); break;
+        case 7: set_mario_animation(m, MARIO_ANIM_SLIDE); break;
+        default: set_mario_animation(m, MARIO_ANIM_IDLE_ON_LEDGE); break;
+    }
+    m->actionTimer++;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    // (the charge: he trembles with it)
+    if (m->actionArg == 4) {
+        m->marioObj->header.gfx.pos[0] += (f32) ((m->actionTimer * 7) % 5 - 2) * 9.0f;
+        m->marioObj->header.gfx.pos[2] += (f32) ((m->actionTimer * 11) % 5 - 2) * 9.0f;
+    }
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    return FALSE;
+}
+
 s32 mario_execute_automatic_action(struct MarioState *m) {
     s32 cancel;
 
@@ -966,6 +1012,7 @@ s32 mario_execute_automatic_action(struct MarioState *m) {
         case ACT_ER_LADDER:              cancel = act_er_ladder(m);              break;
         case ACT_ER_RIDE:                cancel = act_er_ride(m);                break;
         case ACT_ER_BOSS_RIDE:           cancel = act_er_boss_ride(m);           break;
+        case ACT_ER_CLING:               cancel = act_er_cling(m);               break;
         case ACT_ER_GRABBED:             cancel = act_er_grabbed(m);             break;
     }
     /* clang-format on */

@@ -115,11 +115,14 @@ pub enum Attack {
     RideCrash,
     /// co-op: the Bros. Attack's ground pound on the enemy both brothers marked (brosattack.rs)
     BrosAttack,
+    /// on a colossus (colossus.rs): the star strike on a weak point, a blow anywhere else on it
+    Sigil,
+    SigilTap,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 62] = [
+const CODES: [Attack; 64] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -130,7 +133,7 @@ const CODES: [Attack; 62] = [
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
-    Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack,
+    Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack, Attack::Sigil, Attack::SigilTap,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -201,7 +204,8 @@ impl Attack {
             Attack::Bowled => Attack::Sweep.spec(),
             Attack::Tether => Attack::GroundPound.spec(),
             Attack::MaxFlurry => Attack::Punch.spec(),
-            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::BrosAttack => Attack::GroundPound.spec(),
+            Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil => Attack::GroundPound.spec(),
+            Attack::SigilTap => Attack::Punch.spec(),
         }
     }
 
@@ -307,6 +311,10 @@ impl Attack {
             // the Bros. Attack: a team finisher's worth, once in a while (a streak of BROS! and a
             // wait after it)
             Attack::BrosAttack => (30.0, "damage_bros_attack"),
+            // the colossus: a weak point's star strike is worth the climb and the charge (a few a
+            // climb: its grip runs out); a blow anywhere else on it is a scratch
+            Attack::Sigil => (12.0, "damage_star_strike"),
+            Attack::SigilTap => (2.0, "damage_colossus_blow"),
         }
     }
 
@@ -375,6 +383,8 @@ impl Attack {
             Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
             Attack::RideCrash => 1.5,
             Attack::BrosAttack => 1.5,
+            Attack::Sigil => 1.5,
+            Attack::SigilTap => 1.0,
         }
     }
 
@@ -2296,7 +2306,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;

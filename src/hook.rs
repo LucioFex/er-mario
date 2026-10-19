@@ -33,6 +33,7 @@ use crate::combat::{self, Attack, Combat};
 use crate::{log, moves, sm64, worker};
 
 /// how far it reaches (m), how fast it flies out and back (m/s)
+/// its reach shut in (m: colossus::hook_reach stretches it in the open)
 const RANGE: f32 = 20.0;
 const SPEED: f32 = 75.0;
 const BACK_SPEED: f32 = 60.0;
@@ -76,6 +77,8 @@ enum Phase {
     Zipping(u32),
     /// R2 held on a big one: Mario swings round it (since this tick)
     Swinging(u32),
+    /// R2 held as it caught a spot high up or a colossus: Mario swings on the rope (colossus.rs)
+    Roping,
     Back,
 }
 
@@ -153,6 +156,13 @@ impl Hook {
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
     pub fn drop(&mut self) {
+        // (on the rope: off it, he falls on; the map is fair game again, rope to rope; R2 still held
+        // from the rope isn't a new throw)
+        if matches!(self.phase, Some(Phase::Roping)) {
+            crate::colossus::cancel_rope();
+            self.map_used = false;
+            self.pressed = true;
+        }
         // (mid-swing: libsm64 lets go too, or he'd go round the spot where it was)
         if matches!(self.phase, Some(Phase::Swinging(_))) {
             let id = self.id;
@@ -253,7 +263,9 @@ impl Hook {
                 if next == Some(Phase::Out) {
                     if d.length() <= step {
                         self.pos = to;
-                        next = self.latch(id, feet, origin, tick, air, player, combat);
+                        let v = state.velocity;
+                        let vel = Vec3::new(-v[0], v[1], v[2]) * crate::scale() * 30.0;
+                        next = self.latch(id, feet, vel, button, origin, tick, air, player, combat);
                     } else {
                         self.pos += d / d.length() * step;
                     }
@@ -361,6 +373,16 @@ impl Hook {
                     }
                 }
             }
+            // on the rope (colossus.rs swings him): the cap where it hangs from; off it, it comes back
+            // and the map is fair game again (rope to rope, Spider-Man's way)
+            Phase::Roping => match crate::colossus::rope_pivot() {
+                Some(p) => self.pos = p,
+                None => {
+                    self.map_used = false;
+                    self.pressed = true;
+                    next = Some(Phase::Back);
+                }
+            },
             Phase::Back => {
                 let d = hand - self.pos;
                 let step = BACK_SPEED * DT;
@@ -372,10 +394,10 @@ impl Hook {
             }
         }
         // (a swing lasts as long as it does: C lets go after 4 s)
-        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Swinging(_))) {
+        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Swinging(_) | Phase::Roping)) {
             next = Some(Phase::Back);
         }
-        if tick.wrapping_sub(self.born) > LIFE + 150 {
+        if tick.wrapping_sub(self.born) > LIFE + 150 && next != Some(Phase::Roping) {
             next = None;
         }
         if next.is_none() {
@@ -400,7 +422,12 @@ impl Hook {
         // (why near ones weren't taken, for the log: out of sight, outside the cone)
         let (mut hidden, mut aside) = (0u32, 0u32);
         let chest = feet + Vec3::Y * (CHEST + 0.4);
-        let enemy = combat::nearby(&here, RANGE, origin)
+        // (its reach by the place: shut in, as ever; in the open by a colossus, far longer, colossus.rs)
+        let reach = crate::colossus::hook_reach(feet, origin);
+        if reach > RANGE + 1.0 {
+            log(format!("hook: reach {reach:.0} m (open {:.1})", crate::lakitu::openness()));
+        }
+        let enemy = combat::nearby(&here, reach, origin)
             .iter()
             .filter_map(|t| {
                 let mob = *t.shootable()?;
@@ -445,9 +472,9 @@ impl Hook {
                 // the map where the camera looks (a little up without Lakitu)
                 let dir = look.unwrap_or((face + Vec3::Y * 0.2).normalize());
                 let from = feet + Vec3::Y * CHEST;
-                match ray(from, from + dir * RANGE) {
+                match ray(from, from + dir * reach) {
                     // (L2 only takes enemies: it flies out and back)
-                    Some(_) if self.pull => (Aim::Miss { at: from + dir * RANGE, clink: false }, from + dir * RANGE),
+                    Some(_) if self.pull => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
                     // (once an airtime: then it only clinks off)
                     Some(p) if self.map_used => (Aim::Miss { at: p, clink: true }, p),
                     Some(p) => {
@@ -456,7 +483,7 @@ impl Hook {
                         let floor = ray(near + Vec3::Y * 0.4, near - Vec3::Y * 0.6).is_some();
                         (Aim::Map { at: p, floor }, p)
                     }
-                    None => (Aim::Miss { at: from + dir * RANGE, clink: false }, from + dir * RANGE),
+                    None => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
                 }
             }
         };
@@ -491,7 +518,7 @@ impl Hook {
 
     /// It got there: a pull, or the zip. What's next.
     #[allow(clippy::too_many_arguments)]
-    fn latch(&mut self, id: i32, feet: Vec3, origin: [f32; 3], tick: u32, air: bool, player: &ChrIns, combat: &mut Combat) -> Option<Phase> {
+    fn latch(&mut self, id: i32, feet: Vec3, vel: Vec3, button: bool, origin: [f32; 3], tick: u32, air: bool, player: &ChrIns, combat: &mut Combat) -> Option<Phase> {
         match self.aim {
             Aim::Enemy { mob, radius, height, drag, medium } => {
                 // its little hit (a flinch, a point of style), then in it comes, or he goes
@@ -518,6 +545,12 @@ impl Hook {
                     sound(SOUND_BUZZ, 0.35);
                     return Some(Phase::Back);
                 }
+                // (R2 held on a colossus: the rope from its highest spot in reach, colossus.rs;
+                // let go, the zip, and Mario catches on to it as he gets there)
+                if button && crate::colossus::is_colossus(radius, height) && crate::colossus::start_rope(None, Some(&mob), feet, vel, air, origin) {
+                    log("hook: the rope, on a colossus");
+                    return Some(Phase::Roping);
+                }
                 let Some((_, f)) = chest(&mob, height) else { return Some(Phase::Back) };
                 let to = zip_to_enemy(feet, f, radius, height);
                 let sm = er_to_sm(origin, &HavokPosition(to.x, to.y, to.z, 0.0));
@@ -529,6 +562,13 @@ impl Hook {
                 self.map_used = true;
                 sound(SOUND_CLINK, 0.55);
                 crate::impact::hook_latch(at);
+                // R2 held on a spot high above him, aimed up at it (a branch, a ledge, a ceiling;
+                // a wall ahead is the zip and the cling, as ever): the rope there
+                let up = (at - feet).normalize_or_zero().y > 0.45;
+                if button && up && at.y > feet.y + crate::colossus::ROPE_ABOVE && crate::colossus::start_rope(Some(at), None, feet, vel, air, origin) {
+                    log("hook: the rope, on the map");
+                    return Some(Phase::Roping);
+                }
                 // a floor: his feet on it; a wall: his chest at the spot, his body against it
                 let (to, kind) = if floor {
                     (at + Vec3::Y * 0.05, 1)

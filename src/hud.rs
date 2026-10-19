@@ -799,6 +799,59 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
     }
 }
 
+/// On a colossus (colossus.rs): its weak points, gold stars glowing on it (dim on its far side),
+/// the spot a leap would take him to (a faint ring), and his grip, a ring by him that empties,
+/// turns red when low and trembles while it thrashes (Shadow of the Colossus's), the star strike's
+/// charge filling inside it.
+fn draw_colossus(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2]) {
+    let Some(h) = crate::colossus::hud() else { return };
+    let t = crate::flame::clock();
+    let eye = camera_position();
+    for &(p, out, left) in &h.stars {
+        let (Some((c, z)), Some((top, _))) = (project(p, size), project(p + Vec3::Y * 0.5, size)) else { continue };
+        if z > 80.0 {
+            continue;
+        }
+        let px = ((c[1] - top[1]) * 2.0).max(10.0);
+        // (on the far side of its body: dim)
+        let behind = eye.is_some_and(|e| out.dot((e - p).normalize_or_zero()) < -0.15);
+        let a = if behind { 0.3 } else { 1.0 } * (0.55 + 0.45 * left);
+        let pulse = 1.0 + 0.15 * (t * 5.0).sin();
+        let g = px * 1.4 * pulse;
+        dl.add_image(textures[IMG_GLOW], [c[0] - g, c[1] - g], [c[0] + g, c[1] + g]).col([1.0, 0.8, 0.25, 0.55 * a]).build();
+        let s = px * 0.55 * pulse;
+        dl.add_image(textures[IMG_STAR], [c[0] - s, c[1] - s], [c[0] + s, c[1] + s]).col([1.0, 1.0, 1.0, a]).build();
+    }
+    if let Some((c, _)) = h.next.and_then(|n| project(n, size)) {
+        dl.add_circle(c, 9.0 + 2.0 * (t * 4.0).sin(), imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.45)).thickness(2.0).build();
+    }
+    let Some(grip) = h.grip else { return };
+    let Some((m, _)) = project(h.mario + Vec3::Y * 1.0, size) else { return };
+    let r = (size[1] * 0.024).clamp(14.0, 34.0);
+    let shake = if h.shaking { 2.5 * (t * 47.0).sin() } else { 0.0 };
+    let c = [m[0] + r * 3.0 + shake, m[1] - r * 0.5];
+    let arc = |from: f32, to: f32, rad: f32| -> Vec<[f32; 2]> {
+        let n = ((to - from).abs() / std::f32::consts::TAU * 40.0).ceil().max(2.0) as usize;
+        (0..=n).map(|k| {
+            let a = from + (to - from) * k as f32 / n as f32;
+            [c[0] + a.cos() * rad, c[1] + a.sin() * rad]
+        }).collect()
+    };
+    let start = -std::f32::consts::FRAC_PI_2;
+    dl.add_polyline(arc(0.0, std::f32::consts::TAU, r), imgui::ImColor32::from_rgba_f32s(0.05, 0.05, 0.08, 0.55)).thickness(r * 0.32).build();
+    let low = grip < 0.3;
+    let flash = if low { 0.6 + 0.4 * (t * 10.0).sin().abs() } else { 1.0 };
+    let col = if low { [1.0, 0.25, 0.15] } else { [1.0, 0.82, 0.3] };
+    if grip > 0.005 {
+        dl.add_polyline(arc(start, start + std::f32::consts::TAU * grip, r), imgui::ImColor32::from_rgba_f32s(col[0], col[1], col[2], 0.9 * flash)).thickness(r * 0.22).build();
+    }
+    if h.charge > 0.0 {
+        let full = h.charge >= 1.0;
+        let cc = if full { [1.0, 1.0, 0.85] } else { [1.0, 0.9, 0.5] };
+        dl.add_circle(c, r * 0.55 * h.charge, imgui::ImColor32::from_rgba_f32s(cc[0], cc[1], cc[2], if full { 0.9 } else { 0.6 })).filled(true).build();
+    }
+}
+
 /// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
 /// pixels a metre spans 1 m off.
 struct View {
@@ -1244,6 +1297,7 @@ impl ImguiRenderLoop for Overlay {
             for partner in crate::coop::partner_fx() {
                 draw_fx(&dl, textures, size, &partner, &[]);
             }
+            draw_colossus(&dl, textures, size);
         }
 
         // Mario got hurt: the screen's edges flash red, fading

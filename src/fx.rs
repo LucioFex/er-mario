@@ -141,7 +141,8 @@ impl WorldFx {
             yoshi_fires: ride.fires,
             eggs: ride.eggs,
             chain: crate::hook::live().filter(|_| chomp_hook).map(|h| (h.hand, h.head)),
-            hook: crate::hook::sprite().filter(|_| !chomp_hook).map(|h| (h.hand, h.head, h.spin)),
+            // (the rope thrown from on a colossus has no hook of hook.rs's: its line all the same)
+            hook: crate::hook::sprite().filter(|_| !chomp_hook).map(|h| (h.hand, h.head, h.spin)).or_else(|| crate::colossus::rope_line().map(|(hand, q)| (hand, q, crate::flame::clock() * 27.0))),
             sparks: crate::impact::sparks().into_iter().map(|(s, t)| Spark { pos: s.pos, size: s.size, tint: s.tint, t }).collect(),
             dash: crate::impact::dash_trail(),
             puffs: crate::impact::dash_puffs(),
