@@ -210,6 +210,7 @@ unsafe extern "C" {
     pub fn sm64_er_set_hammer(on: i32);
     /// er-mario patch: an enemy is up in the air with Mario (juggle.rs): his air blows keep him up
     pub fn sm64_er_set_juggle(on: i32);
+    pub fn sm64_er_set_loss_share(share: f32);
     /// Y held (the hammer's slam charges while it is)
     pub fn sm64_er_set_hold_y(held: i32);
     /// the weapon in hand (weapons.rs) and the boomerangs ready to throw

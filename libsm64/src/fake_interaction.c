@@ -93,6 +93,8 @@ s16 fake_mario_obj_angle_to_object(struct MarioState *m, float xSrc,float zSrc) 
     return atan2s(dz, dx);
 }
 
+extern float er_loss_share;
+
 u32 fake_determine_knockback_action(struct MarioState *m, s32 damage,float xSrc,float ySrc,float zSrc) {
     u32 bonkAction;
 
@@ -101,7 +103,8 @@ u32 fake_determine_knockback_action(struct MarioState *m, s32 damage,float xSrc,
 
     s16 angleToObject = fake_mario_obj_angle_to_object(m, xSrc,zSrc);
     s16 facingDYaw = angleToObject - m->faceAngle[1];
-    s16 remainingHealth = m->health - 0x40 * m->hurtCounter;
+    // (er-mario: what the blow really leaves him, his losses cut: mario.c's er_loss_share)
+    s16 remainingHealth = m->health - (s16) (0x40 * m->hurtCounter * er_loss_share);
 
     if (m->action & (ACT_FLAG_SWIMMING | ACT_FLAG_METAL_WATER)) {
         terrainIndex = 2;

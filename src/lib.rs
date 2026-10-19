@@ -2367,7 +2367,12 @@ fn frame(data: &FD4TaskData) {
         revive::clear();
         leash::clear();
         *LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let id = worker::call("create", move |_| unsafe { sm64::sm64_mario_create(0.0, start_y + 1.0, 0.0) }).unwrap_or(-1);
+        let id = worker::call("create", move |_| unsafe {
+            // (tougher than SM64's: its own losses of health cut, tough.rs)
+            sm64::sm64_er_set_loss_share(tough::loss_share());
+            sm64::sm64_mario_create(0.0, start_y + 1.0, 0.0)
+        })
+        .unwrap_or(-1);
         log(format!("mario created id={id} at {:?}", (p.0, p.1, p.2)));
         // which collision is under his feet (a layer SM64 doesn't get would drop him through)
         for line in havok.probe(glam::Vec3::new(p.0, p.1, p.2)) {
@@ -3630,9 +3635,11 @@ fn frame(data: &FD4TaskData) {
             }
         }
         let leash_fix = LEASH_FIX.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(_, t)| t.wrapping_add(1) == m.ticks).map(|(p, _)| collision::er_to_sm(m.origin, &HavokPosition(p.x, p.y, p.z, 0.0)));
-        // the blows whose health the mod takes itself (not SM64's knockback), cut now (tough.rs)
+        // the blows whose health the mod takes itself (not SM64's knockback), cut now (tough.rs;
+        // SM64 cuts its own); let go by an enemy a moment ago, read once for both
+        let released = grab::just_released();
         let direct = match hurt {
-            Some(combat::Hurt::Hit(w)) if still_flying || grab::just_released() || bled => Some(w as i32 * 0x100),
+            Some(combat::Hurt::Hit(w)) if still_flying || released || bled => Some(w as i32 * 0x100),
             Some(combat::Hurt::Hit(w)) if rocking => Some(w as i32 * 0x80),
             Some(combat::Hurt::Drain) => Some(0x100),
             _ => None,
@@ -3668,7 +3675,7 @@ fn frame(data: &FD4TaskData) {
                 // (flying off already: the blow costs health, SM64's knockback would end the flight)
                 // (let go by an enemy: thrown off it already, the same)
                 // (the boulder: half of it, and it rolls on)
-                Some(combat::Hurt::Hit(_)) if still_flying || grab::just_released() || bled || rocking => unsafe {
+                Some(combat::Hurt::Hit(_)) if still_flying || released || bled || rocking => unsafe {
                     sm64::sm64_set_mario_health(id, direct.unwrap_or(health_before) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
@@ -3996,15 +4003,6 @@ fn frame(data: &FD4TaskData) {
                     log(format!("MARIO JUMP {jump:.0} units in one tick: {:?} -> {:?}", m.state, state));
                 }
                 m.state = state;
-                // (tougher than SM64's: this tick's loss of health cut, tough.rs; the mod's own
-                // losses were cut before it)
-                if !m.dead {
-                    if let Some(h) = m.tough.take(m.state.health) {
-                        m.state.health = h;
-                        let id = m.id;
-                        worker::call("tough", move |_| unsafe { sm64::sm64_set_mario_health(id, h as u16) });
-                    }
-                }
                 m.mesh = mesh;
                 // co-op: past the leash's pull the way out from the partner gets stiffer (leash.rs)
                 if coop::active() && !m.dead {

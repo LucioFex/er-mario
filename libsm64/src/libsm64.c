@@ -228,6 +228,7 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
 
 /** er-mario: the combos' moves (decomp/game/er_moves.c) */
 extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted, er_hold_y;
+extern float er_loss_share;
 extern int er_weapon, er_rang_ready, er_move_throw, er_move_charge, er_chomp_scripted;
 extern f32 er_chomp_yaw, er_chomp_reach, er_chomp_height, er_chomp_bite;
 extern u32 er_move_fx;
@@ -1122,6 +1123,12 @@ SM64_LIB_FN void sm64_er_set_stomp(float vel, float velA)
 SM64_LIB_FN void sm64_er_set_hold_y(int held)
 {
     er_hold_y = held;
+}
+
+/** er-mario: the share of each loss of health Mario takes (tough.rs) */
+SM64_LIB_FN void sm64_er_set_loss_share(float share)
+{
+    er_loss_share = share;
 }
 
 /** er-mario: an enemy is up in the air with Mario (juggle.rs) */

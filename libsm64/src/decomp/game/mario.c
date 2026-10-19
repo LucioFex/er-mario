@@ -1499,6 +1499,18 @@ void set_submerged_cam_preset_and_spawn_bubbles(struct MarioState *m) {
 }
 
 
+/* er-mario: Mario is tougher than SM64's (tough.rs: 40% more health, 30% less damage): each loss of
+ * health is this share of SM64's, the fractions carried over (sm64_er_set_loss_share) */
+float er_loss_share = 1.0f;
+static float sErLossCarry = 0.0f;
+
+s16 er_cut_loss(s16 loss) {
+    float want = (float) loss * er_loss_share + sErLossCarry;
+    s16 cut = (s16) want;
+    sErLossCarry = want - (float) cut;
+    return cut;
+}
+
 /**
  * Both increments and decrements Mario's HP.
  */
@@ -1510,7 +1522,7 @@ void update_mario_health(struct MarioState *m) {
         if (((u32) m->healCounter | (u32) m->hurtCounter) == 0) {
             if ((m->input & INPUT_IN_POISON_GAS) && !(m->action & ACT_FLAG_INTANGIBLE)) {
                 if (!(m->flags & MARIO_METAL_CAP) && !gDebugLevelSelect) {
-                    m->health -= 4;
+                    m->health -= er_cut_loss(4);
                 }
             } else {
                 if ((m->action & ACT_FLAG_SWIMMING) && !(m->action & ACT_FLAG_INTANGIBLE)) {
@@ -1522,7 +1534,7 @@ void update_mario_health(struct MarioState *m) {
                     if ((m->pos[1] >= (m->waterLevel - 140)) && !terrainIsSnow) {
                         m->health += 0x1A;
                     } else if (!gDebugLevelSelect) {
-                        m->health -= (terrainIsSnow ? 3 : 1);
+                        m->health -= er_cut_loss(terrainIsSnow ? 3 : 1);
                     }
                 }
             }
@@ -1533,7 +1545,7 @@ void update_mario_health(struct MarioState *m) {
             m->healCounter--;
         }
         if (m->hurtCounter > 0) {
-            m->health -= 0x40;
+            m->health -= er_cut_loss(0x40);
             m->hurtCounter--;
         }
 

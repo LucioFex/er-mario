@@ -19,6 +19,7 @@
 #include "../include/object_fields.h"
 #include "../include/mario_geo_switch_case_ids.h"
 extern int er_soft_burn;
+extern s16 er_cut_loss(s16 loss);
 
 struct LandingAction {
     s16 numFrames;
@@ -1358,7 +1359,7 @@ s32 act_burning_ground(struct MarioState *m) {
     play_sound(SOUND_MOVING_LAVA_BURN, m->marioObj->header.gfx.cameraToObject);
 
     // (Elden Ring's fire has already hurt him: no burn of SM64's own on top)
-    if (!er_soft_burn) m->health -= 10;
+    if (!er_soft_burn) m->health -= er_cut_loss(10);
     if (m->health < 0x100) {
         set_mario_action(m, ACT_STANDING_DEATH, 0);
     }
