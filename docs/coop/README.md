@@ -181,7 +181,7 @@ a sí misma.
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
-| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 7) |
+| `coop: packets of version N` | Tienen versiones distintas de ER Mario (hace falta el mismo build en las dos PCs; ahora es la 8) |
 | `coop: status from ... partner card on` | Llega el estado del otro (vida, monedas, poder, estilo): la tarjeta del compañero funciona |
 | `coop: pose from ... with its place` | El otro se ve suave y en su lugar real. Si dice `no place`, se ve donde el juego tiene a su personaje (más tironeado) |
 | `coop: partner ... shown at their own place (...)` / `where the game has them` | Dónde se dibuja al compañero y a cuántos metros está la copia del juego. Si al cargar se ven encimados, esta línea dice por qué |
