@@ -610,7 +610,9 @@ fn sample_at(s: &std::collections::VecDeque<Sample>, t: f64) -> ([PartPose; PART
 fn placed(steam: u64, chr: &PlayerIns, parts: &[PartPose; PARTS], place: Option<Place>) -> ([PartPose; PARTS], Vec3, Quat, bool) {
     let c = &chr.chr_ins;
     let ph = &c.modules.physics;
-    let here = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
+    // (the parts go on its model, drawn where its model matrix is: for a partner the game eases
+    // that towards its physics position, which can sit far from it)
+    let here = drawn_at(c);
     let o = ph.orientation;
     let rot = Quat::from_xyzw(o.0, o.1, o.2, o.3).normalize();
     // (no orientation yet, a character still loading: as the game has it)
@@ -1319,18 +1321,29 @@ pub fn apply_remote() {
         // invisible. Also where our enemies see them. Not while the game moves them (Torrent, a
         // door, a ladder, a cutscene).
         if own && flags & BUSY == 0 && feet.is_finite() {
-            let ph = &mut player.chr_ins.modules.physics;
-            let here = Vec3::new(ph.position.0, ph.position.1, ph.position.2);
-            let off = here.distance(feet);
+            let c = &mut player.chr_ins;
+            let drawn = drawn_at(c);
+            let p = c.modules.physics.position;
+            let physics = Vec3::new(p.0, p.1, p.2);
+            let off = drawn.distance(feet).max(physics.distance(feet));
             if off > SNAP_FROM {
-                ph.position = eldenring::position::HavokPosition(feet.x, feet.y, feet.z, ph.position.3);
-                pose = placed(*steam, player, parts, *place).0;
                 static LOGGED: Mutex<Option<Instant>> = Mutex::new(None);
                 let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
                 if off > SNAP_LOG && logged.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
                     *logged = Some(Instant::now());
-                    log(format!("coop: partner {steam:x}'s character moved {off:.1} m to their own place"));
+                    log(format!(
+                        "coop: partner {steam:x}'s character moved to their own place: its model {:.1} m off, its physics {:.1} m",
+                        drawn.distance(feet),
+                        physics.distance(feet)
+                    ));
                 }
+                // (both: the physics position for the game's enemies, the model where it's drawn
+                // this frame, before the game eases it on)
+                c.modules.physics.position = eldenring::position::HavokPosition(feet.x, feet.y, feet.z, p.3);
+                let lift = c.chr_ctrl.vertical_position_offset;
+                let m = &mut c.chr_ctrl.model_matrix.3;
+                *m = fromsoftware_shared::F32Vector4(feet.x, feet.y + if lift.is_finite() { lift } else { 0.0 }, feet.z, m.3);
+                pose = placed(*steam, player, parts, *place).0;
             }
         }
         // the Vanish cap: see-through, as they see themselves
@@ -1344,6 +1357,16 @@ pub fn apply_remote() {
         crate::engine_mario::apply_remote(ins, &pose);
     }
     unfade(&vanished);
+}
+
+/// Where a character's model is drawn, at its feet (its model matrix, less its lift: for a
+/// partner the game eases it towards the physics position), else its physics position.
+fn drawn_at(c: &eldenring::cs::ChrIns) -> Vec3 {
+    let m = c.chr_ctrl.model_matrix.3;
+    let lift = c.chr_ctrl.vertical_position_offset;
+    let at = Vec3::new(m.0, m.1 - if lift.is_finite() { lift } else { 0.0 }, m.2);
+    let p = c.modules.physics.position;
+    if at.is_finite() && at.length_squared() > 1e-6 { at } else { Vec3::new(p.0, p.1, p.2) }
 }
 
 /// the game's copy of a partner this far (m) from their own place is moved there; this far, logged
