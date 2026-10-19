@@ -86,6 +86,7 @@ struct SM64ErMove
     float chompReach;
     float chompHeight;
     float chompBite;
+    int32_t locked;
 };
 
 struct SM64MarioGeometryBuffers

@@ -59,6 +59,12 @@ enum ErHit {
     ER_HIT_ROCK_SLAM,
     ER_HIT_HOME_RUN,
     ER_HIT_SWING_KICK,
+    ER_HIT_HAMMER_WIDE,
+    ER_HIT_QUAKE_BIG,
+    ER_HIT_TITAN,
+    ER_HIT_POUND,
+    ER_HIT_RISE,
+    ER_HIT_HAMMER_RISE,
 };
 
 /* (same bits as moves.rs FX_*) */
@@ -72,6 +78,7 @@ enum ErHit {
 #define ER_FX_GROW    0x80 /* the hammer grows giant: sparkles on it */
 #define ER_FX_CHARGE  0x100 /* charging: a glow at the hammer's head, dust at his feet */
 #define ER_FX_THROW   0x200 /* a throw lets go (er_move_throw says what) */
+#define ER_FX_SLAM    0x400 /* a heavy hammer blow in the ground: a ring, dust, rubble */
 
 int er_hammer_mode = 0;
 /** the weapon in hand (weapons.rs): 0 fists, 1 hammer, 2 boomerang, 3 Chain Chomp */
@@ -332,24 +339,69 @@ static s32 er_ground(struct MarioState *m, f32 speed) {
 
 /* ---- the hammer ---------------------------------------------------------------------------- */
 
-/* the hammer's string of swings: wind-up, blow and recovery ticks */
-#define ER_SWINGS 5
-static const s8 sSwingWind[ER_SWINGS] = { 3, 3, 6, 2, 7 };
-static const s8 sSwingHit[ER_SWINGS] = { 3, 3, 3, 5, 3 };
-static const s8 sSwingRest[ER_SWINGS] = { 7, 7, 9, 6, 14 };
-#define ER_FINAL_SCALE 1.9f
+/* The hammer is the heavy one: few blows, each a titan's. Every one has a wind-up that tells it's
+ * coming and can't be left (no dash, no jump: er_move_locked), a blow that stops the world a moment
+ * (the hit-stop, impact.rs), and a long recovery: missed, it's punished. His body takes the weight:
+ * squashed down into the wind-up, stretched into the blow, sinking under the follow-through. */
+
+/** a blow of the hammer can't be left yet (moves.rs: no dash) */
+int er_move_locked = 0;
+/** his body's squash this tick (1: none; under 1 squashed down, over 1 stretched up), applied by
+ * mario.c after SM64's own squish (er_apply_squash) */
+f32 er_body_squash = 1.0f;
+
+/** His body squashed `k` (1: as he is) and drawn `dip` units lower (after the step). */
+static void er_squash(struct MarioState *m, f32 k, f32 dip) {
+    er_body_squash = k;
+    m->marioObj->header.gfx.pos[1] = m->pos[1] - dip;
+}
+
+/** mario.c, after SM64's squish of the tick: the move's squash on his model (not while crushed). */
+void er_apply_squash(struct MarioState *m) {
+    if (m->squishTimer == 0 && er_body_squash != 1.0f) {
+        f32 across = 1.0f / sqrtf(er_body_squash);
+        vec3f_set(m->marioObj->header.gfx.scale, across, er_body_squash, across);
+    }
+}
+
+/** Smooth in and out (0..1). */
+static f32 er_ease_in_out(f32 t) {
+    if (t < 0.0f) {
+        t = 0.0f;
+    } else if (t > 1.0f) {
+        t = 1.0f;
+    }
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/* the hammer's string of three: the Hammer Bro's chop, King K. Rool's backhand, Donkey Kong's
+ * smash; wind-up, blow and recovery ticks */
+#define ER_SWINGS 3
+static const s8 sSwingWind[ER_SWINGS] = { 9, 10, 14 };
+static const s8 sSwingHit[ER_SWINGS] = { 3, 4, 3 };
+static const s8 sSwingRest[ER_SWINGS] = { 18, 18, 27 };
+/* after a blow: the next swing comes this many ticks on at the soonest (its follow-through
+ * first), a jump or the dash this many (the smash's longer: it's buried in the ground) */
+#define ER_SWING_NEXT 7
+#define ER_SWING_FREE 8
+#define ER_SMASH_FREE 12
+/* the smash's hammer grows with the swing, and how high the little hop before it goes (units) */
+#define ER_SMASH_SCALE 1.3f
+#define ER_SMASH_HOP 55.0f
 /* the next swing of a string starts from where the last one left the hammer, eased onto its own
  * wind-up over this many ticks (it jumped across in one) */
-#define ER_SWING_EASE 2
-static f32 sErSwingFromYaw = 0.0f;
-static f32 sErSwingFromPitch = 0.0f;
+#define ER_SWING_EASE 3
 /* SM64's heavy throw lets go at this frame: the overhead blows play it so it's there at impact */
 #define ER_HEAVY_THROW_RELEASE 13
+static f32 sErSwingFromYaw = 0.0f;
+static f32 sErSwingFromPitch = 0.0f;
 
 /**
- * X with the hammer, a string of five (actionArg): from his right to his left, back, an overhead
- * smash into the ground, a full turn with it held out, and a last blow with it grown, that shakes
- * the ground. X during a swing queues the next one (actionState).
+ * X with the hammer, a string of three (actionArg): the Hammer Bro's chop, down across from over
+ * his right shoulder; King K. Rool's backhand, a wide sweep from behind his left round to his
+ * right, through everyone in front; Donkey Kong's smash, a little hop and the hammer, grown with
+ * the swing, buried in the ground, the ground shaking around it (a regular enemy goes down). X
+ * during a swing queues the next one (actionState).
  */
 s32 act_er_hammer(struct MarioState *m) {
     u32 swing = m->actionArg < ER_SWINGS ? m->actionArg : ER_SWINGS - 1;
@@ -357,10 +409,14 @@ s32 act_er_hammer(struct MarioState *m) {
     s32 wind = sSwingWind[swing];
     s32 hit = sSwingHit[swing];
     s32 rest = sSwingRest[swing];
-    f32 side = swing == 0 ? 1.0f : -1.0f;
+    s32 blow = wind + hit;
+    s32 free = blow + (swing == 2 ? ER_SMASH_FREE : ER_SWING_FREE);
     f32 speed = 0.0f;
     f32 twist = 0.0f;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
     f32 p;
+    f32 e;
 
     if (t == 0) {
         // (the last swing's hammer, still in the report: this one's wind-up starts from there)
@@ -368,90 +424,124 @@ s32 act_er_hammer(struct MarioState *m) {
         sErSwingFromPitch = er_hammer_pitch;
         er_aim_turn(m);
         er_aim_lunge(m);
-        er_sound(m, swing == 4 ? SOUND_MARIO_YAHOO : swing == 2 ? SOUND_MARIO_PUNCH_HOO
-                    : swing == 1 ? SOUND_MARIO_PUNCH_WAH : SOUND_MARIO_PUNCH_YAH);
-        if (swing == 4) {
-            er_sound(m, SOUND_GENERAL_SHORT_STAR);
-            er_move_fx |= ER_FX_GROW;
-        }
+        er_sound_soft(SOUND_MARIO_UH, 0.5f);
     }
     if (t == wind) {
-        er_sound(m, SOUND_ACTION_SPIN);
+        // the shout comes with the blow, the whoosh with its swing
+        er_sound(m, swing == 2 ? SOUND_MARIO_HOOHOO : swing == 1 ? SOUND_MARIO_PUNCH_WAH : SOUND_MARIO_PUNCH_YAH);
+        er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.5f);
     }
+    er_move_locked = t < free;
     if (t >= 2 && swing < ER_SWINGS - 1 && (m->input & INPUT_B_PRESSED)) {
         m->actionState = 1;
     }
-    if (t >= wind + hit + 2 && (m->input & INPUT_A_PRESSED)) {
-        // (off the full turn he faces where it left him)
-        if (swing == 3) {
-            er_fold(m, sErTwistDeg);
-        }
+    if (t >= free && (m->input & INPUT_A_PRESSED)) {
         return set_jumping_action(m, ACT_JUMP, 0);
     }
 
-    if (swing == 2 || swing == 4) {
-        // overhead: raised behind his head, brought down into the ground in front (the throw's
-        // frames played fast enough to be at its release on the impact)
-        f32 size = swing == 4 ? ER_FINAL_SCALE : 1.0f;
-        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, swing == 4 ? 0x15E00 : 0x18C00);
+    if (swing == 0) {
+        // the chop: both hands, raised over his right shoulder, down across to his left
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, t < wind ? 0xC000 : t < blow ? 0x20000 : 0x8000);
         if (t < wind) {
-            p = (f32) t / wind;
-            er_hammer(0.0f, er_lerp(40.0f, 165.0f, er_ease_out(p)), er_lerp(1.0f, size, p));
-        } else if (t < wind + hit) {
+            e = er_ease_out((f32)(t + 1) / wind);
+            er_hammer(er_lerp(-20.0f, -50.0f, e), er_lerp(40.0f, 150.0f, e), 1.0f);
+            twist = -30.0f * e;
+            squash = 1.0f - 0.08f * e;
+            dip = 5.0f * e;
+        } else if (t < blow) {
             p = (f32)(t - wind + 1) / hit;
-            er_hammer(0.0f, er_lerp(165.0f, -40.0f, p * p), size);
-            speed = swing == 4 ? 18.0f : 26.0f;
-            if (t == wind + hit - 1) {
-                er_move_hit = swing == 4 ? ER_HIT_QUAKE : ER_HIT_SMASH_WAVE;
-                er_move_fx |= swing == 4 ? ER_FX_QUAKE : ER_FX_GROUND;
-                er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
-                if (swing == 4) {
-                    er_sound(m, SOUND_OBJ_THWOMP);
-                }
+            er_hammer(er_lerp(-50.0f, 30.0f, p * p), er_lerp(150.0f, -35.0f, p * p), 1.0f);
+            er_move_hit = ER_HIT_HAMMER;
+            speed = t == wind ? 24.0f : 12.0f;
+            twist = er_lerp(-30.0f, 25.0f, p);
+            squash = 1.06f;
+            if (t == blow - 1) {
+                er_move_fx |= ER_FX_GROUND;
+                er_sound_soft(SOUND_GENERAL_POUND_WOOD_POST, 0.55f);
+            }
+        } else {
+            // (the follow-through: dragged on a little low with its weight, then up again)
+            p = (f32)(t - blow) / rest;
+            e = er_ease_in_out((p - 0.3f) / 0.7f);
+            er_hammer(er_lerp(er_lerp(30.0f, 40.0f, p / 0.3f), 15.0f, e), er_lerp(er_lerp(-35.0f, -42.0f, p / 0.3f), 20.0f, e), 1.0f);
+            twist = er_lerp(25.0f, 0.0f, e);
+            squash = er_lerp(0.94f, 1.0f, e);
+            dip = er_lerp(4.0f, 0.0f, e);
+        }
+    } else if (swing == 1) {
+        // the backhand: wound round behind his left, swept wide round to his right
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, t < wind ? 0x6000 : t < blow ? 0x18000 : 0x8000);
+        if (t < wind) {
+            e = er_ease_out((f32)(t + 1) / wind);
+            er_hammer(er_lerp(30.0f, 140.0f, e), er_lerp(20.0f, 15.0f, e), 1.0f);
+            twist = er_lerp(25.0f, 45.0f, e);
+            squash = 1.0f - 0.06f * e;
+            dip = 4.0f * e;
+        } else if (t < blow) {
+            p = (f32)(t - wind + 1) / hit;
+            er_hammer(er_lerp(140.0f, -110.0f, p), er_lerp(15.0f, 0.0f, p), 1.0f);
+            er_move_hit = ER_HIT_HAMMER_WIDE;
+            speed = t == wind ? 16.0f : 6.0f;
+            twist = er_lerp(45.0f, -40.0f, p);
+            squash = 1.05f;
+            if (t == wind + 1) {
+                er_move_fx |= ER_FX_SPIN;
+            }
+        } else {
+            p = (f32)(t - blow) / rest;
+            e = er_ease_in_out((p - 0.3f) / 0.7f);
+            er_hammer(er_lerp(er_lerp(-110.0f, -125.0f, p / 0.3f), -40.0f, e), er_lerp(0.0f, 20.0f, e), 1.0f);
+            twist = er_lerp(er_lerp(-40.0f, -45.0f, p / 0.3f), 0.0f, e);
+            squash = er_lerp(0.95f, 1.0f, e);
+            dip = er_lerp(3.0f, 0.0f, e);
+        }
+    } else {
+        // the smash: a crouch, a little hop with the hammer raised high behind his head (growing
+        // with the swing), and down into the ground with all of him
+        f32 hop = 0.0f;
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, t < wind ? 0x6000 : t < blow ? 0x28000 : 0x6000);
+        if (t < 5) {
+            e = er_ease_out((f32)(t + 1) / 5);
+            er_hammer(0.0f, er_lerp(40.0f, 120.0f, e), 1.0f);
+            squash = 1.0f - 0.14f * e;
+            dip = 10.0f * e;
+        } else if (t < wind) {
+            p = (f32)(t - 5 + 1) / (wind - 5);
+            e = er_ease_out(p);
+            er_hammer(0.0f, er_lerp(120.0f, 175.0f, e), er_lerp(1.0f, ER_SMASH_SCALE, e));
+            hop = sinf(ER_PI * 0.5f * e) * ER_SMASH_HOP;
+            squash = er_lerp(0.86f, 1.08f, er_ease_out(p * 2.0f));
+            if (t == 5) {
+                er_sound_soft(SOUND_ACTION_SIDE_FLIP_UNK, 0.4f);
+                er_move_fx |= ER_FX_LAUNCH;
+            }
+        } else if (t < blow) {
+            p = (f32)(t - wind + 1) / hit;
+            er_hammer(0.0f, er_lerp(175.0f, -45.0f, p * p), ER_SMASH_SCALE);
+            hop = (1.0f - p * p) * ER_SMASH_HOP;
+            speed = t == wind ? 22.0f : 10.0f;
+            squash = 1.08f;
+            if (t == blow - 1) {
+                er_move_hit = ER_HIT_SMASH_WAVE;
+                er_move_fx |= ER_FX_SLAM;
+                er_sound_soft(SOUND_OBJ_THWOMP, 0.5f);
+                er_sound_soft(SOUND_GENERAL_POUND_WOOD_POST, 0.6f);
                 play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
             } else {
                 er_move_hit = ER_HIT_HAMMER_SMASH;
             }
         } else {
-            p = (f32)(t - wind - hit) / rest;
-            er_hammer(0.0f, p < 0.5f ? -40.0f : er_lerp(-40.0f, 10.0f, (p - 0.5f) * 2.0f),
-                      p < 0.5f ? size : er_lerp(size, 1.0f, (p - 0.5f) * 2.0f));
-        }
-    } else if (swing == 3) {
-        // a full turn, the hammer held out level, his body turning with it
-        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0xC000);
-        if (t < wind) {
-            er_hammer(er_lerp(-60.0f, -180.0f, (f32)(t + 1) / wind), 5.0f, 1.1f);
-        } else if (t < wind + hit) {
-            p = (f32)(t - wind + 1) / hit;
-            er_hammer(er_lerp(-180.0f, 180.0f, p), 5.0f, 1.1f);
-            er_move_hit = ER_HIT_HAMMER;
-            if (t % 2 == 0) {
-                er_move_fx |= ER_FX_SPIN;
+            // (buried in the ground a moment, wrenched out, shrinking back)
+            p = (f32)(t - blow) / rest;
+            e = er_ease_in_out((p - 0.33f) / 0.67f);
+            er_hammer(0.0f, er_lerp(-45.0f, 25.0f, e), er_lerp(ER_SMASH_SCALE, 1.0f, e));
+            squash = p < 0.12f ? er_lerp(0.82f, 0.9f, p / 0.12f) : er_lerp(0.9f, 1.0f, e);
+            dip = er_lerp(8.0f, 0.0f, e);
+            if (t >= blow + 8 && t < blow + 11) {
+                twist = (t % 2 == 0 ? 4.0f : -4.0f);
             }
-            speed = 8.0f;
-        } else {
-            p = (f32)(t - wind - hit) / rest;
-            er_hammer(er_lerp(180.0f, 200.0f, p), er_lerp(5.0f, -25.0f, p), 1.0f);
         }
-        // (his body turns with it more and more over the wind-up: out of the overhead blow it
-        // was square, and jumped round in one tick)
-        twist = er_hammer_yaw * 0.9f * (t < wind ? (f32)(t + 1) / (wind + 1) : 1.0f);
-    } else {
-        set_mario_anim_with_accel(m, swing == 0 ? MARIO_ANIM_FIRST_PUNCH : MARIO_ANIM_SECOND_PUNCH, 0xC000);
-        if (t < wind) {
-            p = (f32) t / wind;
-            er_hammer(side * er_lerp(-70.0f, -120.0f, p), 15.0f, 1.0f);
-        } else if (t < wind + hit) {
-            p = (f32)(t - wind + 1) / hit;
-            er_hammer(side * er_lerp(-120.0f, 80.0f, er_ease_out(p)), er_lerp(10.0f, -5.0f, p), 1.0f);
-            er_move_hit = ER_HIT_HAMMER;
-            speed = t == wind ? 20.0f : 10.0f;
-        } else {
-            p = (f32)(t - wind - hit) / rest;
-            er_hammer(side * er_lerp(80.0f, 40.0f, p), er_lerp(-5.0f, -30.0f, p), 1.0f);
-        }
-        twist = er_hammer_yaw * 0.45f;
+        dip -= hop;
     }
     // the string's next swing: its first ticks eased from where the last one left the hammer
     if (swing > 0 && m->prevAction == ACT_ER_HAMMER && t < ER_SWING_EASE) {
@@ -463,33 +553,33 @@ s32 act_er_hammer(struct MarioState *m) {
         return TRUE;
     }
     er_twist(m, twist);
+    er_squash(m, squash, dip);
 
     m->actionTimer++;
-    // the next swing comes as soon as this one has landed (or at its end)
-    if (m->actionState == 1 && m->actionTimer >= wind + hit + 2) {
-        // (after the full turn he faces where it ended)
-        if (swing == 3) {
-            er_fold(m, twist);
-        }
+    // the next swing comes once this one's weight has followed through (his body's twist eases
+    // out into it: er_moves_end_tick)
+    if (m->actionState == 1 && m->actionTimer >= blow + ER_SWING_NEXT) {
         return set_mario_action(m, ACT_ER_HAMMER, swing + 1);
     }
-    if (m->actionTimer >= wind + hit + rest) {
-        if (swing == 3) {
-            er_fold(m, twist);
-        }
+    if (m->actionTimer >= blow + rest) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;
 }
 
-#define ER_SLAM_IMPACT 11
-#define ER_SLAM_END 26
-/* Y held through the slam's wind-up charges it (ticks): the hammer grows, a chime per level; full,
- * it comes down as the giant hammer's blow */
-#define ER_SLAM_CHARGE_AT 7
+#define ER_SLAM_RAISE 10
+#define ER_SLAM_IMPACT 13
+#define ER_SLAM_END 38
+/* Y held through the slam's wind-up charges it (ticks): the hammer grows, a chime per level; a
+ * level up it comes down as the big quake (a regular enemy goes down), full as the titan's blow,
+ * the hammer giant */
+#define ER_SLAM_CHARGE_AT 9
 #define ER_SLAM_CHARGE_LEVEL 12
 #define ER_SLAM_CHARGE_MAX 36
-#define ER_SLAM_CHARGE_SCALE 0.8f
+#define ER_SLAM_SIZE 1.1f
+#define ER_TITAN_SCALE 2.6f
+/* the dash or a jump come back this long after the blow (the hammer is buried) */
+#define ER_SLAM_FREE 11
 
 /* Y is held (lib.rs, sm64_er_set_hold_y) */
 int er_hold_y = 0;
@@ -497,16 +587,20 @@ int er_hold_y = 0;
 int er_soft_burn = 0;
 
 /**
- * Y with the hammer: raised high over his head and brought down, the ground shakes all around.
- * actionArg 1: the plunge landing, straight from the blow.
+ * Y with the hammer, Bowser's quake: raised high over his head, slowly, and brought down, the
+ * ground shaking all around. Held: charged, the hammer growing to the titan's. actionArg 1: the
+ * plunge landing, straight from the blow.
  */
 s32 act_er_hammer_slam(struct MarioState *m) {
     s32 t;
     f32 p;
+    f32 e;
     s32 charge;
     s32 charging;
     s32 full;
     f32 size;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
     s32 landing = FALSE;
 
     if (m->actionTimer == 0) {
@@ -515,11 +609,12 @@ s32 act_er_hammer_slam(struct MarioState *m) {
             landing = TRUE;
         } else {
             er_aim_turn(m);
-            er_sound(m, SOUND_MARIO_HOOHOO);
+            er_sound_soft(SOUND_MARIO_UH, 0.5f);
         }
     }
     t = m->actionTimer;
-    if (t >= ER_SLAM_IMPACT + 5 && (m->input & INPUT_A_PRESSED)) {
+    er_move_locked = t < ER_SLAM_IMPACT + ER_SLAM_FREE;
+    if (t >= ER_SLAM_IMPACT + ER_SLAM_FREE && (m->input & INPUT_A_PRESSED)) {
         return set_jumping_action(m, ACT_JUMP, 0);
     }
     // the charge (actionState: ticks of it): held up high while Y is
@@ -528,41 +623,53 @@ s32 act_er_hammer_slam(struct MarioState *m) {
     if (charging) {
         m->actionState = ++charge;
         if (charge % ER_SLAM_CHARGE_LEVEL == 0) {
-            er_sound_soft(SOUND_MENU_COLLECT_RED_COIN + ((charge / ER_SLAM_CHARGE_LEVEL - 1) << 16), 0.25f);
+            er_sound_soft(SOUND_MENU_COLLECT_RED_COIN + ((charge / ER_SLAM_CHARGE_LEVEL - 1) << 16), 0.22f);
             er_move_fx |= ER_FX_GROW;
         }
     }
-    size = 1.1f + ER_SLAM_CHARGE_SCALE * (f32) charge / ER_SLAM_CHARGE_MAX;
+    size = ER_SLAM_SIZE + (ER_TITAN_SCALE - ER_SLAM_SIZE) * (f32) charge / ER_SLAM_CHARGE_MAX;
     full = charge >= ER_SLAM_CHARGE_MAX;
 
-    set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, charging ? 0 : t < ER_SLAM_IMPACT ? 0x9000 : 0x10000);
+    set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, charging ? 0 : t < ER_SLAM_RAISE ? 0x8000 : t < ER_SLAM_IMPACT ? 0x28000 : 0x8000);
     // (the plunge lands on the blow itself: the throw from its release, not its wind-up)
     if (landing) {
         set_anim_to_frame(m, ER_HEAVY_THROW_RELEASE);
     }
-    if (t < 8) {
-        p = (f32) t / 8;
-        er_hammer(0.0f, er_lerp(30.0f, 170.0f, er_ease_out(p)), size);
+    if (t < ER_SLAM_RAISE) {
+        e = er_ease_out((f32)(t + 1) / ER_SLAM_RAISE);
+        er_hammer(0.0f, er_lerp(30.0f, 172.0f, e), size);
+        squash = 1.0f - 0.1f * e;
+        dip = 7.0f * e;
     } else if (t < ER_SLAM_IMPACT) {
-        p = (f32)(t - 7) / 4;
-        er_hammer(0.0f, er_lerp(170.0f, -45.0f, p * p), size);
+        p = (f32)(t - ER_SLAM_RAISE + 1) / (ER_SLAM_IMPACT - ER_SLAM_RAISE);
+        er_hammer(0.0f, er_lerp(172.0f, -45.0f, p * p), size);
+        squash = 1.07f;
     } else {
+        // (buried in the ground a moment, wrenched out, shrinking back)
         p = (f32)(t - ER_SLAM_IMPACT) / (ER_SLAM_END - ER_SLAM_IMPACT);
-        er_hammer(0.0f, p < 0.6f ? -45.0f : er_lerp(-45.0f, 10.0f, (p - 0.6f) / 0.4f), p < 0.6f ? size : er_lerp(size, 1.1f, (p - 0.6f) / 0.4f));
+        e = er_ease_in_out((p - 0.3f) / 0.7f);
+        er_hammer(0.0f, er_lerp(-45.0f, 15.0f, e), er_lerp(size, 1.0f, e));
+        squash = p < 0.1f ? er_lerp(0.8f, 0.9f, p / 0.1f) : er_lerp(0.9f, 1.0f, e);
+        dip = er_lerp(8.0f, 0.0f, e);
     }
-    if (t == ER_SLAM_IMPACT && full) {
-        // fully charged: the giant hammer's blow
-        er_move_hit = ER_HIT_FLURRY_END;
-        er_move_fx |= ER_FX_GIANT;
-        er_cheer(m);
-        er_sound(m, SOUND_OBJ_THWOMP);
-        er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
-        play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
-    } else if (t == ER_SLAM_IMPACT) {
-        er_move_hit = ER_HIT_QUAKE;
-        er_move_fx |= ER_FX_QUAKE;
-        er_sound(m, SOUND_OBJ_THWOMP);
-        er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
+    if (t == ER_SLAM_IMPACT) {
+        if (full) {
+            // fully charged: the titan's blow
+            er_move_hit = ER_HIT_TITAN;
+            er_move_fx |= ER_FX_GIANT;
+            er_cheer(m);
+            er_sound_soft(SOUND_GENERAL_BOWSER_BOMB_EXPLOSION, 0.45f);
+        } else if (charge >= ER_SLAM_CHARGE_LEVEL) {
+            er_move_hit = ER_HIT_QUAKE_BIG;
+            er_move_fx |= ER_FX_QUAKE;
+            er_shout(m);
+        } else {
+            er_move_hit = ER_HIT_QUAKE;
+            er_move_fx |= ER_FX_SLAM;
+            er_sound(m, SOUND_MARIO_PUNCH_HOO);
+        }
+        er_sound_soft(SOUND_OBJ_THWOMP, full ? 0.65f : 0.5f);
+        er_sound_soft(SOUND_GENERAL_POUND_WOOD_POST, 0.6f);
         play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
     }
 
@@ -574,169 +681,216 @@ s32 act_er_hammer_slam(struct MarioState *m) {
         if (m->input & INPUT_NONZERO_ANALOG) {
             m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x280, 0x280);
         }
-        er_hammer(wob * (2.0f + 5.0f * k), 170.0f + sinf((f32) charge * 3.1f) * (2.0f + 4.0f * k), size);
+        er_hammer(wob * (2.0f + 5.0f * k), 172.0f + sinf((f32) charge * 3.1f) * (2.0f + 4.0f * k), size);
         if (charge % 4 == 0) {
             er_move_fx |= ER_FX_CHARGE;
         }
     }
-    if (!er_ground(m, t >= 8 && t < ER_SLAM_IMPACT ? 12.0f : 0.0f)) {
+    if (!er_ground(m, t >= ER_SLAM_RAISE && t < ER_SLAM_IMPACT ? 12.0f : 0.0f)) {
         return TRUE;
     }
     if (charging) {
         f32 k = (f32) charge / ER_SLAM_CHARGE_MAX;
         er_twist(m, sinf((f32) charge * 2.9f) * (1.5f + 4.0f * k));
         // a squat that deepens, bouncing a little with the effort
-        m->marioObj->header.gfx.pos[1] = m->pos[1] - (4.0f + 8.0f * k) * (0.7f + 0.3f * sinf((f32) charge * 1.7f));
+        er_squash(m, 0.9f - 0.06f * k, (7.0f + 8.0f * k) * (0.7f + 0.3f * sinf((f32) charge * 1.7f)));
         return FALSE;
     }
     // (out of a charge he rises from the squat over a few ticks, not in one)
     if (m->actionArg == 0 && charge > 0 && t >= ER_SLAM_CHARGE_AT && t < ER_SLAM_CHARGE_AT + 3) {
         static const f32 rise[3] = { 0.6f, 0.3f, 0.1f };
         f32 k = (f32) charge / ER_SLAM_CHARGE_MAX;
-        m->marioObj->header.gfx.pos[1] = m->pos[1] - (4.0f + 8.0f * k) * (0.7f + 0.3f * sinf((f32) charge * 1.7f)) * rise[t - ER_SLAM_CHARGE_AT];
+        f32 held = (7.0f + 8.0f * k) * rise[t - ER_SLAM_CHARGE_AT];
+        if (held > dip) {
+            dip = held;
+        }
     }
+    er_squash(m, squash, dip);
     if (++m->actionTimer >= ER_SLAM_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;
 }
 
-#define ER_LAUNCH_WIND 6
+#define ER_LAUNCH_WIND 8
 #define ER_LAUNCH_SCRAPE 3
 #define ER_LAUNCH_LIFT 3
-#define ER_LAUNCH_END 23
+#define ER_LAUNCH_END 26
 
 /**
- * X, Y with the hammer: the launcher, a golf swing. Down low behind him on his right, scraped
- * along the ground in front, then straight up: whoever it catches flies high into the air
- * (juggle.rs), for Mario to jump after and go on with the air string. A or the stick soon after
- * the blow: off after them.
+ * X, Y (or back + X) with the hammer: the launcher, a golf swing. Down low behind him on his
+ * right, scraped along the ground in front, then straight up: whoever it catches flies high into
+ * the air (juggle.rs), for Mario to jump after and go on with the air string. A or the stick soon
+ * after the blow: off after them.
  */
 s32 act_er_hammer_launch(struct MarioState *m) {
     s32 t = m->actionTimer;
     s32 lift = ER_LAUNCH_WIND + ER_LAUNCH_SCRAPE;
     f32 speed = 0.0f;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
     f32 p;
 
     if (t == 0) {
         er_aim_turn(m);
-        er_sound(m, SOUND_MARIO_HOOHOO);
+        er_sound_soft(SOUND_MARIO_UH, 0.5f);
     }
+    er_move_locked = t < lift + 2;
     if (t >= lift + 2 && (m->input & INPUT_A_PRESSED)) {
         return set_jumping_action(m, ACT_JUMP, 0);
     }
-    if (t >= lift + 5 && (m->input & INPUT_NONZERO_ANALOG)) {
+    if (t >= lift + 6 && (m->input & INPUT_NONZERO_ANALOG)) {
         return set_mario_action(m, ACT_WALKING, 0);
     }
 
-    set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, t < ER_LAUNCH_WIND ? 0x6000 : 0x10000);
+    set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, t < ER_LAUNCH_WIND ? 0x5000 : 0x10000);
     if (t < ER_LAUNCH_WIND) {
         // (taken back slowly: the wind-up tells it's coming)
         p = (f32)(t + 1) / ER_LAUNCH_WIND;
         er_hammer(er_lerp(-60.0f, -150.0f, er_ease_out(p)), er_lerp(10.0f, -35.0f, p), 1.1f);
+        squash = 1.0f - 0.08f * er_ease_out(p);
+        dip = 6.0f * er_ease_out(p);
     } else if (t < lift) {
         p = (f32)(t - ER_LAUNCH_WIND + 1) / ER_LAUNCH_SCRAPE;
         er_hammer(er_lerp(-150.0f, 0.0f, p * p), -35.0f, 1.1f);
         speed = 14.0f;
+        dip = 6.0f;
         if (t == lift - 1) {
             er_move_fx |= ER_FX_GROUND;
-            er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
+            er_sound_soft(SOUND_GENERAL_POUND_WOOD_POST, 0.55f);
             play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
         }
     } else if (t < lift + ER_LAUNCH_LIFT) {
         p = (f32)(t - lift + 1) / ER_LAUNCH_LIFT;
         er_hammer(0.0f, er_lerp(-35.0f, 85.0f, er_ease_out(p)), 1.2f);
         er_move_hit = ER_HIT_LAUNCH;
+        squash = 1.1f;
         if (t == lift) {
             er_move_fx |= ER_FX_LAUNCH | ER_FX_GROUND;
             er_cheer(m);
-            er_sound(m, SOUND_ACTION_SPIN);
+            er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.5f);
         }
     } else {
         p = (f32)(t - lift - ER_LAUNCH_LIFT) / (ER_LAUNCH_END - lift - ER_LAUNCH_LIFT);
-        er_hammer(0.0f, er_lerp(85.0f, 40.0f, p), er_lerp(1.2f, 1.0f, p));
+        er_hammer(0.0f, er_lerp(85.0f, 40.0f, er_ease_in_out(p)), er_lerp(1.2f, 1.0f, p));
+        squash = er_lerp(1.04f, 1.0f, p);
     }
 
     if (!er_ground(m, speed)) {
         return TRUE;
     }
     er_twist(m, er_hammer_yaw * 0.45f);
+    er_squash(m, squash, dip);
     if (++m->actionTimer >= ER_LAUNCH_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;
 }
 
-#define ER_BANGS 8
-#define ER_BANG_START 2
-#define ER_GIANT_START (ER_BANG_START + ER_BANGS * 3)
-#define ER_GIANT_IMPACT (ER_GIANT_START + 9)
-#define ER_FLURRY_END (ER_GIANT_IMPACT + 18)
-#define ER_GIANT_SCALE 3.6f
+/* Donkey Kong's drum: three pounds into the ground (each raised, brought down, held a moment),
+ * the hammer and their rings growing, then it grows giant for the last */
+#define ER_POUNDS 3
+#define ER_POUND_START 3
+#define ER_POUND_TICKS 11
+#define ER_POUND_RAISE 6
+#define ER_POUND_DOWN 2
+#define ER_GIANT_START (ER_POUND_START + ER_POUNDS * ER_POUND_TICKS)
+#define ER_GIANT_IMPACT (ER_GIANT_START + 13)
+#define ER_FLURRY_END (ER_GIANT_IMPACT + 26)
+#define ER_GIANT_SCALE 3.0f
 
 /**
- * X, X, Y with the hammer: Donkey Kong's hammer, eight quick blows stepping forward, then it grows
- * giant for one last blow that shakes the ground.
+ * X, X, Y with the hammer: Donkey Kong's drum, three pounds into the ground stepping forward,
+ * each shaking it wider, then the hammer grows giant for one last blow that shakes it all.
  */
 s32 act_er_hammer_flurry(struct MarioState *m) {
     s32 t = m->actionTimer;
     f32 speed = 0.0f;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
     f32 p;
+    f32 e;
 
     if (t == 0) {
         er_sound(m, SOUND_MARIO_YAH_WAH_HOO);
     }
-    if (t < ER_BANG_START) {
-        er_hammer(0.0f, er_lerp(40.0f, 110.0f, (f32)(t + 1) / ER_BANG_START), 1.0f);
-        set_mario_anim_with_accel(m, MARIO_ANIM_FIRST_PUNCH_FAST, 0x10000);
+    er_move_locked = t < ER_GIANT_IMPACT + ER_SMASH_FREE;
+    if (t < ER_POUND_START) {
+        er_hammer(0.0f, er_lerp(er_hammer_pitch, 40.0f, (f32)(t + 1) / ER_POUND_START), 1.0f);
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x8000);
+        dip = 3.0f;
     } else if (t < ER_GIANT_START) {
-        s32 bang = (t - ER_BANG_START) / 3;
-        s32 k = (t - ER_BANG_START) % 3;
-        static const f32 pitches[3] = { 110.0f, 40.0f, -25.0f };
+        s32 pound = (t - ER_POUND_START) / ER_POUND_TICKS;
+        s32 k = (t - ER_POUND_START) % ER_POUND_TICKS;
+        f32 size = 1.0f + 0.15f * pound;
         if (k == 0) {
             er_aim_turn(m);
-            set_mario_animation(m, bang % 2 == 0 ? MARIO_ANIM_FIRST_PUNCH_FAST : MARIO_ANIM_SECOND_PUNCH_FAST);
-            set_anim_to_frame(m, 0);
+            set_mario_animation(m, MARIO_ANIM_HEAVY_THROW);
+            set_anim_to_frame(m, 2);
         }
-        er_hammer((bang % 2 == 0 ? 12.0f : -12.0f), pitches[k], 1.0f);
-        speed = 9.0f;
-        if (k == 2) {
-            er_move_hit = ER_HIT_FLURRY;
-            er_move_fx |= ER_FX_BANG;
-            er_sound(m, SOUND_GENERAL_POUND_WOOD_POST);
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, k < ER_POUND_RAISE ? 0xE000 : 0x20000);
+        if (k < ER_POUND_RAISE) {
+            e = er_ease_out((f32)(k + 1) / ER_POUND_RAISE);
+            er_hammer(0.0f, er_lerp(-40.0f, 160.0f, e), size);
+            speed = 6.0f;
+            squash = 1.0f - 0.07f * e;
+            dip = 4.0f * e;
+        } else if (k < ER_POUND_RAISE + ER_POUND_DOWN) {
+            p = (f32)(k - ER_POUND_RAISE + 1) / ER_POUND_DOWN;
+            er_hammer(0.0f, er_lerp(160.0f, -40.0f, p * p), size);
+            squash = 1.06f;
+            if (k == ER_POUND_RAISE + ER_POUND_DOWN - 1) {
+                er_move_hit = ER_HIT_POUND;
+                er_move_fx |= pound == ER_POUNDS - 1 ? ER_FX_SLAM : ER_FX_GROUND;
+                er_sound_soft(SOUND_GENERAL_POUND_WOOD_POST, 0.5f + 0.05f * pound);
+                if (pound == ER_POUNDS - 1) {
+                    er_sound_soft(SOUND_OBJ_THWOMP, 0.4f);
+                }
+            }
+        } else {
+            er_hammer(0.0f, -40.0f, size);
+            squash = 0.9f;
+            dip = 4.0f;
         }
-    } else if (t < ER_GIANT_IMPACT - 2) {
+    } else if (t < ER_GIANT_IMPACT - 3) {
         // the giant hammer: it grows raised high
-        p = (f32)(t - ER_GIANT_START) / (ER_GIANT_IMPACT - 2 - ER_GIANT_START);
+        p = (f32)(t - ER_GIANT_START) / (ER_GIANT_IMPACT - 3 - ER_GIANT_START);
         if (t == ER_GIANT_START) {
             er_aim_turn(m);
             er_cheer(m);
-            er_sound(m, SOUND_GENERAL_SHORT_STAR);
+            er_sound_soft(SOUND_GENERAL_SHORT_STAR, 0.4f);
             er_move_fx |= ER_FX_GROW;
         }
-        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x8000);
-        er_hammer(0.0f, er_lerp(110.0f, 165.0f, p), er_lerp(1.0f, ER_GIANT_SCALE, er_ease_out(p * 1.3f)));
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x6000);
+        e = er_ease_out(p);
+        er_hammer(0.0f, er_lerp(-40.0f, 168.0f, e), er_lerp(1.3f, ER_GIANT_SCALE, er_ease_out(p * 1.3f)));
+        squash = 1.0f - 0.12f * e;
+        dip = 9.0f * e;
     } else if (t <= ER_GIANT_IMPACT) {
         // (brought down over all three ticks: it stood still on the first and fell 154 degrees in
         // the last)
         p = (f32)(t - (ER_GIANT_IMPACT - 3)) / 3;
-        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x18000);
-        er_hammer(0.0f, er_lerp(165.0f, -40.0f, p * p), ER_GIANT_SCALE);
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x28000);
+        er_hammer(0.0f, er_lerp(168.0f, -40.0f, p * p), ER_GIANT_SCALE);
         speed = 14.0f;
+        squash = 1.1f;
         if (t == ER_GIANT_IMPACT) {
             er_move_hit = ER_HIT_FLURRY_END;
             er_move_fx |= ER_FX_GIANT;
-            er_sound(m, SOUND_GENERAL_BOWSER_BOMB_EXPLOSION);
-            er_sound(m, SOUND_OBJ_THWOMP);
+            er_sound_soft(SOUND_GENERAL_BOWSER_BOMB_EXPLOSION, 0.45f);
+            er_sound_soft(SOUND_OBJ_THWOMP, 0.6f);
             play_mario_heavy_landing_sound(m, SOUND_ACTION_TERRAIN_HEAVY_LANDING);
-        } else {
+        } else if (p > 0.0f) {
             er_move_hit = ER_HIT_HAMMER_SMASH;
         }
     } else {
         p = (f32)(t - ER_GIANT_IMPACT) / (ER_FLURRY_END - ER_GIANT_IMPACT);
-        er_hammer(0.0f, p < 0.5f ? -40.0f : er_lerp(-40.0f, 10.0f, (p - 0.5f) * 2.0f),
-                  p < 0.5f ? ER_GIANT_SCALE : er_lerp(ER_GIANT_SCALE, 1.0f, (p - 0.5f) * 2.0f));
-        if (t >= ER_GIANT_IMPACT + 6 && (m->input & INPUT_A_PRESSED)) {
+        e = er_ease_in_out((p - 0.35f) / 0.65f);
+        er_hammer(0.0f, er_lerp(-40.0f, 15.0f, e), er_lerp(ER_GIANT_SCALE, 1.0f, e));
+        set_mario_anim_with_accel(m, MARIO_ANIM_HEAVY_THROW, 0x6000);
+        squash = p < 0.1f ? er_lerp(0.8f, 0.9f, p / 0.1f) : er_lerp(0.9f, 1.0f, e);
+        dip = er_lerp(9.0f, 0.0f, e);
+        if (t >= ER_GIANT_IMPACT + ER_SMASH_FREE && (m->input & INPUT_A_PRESSED)) {
             return set_jumping_action(m, ACT_JUMP, 0);
         }
     }
@@ -744,18 +898,19 @@ s32 act_er_hammer_flurry(struct MarioState *m) {
     if (!er_ground(m, speed)) {
         return TRUE;
     }
+    er_squash(m, squash, dip);
     if (++m->actionTimer >= ER_FLURRY_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;
 }
 
-#define ER_GIRO_RELEASE 32
-#define ER_GIRO_END 46
+#define ER_GIRO_RELEASE 40
+#define ER_GIRO_END 58
 
 /**
- * Y, X with the hammer: Mario spins with it held out like Bowser by the tail, faster and faster,
- * hitting all around; the release flings the ones it hits.
+ * Y, X with the hammer: Mario spins with it held out like Bowser by the tail, slow to get going,
+ * faster and faster, a blow all round each turn; the release flings the ones it hits.
  */
 s32 act_er_hammer_giro(struct MarioState *m) {
     s32 t = m->actionTimer;
@@ -766,34 +921,33 @@ s32 act_er_hammer_giro(struct MarioState *m) {
         sErSpin = 0;
         before = 0;
         er_sound(m, SOUND_MARIO_HOOHOO);
-        er_sound(m, SOUND_OBJ_BOWSER_TAIL_PICKUP);
+        er_sound_soft(SOUND_OBJ_BOWSER_TAIL_PICKUP, 0.6f);
     }
+    er_move_locked = t < ER_GIRO_RELEASE + 8;
     if (t < ER_GIRO_RELEASE) {
         p = (f32) t / ER_GIRO_RELEASE;
-        set_mario_animation(m, t < 3 ? MARIO_ANIM_GRAB_BOWSER : MARIO_ANIM_SWINGING_BOWSER);
+        set_mario_animation(m, t < 4 ? MARIO_ANIM_GRAB_BOWSER : MARIO_ANIM_SWINGING_BOWSER);
         if (t == 0) {
             // (a turn back the other way first: the wind-up)
             sErSpin = -ER_COUNTER_TWIST;
             before = sErSpin;
         } else {
-            s16 step = (s16) er_lerp(0x1200, 0x3400, p);
+            s16 step = (s16) er_lerp(0x0C00, 0x2C00, p * p);
             sErSpin += t <= ER_SPIN_UP && sSpinUp[t - 1] < step ? sSpinUp[t - 1] : step;
         }
-        // (a full turn: the swing's whoosh; not out of the wind-up, past his front again at once)
+        // (past his front again: a turn done, its whoosh, its blow all round)
         if ((u16) sErSpin < (u16) before && t > ER_SPIN_UP) {
-            er_sound(m, SOUND_ACTION_SPIN);
-        }
-        if (t % 6 == 3) {
-            er_move_fx |= ER_FX_SPIN;
-        }
-        if (t >= 3) {
+            er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.4f);
             er_move_hit = ER_HIT_GIRO;
+            er_move_fx |= ER_FX_SPIN;
         }
         er_hammer(sErSpin * 360.0f / 65536.0f, 8.0f, 1.3f);
         if (!er_ground(m, 0.0f)) {
             return TRUE;
         }
         er_twist(m, sErSpin * 360.0f / 65536.0f);
+        // (leaning back against the hammer's pull)
+        er_squash(m, 1.0f - 0.05f * p, 3.0f * p);
     } else {
         if (t == ER_GIRO_RELEASE) {
             // he faces where he let go
@@ -803,14 +957,15 @@ s32 act_er_hammer_giro(struct MarioState *m) {
             er_move_hit = ER_HIT_GIRO_END;
             er_move_fx |= ER_FX_QUAKE;
             er_cheer(m);
-            er_sound(m, SOUND_OBJ_THWOMP);
+            er_sound_soft(SOUND_OBJ_THWOMP, 0.5f);
         }
         p = (f32)(t - ER_GIRO_RELEASE) / (ER_GIRO_END - ER_GIRO_RELEASE);
-        er_hammer(er_lerp(0.0f, -60.0f, p), er_lerp(0.0f, -30.0f, p), er_lerp(1.3f, 1.0f, p));
+        er_hammer(er_lerp(0.0f, -60.0f, er_ease_in_out(p)), er_lerp(0.0f, -30.0f, p), er_lerp(1.3f, 1.0f, p));
         if (!er_ground(m, 0.0f)) {
             return TRUE;
         }
-        if (t >= ER_GIRO_RELEASE + 6 && (m->input & INPUT_A_PRESSED)) {
+        er_squash(m, er_lerp(0.92f, 1.0f, p), er_lerp(4.0f, 0.0f, p));
+        if (t >= ER_GIRO_RELEASE + 8 && (m->input & INPUT_A_PRESSED)) {
             return set_jumping_action(m, ACT_JUMP, 0);
         }
     }
@@ -820,10 +975,12 @@ s32 act_er_hammer_giro(struct MarioState *m) {
     return FALSE;
 }
 
-/* the plunge from high up lands as a charged slam: fully charged (the giant hammer's blow) after a
- * drop of this much (SM64 units, 12 m), from a quarter of it on more and more */
+/* the plunge from high up lands as a charged slam: fully charged (the titan's blow) after a drop
+ * of this much (SM64 units, 12 m), from a quarter of it on more and more; out of the leap (forward
+ * + Y) it lands a level up at least, the Hammer Bro's jump */
 #define ER_PLUNGE_FULL_DROP 1200.0f
 static f32 sErPlungeFrom = 0.0f;
+static s32 sErPlungeLeap = 0;
 
 /* a swing in the air goes a whole turn round him from behind on his right (degrees from his
  * facing). His body turns from where it started (a share of the swing, eased in over its first
@@ -841,10 +998,15 @@ static f32 er_air_swing_twist(s32 t, s32 ticks, f32 share) {
     return 360.0f * share * (f32)(t + 1) / ticks * (t < ER_AIR_SWING_RAMP ? (f32)(t + 1) / (ER_AIR_SWING_RAMP + 1) : 1.0f);
 }
 
+/* the air somersault: raised behind him, brought over in a flip, followed through */
+#define ER_FLIP_RAISE 4
+#define ER_FLIP_BLOW 4
+#define ER_FLIP_END 13
+
 /**
- * X (actionArg 0) in the air with the hammer: a full turn with it held out. Y (actionArg 1): the
- * plunge, a moment held up high, then straight down onto it: lands as the slam's blow, the bigger
- * the higher it came down from.
+ * X (actionArg 0) in the air with the hammer: a somersault, the hammer brought over and down in
+ * front with it. Y (actionArg 1): the plunge, a moment held up high, then straight down onto it:
+ * lands as the slam's blow, the bigger the higher it came down from.
  */
 s32 act_er_hammer_air(struct MarioState *m) {
     s32 t = m->actionTimer;
@@ -852,9 +1014,8 @@ s32 act_er_hammer_air(struct MarioState *m) {
 
     if (m->actionArg == 0) {
         if (t == 0) {
-            er_sound(m, SOUND_MARIO_PUNCH_HOO);
-            er_sound(m, SOUND_ACTION_SPIN);
-            set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+            er_sound_soft(SOUND_MARIO_UH, 0.5f);
+            set_mario_animation(m, MARIO_ANIM_FORWARD_SPINNING);
             // juggling: each swing lifts him a little, to stay up with the enemy
             if (er_juggle) {
                 m->vel[1] = 16.0f;
@@ -864,15 +1025,22 @@ s32 act_er_hammer_air(struct MarioState *m) {
         if (t >= 4 && (m->input & INPUT_B_PRESSED)) {
             m->actionState = 1;
         }
-        if (t >= 4 && er_enemy_step(m)) {
-            // (off the swing he faces where it left him)
-            er_fold(m, sErTwistDeg);
+        if (t >= ER_FLIP_RAISE + ER_FLIP_BLOW && er_enemy_step(m)) {
             return TRUE;
         }
-        p = (f32)(t + 1) / 8;
-        er_hammer(ER_AIR_SWING_FROM + 360.0f * (p < 1.0f ? p : 1.0f), 0.0f, 1.1f);
-        if (t < 8) {
+        if (t < ER_FLIP_RAISE) {
+            er_hammer(0.0f, er_lerp(60.0f, 170.0f, er_ease_out((f32)(t + 1) / ER_FLIP_RAISE)), 1.1f);
+        } else if (t < ER_FLIP_RAISE + ER_FLIP_BLOW) {
+            p = (f32)(t - ER_FLIP_RAISE + 1) / ER_FLIP_BLOW;
+            er_hammer(0.0f, er_lerp(170.0f, -70.0f, p * p), 1.15f);
             er_move_hit = ER_HIT_HAMMER_AIR;
+            if (t == ER_FLIP_RAISE) {
+                er_sound(m, SOUND_MARIO_PUNCH_HOO);
+                er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.45f);
+            }
+        } else {
+            p = (f32)(t - ER_FLIP_RAISE - ER_FLIP_BLOW) / (ER_FLIP_END - ER_FLIP_RAISE - ER_FLIP_BLOW);
+            er_hammer(0.0f, er_lerp(-70.0f, -30.0f, er_ease_in_out(p)), 1.1f);
         }
         // (a moment of hang time)
         if (m->vel[1] < -10.0f) {
@@ -880,6 +1048,7 @@ s32 act_er_hammer_air(struct MarioState *m) {
         }
     } else {
         if (t == 0) {
+            sErPlungeLeap = m->prevAction == ACT_ER_LEAP;
             er_aim_turn(m);
             er_sound(m, SOUND_MARIO_PUNCH_HOO);
             set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);
@@ -907,12 +1076,12 @@ s32 act_er_hammer_air(struct MarioState *m) {
                 f32 drop = t > 6 ? sErPlungeFrom - m->pos[1] : 0.0f;
                 f32 k = (drop / ER_PLUNGE_FULL_DROP - 0.25f) / 0.75f;
                 s32 charge = k <= 0.0f ? 0 : k >= 1.0f ? ER_SLAM_CHARGE_MAX : (s32)(k * ER_SLAM_CHARGE_MAX);
+                if (sErPlungeLeap && charge < ER_SLAM_CHARGE_LEVEL) {
+                    charge = ER_SLAM_CHARGE_LEVEL;
+                }
                 set_mario_action(m, ACT_ER_HAMMER_SLAM, 1);
                 m->actionState = charge;
                 return TRUE;
-            }
-            if (t > 0) {
-                er_fold(m, sErTwistDeg);
             }
             return set_mario_action(m, ACT_FREEFALL_LAND, 0);
 
@@ -924,16 +1093,9 @@ s32 act_er_hammer_air(struct MarioState *m) {
             lava_boost_on_wall(m);
             return TRUE;
     }
-    if (m->actionArg == 0) {
-        er_twist(m, er_air_swing_twist(t, 8, 0.8f));
-    }
 
-    if (++m->actionTimer >= (m->actionArg == 0 ? 10 : 90)) {
-        // X during it: the next swing (or with the hammer put away, the fists' air string); he
-        // faces where the swing left him (a whole turn: the next one starts where this one ended)
-        if (m->actionArg == 0) {
-            er_fold(m, sErTwistDeg);
-        }
+    if (++m->actionTimer >= (m->actionArg == 0 ? ER_FLIP_END : 90)) {
+        // X during it: the next swing (or with the hammer put away, the fists' air string)
         if (m->actionArg == 0 && m->actionState == 1) {
             return set_mario_action(m, er_air_attack(), 0);
         }
@@ -2517,6 +2679,11 @@ void er_moves_begin_tick(int frozen) {
     er_move_hit = ER_HIT_NONE;
     er_move_fx = 0;
     er_move_throw = 0;
+    if (!frozen) {
+        // (in a hit-stop his move holds: still locked, still squashed)
+        er_move_locked = 0;
+        er_body_squash = 1.0f;
+    }
     if (!frozen && sErBonkWait > 0) {
         sErBonkWait--;
     }
@@ -3147,6 +3314,119 @@ s32 act_er_leap(struct MarioState *m) {
             return TRUE;
     }
     if (t >= ER_LEAP_MAX) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    return FALSE;
+}
+
+/* the rising blow: a crouch (its wind-up), up off the ground, the weapon's blow on the way up, a
+ * while to follow it with the air string */
+#define ER_RISE_CROUCH 3
+#define ER_RISE_BLOW 6
+#define ER_RISE_END 24
+
+/**
+ * X + A together (moves.rs), with whatever is in hand (actionArg: the weapon): up into the air
+ * with a rising blow that takes whoever it catches up with him, the start of an air string. The
+ * fists' rising spin kick, the hammer's upswing, the Chain Chomp's bite upwards, the boomerangs'
+ * launcher thrown on the way up. X once he's up: the weapon's air blow.
+ */
+s32 act_er_rise(struct MarioState *m) {
+    s32 t = m->actionTimer;
+    u32 w = m->actionArg;
+    s32 up = t - ER_RISE_CROUCH;
+    f32 spin = 0.0f;
+    f32 p;
+
+    if (t == 0) {
+        er_aim_turn(m);
+        er_aim_lunge(m);
+        set_mario_anim_with_accel(m, MARIO_ANIM_START_CROUCHING, 0x14000);
+        if (w == ER_WEAPON_CHOMP) {
+            er_chomp_from_here();
+        }
+    }
+    if (t < ER_RISE_CROUCH) {
+        // (the crouch on the ground: squashed down, the weapon drawn low)
+        p = (f32)(t + 1) / ER_RISE_CROUCH;
+        if (w == 1) {
+            er_hammer(-20.0f, er_lerp(20.0f, -40.0f, p), 1.1f);
+        } else if (w == ER_WEAPON_CHOMP) {
+            er_chomp(0.0f, 80.0f, 10.0f, 0.3f);
+            er_chomp_eased(p);
+        }
+        mario_set_forward_vel(m, 0.0f);
+        m->vel[1] = 0.0f;
+        perform_ground_step(m);
+        vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+        er_squash(m, 1.0f - 0.14f * p, 7.0f * p);
+        m->actionTimer++;
+        return FALSE;
+    }
+    if (up == 0) {
+        m->vel[1] = w == 1 ? 40.0f : 46.0f;
+        mario_set_forward_vel(m, 10.0f + er_take_lunge(m) * 0.5f);
+        m->pos[1] += 1.0f;
+        er_move_fx |= ER_FX_LAUNCH;
+        er_shout(m);
+        er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.45f);
+        set_mario_animation(m, w == 0 ? MARIO_ANIM_AIR_KICK : w == 1 ? MARIO_ANIM_HEAVY_THROW : MARIO_ANIM_SECOND_PUNCH);
+    }
+    if (up < ER_RISE_BLOW) {
+        p = (f32)(up + 1) / ER_RISE_BLOW;
+        switch (w) {
+            case 1:
+                // the hammer swung up from the ground in front, over his head
+                er_hammer(er_lerp(-20.0f, 0.0f, p), er_lerp(-40.0f, 125.0f, er_ease_out(p)), 1.15f);
+                er_move_hit = ER_HIT_HAMMER_RISE;
+                break;
+            case ER_WEAPON_RANG:
+                if (up == 1 && er_rang_ready) {
+                    er_release(m, ER_THROW_UPPER);
+                }
+                break;
+            case ER_WEAPON_CHOMP:
+                // the Chomp bites its way up in front of him, jaws snapping shut at the top
+                er_chomp(0.0f, er_lerp(160.0f, 130.0f, p), er_lerp(20.0f, 260.0f, er_ease_out(p)), p < 0.7f ? 1.0f : 0.0f);
+                er_move_hit = ER_HIT_CHOMP_LAUNCH;
+                break;
+            default:
+                // a spinning kick, one turn on the way up (drawn after the step)
+                spin = 360.0f * er_ease_out(p);
+                er_move_hit = ER_HIT_RISE;
+                if (up == 2) {
+                    er_move_fx |= ER_FX_SPIN;
+                }
+                break;
+        }
+        er_body_squash = er_lerp(1.12f, 1.0f, p);
+    } else {
+        // X: the weapon's air blow (with whoever it took up, the air string)
+        if (m->input & INPUT_B_PRESSED) {
+            return set_mario_action(m, er_air_attack(), 0);
+        }
+        if (w == 1) {
+            er_hammer(0.0f, er_lerp(125.0f, 60.0f, (f32)(up - ER_RISE_BLOW) / (ER_RISE_END - ER_RISE_CROUCH - ER_RISE_BLOW)), 1.1f);
+        }
+    }
+
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            if (up > 2) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            break;
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    if (spin != 0.0f) {
+        er_twist(m, spin);
+    }
+    if (++m->actionTimer >= ER_RISE_END) {
         return set_mario_action(m, ACT_FREEFALL, 0);
     }
     return FALSE;

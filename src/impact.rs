@@ -66,7 +66,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     let (coins, stars) = match attack {
         Attack::Uppercut => (2, 0),
         Attack::UppercutTop => (5, 3),
-        Attack::FlurryEnd => (3, 5),
+        Attack::FlurryEnd | Attack::Titan => (3, 5),
         _ if attack.finisher() => (0, 3),
         _ => (0, 0),
     };
@@ -76,18 +76,22 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     if stars > 0 {
         burst(at, stars, Bit::Star);
     }
-    let wood = matches!(attack, Attack::Hammer | Attack::HammerAir | Attack::Flurry | Attack::Giro);
+    let wood = matches!(attack, Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Pound | Attack::Flurry | Attack::Giro);
     // (hit-stop in SM64 ticks, burst size, a heavy thud too)
     let (stop, size, heavy) = match attack {
         Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::Shell => (1, 0.8, false),
-        Attack::Meteor | Attack::HammerAir | Attack::Giro | Attack::Chain | Attack::AirHit => (2, 1.0, false),
+        Attack::Meteor | Attack::Giro | Attack::Chain | Attack::AirHit | Attack::Rise => (2, 1.0, false),
         Attack::ChainEnd => (5, 1.4, true),
-        Attack::Hammer => (4, 1.2, false),
-        Attack::UppercutTop | Attack::Quake | Attack::Launch => (5, 1.4, true),
+        // the hammer: every blow stops the world a moment, its heavy ones longer (a titan's)
+        Attack::HammerAir | Attack::HammerRise | Attack::Pound => (4, 1.2, false),
+        Attack::Hammer | Attack::HammerWide => (6, 1.4, false),
+        Attack::UppercutTop | Attack::Launch => (5, 1.4, true),
+        Attack::Quake => (6, 1.5, true),
         Attack::TornadoEnd => (4, 1.3, true),
-        Attack::HammerSmash | Attack::GiroEnd => (5, 1.5, true),
+        Attack::GiroEnd => (6, 1.5, true),
+        Attack::HammerSmash | Attack::QuakeBig => (8, 1.7, true),
         Attack::MeteorLand => (6, 1.6, true),
-        Attack::FlurryEnd => (7, 1.8, true),
+        Attack::FlurryEnd | Attack::Titan => (10, 1.9, true),
         Attack::GroundPound => (4, 1.3, true),
         Attack::Shockwave => (3, 1.0, true),
         // (the giant fireball's burn and Mega's steps: no hold, they come again and again)
@@ -150,13 +154,13 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         crate::lakitu::punch(0.18 + 0.08 * size);
     }
     if heavy {
-        crate::lakitu::shake(if mega { size * 0.6 } else { size - 0.4 });
-    } else if matches!(attack, Attack::Hammer | Attack::HammerAir) {
-        // (the hammer's every blow has some weight)
-        crate::lakitu::shake(0.35);
+        crate::lakitu::shake(if mega { size * 0.6 } else { size - 0.6 });
+    } else if matches!(attack, Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Pound) {
+        // (the hammer's every blow has some weight: a soft shake)
+        crate::lakitu::shake(0.45);
     }
     let chomp = matches!(attack, Attack::Chomp | Attack::ChompAir | Attack::ChompSpin | Attack::ChompLaunch | Attack::ChompEnd);
-    let light = !heavy && !matches!(attack, Attack::Hammer);
+    let light = !heavy && !matches!(attack, Attack::Hammer | Attack::HammerWide);
     let (pick, loud) = (crate::rand01(), 0.6 + 0.4 * crate::rand01());
     worker::call("impact", move |_| unsafe {
         sm64::sm64_er_hitstop(stop);
@@ -268,22 +272,34 @@ pub fn combo(fx: u32, feet: Vec3, head: Option<Vec3>) {
     if fx & FX_GROUND != 0 {
         ring(ground + Vec3::Y * 0.05, 1.8, 0.35, DUST);
         puffs(ground, 3, 0.3);
+        rubble(ground, 3, 0.6);
+    }
+    // (a soft shake for each: the hammer's weight is in the hit-stop, the dust and the rubble, not
+    // in a camera jolting about)
+    if fx & FX_SLAM != 0 {
+        crate::lakitu::shake(0.6);
+        ring(ground + Vec3::Y * 0.05, 3.0, 0.45, DUST);
+        ring(ground + Vec3::Y * 0.1, 1.6, 0.3, WHITE);
+        puffs(ground, 5, 0.6);
+        rubble(ground, 7, 0.9);
     }
     if fx & FX_QUAKE != 0 {
         ring(ground + Vec3::Y * 0.05, 3.8, 0.5, DUST);
         ring(ground + Vec3::Y * 0.1, 2.2, 0.35, WHITE);
         puffs(ground, 6, 0.8);
         burst(ground + Vec3::Y * 0.3, 4, Bit::Star);
+        rubble(ground, 10, 1.1);
     }
     if fx & (FX_QUAKE | FX_METEOR) != 0 {
-        crate::lakitu::shake(1.2);
+        crate::lakitu::shake(0.9);
     }
     if fx & FX_GIANT != 0 {
-        crate::lakitu::shake(2.0);
+        crate::lakitu::shake(1.4);
         ring(ground + Vec3::Y * 0.05, 6.5, 0.7, DUST);
         ring(ground + Vec3::Y * 0.1, 4.0, 0.5, GOLD);
         puffs(ground, 8, 1.8);
         burst(ground + Vec3::Y * 0.6, 7, Bit::Star);
+        rubble(ground, 16, 1.5);
     }
     if fx & FX_METEOR != 0 {
         ring(feet + Vec3::Y * 0.05, 4.0, 0.5, GOLD);
@@ -948,7 +964,84 @@ pub fn clear() {
     SWING.lock().unwrap_or_else(|e| e.into_inner()).clear();
     CHOMP_TRAIL.lock().unwrap_or_else(|e| e.into_inner()).clear();
     FLYING_SPARKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    RUBBLE.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *HURT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *FLASH.lock().unwrap_or_else(|e| e.into_inner()) = None;
     STREAKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Rubble: chunks of the ground a heavy blow throws up (real 3D, drawn by flame.rs with the
+/// fireballs' faces): where from, how fast (m/s), when, how big (m), the ground's height under it,
+/// the axis it tumbles about and how fast (rad/s), a seed for its shape.
+#[derive(Clone, Copy)]
+struct Chunk {
+    from: Vec3,
+    vel: Vec3,
+    born: Instant,
+    size: f32,
+    ground: f32,
+    axis: Vec3,
+    spin: f32,
+    seed: u32,
+}
+
+static RUBBLE: Mutex<Vec<Chunk>> = Mutex::new(Vec::new());
+const MAX_RUBBLE: usize = 48;
+/// how long a chunk lasts (s, the last share of it shrinking away), how hard it falls (m/s²)
+pub const RUBBLE_TIME: f32 = 1.5;
+const RUBBLE_GRAVITY: f32 = 18.0;
+
+/// `n` chunks of the ground thrown up and out all around `at` (the ground), harder and bigger with
+/// `power` (1: a slam's).
+fn rubble(at: Vec3, n: usize, power: f32) {
+    let mut chunks = RUBBLE.lock().unwrap_or_else(|e| e.into_inner());
+    chunks.retain(|c| c.born.elapsed().as_secs_f32() < RUBBLE_TIME);
+    let turn = crate::rand01() * std::f32::consts::TAU;
+    for k in 0..n {
+        if chunks.len() >= MAX_RUBBLE {
+            chunks.remove(0);
+        }
+        let a = turn + (k as f32 + 0.5 * crate::rand01()) / n as f32 * std::f32::consts::TAU;
+        let out = (1.5 + 3.0 * crate::rand01()) * power;
+        let up = (3.5 + 4.5 * crate::rand01()) * power.sqrt();
+        let dir = Vec3::new(a.cos(), 0.0, a.sin());
+        let axis = Vec3::new(crate::rand01() - 0.5, crate::rand01() - 0.5, crate::rand01() - 0.5).normalize_or(Vec3::X);
+        chunks.push(Chunk {
+            from: at + dir * (0.2 + 0.3 * crate::rand01()) * power + Vec3::Y * 0.05,
+            vel: dir * out + Vec3::Y * up,
+            born: Instant::now(),
+            size: (0.07 + 0.11 * crate::rand01()) * power.sqrt(),
+            ground: at.y,
+            axis,
+            spin: 6.0 + 10.0 * crate::rand01(),
+            seed: (crate::rand01() * 65535.0) as u32,
+        });
+    }
+}
+
+/// The rubble to draw: where each chunk is now, how it's turned, its size, its shape's seed.
+pub fn rubble_chunks() -> Vec<crate::fx::Rock> {
+    let chunks = RUBBLE.lock().unwrap_or_else(|e| e.into_inner());
+    chunks
+        .iter()
+        .filter_map(|c| {
+            let age = c.born.elapsed().as_secs_f32();
+            if age >= RUBBLE_TIME {
+                return None;
+            }
+            // (falling until it meets the ground it came from, then lying there)
+            let landed = {
+                let (a, b, cc) = (0.5 * RUBBLE_GRAVITY, -c.vel.y, c.ground - c.from.y);
+                let disc = b * b - 4.0 * a * cc;
+                if disc > 0.0 { (-b + disc.sqrt()) / (2.0 * a) } else { 0.0 }
+            };
+            let t = age.min(landed.max(0.0));
+            let pos = c.from + c.vel * t - Vec3::Y * (0.5 * RUBBLE_GRAVITY * t * t);
+            let pos = Vec3::new(pos.x, pos.y.max(c.ground + c.size * 0.3), pos.z);
+            let rot = glam::Quat::from_axis_angle(c.axis, c.spin * t);
+            // (shrinking away over its last third)
+            let fade = ((RUBBLE_TIME - age) / (RUBBLE_TIME * 0.33)).clamp(0.0, 1.0);
+            Some(crate::fx::Rock { pos, rot, size: c.size * fade, seed: c.seed })
+        })
+        .collect()
 }

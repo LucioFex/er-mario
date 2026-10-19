@@ -191,15 +191,16 @@ fn hammer(model: &[Tri], atlas: &[u8]) -> Vec<Tri> {
     };
     // the handle, along Y
     let along_y = |t: f32, r: f32, y: f32| ([r * t.cos(), y, r * t.sin()], [t.cos(), 0.0, t.sin()]);
-    cylinder(&along_y, [0.0, 1.0, 0.0], 0.04, -0.16, HEAD_AT - 0.1, 8, (true, false), handle, false);
+    cylinder(&along_y, [0.0, 1.0, 0.0], 0.05, -0.2, HEAD_AT - 0.15, 8, (true, false), handle, false);
     // the head, along Z around its centre: solid and dark, a band at each end, dark capped ends
+    // (a titan's: 0.56 m across, 0.9 m long)
     let y = HEAD_AT;
     let along_z = |t: f32, r: f32, z: f32| ([r * t.cos(), y + r * t.sin(), z], [t.cos(), t.sin(), 0.0]);
-    cylinder(&along_z, [0.0, 0.0, 1.0], 0.2, -0.24, 0.24, 12, (false, false), band, true);
-    cylinder(&along_z, [0.0, 0.0, 1.0], 0.215, -0.30, -0.24, 12, (false, false), band, false);
-    cylinder(&along_z, [0.0, 0.0, 1.0], 0.215, 0.24, 0.30, 12, (false, false), band, false);
-    cylinder(&along_z, [0.0, 0.0, 1.0], 0.2, -0.34, -0.30, 12, (true, false), band, true);
-    cylinder(&along_z, [0.0, 0.0, 1.0], 0.2, 0.30, 0.34, 12, (false, true), band, true);
+    cylinder(&along_z, [0.0, 0.0, 1.0], 0.28, -0.3, 0.3, 14, (false, false), band, true);
+    cylinder(&along_z, [0.0, 0.0, 1.0], 0.3, -0.38, -0.3, 14, (false, false), band, false);
+    cylinder(&along_z, [0.0, 0.0, 1.0], 0.3, 0.3, 0.38, 14, (false, false), band, false);
+    cylinder(&along_z, [0.0, 0.0, 1.0], 0.28, -0.45, -0.38, 14, (true, false), band, true);
+    cylinder(&along_z, [0.0, 0.0, 1.0], 0.28, 0.38, 0.45, 14, (false, true), band, true);
     out
 }
 

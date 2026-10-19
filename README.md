@@ -84,17 +84,33 @@ there). Each swap scores style points and flashes a golden ring.
 a second, Bayonetta's Witch Time: a ring and a glint on Mario (nothing over the screen), a "waha!", and for a moment Mario's blows are
 counters that hit 1.6x as hard (`src/dodge.rs`). Once every few seconds at most.
 
-**Hammer.** Mario pulls out a big dark hammer and his X and Y moves turn into hammer
-moves: a five-swing string, an earthquake slam (Y), a plunge from the air (Y in the air: the higher
-he comes down from, the more the slam charges, and from 12 m up it lands as the giant hammer), a
-Donkey Kong flurry that ends with a giant hammer (X, X, Y), a Bowser spin (Y, X) and a
-launcher (X, Y): a golf swing that sends enemies flying high, where they hang for a moment so
-Mario can jump after them and keep the combo going in the air. When he's
-not swinging it, the hammer hangs across his back and he grabs it for each attack.
+**Hammer.** The heavy weapon: slow, committed, and the one that takes the most health per blow.
+Donkey Kong's hammer, nearly as tall as Mario (on his back too). Every blow has a wind-up that
+can't be cut short (no dash, no jump until it has landed: a miss is punished), stops the world a
+moment when it lands (hit-stop), shakes the camera softly and throws up dust and 3D rubble; Mario's
+body squashes into the wind-up, stretches into the blow and sinks under the follow-through. Its
+heavy blows break strong enemies' stance and knock regular ones down.
+
+| Input | Move | Per hit (regular enemy) |
+|---|---|---|
+| X | Hammer Bro's chop, down across from over his shoulder | 18% |
+| X, X | King K. Rool's backhand, a wide sweep through everyone in front | 20% |
+| X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 28% |
+| Y (hold to charge) | Bowser's quake: tapped 22%; a level up 32% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 45% in 6 m | 22-45% |
+| X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 10% + 35% |
+| Y, X | Bowser spin: one blow all round each turn, the release flings them | 8% a turn + 20% |
+| back + X (or X, Y) | Launcher (golf swing): they fly high for an air combo | 12% |
+| forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 32% |
+| X in the air | Somersault swing | 14% |
+| Y in the air | Plunge: the higher he came down from, the more the slam charges (12 m: the titan's blow) | 22-45% |
+| X + A | Hammer upswing, up into the air with them | 17% |
+
+(Shares as they are in vanilla; Reforged takes 30% off. Bosses take a few % of their bar at most
+from the heaviest.) Y pressed during a swing's wind-up waits for it to land.
 
 Holding Y with the hammer charges the slam: Mario squats and trembles with the hammer raised (he can
-still turn), it grows with a soft chime per level, and fully charged it comes down as the giant
-hammer. Enemies that fall out of an air combo bounce off the ground once, and a hit on the bounce
+still turn), it grows with a soft chime per level, and fully charged it comes down as the titan's
+blow. Enemies that fall out of an air combo bounce off the ground once, and a hit on the bounce
 sends them back up. Launched enemies leave a streak and land with a thud of dust.
 
 **Squash and stretch.** The weapons move like a cartoon's: the hammer stretches out and smears
@@ -271,13 +287,14 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | X right as a blow connects | **Action command**: NICE! / GREAT! | +30% on that blow, every third +50%. Mashing locks it out for a moment |
 | X at the end of the dash | **Dash strike** (Hades) | A lunging punch with the dash's speed, at most every 1.2 s |
 | back + X | **Launcher**, any weapon | Fists: super jump punch; hammer: launcher; Chomp: bite; boomerang: the upward throw |
+| X + A together | **Rising blow**, any weapon (replaces SM64's jump kick) | Up into the air with whoever it catches, to go on with the air string (X up there): fists a rising spin kick, hammer an upswing, Chomp a bite upwards, boomerang the upward throw. From standing, the middle of a string, or the jump A just began |
 | forward + Y | **Leap** at the enemy into the weapon's dive | Fists: meteor; hammer: plunge; Chomp: crash; boomerang: fan |
 | B toward another enemy mid-string | **Freeflow** (Arkham) | A leap to it (3-12 m), the string goes on |
 | 12 blows without being hurt | **MAX finisher** | The weapon twinkles, MAX shows (lost if you're hurt, or after 10 s without landing a blow); its next finisher: fists phantom flurry + launch, hammer cross-shaped quake, Chomp ring of fire flinging the small ones, boomerang three big ones |
-| LT crouched + X | **Banana** | Regular enemies slip and fall (the game's own knockdown), big ones stagger, bosses walk over it. 2 at most, 10 s each |
-| LT crouched + Y (hold: red) | **Green / red Koopa shell** | Kicked along the floor, off walls and enemies (knockdown), 4 hits; the red one homes in, 2 hits. 8 s |
+| LT crouched or sliding + X | **Banana** | Regular enemies slip and fall (the game's own knockdown), big ones stagger, bosses walk over it. 2 at most, 10 s each |
+| LT crouched + Y (hold: red) | **Green / red Koopa shell** | Kicked along the floor, off walls; off an enemy it ricochets to the next one within 9 m (never through a wall), going round all of them in turn (three: A, B, C, A, B; two: back and forth), 5 hits (knockdown); the red one homes in from the start. CAROM! at three enemies, PINBALL! at five hits. 8 s |
 | LT crouched + B | **Bob-omb** | Lobbed, bounces, goes off after 2 s or on the first enemy: a 3.5 m blast that throws the regular ones up. 12 s |
-| LT crouched + RB | **Spring** | Enemies stepping on it fly up; Mario jumping onto it goes higher than any jump. 15 s |
+| LT crouched + RB | **Spring** | A wide trampoline: enemies stepping on it fly up; Mario jumping onto it goes higher than any jump. 15 s |
 | LT crouched + LB | **Stopwatch** | The enemy in front stops in time (3 s, bosses 1.2 s); blows on it build up momentum and it flies off when time runs again (bosses stagger). 25 s |
 | D-pad left | **Rock Mushroom** | 12 s as a boulder: down slopes faster, off walls, a slam after a drop; bowls regular enemies over (3 at once: STRIKE!), bounces off bosses; A hops, X rams; hits cost half. 75 s |
 | R3 as a projectile comes | **Parry** (Sekiro / Hollow Knight) | A palm thrust opens a 0.45 s window: an enemy's arrow or spell that reaches Mario (3.8 m) is turned back as a blue-white fireball with a level-3 charge's strength (about 20% on a regular enemy), homing on whoever fired it; a volley is stopped (up to 3 per press) but only one shot goes back. Only shots coming at him, from enemies (not neutral NPCs or the co-op partner); not while swimming, hanging, on a pole or a ladder, or as the Rock. A press that deflects nothing waits 1.6 s, a deflect 1 s. PARRY! (3 style points) |
@@ -317,12 +334,13 @@ close and risky hits.
 
 | Attack | Original | This fork |
 |---|---|---|
-| Punches, kicks, combos, hammer (X and Y) | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch. The game's own hit that goes with a blow (its reaction, its aggro) carries only 5% of the bare fist now: at 100% it added the whole fist on top (a third of a regular enemy's health per punch in Reforged) |
+| Hammer | 67% of enemy HP | **18-45%** per hit (see [the hammer](#new-moves)), the slowest and riskiest; its heavy blows knock regular enemies down and crack strong enemies' stance |
+| Punches, kicks, fist combos | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch. The game's own hit that goes with a blow (its reaction, its aggro) carries only 5% of the bare fist now: at 100% it added the whole fist on top (a third of a regular enemy's health per punch in Reforged) |
 | Grab and throw (LT + R3, B) | — | **1.5%** on landing, never a kill; whoever it bowls over takes the bowled share and goes down |
 | Boomerang | — | **2-4%** per pass (it hits going and coming back); the big one about 2% per hit while it hovers |
 | Counters (after a perfect dodge) | — | **x1.6** for 1.6 s |
-| Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least |
-| Long strings | — | Past 10 hits on the same enemy each hit is worth 5% less than the one before (down to 40%, finishers 70%), so long combos last instead of melting the enemy |
+| Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least. Fast, wide, light: it wins by numbers |
+| Long strings | — | Past 10 punches' worth of blows on the same enemy each blow is worth 5% less than the one before per punch it weighs (a hammer blow weighs two or three, a cyclone tick a third), down to 40% (finishers 70%), so long combos last instead of melting the enemy, whatever the weapon |
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
@@ -330,7 +348,7 @@ close and risky hits.
 | Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |
 | Action command | — | **+30%** of the blow (every third **+50%**) |
 | Dash strike | — | **12%** |
-| Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown, Bob-omb **21%** in its blast, spring **2%** |
+| Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
@@ -426,7 +444,7 @@ replaces this fork's DLL with the original one.
 |---|---|---|
 | Left stick | W A S D | Move |
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
-| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive. A punch out of a run brakes him into the blow (no sliding past the enemy). Right on a blow's impact: NICE!. Back + X: launcher |
+| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive. A punch out of a run brakes him into the blow (no sliding past the enemy). Right on a blow's impact: NICE!. Back + X: launcher. X + A together: the weapon's rising blow |
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B. Forward + Y: leap into the weapon's dive |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow |
 | A just before an enemy's blow | | Mikiri stomp |
@@ -434,7 +452,7 @@ replaces this fork's DLL with the original one.
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
 | R3 | | Parry; with LT held, the grab |
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing. Held as it catches a spot high up or a colossus: the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
-| LT held (crouched) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch |
+| LT held (crouched or sliding) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch. Thrown out of a slide or a run they carry his speed |
 | LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |

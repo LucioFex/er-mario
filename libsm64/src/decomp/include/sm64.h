@@ -315,6 +315,7 @@
 #define ACT_ER_POLE_SWING              0x00800895 // (0x095 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) round a hooked enemy
 #define ACT_ER_SWING_KICK              0x00800896 // (0x096 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) off the pole swing
 #define ACT_ER_LEAP                    0x00800897 // (0x097 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) forward + Y, the gap closer
+#define ACT_ER_RISE                    0x0080089D // (0x09D | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) X + A, the weapon's rising blow
 #define ACT_THROWN_FORWARD             0x010208BD // (0x0BD | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_THROWN_BACKWARD            0x010208BE // (0x0BE | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 

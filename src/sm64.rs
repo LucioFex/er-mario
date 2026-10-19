@@ -257,4 +257,6 @@ pub struct SM64ErMove {
     pub chomp_reach: f32,
     pub chomp_height: f32,
     pub chomp_bite: f32,
+    /// a hammer blow that can't be left yet (no dash: er_moves.c er_move_locked)
+    pub locked: i32,
 }

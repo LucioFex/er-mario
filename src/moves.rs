@@ -74,12 +74,15 @@ pub const ACT_ER_POLE_SWING: u32 = 0x0080_0895;
 pub const ACT_ER_SWING_KICK: u32 = 0x0080_0896;
 /// forward + Y: the leap at an enemy into the weapon's dive (er_moves.c act_er_leap)
 const ACT_ER_LEAP: u32 = 0x0080_0897;
+/// X + A together: the weapon's rising blow, up into the air with whoever it catches (er_moves.c
+/// act_er_rise)
+pub const ACT_ER_RISE: u32 = 0x0080_089D;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 25] = [
+const COMBO_ACTIONS: [u32; 26] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
     ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN, ACT_ER_POLE_SWING,
-    ACT_ER_SWING_KICK, ACT_ER_LEAP,
+    ACT_ER_SWING_KICK, ACT_ER_LEAP, ACT_ER_RISE,
 ];
 /// L1 held this long (ticks): back to the fists
 const L1_HOLD: u32 = 12;
@@ -113,7 +116,13 @@ const COMBO_WINDOW: u32 = 12;
 /// long (ticks)
 const X_BUFFER: u32 = 24;
 /// the slam's blow, on its timer (er_moves.c ER_SLAM_IMPACT)
-const SLAM_IMPACT: i32 = 11;
+const SLAM_IMPACT: i32 = 13;
+/// X and A this close together (ticks): the rising blow, not SM64's jump kick
+const CHORD: u32 = 2;
+/// a Y kept through a hammer string's locked swings this long at most (ticks: a queued swing
+/// begins before the last one frees him, so the lock can last two swings)
+const Y_BUFFER: u32 = 60;
+const ACT_JUMP: u32 = 0x0300_0880;
 const ACT_PUNCHING: u32 = 0x0080_0380;
 const ACT_MOVE_PUNCHING: u32 = 0x0080_0457;
 const ACT_SLIDE_KICK: u32 = 0x0180_08AA;
@@ -199,6 +208,12 @@ pub enum Hit {
     RockSlam,
     HomeRun,
     SwingKick,
+    HammerWide,
+    QuakeBig,
+    Titan,
+    Pound,
+    Rise,
+    HammerRise,
 }
 
 impl Hit {
@@ -207,6 +222,7 @@ impl Hit {
         [
             Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
             ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam, HomeRun, SwingKick,
+            HammerWide, QuakeBig, Titan, Pound, Rise, HammerRise,
         ]
             .get((v as usize).wrapping_sub(1))
             .copied()
@@ -223,6 +239,8 @@ pub const FX_LAUNCH: u32 = 0x20;
 pub const FX_BANG: u32 = 0x40;
 pub const FX_GROW: u32 = 0x80;
 pub const FX_CHARGE: u32 = 0x100;
+/// a heavy hammer blow into the ground: a ring, dust, rubble
+pub const FX_SLAM: u32 = 0x400;
 
 /// One of the combos' moves (combat.rs leaves their hits to `Hit`).
 pub fn combo(action: u32) -> bool {
@@ -336,6 +354,11 @@ pub struct Moves {
     /// in the dash strike (for its log line), and when the next one may come
     bonk_seen: bool,
     bonk_ready: u32,
+    /// a Y pressed in a hammer swing's wind-up, kept until it lands
+    y_buffer: Option<u32>,
+    /// when A and X last went down (X + A: the rising blow)
+    a_at: Option<u32>,
+    x_at: Option<u32>,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -390,6 +413,9 @@ impl Moves {
             pending: None,
             bonk_seen: false,
             bonk_ready: 0,
+            y_buffer: None,
+            a_at: None,
+            x_at: None,
         }
     }
 
@@ -473,7 +499,7 @@ impl Moves {
             && (w != FISTS || !crate::mega::active())
     }
 
-    /// Game thread, every SM64 tick: B, Y and X held now, whether Mario may use them (not holding
+    /// Game thread, every SM64 tick: B, Y and X held now, A just pressed, whether Mario may use them (not holding
     /// an enemy, not on Yoshi, no menu), whether the game is busy with an interaction (a door, a
     /// grace, a menu: no Y move then), his last state. The move to start, if any.
     #[allow(clippy::too_many_arguments)]
@@ -482,10 +508,12 @@ impl Moves {
         b: bool,
         y: bool,
         x: bool,
+        a_pressed: bool,
         allowed: bool,
         interacting: bool,
         state: &sm64::SM64MarioState,
         move_timer: i32,
+        locked: bool,
         lean: f32,
         flow: Option<[f32; 3]>,
         tick: u32,
@@ -498,6 +526,17 @@ impl Moves {
         let x_pressed = !std::mem::replace(&mut self.x_held, x) && x;
         // (Y is Mario's alone: the game's interact moved to D-pad down, lib.rs; no waiting for it)
         let y_pressed = y_pressed && !interacting;
+        // Y in a hammer swing's wind-up waits for it to land (the swing can't be cut short), then
+        // goes on as the combo's Y
+        let y_pressed = if y_pressed && locked && a == ACT_ER_HAMMER {
+            self.y_buffer = Some(tick);
+            false
+        } else {
+            y_pressed || (!locked && a == ACT_ER_HAMMER && self.y_buffer.take().is_some_and(|t| tick.wrapping_sub(t) <= Y_BUFFER))
+        };
+        if a != ACT_ER_HAMMER {
+            self.y_buffer = None;
+        }
         if y_pressed {
             self.x_buffer = None;
         }
@@ -577,6 +616,28 @@ impl Moves {
         if !air {
             self.air_swaps = 0;
         }
+        // X + A together: the weapon's rising blow (God of War's, Devil May Cry's launcher with a
+        // jump), from standing, a string or the jump A just began (SM64 took the A first); not in
+        // a hammer blow's wind-up (it can't be left), not for Mega Mario (SM64's jump kick)
+        if a_pressed {
+            self.a_at = Some(tick);
+        }
+        if x_pressed {
+            self.x_at = Some(tick);
+        }
+        if let (Some(at_a), Some(at_x)) = (self.a_at, self.x_at) {
+            let together = at_a.max(at_x) == tick && at_a.abs_diff(at_x) <= CHORD;
+            let jump_begun = in_air && a == ACT_JUMP && tick.wrapping_sub(at_a) <= CHORD;
+            // (X first: the swing it began a tick or two ago gives way)
+            let just_began = move_timer <= CHORD as i32 + 1 && tick.wrapping_sub(at_x) <= CHORD;
+            if together && (ground || jump_begun) && (!locked || just_began) && !crate::mega::active() {
+                self.a_at = None;
+                self.x_at = None;
+                self.x_chain = 0;
+                crate::log("moves: rising blow (X + A)");
+                return Some(Request::Action(ACT_ER_RISE, self.weapon as u32));
+            }
+        }
         if self.attack_seen.is_none_or(|t| tick.wrapping_sub(t) > STRING_OVER) {
             self.string_swaps = 0;
         }
@@ -631,7 +692,7 @@ impl Moves {
         // the freeflow (Arkham's): B toward another enemy in the middle of a string, a leap to it, the
         // string going on (its blows keep counting, lib.rs found the one the stick points at)
         let in_string = self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= FLOW_AFTER);
-        if b_pressed && in_string && !crate::mega::active() && a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 {
+        if b_pressed && in_string && !locked && !crate::mega::active() && a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 {
             if let Some(to) = flow {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 self.chain_seen = Some(tick);
@@ -641,7 +702,8 @@ impl Moves {
             }
         }
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
-        if b_pressed && tick >= self.dash_ready && !crate::mega::active() {
+        // (not in a hammer blow's wind-up and impact: it's committed)
+        if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() {
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 crate::log("moves: dash");
@@ -661,7 +723,7 @@ impl Moves {
             use crate::weapons::{CHOMP, FISTS, HAMMER, RANG};
             let slow = state.forward_velocity < LEAN_SLOW;
             let stringy = !combo(a) || matches!(a, ACT_ER_HAMMER | ACT_ER_CHOMP | ACT_ER_THROW | ACT_ER_CHAIN) || punching;
-            if x_pressed && ground && lean < -LEAN && slow && stringy && !crate::mega::active() {
+            if x_pressed && ground && lean < -LEAN && slow && stringy && !locked && !crate::mega::active() {
                 let launcher = match self.weapon {
                     FISTS => Some((ACT_ER_UPPERCUT, 0, "super jump punch")),
                     HAMMER => Some((ACT_ER_HAMMER_LAUNCH, 0, "hammer launcher")),

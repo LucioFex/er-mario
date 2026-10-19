@@ -88,6 +88,16 @@ pub struct Ring {
     pub t: f32,
 }
 
+/// A chunk of rubble a heavy blow threw up (impact.rs): where, how it's turned, its size (m), a
+/// seed for its shape. Ours only: a partner's blows throw theirs on their own screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rock {
+    pub pos: Vec3,
+    pub rot: glam::Quat,
+    pub size: f32,
+    pub seed: u32,
+}
+
 /// A star or a coin flying off a blow
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bit {
@@ -122,6 +132,8 @@ pub struct WorldFx {
     pub flying: Vec<(Vec3, Vec3, f32)>,
     pub rings: Vec<Ring>,
     pub bits: Vec<Bit>,
+    /// (not sent: encode leaves it out)
+    pub rubble: Vec<Rock>,
 }
 
 /// at most this many of each kind go out (the newest), and points per trail
@@ -151,6 +163,7 @@ impl WorldFx {
             flying: crate::impact::flying_sparks(),
             rings: crate::impact::rings().into_iter().map(|(r, t)| Ring { pos: r.pos, radius: r.radius, tint: r.tint, t }).collect(),
             bits: crate::impact::bits().into_iter().map(|(b, pos, size, t, age)| Bit { coin: matches!(b, crate::impact::Bit::Coin), pos, size, t, age }).collect(),
+            rubble: crate::impact::rubble_chunks(),
         }
     }
 
@@ -191,6 +204,7 @@ impl WorldFx {
         }
         self.rings.iter_mut().for_each(|r| r.pos += d);
         self.bits.iter_mut().for_each(|b| b.pos += d);
+        self.rubble.iter_mut().for_each(|r| r.pos += d);
         self
     }
 
@@ -513,6 +527,7 @@ mod tests {
             flying: vec![(at(2.0), at(2.1), 0.9)],
             rings: vec![Ring { pos: at(0.0), radius: 6.0, tint: [0.9, 0.8, 0.6, 1.0], t: 0.25 }],
             bits: vec![Bit { coin: true, pos: at(1.5), size: 0.4, t: 0.3, age: 0.7 }],
+            rubble: Vec::new(),
         };
         let mut out = Vec::new();
         fx.encode(here, &mut out);

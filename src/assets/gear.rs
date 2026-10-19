@@ -14,9 +14,11 @@ use crate::engine_mario::{CHAIN, CHAIN_LINKS, CHOMP, JAW, RANG, RANGS};
 
 /// SM64 units per metre in the mesh (as the hammer's: flver.rs scales by 0.01 * 0.25)
 const PER_METRE: f32 = 400.0;
-/// the Chomp's radius (m) and where its jaw hinges (behind its centre, at the mouth's height)
+/// the Chomp's radius (m) and where its jaw hinges (a little behind its centre, at the mouth's
+/// top: the mouth is a wedge out of the ball from there, Pac-Man's, so the jaw turns out of it
+/// whole; this far forward its floor stays under the jaw opened all the way)
 pub const CHOMP_R: f32 = 0.4;
-pub const HINGE: Vec3 = Vec3::new(0.0, 0.0, -0.45 * CHOMP_R);
+pub const HINGE: Vec3 = Vec3::new(0.0, 0.0, -0.2 * CHOMP_R);
 /// a link's length from end to end (m), and a pair's (the chain's pairs are spread along it)
 pub const LINK_LEN: f32 = 0.19;
 pub const PAIR_LEN: f32 = LINK_LEN * 1.55;
@@ -141,10 +143,16 @@ fn boomerang(b: &mut Builder, white: [f32; 3], red: [f32; 3]) {
 /// The ball on the Chomp's sphere: column i (longitude, 0 = front), row j (0 = top).
 const LON: usize = 10;
 const LAT: usize = 6;
-/// the mouth's quads: rows 3..5 (from the middle down) in the columns around the front
+/// the mouth's quads: rows 3..5 (from the middle down) in the columns around the front, a hole in
+/// the ball that the jaw fills
 fn mouth(i: usize, j: usize) -> bool {
     (j == 3 || j == 4) && (i >= LON - 2 || i < 2)
 }
+/// the mouth's rim on its own grid (column 0..=4 from -X round the front, row 0..=2 down from the
+/// middle): along the top from -X, down the +X side, back along the bottom, up the -X side
+const RIM: [(usize, usize); 12] = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (4, 1), (4, 2), (3, 2), (2, 2), (1, 2), (0, 2), (0, 1)];
+/// the teeth's spacing along the mouth (radians round the front): the lower ones between the upper
+const TEETH: f32 = 0.3;
 
 fn sphere(i: usize, j: usize, r: f32) -> (Vec3, Vec3) {
     let lon = i as f32 / LON as f32 * std::f32::consts::TAU;
@@ -153,9 +161,28 @@ fn sphere(i: usize, j: usize, r: f32) -> (Vec3, Vec3) {
     (n * r, n)
 }
 
-/// The Chomp's ball: dark iron, the inside of its mouth red, two big eyes and its upper teeth.
+/// A point of the mouth's patch of the ball (column i, row j of its own grid) and its normal.
+fn lip(i: usize, j: usize) -> (Vec3, Vec3) {
+    sphere((i + LON - 2) % LON, j + 3, CHOMP_R)
+}
+
+/// Edge k of the mouth's rim fanned to the hinge (the wedge the jaw is): the edge's ends on the
+/// mouth's grid, the triangle, and its normal out of the wedge (the ball's side faces the other way).
+fn fan(k: usize) -> ([(usize, usize); 2], [Vec3; 3], Vec3) {
+    let ends = [RIM[k], RIM[(k + 1) % RIM.len()]];
+    let [p, q] = ends.map(|(i, j)| lip(i, j).0);
+    (ends, [p, q, HINGE], (p - HINGE).cross(q - HINGE).normalize())
+}
+
+/// The Chomp's ball: dark iron, its mouth a red hollow, two big eyes and its upper teeth.
 fn chomp(b: &mut Builder, white: [f32; 3], red: [f32; 3]) {
-    b.grid(LON, LAT, (true, false), &|i, j| sphere(i % LON, j, CHOMP_R), &|i, j| Some(if mouth(i, j) { Paint::Color(red) } else { Paint::Dark }));
+    b.grid(LON, LAT, (true, false), &|i, j| sphere(i % LON, j, CHOMP_R), &|i, j| (!mouth(i, j)).then_some(Paint::Dark));
+    // the mouth's hollow, from the hole's rim back to the hinge, seen from in front: its roof flat
+    // at the middle (the jaw's top shuts against it), its cheeks and floor sloping in
+    for k in 0..RIM.len() {
+        let (_, p, n) = fan(k);
+        b.tri(p, [-n; 3], Paint::Color(red), [(0, 0); 3]);
+    }
     // the eyes: white discs, the pupils a little in front and towards the middle
     let at = |lon: f32, lat: f32, r: f32| {
         let n = Vec3::new(lat.sin() * lon.sin(), lat.cos(), lat.sin() * lon.cos());
@@ -169,34 +196,40 @@ fn chomp(b: &mut Builder, white: [f32; 3], red: [f32; 3]) {
     }
     // the upper teeth along the top of the mouth, pointing down
     for k in 0..5 {
-        let lon = (k as f32 - 2.0) * 0.27;
+        let lon = (k as f32 - 2.0) * TEETH;
         tooth(b, lon, std::f32::consts::FRAC_PI_2, 0.3, white);
     }
 }
 
-/// The Chomp's lower jaw: a shell over the mouth (red inside), its teeth pointing up.
+/// The Chomp's lower jaw: the wedge the mouth is, out of the ball (its shell flush with the ball's,
+/// shut it fills the hole), its top the red floor of the mouth, its teeth pointing up.
 fn jaw(b: &mut Builder, white: [f32; 3], red: [f32; 3]) {
-    // (columns LON-2..LON+2 around the front, rows 3..5)
-    let point = |i: usize, j: usize, r: f32, inward: bool| {
-        let (p, n) = sphere((i + LON - 2) % LON, j + 3, r);
-        (p, if inward { -n } else { n })
-    };
-    b.grid(4, 2, (false, false), &|i, j| point(i, j, CHOMP_R * 1.03, false), &|_, _| Some(Paint::Dark));
-    b.grid(4, 2, (false, false), &|i, j| point(4 - i, j, CHOMP_R * 0.99, true), &|_, _| Some(Paint::Color(red)));
+    b.grid(4, 2, (false, false), &lip, &|_, _| Some(Paint::Dark));
+    // its top, from the rim's top edge to the hinge, red; its sides and bottom (only seen opened,
+    // out of the ball) dark, on the shell's own steps, the hinge on a step of its own
+    for k in 0..RIM.len() {
+        let (ends, p, n) = fan(k);
+        if k < 4 {
+            b.tri(p, [n; 3], Paint::Color(red), [(0, 0); 3]);
+        } else {
+            b.tri(p, [n; 3], Paint::Dark, [ends[0], ends[1], (1, 1)]);
+        }
+    }
     for k in 0..4 {
-        let lon = (k as f32 - 1.5) * 0.27;
+        let lon = (k as f32 - 1.5) * TEETH;
         tooth(b, lon, std::f32::consts::FRAC_PI_2, -0.3, white);
     }
 }
 
 /// A tooth on the ball's mouth line: its base around (lon, lat), its tip `reach` radians further
-/// down (up when negative), a little out of the ball.
+/// down (up when negative), a little out of the ball. Narrow enough for the upper and lower teeth
+/// to sit side by side, shut, without cutting into each other.
 fn tooth(b: &mut Builder, lon: f32, lat: f32, reach: f32, white: [f32; 3]) {
     let at = |lon: f32, lat: f32, r: f32| {
         let n = Vec3::new(lat.sin() * lon.sin(), lat.cos(), lat.sin() * lon.cos());
         n * r
     };
-    let w = 0.1;
+    let w = TEETH * 0.22;
     let (l, r) = (at(lon - w, lat, CHOMP_R * 1.05), at(lon + w, lat, CHOMP_R * 1.05));
     let back = at(lon, lat, CHOMP_R * 0.95);
     let tip = at(lon, lat + reach, CHOMP_R * 1.07);
@@ -204,6 +237,8 @@ fn tooth(b: &mut Builder, lon: f32, lat: f32, reach: f32, white: [f32; 3]) {
     b.face([l, r, tip], back * 0.5, Paint::Color(white));
     b.face([l, back, tip], inside + (r - l) * 0.3, Paint::Color(white));
     b.face([r, back, tip], inside - (r - l) * 0.3, Paint::Color(white));
+    // (its base too: with the mouth open it shows from below, or above)
+    b.face([l, r, back], tip, Paint::Color(white));
 }
 
 /// A flat disc at `c`, facing `n`.

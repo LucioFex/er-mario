@@ -19,17 +19,17 @@ const HEAD: usize = 3;
 const L_UPPER_ARM: usize = 4;
 const R_UPPER_ARM: usize = 7;
 const R_HAND: usize = 9;
-/// the head's centre from the grip, along the handle (m, at scale 1; assets/model.rs): a big one,
-/// it reaches
-pub const HEAD_AT: f32 = 0.8;
+/// the head's centre from the grip, along the handle (m, at scale 1; assets/model.rs): Donkey
+/// Kong's, near as tall as Mario
+pub const HEAD_AT: f32 = 1.0;
 /// how far the hand reaches from the shoulder when a swing places the hammer (m)
 const ARM: f32 = 0.22;
 /// slung on his back, across it: the grip by his right hip (up from the pelvis, out to the side,
 /// out behind), the handle leaning over to his left shoulder and a little away from his back (the
 /// head is fat), all in metres
-const BACK_GRIP: (f32, f32, f32) = (0.06, 0.13, 0.24);
-const BACK_LEAN: f32 = 0.45;
-const BACK_TILT: f32 = 0.14;
+const BACK_GRIP: (f32, f32, f32) = (0.02, 0.1, 0.32);
+const BACK_LEAN: f32 = 0.55;
+const BACK_TILT: f32 = 0.16;
 /// in his hand for a swing: how fast it gets there and goes back (share of the way per tick), and
 /// how long it stays after one (ticks: a string's swings don't bounce it back between them)
 const TO_HAND: f32 = 0.45;
@@ -219,7 +219,7 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     // squash and stretch (its own axes: X across the head's face, Y along the handle, Z the way the
     // head strikes)
     let speed = (head - prev).length() * crate::scale() / scale.max(0.1);
-    let heavy = scripted && mv.fx & (crate::moves::FX_GROUND | crate::moves::FX_QUAKE | crate::moves::FX_GIANT | crate::moves::FX_BANG) != 0;
+    let heavy = scripted && mv.fx & (crate::moves::FX_GROUND | crate::moves::FX_SLAM | crate::moves::FX_QUAKE | crate::moves::FX_GIANT | crate::moves::FX_BANG) != 0;
     let stretch = with(|s| {
         if heavy {
             s.squash = SQUASH_TICKS;

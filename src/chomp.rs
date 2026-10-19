@@ -230,9 +230,16 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     // (a little wobble as it hops)
     let body = if scripted { body } else { body * Quat::from_rotation_z((t * 7.0).sin() * 0.12) };
     parts[CHOMP] = PartPose { rot: body, pos: centre, scale: size, stretch };
+    // its jaw is the wedge of the ball its mouth is, so it squashes and stretches with it: a part
+    // only stretches along its own axes, turned open with the jaw, so it takes the ball's stretch
+    // along those (as near as they get), opens less the more lopsided the ball is (or they'd shear
+    // apart), and turns about the hinge where it is on the stretched ball
+    let jaw = jaw * (1.0 - (stretch.z - stretch.y).abs() * 1.2).clamp(0.3, 1.0);
+    let (sin, cos) = jaw.sin_cos();
+    let jaw_stretch = Vec3::new(stretch.x, stretch.y * cos * cos + stretch.z * sin * sin, stretch.y * sin * sin + stretch.z * cos * cos);
     let open = Quat::from_rotation_x(jaw);
-    let hinge = HINGE * stretch;
-    parts[JAW] = PartPose { rot: (body * open).normalize(), pos: centre + body * (hinge - open * hinge) * size, scale: size, stretch };
+    let pos = centre + body * (HINGE * stretch - open * (HINGE * jaw_stretch)) * size;
+    parts[JAW] = PartPose { rot: (body * open).normalize(), pos, scale: size, stretch: jaw_stretch };
     // the chain: from his hand to the back of the ball, its pairs of links spread along it (a
     // little bigger when it's long, so it reads as a chain), sagging when slack (and swaying a
     // little); a pair's second link is turned a quarter, so the next pair's first hooks into it.

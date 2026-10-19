@@ -121,11 +121,20 @@ pub enum Attack {
     /// on a colossus (colossus.rs): the star strike on a weak point, a blow anywhere else on it
     Sigil,
     SigilTap,
+    /// the hammer's (er_moves.c): King K. Rool's backhand, the charged quakes (a level up, the
+    /// titan's full one), Donkey Kong's drum's pounds
+    HammerWide,
+    QuakeBig,
+    Titan,
+    Pound,
+    /// X + A: the rising blow (the fists' spin kick, the hammer's upswing)
+    Rise,
+    HammerRise,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 66] = [
+const CODES: [Attack; 72] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -137,7 +146,8 @@ const CODES: [Attack; 66] = [
     Attack::Slip, Attack::ShellHit, Attack::Bomb, Attack::Boing, Attack::Rock, Attack::RockSlam,
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
     Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack, Attack::Sigil, Attack::SigilTap,
-    Attack::RideBlow, Attack::RideSmash,
+    Attack::RideBlow, Attack::RideSmash, Attack::HammerWide, Attack::QuakeBig, Attack::Titan, Attack::Pound, Attack::Rise,
+    Attack::HammerRise,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -183,8 +193,11 @@ impl Attack {
             Attack::Chain | Attack::Shell => Attack::Kick.spec(),
             Attack::ChainEnd | Attack::Launch => Attack::Stomp.spec(),
             Attack::Meteor => Attack::Stomp.spec(),
-            Attack::Hammer | Attack::HammerAir | Attack::Giro | Attack::TornadoEnd => Attack::Sweep.spec(),
-            Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd => {
+            Attack::Giro | Attack::TornadoEnd => Attack::Sweep.spec(),
+            // (the hammer's every blow staggers like a stomp at least, its heavy ones like a ground
+            // pound)
+            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::Pound | Attack::HammerRise | Attack::Rise => Attack::Stomp.spec(),
+            Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd => {
                 Attack::GroundPound.spec()
             }
             Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook | Attack::Tongue => Attack::Punch.spec(),
@@ -256,21 +269,30 @@ impl Attack {
             Attack::MeteorLand => (25.5, "damage_meteor_land"),
             Attack::Tornado => (5.5, "damage_tornado"),
             Attack::TornadoEnd => (18.0, "damage_tornado_end"),
-            // the hammer: slower than the fists, every blow heavier
-            Attack::Hammer => (16.5, "damage_hammer"),
-            Attack::HammerSmash => (25.5, "damage_hammer_smash"),
-            Attack::Quake => (19.5, "damage_hammer_slam"),
-            Attack::HammerAir => (13.5, "damage_hammer_air"),
+            // the hammer: the heavy one, few blows and slow, each worth two of the fists' or more
+            // (the fists' finishers' worth at the least); the Chain Chomp's least of all, many at
+            // once
+            Attack::Hammer => (30.0, "damage_hammer"),
+            Attack::HammerWide => (33.0, "damage_hammer_backhand"),
+            Attack::HammerSmash => (47.0, "damage_hammer_smash"),
+            Attack::Quake => (37.0, "damage_hammer_slam"),
+            Attack::QuakeBig => (53.0, "damage_hammer_slam_charged"),
+            Attack::Titan => (75.0, "damage_hammer_titan"),
+            Attack::HammerAir => (23.0, "damage_hammer_air"),
+            Attack::HammerRise => (28.0, "damage_hammer_rise"),
+            Attack::Pound => (17.0, "damage_hammer_pound"),
             Attack::Flurry => (6.0, "damage_hammer_flurry"),
-            Attack::FlurryEnd => (30.0, "damage_hammer_giant"),
-            Attack::Giro => (7.5, "damage_hammer_spin"),
-            Attack::GiroEnd => (21.0, "damage_hammer_spin_end"),
+            Attack::FlurryEnd => (58.0, "damage_hammer_giant"),
+            Attack::Giro => (13.0, "damage_hammer_spin"),
+            Attack::GiroEnd => (33.0, "damage_hammer_spin_end"),
+            // the fists' rising spin kick: a punch and a bit, it's the air string's start
+            Attack::Rise => (16.0, "damage_rise"),
             Attack::Chain => (12.0, "damage_string"),
             Attack::ChainEnd => (24.0, "damage_string_end"),
             Attack::Shell => (10.5, "damage_shell"),
             Attack::AirHit => (9.0, "damage_air"),
             // (it sets up the air string: the blows up there are the damage)
-            Attack::Launch => (10.0, "damage_hammer_launch"),
+            Attack::Launch => (20.0, "damage_hammer_launch"),
             // the boomerang: from afar and safe, a little each pass (it hits going and coming back)
             Attack::Rang => (3.0, "damage_boomerang"),
             Attack::RangBig => (3.0, "damage_boomerang_big"),
@@ -368,14 +390,19 @@ impl Attack {
             Attack::Uppercut | Attack::Meteor | Attack::Flurry | Attack::HammerAir => 1.3,
             Attack::Tornado | Attack::Giro => 1.2,
             Attack::UppercutTop => 1.7,
-            Attack::MeteorLand | Attack::HammerSmash => 1.8,
-            Attack::TornadoEnd | Attack::Hammer => 1.5,
-            Attack::Quake => 1.4,
-            Attack::FlurryEnd => 1.9,
-            Attack::GiroEnd => 1.6,
+            Attack::MeteorLand => 1.8,
+            Attack::TornadoEnd => 1.5,
+            // (the hammer's shares are big already: a boss loses a few % to its heaviest)
+            Attack::Hammer | Attack::HammerWide => 1.4,
+            Attack::HammerSmash | Attack::Quake => 1.3,
+            Attack::QuakeBig | Attack::FlurryEnd => 1.1,
+            Attack::Titan => 1.0,
+            Attack::Pound | Attack::HammerRise | Attack::GiroEnd => 1.2,
+            Attack::Rise => 1.4,
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
-            Attack::Shell | Attack::AirHit | Attack::Launch => 1.3,
+            Attack::Shell | Attack::AirHit => 1.3,
+            Attack::Launch => 1.2,
             Attack::Rang | Attack::RangBig | Attack::RangUpper | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::Egg => 1.0,
             Attack::YoshiStomp => 1.2,
             Attack::Chomp | Attack::ChompAir | Attack::ChompLaunch => 1.2,
@@ -410,10 +437,10 @@ impl Attack {
             Attack::Shell => 5,
             Attack::Tornado | Attack::Giro => 5,
             // a swing hits over 3 ticks, once; the next one comes 8 ticks later at the soonest
-            Attack::Hammer | Attack::HammerAir | Attack::Meteor => 6,
+            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Rise | Attack::Pound | Attack::Meteor => 6,
             Attack::HammerSmash => 4,
             // the finishers always land, right after the blows before them
-            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd | Attack::ChompEnd => 1,
+            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd | Attack::ChompEnd => 1,
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
@@ -438,6 +465,8 @@ impl Attack {
                 | Attack::TornadoEnd
                 | Attack::HammerSmash
                 | Attack::Quake
+                | Attack::QuakeBig
+                | Attack::Titan
                 | Attack::FlurryEnd
                 | Attack::GiroEnd
                 | Attack::ChainEnd
@@ -445,6 +474,22 @@ impl Attack {
                 | Attack::ChompLaunch
                 | Attack::RangUpper
         )
+    }
+
+    /// A heavy blow's weight on a strong enemy's stance (swing.rs, its stagger meter): the hammer
+    /// breaks it, more the heavier the blow.
+    fn posture(self) -> f32 {
+        match self {
+            Attack::Hammer | Attack::HammerWide => 6.0,
+            Attack::HammerAir | Attack::HammerRise | Attack::Launch => 5.0,
+            Attack::Pound => 4.0,
+            Attack::Quake => 9.0,
+            Attack::HammerSmash | Attack::GiroEnd => 12.0,
+            Attack::QuakeBig => 15.0,
+            Attack::FlurryEnd => 20.0,
+            Attack::Titan => 25.0,
+            _ => 0.0,
+        }
     }
 
     const ALL: [Attack; 6] = [Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash];
@@ -534,6 +579,8 @@ const KNOCK_EVERY: u32 = 105;
 /// Mega Mario's steps hurt the same enemy at most this often (ticks)
 const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
+/// Mega Mario's own slam against the hammer's (see take_share)
+const MEGA_SLAM: f32 = 0.5;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
 /// doesn't hurt those. Everyone else can be hit, friendly NPCs included, like with a weapon.
@@ -662,7 +709,7 @@ pub struct Combat {
     stomp_run: HashMap<u64, u32>,
     /// blows on each enemy in the current string, and the tick of the last one (their damage fades
     /// in a long string: a showy combo isn't over in a second)
-    string: HashMap<u64, (u32, u32)>,
+    string: HashMap<u64, (f32, u32)>,
     /// a MAX finisher that just landed: the blow and where (maxfin.rs takes it from here)
     max: Option<(Attack, glam::Vec3)>,
     /// the last blow on each enemy and how it was then (its kill's skillshot, skillshot.rs)
@@ -1519,6 +1566,11 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
     // Mega Mario's blows are a giant's
     if crate::mega::active() {
         pct *= crate::mega::DAMAGE;
+        // (his own slam, Y without the hammer, is the hammer's slam in his giant hands: at the
+        // weight it had before the hammer became the heavy weapon)
+        if crate::weapons::current() != crate::weapons::HAMMER && matches!(attack, Attack::Quake | Attack::QuakeBig | Attack::Titan) {
+            pct *= MEGA_SLAM;
+        }
     }
     // Metal Mario hits harder (his fireballs too)
     if crate::caps::active() == Some(crate::caps::METAL) {
@@ -1568,10 +1620,15 @@ fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
 /// each takes half of the one before (100%, 50%, 25%...), down to STOMP_FLOOR.
 const STOMP_FADE: f32 = 0.5;
 /// A string of blows on one enemy (no more than STRING_GAP ticks apart): the first STRING_FULL
-/// count in full, then each a share of the one before, down to STRING_FLOOR (a finisher's never
-/// below STRING_FINISHER_FLOOR)
+/// punches' worth count in full, then each blow a share of the one before (by its weight: a
+/// hammer's blow weighs two punches or more, a cyclone's a fraction of one), down to STRING_FLOOR
+/// (a finisher's never below STRING_FINISHER_FLOOR). (By count, the hammer's few heavy blows
+/// hardly ever faded and the cyclone's many light ones faded at once.)
 const STRING_GAP: u32 = 75;
-const STRING_FULL: u32 = 10;
+const STRING_FULL: f32 = 10.0;
+/// a punch's share: a blow's weight in a string is its share against this, within these
+const STRING_UNIT: f32 = 13.5;
+const STRING_WEIGHT: (f32, f32) = (0.3, 4.0);
 const STRING_FADE: f32 = 0.95;
 const STRING_FLOOR: f32 = 0.4;
 const STRING_FINISHER_FLOOR: f32 = 0.7;
@@ -1768,10 +1825,19 @@ const SHOCK_RADIUS: f32 = 260.0;
 
 /// The combos' reach (SM64 units): the hammer's head beyond its own size, the giant one's and the
 /// slams' blows around where it struck, the spins around Mario
-const HAMMER_HEAD_REACH: f32 = 125.0;
-const SMASH_RADIUS: f32 = 200.0;
-const QUAKE_RADIUS: f32 = 420.0;
-const GIANT_RADIUS: f32 = 520.0;
+const HAMMER_HEAD_REACH: f32 = 150.0;
+/// the Chain Chomp's body's (it shares the swept reach)
+const CHOMP_REACH: f32 = 125.0;
+const SMASH_RADIUS: f32 = 280.0;
+const QUAKE_RADIUS: f32 = 380.0;
+const QUAKE_BIG_RADIUS: f32 = 460.0;
+const TITAN_RADIUS: f32 = 600.0;
+const GIANT_RADIUS: f32 = 540.0;
+/// a pound of Donkey Kong's drum around where it struck, by the hammer's size; the rising spin
+/// kick a little in front of Mario
+const POUND_RADIUS: f32 = 150.0;
+const RISE_AHEAD: f32 = 60.0;
+const RISE_RADIUS: f32 = 150.0;
 const GIRO_RADIUS: f32 = 300.0;
 const UPPERCUT_RADIUS: f32 = 150.0;
 const METEOR_RADIUS: f32 = 130.0;
@@ -1798,6 +1864,11 @@ const ROCK_SLAM_RADIUS: f32 = 280.0;
 const HOME_RUN_REACH: f32 = 230.0;
 const SWING_KICK_RADIUS: f32 = 140.0;
 
+/// The swept weapon's reach beyond its head (SM64 units): the hammer's, or the Chomp's.
+fn head_reach() -> f32 {
+    if crate::weapons::current() == crate::weapons::CHOMP { CHOMP_REACH } else { HAMMER_HEAD_REACH }
+}
+
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
 fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], hit: crate::moves::Hit, swing: Option<crate::hammer::Swing>) -> Vec<(usize, Attack, bool)> {
@@ -1819,6 +1890,12 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::HammerSmash => (Attack::HammerSmash, Reach::Sweep),
         Hit::SmashWave => (Attack::HammerSmash, Reach::Around(head, SMASH_RADIUS)),
         Hit::Quake => (Attack::Quake, Reach::Around(head, QUAKE_RADIUS)),
+        Hit::QuakeBig => (Attack::QuakeBig, Reach::Around(head, QUAKE_BIG_RADIUS)),
+        Hit::Titan => (Attack::Titan, Reach::Around(head, TITAN_RADIUS)),
+        Hit::HammerWide => (Attack::HammerWide, Reach::Sweep),
+        Hit::HammerRise => (Attack::HammerRise, Reach::Sweep),
+        Hit::Pound => (Attack::Pound, Reach::Around(head, POUND_RADIUS * size)),
+        Hit::Rise => (Attack::Rise, Reach::Around(me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * RISE_AHEAD, RISE_RADIUS)),
         Hit::HammerAir => (Attack::HammerAir, Reach::Sweep),
         Hit::Flurry => (Attack::Flurry, Reach::Sweep),
         Hit::FlurryEnd => (Attack::FlurryEnd, Reach::Around(head, GIANT_RADIUS)),
@@ -1860,7 +1937,7 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
                 flat(foot - c).length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
             }
             Reach::Ring(c, r) => {
-                let reach = swing.map_or(0.0, |s| HAMMER_HEAD_REACH * s.scale);
+                let reach = swing.map_or(0.0, |s| head_reach() * s.scale);
                 flat(foot - c).length() <= r + reach + radius && c.y - 150.0 <= top && c.y + 250.0 >= foot.y
             }
             Reach::Front(r) => {
@@ -1876,7 +1953,7 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
                 let ab = b - a;
                 let k = if ab.length_squared() > 1.0 { ((flat(foot) - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
                 let at = s.prev.lerp(s.head, k);
-                let near = flat(foot - at).length() <= HAMMER_HEAD_REACH * s.scale + radius;
+                let near = flat(foot - at).length() <= head_reach() * s.scale + radius;
                 let level = at.y >= foot.y - 80.0 * s.scale && at.y <= top + 80.0 * s.scale;
                 // ...and someone hugging Mario, in front of him, inside the head's arc
                 let close = {
@@ -2160,9 +2237,9 @@ impl Combat {
                 // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
                 let stopped = crate::stopwatch::frozen(handle);
                 if stopped {
-                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Bonk | Attack::SwingKick);
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
-                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch) && !hands_off(handle) {
+                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
@@ -2184,8 +2261,8 @@ impl Combat {
                 let big = target.height > STOMP_HEIGHT || target.radius > 120.0;
                 match attack {
                     Attack::Stomp => crate::squish::start(handle, 0.35, 0.0),
-                    Attack::GroundPound | Attack::Quake | Attack::FlurryEnd | Attack::HammerSmash if big => crate::squish::start(handle, 0.35, 0.0),
-                    Attack::GroundPound | Attack::Quake | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
+                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash if big => crate::squish::start(handle, 0.35, 0.0),
+                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
                 // the Bowser spin's release flings regular enemies away, like the giant fireball
@@ -2207,24 +2284,29 @@ impl Combat {
                 if self.string.len() > 64 {
                     self.string.retain(|_, r| tick.wrapping_sub(r.1) <= STRING_GAP);
                 }
-                let run = self.string.entry(target.key).or_insert((0, tick));
+                let run = self.string.entry(target.key).or_insert((0.0, tick));
                 if tick.wrapping_sub(run.1) > STRING_GAP {
-                    run.0 = 0;
+                    run.0 = 0.0;
                 }
                 // (the giant fireball's burn and Mega's steps aren't blows of a string)
+                let before = run.0;
                 if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
-                    run.0 += 1;
+                    run.0 += (attack.percent().0 / STRING_UNIT).clamp(STRING_WEIGHT.0, STRING_WEIGHT.1);
                     run.1 = tick;
                 }
-                let fade = STRING_FADE.powi(run.0.saturating_sub(STRING_FULL) as i32).max(STRING_FLOOR);
+                let fade = STRING_FADE.powf((run.0 - STRING_FULL).max(0.0)).max(STRING_FLOOR);
                 let fade = if attack.finisher() { fade.max(STRING_FINISHER_FLOOR) } else { fade };
                 // (the Bros. Attack comes out of a string on it, BROS! by BROS!: it lands whole)
                 let fade = if matches!(attack, Attack::BrosAttack) { 1.0 } else { fade };
-                if fade < 1.0 && run.0 % 5 == 0 {
-                    log(format!("combat: string of {} on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
+                if fade < 1.0 && (before / 5.0).floor() != (run.0 / 5.0).floor() {
+                    log(format!("combat: string of {:.0} punches' worth on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
                 }
                 // (co-op guest: the health here is only a preview, never the last point: the host
                 // takes it off and ends the enemy)
+                // (the hammer's heavy blows break a strong enemy's stance, swing.rs)
+                if attack.posture() > 0.0 && !liftable(handle) && !crate::coop::guest() {
+                    crate::swing::add_stance(handle, attack.posture());
+                }
                 if take_share(handle, attack, scale * fade) && !crate::coop::guest() {
                     if !self.finishing.contains_key(&target.key) {
                         crate::style::kill(attack.finisher());
@@ -2308,7 +2390,8 @@ impl Combat {
             }
             // the banana, the shells, the boulder, the hook's crashes knock a regular enemy down
             // (the game's own knockdown: a bullet of its own)
-            let knock = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock | Attack::Bowled | Attack::Tether)
+            // (and the hammer's heaviest blows: the smash, the charged quakes, the giant one)
+            let knock = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Rock | Attack::Bowled | Attack::Tether | Attack::HammerSmash | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd)
                 && target.handle.as_ref().is_some_and(liftable)
                 && self.knocked.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= KNOCK_EVERY);
             if knock {

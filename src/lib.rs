@@ -3576,7 +3576,7 @@ fn frame(data: &FD4TaskData) {
                 })
                 .flatten()
         };
-        let moved = m.moves.tick(b_dash, y_move, x_move, fire_allowed, interacting, &m.state, m.combo.action_timer, lean, flow, m.ticks);
+        let moved = m.moves.tick(b_dash, y_move, x_move, a_pressed, fire_allowed, interacting, &m.state, m.combo.action_timer, m.combo.locked != 0, lean, flow, m.ticks);
         let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
@@ -3903,7 +3903,7 @@ fn frame(data: &FD4TaskData) {
                     blown::tick(id, &state, glam::Vec3::new(p.0, p.1, p.2));
                     // the noise he makes, that the enemies hear (the game hears no steps of his)
                     const ACT_GROUND_POUND_LAND: u32 = 0x0080_023C;
-                    const LOUD_FX: u32 = moves::FX_QUAKE | moves::FX_GIANT | moves::FX_METEOR | moves::FX_BANG;
+                    const LOUD_FX: u32 = moves::FX_QUAKE | moves::FX_GIANT | moves::FX_METEOR | moves::FX_BANG | moves::FX_SLAM;
                     let heavy = combo.fx & LOUD_FX != 0 || (state.action == ACT_GROUND_POUND_LAND && m.state.action != ACT_GROUND_POUND_LAND);
                     let attacking = !hits.is_empty() || moves::Hit::from(combo.hit).is_some() || state.flags & (0x0010_0000 | 0x0020_0000) != 0;
                     if !m.dead {

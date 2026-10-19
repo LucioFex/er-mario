@@ -773,3 +773,35 @@ mod tests {
         }
     }
 }
+
+/// The rubble a heavy blow throws up (impact.rs): each chunk a lumpy rock of eight faces (an
+/// octahedron, each corner pushed in or out by its seed), lit from above, earth-coloured, only its
+/// faces turned to the eye.
+pub fn rubble(look: &mut Look, rocks: &[crate::fx::Rock], eye: Vec3) {
+    const LIGHT: Vec3 = Vec3::new(0.3, 0.9, 0.25);
+    const FACES: [[usize; 3]; 8] = [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]];
+    let light = LIGHT.normalize();
+    for r in rocks {
+        if r.size < 0.01 {
+            continue;
+        }
+        // (each corner its own way out: a lump, not a gem)
+        let lump = |k: u32| 0.65 + 0.6 * ((r.seed.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503)) >> 7) % 1000) as f32 / 1000.0;
+        let corners = [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::Y * 0.8, -Vec3::Y * 0.7];
+        let p: Vec<Vec3> = corners.iter().enumerate().map(|(k, c)| r.pos + r.rot * (*c * r.size * lump(k as u32))).collect();
+        // (earth: a little darker or lighter, warmer or greyer by its seed)
+        let tone = 0.85 + 0.3 * (r.seed % 97) as f32 / 97.0;
+        let base = [0.46 * tone, 0.40 * tone, 0.33 * tone];
+        for f in FACES {
+            let (a, b, c) = (p[f[0]], p[f[1]], p[f[2]]);
+            // (out from its middle, whichever way round the corners go)
+            let n = (b - a).cross(c - a).normalize_or_zero();
+            let n = if n.dot(a + b + c - r.pos * 3.0) < 0.0 { -n } else { n };
+            if n.dot(eye - a) <= 0.0 {
+                continue;
+            }
+            let lit = 0.45 + 0.55 * n.dot(light).max(0.0);
+            look.tris.push(Tri { p: [a, b, c], col: [base[0] * lit, base[1] * lit, base[2] * lit, 1.0] });
+        }
+    }
+}

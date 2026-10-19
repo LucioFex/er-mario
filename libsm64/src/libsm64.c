@@ -227,7 +227,7 @@ SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z )
 }
 
 /** er-mario: the combos' moves (decomp/game/er_moves.c) */
-extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted, er_hold_y;
+extern int er_hammer_mode, er_juggle, er_move_hit, er_hammer_scripted, er_hold_y, er_move_locked;
 extern float er_loss_share;
 extern int er_weapon, er_rang_ready, er_move_throw, er_move_charge, er_chomp_scripted;
 extern f32 er_chomp_yaw, er_chomp_reach, er_chomp_height, er_chomp_bite;
@@ -1309,6 +1309,7 @@ SM64_LIB_FN void sm64_er_get_move(int32_t marioId, struct SM64ErMove *out)
     out->chompReach = er_chomp_reach;
     out->chompHeight = er_chomp_height;
     out->chompBite = er_chomp_bite;
+    out->locked = er_move_locked;
     out->actionArg = 0;
     out->actionTimer = 0;
     if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )

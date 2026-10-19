@@ -580,7 +580,7 @@ static BAG_START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instan
 /// tongue and eggs are hidden behind.
 fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fx: &crate::fx::WorldFx, bodies: &[(Vec3, f32)]) {
     // Mario's fireball: the charge at his hand, the shots, their bursts, the lava pools
-    draw_fire(dl, textures, size, &fx.fire);
+    draw_fire(dl, textures, size, &fx.fire, &fx.rubble);
 
     // enemies flying through the air (juggle.rs): a white streak behind each, fading
     for streak in &fx.streaks {
@@ -917,8 +917,8 @@ thread_local! {
 /// The fireballs (flame.rs's looks): 3D faces cut at the camera's near plane (a sun at arm's
 /// length isn't lost, nor flattened) and SM64's sprites, all drawn far to near together; the
 /// screen warming as a big one fills it, all fire inside one.
-fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fire: &crate::fx::FireFx) {
-    if fire.is_empty() {
+fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fire: &crate::fx::FireFx, rubble: &[crate::fx::Rock]) {
+    if fire.is_empty() && rubble.is_empty() {
         return;
     }
     let Some(view) = View::now(size) else { return };
@@ -928,6 +928,7 @@ fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], siz
         look.clear();
         items.clear();
         crate::flame::build(look, fire, &crate::flame::Eye { pos: view.eye, px: view.px, screen: size[1] }, crate::flame::clock());
+        crate::flame::rubble(look, rubble, view.eye);
         // (the light on the ground first, under all the rest)
         let under = look.under.len();
         for (i, t) in look.under.iter().chain(look.tris.iter()).enumerate() {

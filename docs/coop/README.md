@@ -47,6 +47,9 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 - Cada uno escucha los sonidos del otro (voz, pasos, golpes, armas, explosiones, poderes), más
   bajo que los propios y según la distancia. El Torrent del otro también se ve como Yoshi.
 - Sin una sesión de Seamless, el mod funciona igual que en un jugador.
+- Los golpes nuevos del martillo y el golpe ascendente (X + A) viajan con códigos nuevos: las dos
+  PCs tienen que tener el mismo build (los paquetes siguen en la versión 10). Los escombros 3D de
+  los golpes pesados solo los ve quien golpea.
 
 ## Requisitos (en las dos PCs)
 

@@ -1761,6 +1761,8 @@ void func_sh_8025574C(void) {
  */
 void er_moves_end_tick(struct MarioState *m);
 
+void er_apply_squash(struct MarioState *m);
+
 s32 execute_mario_action(UNUSED struct Object *o) {
     s32 inLoop = TRUE;
 
@@ -1815,6 +1817,8 @@ s32 execute_mario_action(UNUSED struct Object *o) {
 
         sink_mario_in_quicksand(gMarioState);
         squish_mario_model(gMarioState);
+        // er-mario: a move's squash and stretch on his body (er_moves.c)
+        er_apply_squash(gMarioState);
         set_submerged_cam_preset_and_spawn_bubbles(gMarioState);
         update_mario_health(gMarioState);
         update_mario_info_for_cam(gMarioState);
