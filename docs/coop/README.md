@@ -58,7 +58,10 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 
 ## Requisitos (en las dos PCs)
 
-1. **Elden Ring en Steam**, actualizado. Los dos tienen que ser amigos en Steam.
+1. **Elden Ring en Steam**, actualizado (ER Mario va con la versión 2.7.2, parche 1.17.2). Los dos
+   tienen que ser amigos en Steam. Cuando Steam actualiza Elden Ring, Seamless y Reforged también
+   necesitan su versión nueva: si el juego se cierra al abrirlo y `er_mario.log` no cambia, es eso
+   (ER Mario ni llegó a cargar).
 2. **Elden Ring Reforged (ERR)**, la **misma versión** en las dos PCs (Nexus Mods, mod 541; se usó la
    **2.3.6.3**). Se descomprime fuera de la carpeta del juego. En esta guía `<ERR>` es la carpeta que
    tiene los `.BAT` de lanzamiento, por ejemplo `C:\ERR - Elden Ring Reforged\ERRv2.3.6.3`.
@@ -192,6 +195,8 @@ a sí misma.
 
 | Línea del log | Qué significa |
 |---|---|
+| `version: ... not found` | Una actualización de Elden Ring movió esa parte del juego: esa función del mod queda apagada (el resto anda) |
+| `this game version is not supported` | Elden Ring es de otra versión que la que soporta este build: el mod queda apagado |
 | `net: steam_api64 lacks the messages API` | El juego no tiene la API de red: no se puede ver al otro como Mario |
 | `coop: session [] ...` con los dos conectados | La sesión de Seamless no está en `CSSessionManager`: falta investigarlo |
 | sin `coop: pose from` | No llegan los paquetes: revisar que los dos tengan el mismo `er_mario.dll` y que sean amigos en Steam |
