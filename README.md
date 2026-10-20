@@ -64,7 +64,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y, X | Mario Tornado |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's shot instead (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
 | D-pad up | Wing cap (recharges in about 55 s) |
@@ -327,6 +327,33 @@ the dice, never twice in a row) sends Mario flying far off, screaming; if a wall
 smacks into it with stars and a bonk (`src/blown.rs`). And a fall from very high up (over 22 m)
 is the end of him, as in Elden Ring.
 
+### Elements
+
+Each weapon imbues Mario's blows with one of Elden Ring's elements, and turns RB into a shot of
+it (`src/element.rs`; the looks in `src/elemfx.rs`):
+
+| Weapon | Element | What it builds up | RB |
+|---|---|---|---|
+| Fists | Fire | Nothing: an enemy weak to fire takes more of every blow | The fireball (charges up to the giant one and the sun) |
+| Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | An ice block lobbed in an arc at the enemy, tumbling; it shatters (charged: its shards hit whoever stands round it) |
+| Chain Chomp | Blood | **Blood loss**: a burst of 12% | A dark orb with crimson cracks and two gleaming eyes: quick, homes in hard, charged it bores through |
+| Boomerang | Poison | **Poison**: about 1% a second for 20 s | A poison glob, lobbed; it bursts into a cloud that poisons whoever stays in it |
+
+Every enemy takes them as Elden Ring has him: his resistance to each status (NpcParam) is what it
+takes to set it off (an immune one never), and a blow of an element he's weak to, or resists, is
+worth a little more or less (x0.8 to x1.25): "WEAK" or "RESIST" over him the first time. A status
+set off makes him tougher to it for a while (a boss much more), and what's built up fades if he's
+left alone, so no weapon wins everywhere: switching pays. The other weapons' shots charge up to
+the full shot (4 s); the giant fireball and the sun stay the fists' own.
+
+Taking a weapon shows its element: a burst of it at Mario's hand with a soft SM64 sound, then now
+and then a mote round the weapon (embers, snowflakes of ice, wisps of darkness, bubbles). The HUD
+shows the element's badge by the weapon (the fists' alone in its place), the weapon banner names
+it, and a thin bar under an enemy's health fills with what's built up on him (glowing while
+frostbite or poison is on him: its time left). Frostbite clings to him as ice crystals, blood loss
+sprays, poison bubbles off him; the statuses go through the same shares as the blows (bosses a few
+% at most).
+
 ### Damage balance
 
 Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
@@ -344,6 +371,8 @@ close and risky hits.
 | Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
+| Ice block, dark orb, poison glob | — | Ice **8-22%** by charge (charged, its shards **8%** on whoever stands round it); dark orb **6-16%**; poison glob **5-13%** and its cloud **1%** every half second |
+| Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |
 | Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |
 | Action command | — | **+30%** of the blow (every third **+50%**) |
@@ -448,7 +477,7 @@ replaces this fork's DLL with the original one.
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B. Forward + Y: leap into the weapon's dive |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow |
 | A just before an enemy's blow | | Mikiri stomp |
-| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools |
+| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer an ice block, the Chain Chomp a dark orb, the boomerang a poison glob (up to the 4 s charge) |
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
 | R3 | | Parry; with LT held, the grab |
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing. Held as it catches a spot high up or a colossus: the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
@@ -582,7 +611,8 @@ Co-op touches (nothing of this shows alone):
   power, style, last enemy hit, coin bag, down and its seconds left, boss fight, busy, a few times
   a second; the effects; the revive; the mod's own sounds with their volume; the Bros. Attack's
   leap and blow; the fireballs as balls, bursts and lava pools, each list's records sized so a later
-  build can add fields an older one skips). From version 4 on a build skips a
+  build can add fields an older one skips; the elements' shots, poison clouds, statuses on enemies
+  and weapon motes ride on those: a byte more per ball and three lists at the end). From version 4 on a build skips a
   kind of packet it doesn't know and reads a longer one as far as it knows, so later additions
   (grabbing and throwing your partner) can come without breaking it.
 

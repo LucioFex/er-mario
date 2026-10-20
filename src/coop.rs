@@ -1763,6 +1763,7 @@ pub fn hud(me: Vec3, dt: f32) -> Vec<crate::hud::PartnerHud> {
             revivable: m.st.flags & REVIVABLE != 0,
             down_left: m.st.down_left,
             revive: crate::revive::progress().filter(|r| r.0 == m.steam).map(|r| r.1),
+            weapon: m.st.weapon,
         });
     }
     out
@@ -2179,7 +2180,7 @@ mod tests {
         let Some(Packet::Pose { place: got, .. }) = decode(&bytes) else { panic!("no pose") };
         assert_eq!(got, None);
         // the effects on their own
-        let fx = crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0 }], ..Default::default() }, ..Default::default() };
+        let fx = crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0, element: 0 }], ..Default::default() }, ..Default::default() };
         let Some(Packet::Fx { seq, ms, fx: got }) = decode(&encode(&Packet::Fx { seq: 65535, ms: 42, fx: std::sync::Arc::new(fx.clone()) })) else { panic!("no effects") };
         assert_eq!((seq, ms), (65535, 42));
         assert!(got.fire.orbs.len() == 1 && got.fire.orbs[0].pos.distance(fx.fire.orbs[0].pos) < 0.01);
@@ -2376,7 +2377,7 @@ mod tests {
         let mut r = Remote::new(1, 0, 0x880, false);
         let pose = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
         r.add(Some(clock()), pose, None);
-        let fx = std::sync::Arc::new(crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0 }], ..Default::default() }, ..Default::default() });
+        let fx = std::sync::Arc::new(crate::fx::WorldFx { fire: crate::fx::FireFx { orbs: vec![crate::fx::Orb { pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::Z, size: 1.0, level: 2, age: 3, flags: 0, ground: None, vis: 1.0, element: 0 }], ..Default::default() }, ..Default::default() });
         // a moment ago (behind the time they're shown at): shown
         r.add_fx(clock() - 0.1, fx.clone());
         assert!(r.fx().is_some());

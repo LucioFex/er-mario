@@ -130,11 +130,22 @@ pub enum Attack {
     /// X + A: the rising blow (the fists' spin kick, the hammer's upswing)
     Rise,
     HammerRise,
+    /// RB with the other weapons (fireball.rs, by charge level 0-3, element.rs their elements):
+    /// the hammer's ice block, the Chain Chomp's dark orb, the boomerang's poison glob, and the
+    /// cloud of poison the glob leaves where it bursts
+    Ice(u8),
+    Dark(u8),
+    Venom(u8),
+    VenomCloud,
+    /// a status going off on an enemy (element.rs): frostbite's burst, blood loss, a tick of poison
+    Frostbite,
+    Hemorrhage,
+    PoisonTick,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 72] = [
+const CODES: [Attack; 88] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -147,7 +158,9 @@ const CODES: [Attack; 72] = [
     Attack::HomeRun, Attack::Bowled, Attack::Tether, Attack::SwingKick, Attack::MaxFlurry, Attack::MaxUpper,
     Attack::MaxQuake, Attack::MaxCyclone, Attack::RideCrash, Attack::BrosAttack, Attack::Sigil, Attack::SigilTap,
     Attack::RideBlow, Attack::RideSmash, Attack::HammerWide, Attack::QuakeBig, Attack::Titan, Attack::Pound, Attack::Rise,
-    Attack::HammerRise,
+    Attack::HammerRise, Attack::Ice(0), Attack::Ice(1), Attack::Ice(2), Attack::Ice(3), Attack::Dark(0), Attack::Dark(1),
+    Attack::Dark(2), Attack::Dark(3), Attack::Venom(0), Attack::Venom(1), Attack::Venom(2), Attack::Venom(3), Attack::VenomCloud,
+    Attack::Frostbite, Attack::Hemorrhage, Attack::PoisonTick,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -224,6 +237,9 @@ impl Attack {
             Attack::MaxFlurry => Attack::Punch.spec(),
             Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil => Attack::GroundPound.spec(),
             Attack::SigilTap => Attack::Punch.spec(),
+            Attack::Ice(level) | Attack::Dark(level) | Attack::Venom(level) => Attack::Fire(level.min(3)).spec(),
+            Attack::VenomCloud | Attack::PoisonTick => Attack::Punch.spec(),
+            Attack::Frostbite | Attack::Hemorrhage => Attack::Stomp.spec(),
         }
     }
 
@@ -345,7 +361,33 @@ impl Attack {
             // climb: its grip runs out); a blow anywhere else on it is a scratch
             Attack::Sigil => (12.0, "damage_star_strike"),
             Attack::SigilTap => (2.0, "damage_colossus_blow"),
+            // the other weapons' shots: the ice block slow and heavy (a lob), the dark orb quick and
+            // light (its worth is the blood loss it builds), the poison glob least (its cloud and the
+            // poison are the rest)
+            Attack::Ice(0) => (14.0, "damage_ice"),
+            Attack::Ice(1) => (19.0, "damage_ice_charged"),
+            Attack::Ice(2) => (26.0, "damage_ice_charged_2"),
+            Attack::Ice(_) => (36.0, "damage_ice_max"),
+            Attack::Dark(0) => (10.0, "damage_dark"),
+            Attack::Dark(1) => (14.0, "damage_dark_charged"),
+            Attack::Dark(2) => (19.0, "damage_dark_charged_2"),
+            Attack::Dark(_) => (27.0, "damage_dark_max"),
+            Attack::Venom(0) => (8.0, "damage_venom"),
+            Attack::Venom(1) => (11.0, "damage_venom_charged"),
+            Attack::Venom(2) => (15.0, "damage_venom_charged_2"),
+            Attack::Venom(_) => (21.0, "damage_venom_max"),
+            Attack::VenomCloud => (1.5, "damage_venom_cloud"),
+            // the statuses (element.rs): a burst worth a heavy blow, poison a little a second for
+            // its 20 s (a fifth of a regular enemy's health in all)
+            Attack::Frostbite => (15.0, "damage_frostbite"),
+            Attack::Hemorrhage => (20.0, "damage_blood_loss"),
+            Attack::PoisonTick => (1.6, "damage_poison"),
         }
+    }
+
+    /// A status going off on him (element.rs): no blow of Mario's, none of a blow's bonuses.
+    pub fn status(self) -> bool {
+        matches!(self, Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick)
     }
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
@@ -353,6 +395,10 @@ impl Attack {
         matches!(
             self,
             Attack::Fire(_)
+                | Attack::Ice(_)
+                | Attack::Dark(_)
+                | Attack::Venom(_)
+                | Attack::VenomCloud
                 | Attack::FireSweep
                 | Attack::Ember
                 | Attack::Rang
@@ -421,6 +467,12 @@ impl Attack {
             Attack::BrosAttack => 1.5,
             Attack::Sigil => 1.5,
             Attack::SigilTap => 1.0,
+            Attack::Ice(level) | Attack::Dark(level) | Attack::Venom(level) => 1.0 + 0.15 * level as f32,
+            Attack::VenomCloud => 1.0,
+            // (rare on a boss: his resistance grows with each, element.rs)
+            Attack::Frostbite => 1.3,
+            Attack::Hemorrhage => 1.4,
+            Attack::PoisonTick => 1.2,
         }
     }
 
@@ -448,7 +500,7 @@ impl Attack {
             Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1,
             // (one bowling a second: it rolls on over them)
             Attack::Rock => 30,
-            Attack::FireSweep | Attack::Ember | Attack::Trample => 1,
+            Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
@@ -490,6 +542,13 @@ impl Attack {
             Attack::Titan => 25.0,
             _ => 0.0,
         }
+    }
+
+    /// A blow's weight against a punch's (its share over a punch's, within 0.2-2.5): how much of
+    /// its weapon's status it builds up (element.rs; the Chomp's cyclone, many light blows a second,
+    /// builds up little each)
+    pub fn weight(self) -> f32 {
+        (self.percent().0 / STRING_UNIT).clamp(0.2, 2.5)
     }
 
     const ALL: [Attack; 6] = [Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash];
@@ -1397,6 +1456,7 @@ pub fn tags() -> Vec<crate::hud::Tag> {
                 hp: hp / max,
                 before: if combo { t.before as f32 / max } else { hp / max },
                 dmg: if combo { t.dmg } else { 0 },
+                status: crate::element::bar(&t.handle),
             })
         })
         .collect()
@@ -1507,6 +1567,7 @@ pub fn bosses() -> Vec<crate::hud::BossBar> {
                 hp: hp / max,
                 before: combo.map(|t| t.before as f32 / max).unwrap_or(hp / max),
                 dmg: combo.map(|t| t.dmg).unwrap_or(0),
+                status: crate::element::bar(&e.field_ins_handle),
             })
         })
         .collect()
@@ -1529,24 +1590,25 @@ fn pass_to_bar(wcm: &mut WorldChrMan, dealt: i32) {
 }
 
 /// Takes the attack's share of the character's max HP (never the last point: the bullet deals the
-/// final blow, so the kill is the game's own). Returns true if it's down to that last point.
+/// final blow, so the kill is the game's own). Returns whether he's down to that last point now;
+/// None if the blow took nothing (an ally, a boss in the middle of a scripted turn, a thrown one).
 /// `scale`: a share of the attack's damage (stomps in a row, Combat::deal).
-fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
-    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return false };
+fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<bool> {
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return None };
     let bar = is_boss(handle);
     // a thrown boss in the air or lying limp takes no hits (the throw's impact is the damage)
     if crate::swing::is_down(handle) || hands_off(handle) {
-        return false;
+        return None;
     }
     // (nor while a real blow is finding out whether he can die: his health is the answer)
     if PROBES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|p| p.get(&handle_key(handle)).is_some_and(|p| p.fired.is_some())) {
-        return false;
+        return None;
     }
-    let Some(chr) = wcm.chr_ins_by_handle_mut(handle) else { return false };
+    let Some(chr) = wcm.chr_ins_by_handle_mut(handle) else { return None };
     let team = chr.team_type;
     if own_side(team) {
         log(format!("combat: team {team} is on the player's side, no damage"));
-        return false;
+        return None;
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
@@ -1556,11 +1618,11 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
         pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
     }
     // a counter, out of a perfect dodge (dodge.rs): blows up close, not shots from afar
-    if crate::dodge::countering() && !attack.ranged() {
+    if crate::dodge::countering() && !attack.ranged() && !attack.status() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
     // co-op: BROS POWER, the partner just leapt off us into a Bros. Attack (brosattack.rs)
-    if crate::brosattack::powered() && !attack.ranged() {
+    if crate::brosattack::powered() && !attack.ranged() && !attack.status() {
         pct *= crate::brosattack::POWER;
     }
     // Mega Mario's blows are a giant's
@@ -1578,15 +1640,20 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> bool {
         if let Some((t, tmax)) = crate::swing::toughness_of(handle) {
             log(format!("combat: boss poise {t:.0}/{tmax:.0}"));
         }
-        crate::swing::add_stance(handle, attack.spec().3);
+        // (not what burns or poisons on its own pace: no stance broken by standing in a cloud)
+        if !attack.status() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::VenomCloud) {
+            crate::swing::add_stance(handle, attack.spec().3);
+        }
     }
     // the red NPC invaders are fights of their own, not two-hit mobs
     if !boss && matches!(chr.chr_type, ChrType::BloodyFingerNpc | ChrType::RecusantNpc) {
         pct *= config_f32("invader_damage_factor", INVADER_FACTOR);
     }
+    // the weapon's element against him (element.rs): weak to it, or resisting it; frostbitten
+    pct *= crate::element::damage_factor(handle, chr, attack);
     // co-op guest: the host takes it off (here only a preview of it, see take_pct)
     crate::coop::send_hit(handle, attack.code(), pct);
-    take_pct(handle, pct, &format!("{attack:?}"))
+    Some(take_pct(handle, pct, &format!("{attack:?}")))
 }
 
 /// Takes `pct` of the character's max HP (never the last point). Returns true if it's down to
@@ -2220,7 +2287,7 @@ impl Combat {
             }
             // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
             // burn and Mega's steps come at their own pace and leave Mario's blows free)
-            if !own_pace && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample) {
+            if !own_pace && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                 self.cooldown.insert(target.key, tick);
             }
             if let Some(handle) = &target.handle {
@@ -2249,7 +2316,7 @@ impl Combat {
                     }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether) {
+                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -2290,7 +2357,7 @@ impl Combat {
                 }
                 // (the giant fireball's burn and Mega's steps aren't blows of a string)
                 let before = run.0;
-                if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
+                if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                     run.0 += (attack.percent().0 / STRING_UNIT).clamp(STRING_WEIGHT.0, STRING_WEIGHT.1);
                     run.1 = tick;
                 }
@@ -2307,13 +2374,21 @@ impl Combat {
                 if attack.posture() > 0.0 && !liftable(handle) && !crate::coop::guest() {
                     crate::swing::add_stance(handle, attack.posture());
                 }
-                if take_share(handle, attack, scale * fade) && !crate::coop::guest() {
+                let took = take_share(handle, attack, scale * fade);
+                if took == Some(true) && !crate::coop::guest() {
                     if !self.finishing.contains_key(&target.key) {
                         crate::style::kill(attack.finisher());
                     }
                     self.finishing.entry(target.key).or_insert((*handle, tick));
                 }
                 let chest = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                // the weapon's element (element.rs): its status builds up on him, and goes off (only
+                // from a blow that took something)
+                if took.is_some() {
+                    if let Some(status) = crate::element::struck(handle, attack, chest, tick) {
+                        self.extra_share(handle, status, 1.0, tick);
+                    }
+                }
                 // (what hit it last, and how it was: up in the air or not)
                 {
                     let airborne = crate::juggle::is_juggled(handle) || crate::bat::is_flying(handle) || crate::knock::is_flying(handle);
@@ -2359,13 +2434,13 @@ impl Combat {
                 }
             }
             let (bullet, ..) = attack.spec();
-            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample) {
+            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                 crate::style::hit(attack, target.key);
                 // (co-op: both on one enemy is a BROS!)
                 crate::coop::own_hit(target.key, glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.6, target.er.2));
             }
             // (breaking a jar or a crate is no blow to stop for)
-            if !matches!(attack, Attack::Fire(_) | Attack::FireSweep | Attack::Ember) && !target.is_prop() {
+            if !matches!(attack, Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::FireSweep | Attack::Ember) && !target.is_prop() {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
@@ -2378,8 +2453,8 @@ impl Combat {
             // nor wake. So a bullet only where it matters: a heavy blow or a finisher, else at most
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
-            let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
+            let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::VenomCloud);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || !(heavy || due) {
                 continue;
@@ -2414,7 +2489,8 @@ impl Combat {
     }
 
     /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
-    /// command's bonus, timing.rs), with its own kill if it's the one that ends him.
+    /// command's bonus, timing.rs; or a status going off, element.rs), with its own kill if it's the
+    /// one that ends him.
     pub fn extra_share(&mut self, handle: &FieldInsHandle, attack: Attack, extra: f32, tick: u32) {
         if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
             return;
@@ -2425,7 +2501,7 @@ impl Combat {
             return;
         }
         self.victims.insert(key, (*handle, tick));
-        if take_share(handle, attack, extra) && !crate::coop::guest() {
+        if take_share(handle, attack, extra) == Some(true) && !crate::coop::guest() {
             if !self.finishing.contains_key(&key) {
                 crate::style::kill(attack.finisher());
             }

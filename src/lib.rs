@@ -21,6 +21,8 @@ mod colossus;
 mod combat;
 mod coop;
 mod dodge;
+mod element;
+mod elemfx;
 mod engine_mario;
 mod fireball;
 mod flame;
@@ -2283,6 +2285,7 @@ fn frame(data: &FD4TaskData) {
             bat::clear();
             maxfin::clear();
             brosattack::clear();
+            element::clear();
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
             mega::clear();
             set_scale(BASE_SCALE);
@@ -2868,6 +2871,7 @@ fn frame(data: &FD4TaskData) {
         ride::clear();
         chomp::clear();
         impact::clear();
+        element::clear();
         knock::clear();
         juggle::clear();
         style::clear();
@@ -3425,6 +3429,7 @@ fn frame(data: &FD4TaskData) {
             chomp::set_out(w == weapons::CHOMP);
             let hand = to_er(m.origin, m.state.position);
             impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), w != weapons::FISTS);
+            element::switched(w, glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2));
             if m.moves.swapping() {
                 impact::swap(glam::Vec3::new(hand.0, hand.1, hand.2));
             }
@@ -3898,6 +3903,25 @@ fn frame(data: &FD4TaskData) {
                 }
                 // co-op host: the guest's blows (coop.rs)
                 m.combat.remote_hits(m.ticks);
+                // the statuses on enemies (element.rs): poison's ticks; a mote of the element in hand
+                // off the weapon now and then
+                for (h, attack) in element::tick(m.ticks) {
+                    m.combat.extra_share(&h, attack, 1.0, m.ticks);
+                }
+                if let Some(p) = m.parts.as_ref() {
+                    let feet = to_er(m.origin, state.position);
+                    let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+                    let points: &[usize] = match weapons::current() {
+                        weapons::HAMMER => &[engine_mario::HAMMER],
+                        weapons::CHOMP => &[engine_mario::CHOMP],
+                        weapons::RANG => &[9],
+                        _ => &[6, 9],
+                    };
+                    let at: Vec<glam::Vec3> = points.iter().filter_map(|&i| p.get(i)).map(|q| feet + q.pos).collect();
+                    if !m.dead && caps::active() != Some(caps::VANISH) {
+                        element::ambient(&at, m.ticks);
+                    }
+                }
                 {
                     let p = to_er(m.origin, state.position);
                     blown::tick(id, &state, glam::Vec3::new(p.0, p.1, p.2));

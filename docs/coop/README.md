@@ -50,6 +50,11 @@ Antes de pasar al paso siguiente, comprobá cada verificación (✔).
 - Los golpes nuevos del martillo y el golpe ascendente (X + A) viajan con códigos nuevos: las dos
   PCs tienen que tener el mismo build (los paquetes siguen en la versión 10). Los escombros 3D de
   los golpes pesados solo los ve quien golpea.
+- **Elementos**: cada arma tiene el suyo (puños fuego, martillo escarcha, Chain Chomp sangrado,
+  boomerang veneno) y el RB tira un disparo de ese elemento. Cada uno acumula sus propios estados
+  sobre los enemigos; el daño de los estados del invitado lo descuenta el anfitrión, como sus
+  golpes. Se ven los disparos, las nubes de veneno, los estados sobre los enemigos y las partículas
+  del arma del otro. En la tarjeta del compañero aparece el ícono de su elemento.
 
 ## Requisitos (en las dos PCs)
 
@@ -205,6 +210,8 @@ a sí misma.
 | `input: interact (D-pad down) pressed, no event animation ... possible actions ...` | La flecha abajo no hizo nada: dice qué acciones permitía el juego, tipo de personaje, si está en el piso y a qué distancia de Mario está el Tarnished |
 | `follow: interact started anim N ... on D-pad down (allowed ...)` | La flecha abajo sí abrió una puerta/agarró algo |
 | `coop: partner's fireball level N in 3D (...)` | Llegó la bola de fuego del otro con el formato nuevo (versión 10) y se dibuja en 3D; sale una vez por nivel |
+| `element: X set off on cXXXX ...` / `element: cXXXX weak to X` / `resists X` | Un estado (FROST, BLOOD, POISON) saltó sobre un enemigo / el enemigo es débil o resistente a ese elemento |
+| `element: NpcParam N: fire cut ... frost ... blood ... poison ...` | Las resistencias que el mod leyó de ese tipo de enemigo (una vez por tipo) |
 | `coop: BROS! (both on one enemy)` | Los dos le pegaron al mismo enemigo dentro de 1,5 s |
 | `bros: BROS ATTACK ready on ...` | Se marcó un enemigo para el Bros. Attack (las dos caras arriba) |
 | `bros: BROS ATTACK! leap at ...` / `bros: BROS ATTACK landed on ...` | El salto desde la cabeza del otro salió / el golpe pegó |

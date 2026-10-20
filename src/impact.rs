@@ -142,7 +142,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         Attack::BrosAttack => (6, 1.8, true),
         Attack::Sigil => (6, 1.7, true),
         Attack::SigilTap => (1, 0.8, false),
-        Attack::Fire(_) => return,
+        Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => return,
     };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
     let mega = crate::mega::active();
@@ -410,6 +410,13 @@ pub fn frost(feet: Vec3) {
     ring(feet + Vec3::Y * 0.9, 1.0, 0.5, WHITE);
     spark(feet + Vec3::Y * 0.9, 1.2, ICE);
     flash([0.5, 0.75, 1.0], 0.3, 0.5);
+}
+
+/// A blow of a weapon's element (element.rs): a spark of its colour on him, `k` its size (bigger
+/// where it tells).
+pub fn element_spark(at: Vec3, tint: [f32; 3], k: f32) {
+    let off = Vec3::new(crate::rand01() - 0.5, crate::rand01() * 0.4, crate::rand01() - 0.5) * 0.4;
+    spark(at + off, 0.25 + 0.55 * k, [tint[0], tint[1], tint[2], 0.45 + 0.45 * k]);
 }
 
 pub fn flame_lick(at: Vec3) {

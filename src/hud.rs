@@ -354,12 +354,14 @@ pub fn set_counters(deaths: u32, coins: u32, stars: u32) {
     STARS.store(stars, Ordering::Relaxed);
 }
 
-/// An enemy health bar (combat.rs): feet position, HP now and before the combo (0..1), combo damage.
+/// An enemy health bar (combat.rs): feet position, HP now and before the combo (0..1), combo damage,
+/// the status built up on him or on him now (element.rs)
 pub struct Tag {
     pub pos: Vec3,
     pub hp: f32,
     pub before: f32,
     pub dmg: i32,
+    pub status: Option<crate::element::Bar>,
 }
 
 static TAGS: Mutex<Vec<Tag>> = Mutex::new(Vec::new());
@@ -370,6 +372,7 @@ pub struct BossBar {
     pub hp: f32,
     pub before: f32,
     pub dmg: i32,
+    pub status: Option<crate::element::Bar>,
 }
 
 static BOSSES: Mutex<Vec<BossBar>> = Mutex::new(Vec::new());
@@ -404,6 +407,8 @@ pub struct PartnerHud {
     pub revivable: bool,
     pub down_left: Option<u8>,
     pub revive: Option<f32>,
+    /// the weapon in their hand (weapons.rs): its element's badge on their card
+    pub weapon: u8,
 }
 
 /// (Seamless Co-op takes up to four players)
@@ -440,6 +445,63 @@ pub fn set_partners(partners: Vec<PartnerHud>) {
 }
 
 /// `n` in decimal into `buf`, as text (no allocation: the HUD draws every frame).
+/// An element's badge (element.rs): a dark disc ringed in its colour with its sign in it: one of
+/// SM64's flames flickering, a snowflake, a drop of blood, bubbles. `c` its centre, `r` its radius.
+fn element_badge(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], c: [f32; 2], r: f32, el: crate::element::Element, alpha: f32, clock: f32) {
+    use crate::element::Element;
+    let t = el.tint();
+    let col = |rgb: [f32; 3], a: f32| [rgb[0], rgb[1], rgb[2], a * alpha];
+    dl.add_circle(c, r, [0.0, 0.0, 0.0, 0.55 * alpha]).filled(true).build();
+    dl.add_circle(c, r, col(t, 0.9)).thickness((r * 0.13).max(1.0)).build();
+    let at = |x: f32, y: f32| [c[0] + x * r, c[1] + y * r];
+    match el {
+        Element::Fire => {
+            let k = r * 0.78;
+            let frame = (clock * 12.0) as usize % 8;
+            dl.add_image(textures[IMG_FLAME + frame], [c[0] - k, c[1] - k * 1.05], [c[0] + k, c[1] + k * 0.95]).col([1.0, 1.0, 1.0, alpha]).build();
+        }
+        Element::Frost => {
+            let w = (r * 0.14).max(1.0);
+            let ice = col([0.85, 0.96, 1.0], 1.0);
+            for k in 0..3 {
+                let a = std::f32::consts::PI * (0.5 + k as f32 / 3.0);
+                let (dx, dy) = (a.cos(), a.sin());
+                dl.add_line(at(dx * 0.62, dy * 0.62), at(-dx * 0.62, -dy * 0.62), ice).thickness(w).build();
+                for s in [1.0f32, -1.0] {
+                    let (bx, by) = (dx * 0.36 * s, dy * 0.36 * s);
+                    for turn in [0.7f32, -0.7] {
+                        let (ca, sa) = (turn.cos(), turn.sin());
+                        let (ex, ey) = (dx * s * ca - dy * s * sa, dx * s * sa + dy * s * ca);
+                        dl.add_line(at(bx, by), at(bx + ex * 0.22, by + ey * 0.22), ice).thickness(w * 0.8).build();
+                    }
+                }
+            }
+        }
+        Element::Blood => {
+            let red = col([0.78, 0.06, 0.1], 1.0);
+            dl.add_circle(at(0.0, 0.2), r * 0.38, red).filled(true).build();
+            dl.add_triangle(at(0.0, -0.62), at(-0.33, 0.08), at(0.33, 0.08), red).filled(true).build();
+            dl.add_circle(at(-0.14, 0.12), r * 0.1, col([1.0, 0.75, 0.75], 0.7)).filled(true).build();
+        }
+        Element::Poison => {
+            for (x, y, b) in [(-0.27f32, 0.2f32, 0.3f32), (0.26, 0.12, 0.24), (0.0, -0.32, 0.2)] {
+                dl.add_circle(at(x, y), r * b, col([0.5, 0.85, 0.25], 1.0)).filled(true).build();
+                dl.add_circle(at(x, y), r * b, col([0.55, 0.25, 0.7], 1.0)).thickness((r * 0.08).max(1.0)).build();
+                dl.add_circle(at(x - b * 0.35, y - b * 0.35), r * b * 0.28, col([1.0, 1.0, 1.0], 0.75)).filled(true).build();
+            }
+        }
+    }
+}
+
+/// A status bar under a health bar (element.rs): `x0`, `y0` its top left, `w` wide, `h` tall; built
+/// up it fills in the status's colour, on him it shows its time left, glowing.
+fn status_bar(dl: &imgui::draw_list::DrawListMut<'_>, x0: f32, y0: f32, w: f32, h: f32, bar: &crate::element::Bar, clock: f32) {
+    let t = bar.tint;
+    dl.add_rect([x0 - 1.0, y0 - 1.0], [x0 + w + 1.0, y0 + h + 1.0], [0.0, 0.0, 0.0, 0.6]).filled(true).build();
+    let a = if bar.on { 0.75 + 0.25 * (clock * 7.0).sin() } else { 0.85 };
+    dl.add_rect([x0, y0], [x0 + w * bar.fill.clamp(0.0, 1.0), y0 + h], [t[0], t[1], t[2], a]).filled(true).build();
+}
+
 fn digits_of(n: u16, buf: &mut [u8; 5]) -> &str {
     let mut k = buf.len();
     let mut n = n;
@@ -1406,10 +1468,18 @@ impl ImguiRenderLoop for Overlay {
                     }
                 }
             }
+            // the element in hand (element.rs): its badge at the weapon's corner (below), the fists'
+            // alone in the weapon's spot
+            if weapon.is_none() {
+                let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
+                element_badge(&dl, textures, [x + s * 0.5, y0 + s * 0.5], s * 0.36, crate::element::current(), 1.0, t);
+            }
             if let Some(img) = weapon {
                 let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
                 dl.add_rect([x - px * 2.0, y0 - px * 2.0], [x + s + px * 2.0, y0 + s + px * 2.0], [0.0, 0.0, 0.0, 0.35]).filled(true).rounding(px * 3.0).build();
                 dl.add_image(textures[img], [x, y0], [x + s, y0 + s]).build();
+                let el = crate::element::current();
+                element_badge(&dl, textures, [x + s * 0.95, y0 + s * 0.88], s * 0.3, el, 1.0, t);
                 if crate::weapons::current() == crate::weapons::RANG {
                     for k in 0..crate::boomerang::ready() {
                         let c = [x + s * (0.2 + 0.3 * k as f32), y0 + s + px * 3.0];
@@ -1439,6 +1509,9 @@ impl ImguiRenderLoop for Overlay {
             dl.add_rect([x0 - 2.0, y0 - 2.0], [x0 + w + 2.0, y0 + h + 2.0], [0.0, 0.0, 0.0, 0.7]).filled(true).build();
             rect(boss.hp, boss.before.max(boss.hp), [0.85, 0.7, 0.2, 1.0]);
             rect(0.0, boss.hp, [0.6, 0.05, 0.05, 1.0]);
+            if let Some(bar) = &boss.status {
+                status_bar(&dl, x0, y0 + h + 4.0, w * 0.3, (h * 0.5).max(2.0), bar, crate::flame::clock());
+            }
             if boss.dmg > 0 {
                 let digits = boss.dmg.to_string();
                 let mut x = x0 + w - digits.len() as f32 * g * 0.8;
@@ -1464,6 +1537,9 @@ impl ImguiRenderLoop for Overlay {
             dl.add_rect([x0 - 2.0, y0 - 2.0], [x0 + w + 2.0, y0 + h + 2.0], [0.0, 0.0, 0.0, 0.7]).filled(true).build();
             rect(tag.hp, tag.before.max(tag.hp), [0.85, 0.7, 0.2, 1.0]);
             rect(0.0, tag.hp, [0.6, 0.05, 0.05, 1.0]);
+            if let Some(bar) = &tag.status {
+                status_bar(&dl, x0, y0 + h + 3.0, w, (h * 0.55).max(2.0), bar, crate::flame::clock());
+            }
             if tag.dmg > 0 {
                 let g = 10.0 * px;
                 for (k, ch) in tag.dmg.to_string().bytes().enumerate() {
@@ -1728,9 +1804,13 @@ impl ImguiRenderLoop for Overlay {
             let pop = (1.0 - age / 0.15).max(0.0);
             let fade = 1.0 - ((age - crate::weapons::BANNER_TIME * 0.7) / (crate::weapons::BANNER_TIME * 0.3)).clamp(0.0, 1.0);
             let name = crate::weapons::NAMES[w as usize];
+            let el = crate::element::Element::of_weapon(w);
             let g = 12.0 * px * (1.0 + 0.5 * pop);
             let n = name.chars().count() as f32;
-            let width = n * g * 0.78 + g * 1.6;
+            // (then its element: its badge and its name in its colour)
+            let ge = g * 0.8;
+            let el_w = g * 1.3 + el.name().chars().count() as f32 * ge * 0.78;
+            let width = n * g * 0.78 + g * 1.6 + el_w;
             let (cx, cy) = (size[0] * 0.5, size[1] * 0.78);
             let icon = match w {
                 crate::weapons::HAMMER => IMG_HAMMER_ICON,
@@ -1745,6 +1825,15 @@ impl ImguiRenderLoop for Overlay {
                 if let Some(id) = glyph_for(c) {
                     let x = x0 + g * 1.6 + (k as f32 + 0.5) * g * 0.78;
                     dl.add_image(textures[id], [x - g * 0.5, cy - g * 0.5], [x + g * 0.5, cy + g * 0.5]).col([1.0, 0.95, 0.7, fade]).build();
+                }
+            }
+            let ex = x0 + g * 1.6 + n * g * 0.78 + g * 0.3;
+            element_badge(&dl, textures, [ex + g * 0.45, cy], g * 0.45, el, fade, crate::flame::clock());
+            let tint = el.tint();
+            for (k, c) in el.name().chars().enumerate() {
+                if let Some(id) = glyph_for(c) {
+                    let x = ex + g * 1.1 + (k as f32 + 0.5) * ge * 0.78;
+                    dl.add_image(textures[id], [x - ge * 0.5, cy - ge * 0.5], [x + ge * 0.5, cy + ge * 0.5]).col([tint[0], tint[1], tint[2], fade]).build();
                 }
             }
         }
@@ -1973,7 +2062,7 @@ impl ImguiRenderLoop for Overlay {
                     // (the card's width: head, pie, then what's there)
                     let mut digits = [0u8; 5];
                     let coins = digits_of(p.coins, &mut digits);
-                    let mut w = s * 2.4 + s * 0.75 + coins.len() as f32 * s * 0.55 * 0.8;
+                    let mut w = s * 2.4 + s * 0.75 + coins.len() as f32 * s * 0.55 * 0.8 + s * 0.85;
                     if p.power != crate::coop::POWER_NONE {
                         w += s * 0.95;
                     }
@@ -1999,6 +2088,9 @@ impl ImguiRenderLoop for Overlay {
                         }
                     }
                     let mut x = x0 + s * 2.55;
+                    // the element in their hand (element.rs)
+                    element_badge(&dl, textures, [x + s * 0.35, cy], s * 0.33, crate::element::Element::of_weapon(p.weapon), a, clock);
+                    x += s * 0.85;
                     let power = match p.power {
                         crate::coop::POWER_WING => Some(IMG_CAP_BOX + 1),
                         crate::coop::POWER_METAL => Some(IMG_CAP_BOX),

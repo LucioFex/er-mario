@@ -132,7 +132,7 @@ fn heat(t: f32) -> [f32; 3] {
     STOPS[5].1
 }
 
-fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
+pub(crate) fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a.clamp(0.0, 1.0)]
 }
 
@@ -145,7 +145,7 @@ fn blue(c: [f32; 4], on: bool) -> [f32; 4] {
     }
 }
 
-fn hash(x: i32, y: i32, z: i32) -> f32 {
+pub(crate) fn hash(x: i32, y: i32, z: i32) -> f32 {
     let mut h = (x as u32).wrapping_mul(0x8da6_b343) ^ (y as u32).wrapping_mul(0xd816_3841) ^ (z as u32).wrapping_mul(0xcb1a_b31f);
     h ^= h >> 13;
     h = h.wrapping_mul(0x5bd1_e995);
@@ -154,7 +154,7 @@ fn hash(x: i32, y: i32, z: i32) -> f32 {
 }
 
 /// Smooth noise in space (0-1)
-fn noise(p: Vec3) -> f32 {
+pub(crate) fn noise(p: Vec3) -> f32 {
     let f = p.floor();
     let (x, y, z) = (f.x as i32, f.y as i32, f.z as i32);
     let t = p - f;
@@ -168,7 +168,7 @@ fn noise(p: Vec3) -> f32 {
     )
 }
 
-fn fbm(p: Vec3) -> f32 {
+pub(crate) fn fbm(p: Vec3) -> f32 {
     0.6 * noise(p) + 0.3 * noise(p * 2.1 + Vec3::splat(5.2)) + 0.1 * noise(p * 4.3 + Vec3::splat(1.7))
 }
 
@@ -178,7 +178,7 @@ fn flick(i: usize, t: f32) -> f32 {
 }
 
 /// The i-th of n ways out spread evenly round a ball
-fn spread(i: usize, n: usize) -> Vec3 {
+pub(crate) fn spread(i: usize, n: usize) -> Vec3 {
     let y = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
     let r = (1.0 - y * y).max(0.0).sqrt();
     let a = i as f32 * 2.399_963;
@@ -186,7 +186,7 @@ fn spread(i: usize, n: usize) -> Vec3 {
 }
 
 /// Two ways across the view at `c` (seen from `eye`)
-fn across(eye: Vec3, c: Vec3) -> (Vec3, Vec3) {
+pub(crate) fn across(eye: Vec3, c: Vec3) -> (Vec3, Vec3) {
     let d = (c - eye).normalize_or(Vec3::Z);
     let u = d.cross(Vec3::Y).normalize_or(Vec3::X);
     (u, u.cross(d))
@@ -196,7 +196,7 @@ fn across(eye: Vec3, c: Vec3) -> (Vec3, Vec3) {
 /// colours each by its way out (`spin` turning the pattern over it) and how square it faces the
 /// eye (1 straight on, 0 edge on), its normal for light from above.
 #[allow(clippy::too_many_arguments)]
-fn sphere(look: &mut Look, c: Vec3, r: f32, rings: usize, slices: usize, half: bool, eye: Vec3, spin: Quat, col: &dyn Fn(Vec3, f32, Vec3) -> [f32; 4]) {
+pub(crate) fn sphere(look: &mut Look, c: Vec3, r: f32, rings: usize, slices: usize, half: bool, eye: Vec3, spin: Quat, col: &dyn Fn(Vec3, f32, Vec3) -> [f32; 4]) {
     let span = if half { PI * 0.5 } else { PI };
     let point = |i: usize, j: usize| {
         let (th, ph) = (span * i as f32 / rings as f32, TAU * j as f32 / slices as f32);
@@ -228,7 +228,7 @@ fn sphere(look: &mut Look, c: Vec3, r: f32, rings: usize, slices: usize, half: b
 }
 
 /// A tongue of flame: a three-sided cone from `base` along `axis` (`len` long, `w` wide at its foot)
-fn cone(look: &mut Look, base: Vec3, axis: Vec3, len: f32, w: f32, col: [f32; 4]) {
+pub(crate) fn cone(look: &mut Look, base: Vec3, axis: Vec3, len: f32, w: f32, col: [f32; 4]) {
     let u = axis.any_orthonormal_vector();
     let v = axis.cross(u);
     let tip = base + axis * len;
@@ -244,7 +244,7 @@ fn cone(look: &mut Look, base: Vec3, axis: Vec3, len: f32, w: f32, col: [f32; 4]
 
 /// A tube along `pts` (radius `radius(k)` at each), only its faces turned to the eye, coloured by
 /// how far along (`col(k)`).
-fn tube(look: &mut Look, pts: &[Vec3], sides: usize, eye: Vec3, radius: &dyn Fn(usize) -> f32, col: &dyn Fn(usize) -> [f32; 4]) {
+pub(crate) fn tube(look: &mut Look, pts: &[Vec3], sides: usize, eye: Vec3, radius: &dyn Fn(usize) -> f32, col: &dyn Fn(usize) -> [f32; 4]) {
     let frame = |k: usize| {
         let d = (pts[(k + 1).min(pts.len() - 1)] - pts[k.saturating_sub(1)]).normalize_or(Vec3::Y);
         let u = d.any_orthonormal_vector();
@@ -273,7 +273,7 @@ fn tube(look: &mut Look, pts: &[Vec3], sides: usize, eye: Vec3, radius: &dyn Fn(
 /// A flat ring (from radius `r0` to `r1`) about `c` in the plane of `u` and `v`, `n` pieces, each
 /// radius wobbled by `wob`
 #[allow(clippy::too_many_arguments)]
-fn band(tris: &mut Vec<Tri>, c: Vec3, u: Vec3, v: Vec3, r0: f32, r1: f32, n: usize, wob: &dyn Fn(f32) -> f32, col: [f32; 4]) {
+pub(crate) fn band(tris: &mut Vec<Tri>, c: Vec3, u: Vec3, v: Vec3, r0: f32, r1: f32, n: usize, wob: &dyn Fn(f32) -> f32, col: [f32; 4]) {
     let at = |k: usize, r: f32| {
         let a = TAU * k as f32 / n as f32;
         c + (u * a.cos() + v * a.sin()) * r * wob(a)
@@ -290,14 +290,32 @@ fn band(tris: &mut Vec<Tri>, c: Vec3, u: Vec3, v: Vec3, r0: f32, r1: f32, n: usi
 /// Everything in `fire` as seen from `eye`, into `look` (cleared first by the caller).
 pub fn build(look: &mut Look, fire: &FireFx, eye: &Eye, clock: f32) {
     let tick = (clock * 30.0) as u32;
+    // (the other weapons' shots and bursts, the clouds, the statuses and the motes: elemfx.rs)
     for orb in &fire.orbs {
-        ball(look, orb, eye, clock, tick);
+        if crate::element::Element::from_u8(orb.element) == crate::element::Element::Fire {
+            ball(look, orb, eye, clock, tick);
+        } else {
+            crate::elemfx::shot(look, orb, eye, clock);
+        }
     }
     for b in &fire.blasts {
-        blast(look, b, eye, tick);
+        if crate::element::Element::from_u8(b.element) == crate::element::Element::Fire {
+            blast(look, b, eye, tick);
+        } else {
+            crate::elemfx::burst(look, b, eye);
+        }
     }
     for p in &fire.pools {
         pool(look, p, tick);
+    }
+    for c in &fire.clouds {
+        crate::elemfx::cloud(look, c, eye, clock);
+    }
+    for a in &fire.auras {
+        crate::elemfx::aura(look, a, eye, clock);
+    }
+    for m in &fire.motes {
+        crate::elemfx::mote(look, m, eye, clock);
     }
 }
 
@@ -723,7 +741,7 @@ mod tests {
     }
 
     fn orb(level: u8, size: f32) -> Orb {
-        Orb { pos: Vec3::new(0.0, 2.0, 0.0), vel: Vec3::Z * 30.0, size, level, age: 12, flags: 0, ground: Some(0.0), vis: 1.0 }
+        Orb { pos: Vec3::new(0.0, 2.0, 0.0), vel: Vec3::Z * 30.0, size, level, age: 12, flags: 0, ground: Some(0.0), vis: 1.0, element: 0 }
     }
 
     #[test]
@@ -767,7 +785,7 @@ mod tests {
         let mut look = Look::default();
         for age in [0, 10, 40, 90] {
             look.clear();
-            let b = Blast { pos: Vec3::new(0.0, 1.0, 0.0), level: SUN, age, size: 7.0, ground: Some(0.0), flags: 0, vis: 1.0 };
+            let b = Blast { pos: Vec3::new(0.0, 1.0, 0.0), level: SUN, age, size: 7.0, ground: Some(0.0), flags: 0, vis: 1.0, element: 0 };
             build(&mut look, &FireFx { blasts: vec![b], ..Default::default() }, &eye(), 1.0);
             assert!(!look.tris.is_empty(), "age {age}");
         }
