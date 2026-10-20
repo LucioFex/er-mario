@@ -156,26 +156,29 @@ struct Npc {
 
 const NO_NPC: Npc = Npc { factor: [1.0; 4], resist: [0.0; 4] };
 
-/// A resistance's worth as a factor on the element's blows: low, a little more; high, a little
-/// less; immune, the least.
-fn of_resist(r: f32) -> f32 {
-    if r <= 0.0 {
-        return 1.0;
-    }
+/// A resistance's worth as a factor on the element's blows, against the enemy's own resistances
+/// to the other statuses (`mean`: theirs on average, the immune left out): the one he resists least
+/// a little more, the one he resists most a little less; immune, the least. (Against a fixed scale
+/// every regular enemy, all of them low, came out weak to every status: x1.2 on every blow of the
+/// hammer, the Chomp and the boomerang alike.)
+fn of_resist(r: f32, mean: f32) -> f32 {
     if r >= 999.0 {
         return 0.8;
     }
-    const STOPS: [(f32, f32); 5] = [(100.0, 1.2), (250.0, 1.1), (400.0, 1.0), (600.0, 0.9), (998.0, 0.85)];
-    if r <= STOPS[0].0 {
-        return STOPS[0].1;
+    if r <= 0.0 || mean <= 0.0 {
+        return 1.0;
     }
-    for w in STOPS.windows(2) {
-        let ((a, fa), (b, fb)) = (w[0], w[1]);
-        if r <= b {
-            return fa + (fb - fa) * (r - a) / (b - a);
-        }
+    (1.0 + (mean / r - 1.0) * 0.5).clamp(0.8, 1.25)
+}
+
+/// The resistances' average, the immune and the missing left out (0: none).
+fn mean_resist(resist: &[f32]) -> f32 {
+    let known: Vec<f32> = resist.iter().copied().filter(|r| *r > 0.0 && *r < 999.0).collect();
+    if known.is_empty() {
+        0.0
+    } else {
+        known.iter().sum::<f32>() / known.len() as f32
     }
-    STOPS[4].1
 }
 
 /// Fire's worth against him: his damage cut rate to fire against a blow's (strike), doubled and a
@@ -198,7 +201,8 @@ fn npc(id: i32) -> Npc {
     let Some(p) = repo.get::<NpcParam>(id as u32) else { return NO_NPC };
     let resist = [0.0, p.resist_freeze() as f32, p.resist_blood() as f32, p.resist_poison() as f32];
     let fire = fire_factor(p.fire_damage_cut_rate(), p.blow_damage_cut_rate());
-    let n = Npc { factor: [fire, of_resist(resist[1]), of_resist(resist[2]), of_resist(resist[3])], resist };
+    let mean = mean_resist(&resist[1..]);
+    let n = Npc { factor: [fire, of_resist(resist[1], mean), of_resist(resist[2], mean), of_resist(resist[3], mean)], resist };
     log(format!(
         "element: NpcParam {id}: fire cut {:.2} (strike {:.2}) x{:.2}; frost {} x{:.2}, blood {} x{:.2}, poison {} x{:.2}",
         p.fire_damage_cut_rate(),
@@ -571,17 +575,24 @@ mod tests {
 
     #[test]
     fn resistances_make_it_a_little_more_or_less() {
-        assert_eq!(of_resist(0.0), 1.0);
-        assert!((of_resist(80.0) - 1.2).abs() < 1e-4);
-        assert!((of_resist(250.0) - 1.1).abs() < 1e-4);
-        assert!((of_resist(400.0) - 1.0).abs() < 1e-4);
-        assert!(of_resist(542.0) < 1.0 && of_resist(542.0) > 0.9);
-        assert_eq!(of_resist(999.0), 0.8);
+        assert_eq!(of_resist(0.0, 100.0), 1.0);
+        assert_eq!(of_resist(999.0, 100.0), 0.8);
+        // (immune to all three: no average, still immune)
+        assert_eq!(of_resist(999.0, mean_resist(&[999.0, 999.0, 999.0])), 0.8);
+        // (one seen in the log: frost 90, blood 135, poison 68: weak to poison, resisting blood)
+        let resist = [90.0, 135.0, 68.0];
+        let mean = mean_resist(&resist);
+        let [frost, blood, poison] = resist.map(|r| of_resist(r, mean));
+        assert!(poison >= 1.1 && blood <= 0.88 && (0.95..1.1).contains(&frost), "{frost} {blood} {poison}");
+        // all alike: nothing either way
+        assert!((of_resist(150.0, mean_resist(&[150.0, 150.0, 150.0])) - 1.0).abs() < 1e-4);
+        // the immune left out of the average
+        assert_eq!(mean_resist(&[999.0, 100.0, 300.0]), 200.0);
         // (never past the moderate band, and lower always worth more)
         let mut last = 2.0;
-        for r in (50..1100).step_by(25) {
-            let k = of_resist(r as f32);
-            assert!((0.8..=1.2).contains(&k) && k <= last, "{r}: {k}");
+        for r in (20..1100).step_by(25) {
+            let k = of_resist(r as f32, 200.0);
+            assert!((0.8..=1.25).contains(&k) && k <= last, "{r}: {k}");
             last = k;
         }
         assert_eq!(fire_factor(1.0, 1.0), 1.0);

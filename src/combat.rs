@@ -285,22 +285,22 @@ impl Attack {
             Attack::MeteorLand => (25.5, "damage_meteor_land"),
             Attack::Tornado => (5.5, "damage_tornado"),
             Attack::TornadoEnd => (18.0, "damage_tornado_end"),
-            // the hammer: the heavy one, few blows and slow, each worth two of the fists' or more
-            // (the fists' finishers' worth at the least); the Chain Chomp's least of all, many at
-            // once
-            Attack::Hammer => (30.0, "damage_hammer"),
-            Attack::HammerWide => (33.0, "damage_hammer_backhand"),
-            Attack::HammerSmash => (47.0, "damage_hammer_smash"),
-            Attack::Quake => (37.0, "damage_hammer_slam"),
-            Attack::QuakeBig => (53.0, "damage_hammer_slam_charged"),
-            Attack::Titan => (75.0, "damage_hammer_titan"),
-            Attack::HammerAir => (23.0, "damage_hammer_air"),
-            Attack::HammerRise => (28.0, "damage_hammer_rise"),
-            Attack::Pound => (17.0, "damage_hammer_pound"),
-            Attack::Flurry => (6.0, "damage_hammer_flurry"),
-            Attack::FlurryEnd => (58.0, "damage_hammer_giant"),
-            Attack::Giro => (13.0, "damage_hammer_spin"),
-            Attack::GiroEnd => (33.0, "damage_hammer_spin_end"),
+            // the hammer: the heavy one, few blows and slow, each worth about two of the fists' (the
+            // fists' finishers' worth at the least); the Chain Chomp's least of all, many at once
+            // (15% off once it had frost on top: a regular enemy went in four swings)
+            Attack::Hammer => (25.5, "damage_hammer"),
+            Attack::HammerWide => (28.0, "damage_hammer_backhand"),
+            Attack::HammerSmash => (40.0, "damage_hammer_smash"),
+            Attack::Quake => (31.5, "damage_hammer_slam"),
+            Attack::QuakeBig => (45.0, "damage_hammer_slam_charged"),
+            Attack::Titan => (64.0, "damage_hammer_titan"),
+            Attack::HammerAir => (19.5, "damage_hammer_air"),
+            Attack::HammerRise => (24.0, "damage_hammer_rise"),
+            Attack::Pound => (14.5, "damage_hammer_pound"),
+            Attack::Flurry => (5.0, "damage_hammer_flurry"),
+            Attack::FlurryEnd => (49.0, "damage_hammer_giant"),
+            Attack::Giro => (11.0, "damage_hammer_spin"),
+            Attack::GiroEnd => (28.0, "damage_hammer_spin_end"),
             // the fists' rising spin kick: a punch and a bit, it's the air string's start
             Attack::Rise => (16.0, "damage_rise"),
             Attack::Chain => (12.0, "damage_string"),
@@ -544,11 +544,12 @@ impl Attack {
         }
     }
 
-    /// A blow's weight against a punch's (its share over a punch's, within 0.2-2.5): how much of
-    /// its weapon's status it builds up (element.rs; the Chomp's cyclone, many light blows a second,
-    /// builds up little each)
+    /// A blow's weight against a punch's (its share over a punch's, within 0.2-1.6, a shot's to
+    /// 2.5): how much of its weapon's status it builds up (element.rs; the Chomp's cyclone, many
+    /// light blows a second, builds up little each; the hammer's heaviest no more than a punch and a
+    /// half: frostbite came every other swing; a full charge's shot is worth its wait)
     pub fn weight(self) -> f32 {
-        (self.percent().0 / STRING_UNIT).clamp(0.2, 2.5)
+        (self.percent().0 / STRING_UNIT).clamp(0.2, if self.ranged() { 2.5 } else { 1.6 })
     }
 
     const ALL: [Attack; 6] = [Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash];
@@ -638,8 +639,9 @@ const KNOCK_EVERY: u32 = 105;
 /// Mega Mario's steps hurt the same enemy at most this often (ticks)
 const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
-/// Mega Mario's own slam against the hammer's (see take_share)
-const MEGA_SLAM: f32 = 0.5;
+/// Mega Mario's own slam against the hammer's (see take_share; it kept its weight when the
+/// hammer's slams lost 15%)
+const MEGA_SLAM: f32 = 0.587;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
 /// doesn't hurt those. Everyone else can be hit, friendly NPCs included, like with a weapon.
