@@ -390,8 +390,12 @@ fn pose_layout_in(chr: usize, raw: impl Fn(usize) -> usize, cached: &mut Option<
 /// Where the game's character animation job has just written a pose (found with a hardware
 /// watchpoint on a bone; run for every character, on the game's worker threads): right after the call that
 /// writes the model pose (the job goes on to hand the bones to rendering, so later is too late),
-/// and the job's return as a fallback.
-const ANIM_DONE_RVAS: [usize; 2] = [0x41da14, 0x402194];
+/// and the job's return as a fallback. By their bytes (version.rs): the first right after its call to
+/// hkaPose::syncModelSpace, the second right after the job's call to the first's function.
+const ANIM_DONE: [(&str, &str, isize); 2] = [
+    ("the animation job's pose", "48 89 7c 24 30 e8 ?? ?? ?? ?? 48 8b 4b 10 48 8b d0 48 8b f8 e8 ?? ?? ?? ?? 48 8b cf e8 ?? ?? ?? ?? 48 8b 4b 28 48 85 c9 74 08 48 8b d7 e8 ?? ?? ?? ??", 0x21),
+    ("the animation job's return", "48 8b 8e 68 05 00 00 48 8b d0 e8 ?? ?? ?? ?? eb 0c 48 8b 96 98 03 00 00 e8 ?? ?? ?? ?? f3 41 0f 10 4e 08 48 8b 4e 58 e8 ?? ?? ?? ?? 48 8b 8e c0 00 00 00", 0x1d),
+];
 
 /// The renderer draws the previous frame while the next one updates: without this, Mario's bones
 /// sit in the Tarnished's animated pose from the animation job until our next task runs, and
@@ -399,17 +403,17 @@ const ANIM_DONE_RVAS: [usize; 2] = [0x41da14, 0x402194];
 /// moment the animation job is done closes that window.
 pub unsafe fn install_anim_hook() {
     use ilhook::x64::{CallbackOption, HookFlags, hook_closure_jmp_back};
-    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return };
-    for rva in ANIM_DONE_RVAS {
+    for (what, pattern, offset) in ANIM_DONE {
+        let Some(at) = crate::version::find(what, pattern, offset) else { continue };
         let hook = |_: *mut ilhook::x64::Registers| {
             let _ = std::panic::catch_unwind(reassert);
         };
-        match unsafe { hook_closure_jmp_back(base.0 as usize + rva, hook, CallbackOption::None, HookFlags::empty()) } {
+        match unsafe { hook_closure_jmp_back(at, hook, CallbackOption::None, HookFlags::empty()) } {
             Ok(h) => {
                 std::mem::forget(h);
-                log(format!("engine mario: hooked the animation job at +{rva:#x}"));
+                log(format!("engine mario: hooked {what}"));
             }
-            Err(e) => log(format!("engine mario: animation hook at +{rva:#x} failed: {e:?}")),
+            Err(e) => log(format!("engine mario: hook on {what} failed: {e:?}")),
         }
     }
 }
@@ -597,17 +601,11 @@ pub fn stand_for_picture() {
 
 /// hkaPose::syncModelSpace: every skeleton's model pose goes through it, the menus' too (the
 /// character creation preview isn't a ChrIns and never reaches the animation job above).
-const SYNC_MODEL_RVA: usize = 0x16551c0;
-const SYNC_MODEL_CODE: [u8; 10] = [0x48, 0x83, 0xec, 0x18, 0x80, 0x79, 0x38, 0x00, 0x0f, 0x85];
+const SYNC_MODEL_CODE: (&str, isize) = ("48 8b 01 45 33 c9 48 89 5c 24 10 48 63 58 38 48 85 db 0f 8e ?? ?? ?? ?? 45 8b d1 0f 29 34 24 0f 1f 00", -0xe);
 
 pub unsafe fn install_menu_hook() {
     use ilhook::x64::{CallbackOption, HookFlags, hook_closure_retn};
-    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return };
-    let at = base.0 as usize + SYNC_MODEL_RVA;
-    if unsafe { *(at as *const [u8; 10]) } != SYNC_MODEL_CODE {
-        log("engine mario: pose sync not where it's expected, no Mario in character creation");
-        return;
-    }
+    let Some(at) = crate::version::find("the pose sync (no Mario in character creation)", SYNC_MODEL_CODE.0, SYNC_MODEL_CODE.1) else { return };
     let hook = |r: *mut ilhook::x64::Registers, original: usize| -> usize {
         let pose = unsafe { (*r).rcx } as usize;
         let sync: extern "win64" fn(usize) = unsafe { std::mem::transmute(original) };
@@ -632,11 +630,7 @@ pub unsafe fn install_menu_hook() {
             return;
         }
     }
-    let at = base.0 as usize + REND_UPDATE_RVA;
-    if unsafe { *(at as *const [u8; 16]) } != REND_UPDATE_CODE {
-        log("engine mario: menu model update not where it's expected, no Mario in character creation");
-        return;
-    }
+    let Some(at) = crate::version::find("the menu model update (no Mario in character creation)", REND_UPDATE_CODE.0, REND_UPDATE_CODE.1) else { return };
     let seen = |r: *mut ilhook::x64::Registers| {
         let _span = crate::perf::span(crate::perf::MENU_MODEL);
         let rend = unsafe { (*r).rcx } as usize;
@@ -663,8 +657,7 @@ pub unsafe fn install_menu_hook() {
 /// CSMenuAsmModelRend's update (its task at +0xe0 calls it every frame): the menus' character
 /// models. Character creation keeps four alive, a dressed and a bare one per body type, and shows
 /// one of them.
-const REND_UPDATE_RVA: usize = 0xbbbe00;
-const REND_UPDATE_CODE: [u8; 16] = [0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0x48, 0x8b, 0xfa];
+const REND_UPDATE_CODE: (&str, isize) = ("48 8b 89 48 09 00 00 48 85 c9 74 21 48 83 bb 78 07 00 00 00 74 17 e8 ?? ?? ?? ?? 48 8b 8b 78 07 00 00", -0x10);
 /// The renderers updated lately: (address, first seen, last seen).
 static RENDS: Mutex<Vec<(usize, std::time::Instant, std::time::Instant)>> = Mutex::new(Vec::new());
 /// Mario is wanted on the menus' models (set every frame, lib.rs).

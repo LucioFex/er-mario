@@ -111,14 +111,10 @@ type StatusFn = unsafe extern "C" fn(usize, i32) -> u8;
 /// Hooks the status banner function ("YOU DIED", "... FELLED").
 pub unsafe fn install_hook() {
     use ilhook::x64::{CallbackOption, HookFlags, hook_closure_retn};
-    // CSMenuManImp::display_status_message (fromsoftware-rs keeps its RVA table private; same RVA in
-    // its WW and JP tables for the supported game version, see version.rs)
-    const DISPLAY_STATUS_MESSAGE_RVA: u32 = 0x7671f0;
-    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else {
-        log("gameover: game module not found");
-        return;
-    };
-    let addr = base.0 as usize + DISPLAY_STATUS_MESSAGE_RVA as usize;
+    // CSMenuManImp::display_status_message (fromsoftware-rs keeps its RVA table private): by its
+    // bytes (version.rs)
+    const DISPLAY_STATUS_MESSAGE: &str = "8b da 48 c7 44 24 28 00 00 00 00 e8 ?? ?? ?? ?? 48 8b 0d ?? ?? ?? ?? 48 85 c9 75 08 32 c0 48 83 c4 30";
+    let Some(addr) = crate::version::find("the status banner", DISPLAY_STATUS_MESSAGE, -0x13) else { return };
     let hook = move |reg: *mut ilhook::x64::Registers, original: usize| -> usize {
         let (this, message) = unsafe { ((*reg).rcx as usize, (*reg).rdx as i32) };
         if ACTIVE.load(Ordering::Relaxed) {

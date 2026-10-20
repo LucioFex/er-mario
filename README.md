@@ -8,7 +8,7 @@ A fork of [deltarooo/er-mario](https://github.com/deltarooo/er-mario) that rewor
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-c9a227?style=flat-square)](LICENSE)
 [![Based on er-mario 0.4.2](https://img.shields.io/badge/based%20on-er--mario%200.4.2-d62828?style=flat-square)](https://github.com/deltarooo/er-mario/releases/tag/v0.4.2)
-[![Elden Ring 2.7.1](https://img.shields.io/badge/Elden%20Ring-2.7.1-3a3a3a?style=flat-square)](#requirements)
+[![Elden Ring 2.7.2](https://img.shields.io/badge/Elden%20Ring-2.7.2-3a3a3a?style=flat-square)](#requirements)
 [![Rust](https://img.shields.io/badge/built%20with-Rust%20%2B%20libsm64-b7410e?style=flat-square)](#building)
 
 <img src="docs/screenshots/boss-closeup.jpg" alt="Mario squaring up to the Draconic Tree Sentinel" width="100%">
@@ -447,7 +447,7 @@ feature list, controls and known issues.
 
 ## Requirements
 
-- **Elden Ring** on Steam, exe version **2.7.1**. On any other version the mod switches itself off.
+- **Elden Ring** on Steam, exe version **2.7.2** (patch 1.17.2). On any other version the mod switches itself off.
 - **[me3](https://me3.help)**, the mod loader.
 - **Your own Super Mario 64 ROM, US version** (`.z64`, `.n64` or `.v64`). Mario's model, textures,
   sounds and icons are built from it on your PC the first time you play. No Nintendo data ships
