@@ -372,9 +372,9 @@ close and risky hits.
 | Counters (after a perfect dodge) | — | **x1.6** for 1.6 s |
 | Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least. Fast, wide, light: it wins by numbers |
 | Long strings | — | Past 10 punches' worth of blows on the same enemy each blow is worth 5% less than the one before per punch it weighs (a hammer blow weighs two or three, a cyclone tick a third), down to 40% (finishers 70%), so long combos last instead of melting the enemy, whatever the weapon |
-| Stomp | 50% of enemy HP | **20%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
+| Stomp | 50% of enemy HP | **12%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
-| Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **75%** within 9 m and its lava pools **4%** every half second (on bosses about 8% and 0.3%) |
+| Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **60%** within 9 m and its lava pools **4%** every half second (on bosses about 9% and 0.4%, as measured) |
 | Ice block, dark orb, poison glob | — | Ice **8-22%** by charge (charged, its shards **8%** on whoever stands round it); dark orb **6-16%**; poison glob **5-13%** and its cloud **1%** every half second |
 | Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |

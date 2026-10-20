@@ -254,7 +254,8 @@ impl Attack {
             Attack::Kick => (13.5, "damage_kick"),
             Attack::Sweep => (13.5, "damage_sweep"),
             Attack::Dash => (15.0, "damage_dive"),
-            Attack::Stomp => (27.0, "damage_stomp"),
+            // (a punch and a fifth: twice one, it was the boss killer, safe on his head)
+            Attack::Stomp => (16.0, "damage_stomp"),
             // slow and leaves Mario open: it has to be worth it (a regular enemy in three)
             Attack::GroundPound => (42.0, "damage_ground_pound"),
             // a regular enemy in nine plain shots, seven, five, four fully charged ones
@@ -264,8 +265,9 @@ impl Attack {
             Attack::Fire(3) => (33.0, "damage_fire_max"),
             // the giant one (10 s): kills a regular enemy outright
             Attack::Fire(4) => (85.0, "damage_fire_giant"),
-            // the sun (20 s): a little more, the most is in its burn, its blast and its embers
-            Attack::Fire(_) => (100.0, "damage_fire_sun"),
+            // the sun (20 s): a little less than the giant one, the most is in its burn, its blast
+            // and its embers (a fifth of a boss in all, before)
+            Attack::Fire(_) => (80.0, "damage_fire_sun"),
             // (the giant one's sweep: a tick every few tenths while it carries them or sticks to a
             // boss, the explosion is the finisher)
             Attack::FireSweep => (8.0, "damage_fire_sweep"),
@@ -422,11 +424,11 @@ impl Attack {
         match self {
             Attack::GroundPound => 2.0,
             Attack::Punch | Attack::Kick | Attack::Sweep => 1.5,
-            Attack::Stomp => 1.4,
+            Attack::Stomp => 1.2,
             Attack::Dash => 1.1,
             // from afar and safe: on bosses only the charged ones count for more
             Attack::Fire(level) => 1.0 + 0.15 * level as f32,
-            Attack::FireSweep => 1.6,
+            Attack::FireSweep => 1.4,
             Attack::Ember => 1.2,
             Attack::Trample => 1.2,
             Attack::Spin => 1.2,
