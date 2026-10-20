@@ -247,7 +247,8 @@ impl Attack {
     fn percent(self) -> (f32, &'static str) {
         // (all of them down to 60% once Mario had his combos, his dash and his speed: the giant
         // fireball, 10 s of charging, only a little; then the fists, kicks and hammer, X and Y, down to half
-        // again: the stomps, the ground pound, the dash and the fireballs kept theirs)
+        // again: the stomps, the ground pound, the dash and the fireballs kept theirs; since, the
+        // stomp, the pound and the sun cut on their own, they took too much of a boss)
         match self {
             // (a regular enemy in eight blows)
             Attack::Punch => (13.5, "damage_punch"),
@@ -256,8 +257,9 @@ impl Attack {
             Attack::Dash => (15.0, "damage_dive"),
             // (a punch and a fifth: twice one, it was the boss killer, safe on his head)
             Attack::Stomp => (16.0, "damage_stomp"),
-            // slow and leaves Mario open: it has to be worth it (a regular enemy in three)
-            Attack::GroundPound => (42.0, "damage_ground_pound"),
+            // slow and leaves Mario open: worth two punches (a regular enemy in four; at 42 and x2 on
+            // bosses it took a boss's 5% a go, a spring and a pound again and again)
+            Attack::GroundPound => (28.0, "damage_ground_pound"),
             // a regular enemy in nine plain shots, seven, five, four fully charged ones
             Attack::Fire(0) => (12.0, "damage_fire"),
             Attack::Fire(1) => (16.0, "damage_fire_charged"),
@@ -419,10 +421,10 @@ impl Attack {
     }
 
     /// On bosses the close hits count for more: Mario has to stand right in front of them to land
-    /// one. The ground pound most of all, it leaves him open the longest.
+    /// one. The ground pound a little, it leaves him open the longest (but it comes again and again).
     fn boss_bonus(self) -> f32 {
         match self {
-            Attack::GroundPound => 2.0,
+            Attack::GroundPound => 1.3,
             Attack::Punch | Attack::Kick | Attack::Sweep => 1.5,
             Attack::Stomp => 1.2,
             Attack::Dash => 1.1,

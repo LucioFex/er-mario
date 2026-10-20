@@ -373,7 +373,7 @@ close and risky hits.
 | Chain Chomp | — | **2-10%**, on every enemy it reaches; the cyclone the least. Fast, wide, light: it wins by numbers |
 | Long strings | — | Past 10 punches' worth of blows on the same enemy each blow is worth 5% less than the one before per punch it weighs (a hammer blow weighs two or three, a cyclone tick a third), down to 40% (finishers 70%), so long combos last instead of melting the enemy, whatever the weapon |
 | Stomp | 50% of enemy HP | **12%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
-| Ground pound | 67%, no boss bonus | **31%**, boss bonus **×2**, shockwave hits enemies around |
+| Ground pound | 67%, no boss bonus | **21%**, boss bonus **×1.3**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **60%** within 9 m and its lava pools **4%** every half second (on bosses about 9% and 0.4%, as measured) |
 | Ice block, dark orb, poison glob | — | Ice **8-22%** by charge (charged, its shards **8%** on whoever stands round it); dark orb **6-16%**; poison glob **5-13%** and its cloud **1%** every half second |
 | Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
@@ -387,7 +387,7 @@ close and risky hits.
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
 | Capture: its attacks **5% / 8.5%**, charge **6%** each, wall slam | — | **11%** and the stance broken |
 
-(The shares below were worked out with a 0.75 damage factor; the current one is 0.6, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 20% off each (44% with Reforged; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 13% of them, more for the
+(The shares above were worked out with a 0.75 damage factor; the current one is 0.6, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 20% off each (44% with Reforged; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 13% of them, more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
