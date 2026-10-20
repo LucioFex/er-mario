@@ -1457,14 +1457,17 @@ impl ImguiRenderLoop for Overlay {
                 _ => None,
             };
             // the MAX finisher ready: MAX in gold under the weapon's spot, pulsing
-            if crate::style::max_ready() {
+            // (its last 3 s blinking: running out)
+            if let Some(age) = crate::style::max_ready() {
+                let left = crate::style::MAX_KEEP - age;
+                let blink = if left < 3.0 { 0.45 + 0.55 * (t * 14.0).sin().abs() } else { 1.0 };
                 let x = x0 + caps.len() as f32 * s * 1.25 + s * 0.35;
                 let pulse = 0.75 + 0.25 * (t * 6.0).sin();
                 let g = 8.0 * px * (1.0 + 0.08 * pulse);
                 for (k, ch) in "MAX".chars().enumerate() {
                     if let Some(id) = glyph_for(ch) {
                         let gx = x + k as f32 * g * 0.8;
-                        dl.add_image(textures[id], [gx, y0 + s + px * 6.0], [gx + g, y0 + s + px * 6.0 + g]).col([1.0, 0.75 * pulse + 0.15, 0.25, 1.0]).build();
+                        dl.add_image(textures[id], [gx, y0 + s + px * 6.0], [gx + g, y0 + s + px * 6.0 + g]).col([1.0, 0.75 * pulse + 0.15, 0.25, blink]).build();
                     }
                 }
             }

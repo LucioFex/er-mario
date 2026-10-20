@@ -246,49 +246,55 @@ pub fn slow_down(time: f32) {
 /// MAX finishers (maxfin.rs): this many blows in a row without being hurt and the next finisher
 /// is a MAX one.
 pub const MAX_HITS: u32 = 12;
-/// a MAX finisher ready keeps this long (s) after the last blow: the fight gone quiet, it's lost
-/// (its twinkle at his hand went on and on till he died)
-const MAX_KEEP: f32 = 10.0;
+/// a MAX finisher ready keeps this long (s) from when it got ready, blows or none: used or lost
+/// (Devil Trigger's way; kept by every blow, in a long fight its twinkle at his hand never ended)
+pub const MAX_KEEP: f32 = 12.0;
 struct Max {
     streak: u32,
-    ready: bool,
-    /// the last blow of the streak
-    last: Option<std::time::Instant>,
+    /// when it got ready (None: not ready)
+    ready: Option<std::time::Instant>,
 }
-static MAX: Mutex<Max> = Mutex::new(Max { streak: 0, ready: false, last: None });
+static MAX: Mutex<Max> = Mutex::new(Max { streak: 0, ready: None });
 
-/// A MAX finisher is ready (the weapon glows).
-pub fn max_ready() -> bool {
-    let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
-    if m.ready && m.last.is_none_or(|t| t.elapsed().as_secs_f32() > MAX_KEEP) {
-        *m = Max { streak: 0, ready: false, last: None };
-        drop(m);
-        crate::log("style: MAX lost (the fight went quiet)");
-        return false;
+impl Max {
+    /// Ready, and not run out (run out: lost, the streak starts over).
+    fn ready(&mut self) -> bool {
+        if self.ready.is_some_and(|t| t.elapsed().as_secs_f32() > MAX_KEEP) {
+            *self = Max { streak: 0, ready: None };
+            crate::log("style: MAX lost (not used in time)");
+        }
+        self.ready.is_some()
     }
-    m.ready
+}
+
+/// A MAX finisher is ready (the weapon glows), and how long it's had (s).
+pub fn max_ready() -> Option<f32> {
+    let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    if m.ready() {
+        m.ready.map(|t| t.elapsed().as_secs_f32())
+    } else {
+        None
+    }
 }
 
 /// Uses the MAX finisher up: true if it was ready (then the streak starts over).
 pub fn take_max() -> bool {
     let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
-    // (gone quiet since it was ready: lost, as max_ready has it)
-    if m.ready && m.last.is_none_or(|t| t.elapsed().as_secs_f32() > MAX_KEEP) {
-        *m = Max { streak: 0, ready: false, last: None };
-    }
-    let ready = std::mem::replace(&mut m.ready, false);
+    let ready = m.ready();
     if ready {
-        m.streak = 0;
+        *m = Max { streak: 0, ready: None };
     }
     ready
 }
 
 fn max_hit() {
     let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
+    if m.ready() {
+        return;
+    }
     m.streak += 1;
-    m.last = Some(std::time::Instant::now());
-    if m.streak >= MAX_HITS && !m.ready {
-        m.ready = true;
+    if m.streak >= MAX_HITS {
+        m.ready = Some(std::time::Instant::now());
         drop(m);
         crate::log(format!("style: MAX ready ({MAX_HITS} blows without a hit)"));
         callout("MAX READY", None, [1.0, 0.75, 0.2], false, 0.0);
@@ -463,10 +469,10 @@ pub const MIKIRI_POINTS: f32 = 2.5;
 pub fn hurt() {
     {
         let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
-        if m.ready {
+        if m.ready.is_some() {
             crate::log("style: MAX lost (hurt)");
         }
-        *m = Max { streak: 0, ready: false, last: None };
+        *m = Max { streak: 0, ready: None };
     }
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = now();
     let lost = METER.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|m| m.alive(now())).and_then(|m| m.rank);
@@ -569,7 +575,7 @@ pub fn clear() {
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = -100.0;
     *METER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CALLOUTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    *MAX.lock().unwrap_or_else(|e| e.into_inner()) = Max { streak: 0, ready: false, last: None };
+    *MAX.lock().unwrap_or_else(|e| e.into_inner()) = Max { streak: 0, ready: None };
     *SLOW.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *STAR.lock().unwrap_or_else(|e| e.into_inner()) = None;

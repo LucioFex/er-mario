@@ -93,17 +93,17 @@ heavy blows break strong enemies' stance and knock regular ones down.
 
 | Input | Move | Per hit (regular enemy) |
 |---|---|---|
-| X | Hammer Bro's chop, down across from over his shoulder | 15% |
-| X, X | King K. Rool's backhand, a wide sweep through everyone in front | 17% |
-| X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 24% |
-| Y (hold to charge) | Bowser's quake: tapped 19%; a level up 27% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 38% in 6 m | 19-38% |
-| X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 9% + 29% |
-| Y, X | Bowser spin: one blow all round each turn, the release flings them | 7% a turn + 17% |
+| X | Hammer Bro's chop, down across from over his shoulder | 13.5% |
+| X, X | King K. Rool's backhand, a wide sweep through everyone in front | 15% |
+| X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 21% |
+| Y (hold to charge) | Bowser's quake: tapped 16.5%; a level up 24% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 34% in 6 m | 16.5-34% |
+| X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 8% + 26% |
+| Y, X | Bowser spin: one blow all round each turn, the release flings them | 6% a turn + 15% |
 | back + X (or X, Y) | Launcher (golf swing): they fly high for an air combo | 12% |
-| forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 27% |
-| X in the air | Somersault swing | 12% |
-| Y in the air | Plunge: the higher he came down from, the more the slam charges (12 m: the titan's blow) | 19-38% |
-| X + A | Hammer upswing, up into the air with them | 14% |
+| forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 24% |
+| X in the air | Somersault swing | 10% |
+| Y in the air | Plunge: the higher he came down from, the more the slam charges (12 m: the titan's blow) | 16.5-34% |
+| X + A | Hammer upswing, up into the air with them | 13% |
 
 (Shares as they are in vanilla; Reforged takes 30% off. Bosses take a few % of their bar at most
 from the heaviest.) Y pressed during a swing's wind-up waits for it to land.
@@ -290,7 +290,7 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | X + A together | **Rising blow**, any weapon (replaces SM64's jump kick) | Up into the air with whoever it catches, to go on with the air string (X up there): fists a rising spin kick, hammer an upswing, Chomp a bite upwards, boomerang the upward throw. From standing, the middle of a string, or the jump A just began |
 | forward + Y | **Leap** at the enemy into the weapon's dive | Fists: meteor; hammer: plunge; Chomp: crash; boomerang: fan |
 | B toward another enemy mid-string | **Freeflow** (Arkham) | A leap to it (3-12 m), the string goes on |
-| 12 blows without being hurt | **MAX finisher** | The weapon twinkles, MAX shows (lost if you're hurt, or after 10 s without landing a blow); its next finisher: fists phantom flurry + launch, hammer cross-shaped quake, Chomp ring of fire flinging the small ones, boomerang three big ones |
+| 12 blows without being hurt | **MAX finisher** | The weapon twinkles, MAX shows (12 s to use it, blinking the last 3; lost if you're hurt); its next finisher: fists phantom flurry + launch, hammer cross-shaped quake, Chomp ring of fire flinging the small ones, boomerang three big ones |
 | LT crouched or sliding + X | **Banana** | Regular enemies slip and fall (the game's own knockdown), big ones stagger, bosses walk over it. 2 at most, 10 s each |
 | LT crouched + Y (hold: red) | **Green / red Koopa shell** | Kicked along the floor, off walls; off an enemy it ricochets to the next one within 9 m (never through a wall), going round all of them in turn (three: A, B, C, A, B; two: back and forth), 5 hits (knockdown); the red one homes in from the start. CAROM! at three enemies, PINBALL! at five hits. 8 s |
 | LT crouched + B | **Bob-omb** | Lobbed, bounces, goes off after 2 s or on the first enemy: a 3.5 m blast that throws the regular ones up. 12 s |
@@ -340,7 +340,9 @@ it (`src/element.rs`; the looks in `src/elemfx.rs`):
 | Boomerang | Poison | **Poison**: about 1% a second for 20 s | A poison glob, lobbed; it bursts into a cloud that poisons whoever stays in it |
 
 Every enemy takes them as Elden Ring has him: his resistance to each status (NpcParam) is what it
-takes to set it off (an immune one never), and a blow of an element he's weak to, or resists, is
+takes to set it off (an immune one never; never less than a string of blows: some five of the
+hammer's heaviest, a dozen bites of the Chomp, a dozen boomerang throws), and a blow of an
+element he's weak to, or resists, is
 worth a little more or less (x0.8 to x1.25; for the statuses, against his own resistances to the
 others: each enemy has the one he resists least and the one he resists most): "WEAK" or "RESIST"
 over him the first time. A status
@@ -363,7 +365,7 @@ close and risky hits.
 
 | Attack | Original | This fork |
 |---|---|---|
-| Hammer | 67% of enemy HP | **15-38%** per hit (see [the hammer](#new-moves)), the slowest and riskiest; its heavy blows knock regular enemies down and crack strong enemies' stance |
+| Hammer | 67% of enemy HP | **13.5-34%** per hit (see [the hammer](#new-moves)), the slowest and riskiest; its heavy blows knock regular enemies down and crack strong enemies' stance |
 | Punches, kicks, fist combos | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch. The game's own hit that goes with a blow (its reaction, its aggro) carries only 5% of the bare fist now: at 100% it added the whole fist on top (a third of a regular enemy's health per punch in Reforged) |
 | Grab and throw (LT + R3, B) | — | **1.5%** on landing, never a kill; whoever it bowls over takes the bowled share and goes down |
 | Boomerang | — | **2-4%** per pass (it hits going and coming back); the big one about 2% per hit while it hovers |

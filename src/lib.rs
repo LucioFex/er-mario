@@ -3894,8 +3894,9 @@ fn frame(data: &FD4TaskData) {
                 maxfin::tick(&mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
                 // a Bros. Attack on its way (co-op): its ground pound, its blow
                 brosattack::tick(id, &state, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks);
-                // (the MAX ready: a twinkle at his hand now and then)
-                if style::max_ready() && m.ticks % 8 == 0 {
+                // (the MAX ready: a flourish of twinkles at his hand as it gets ready, then one now
+                // and then, not a halo round him)
+                if style::max_ready().is_some_and(|age| m.ticks % if age < 0.8 { 6 } else { 36 } == 0) {
                     if let Some(p) = m.parts.as_ref() {
                         let feet = to_er(m.origin, state.position);
                         impact::max_glow(glam::Vec3::new(feet.0, feet.1, feet.2) + p[9].pos);

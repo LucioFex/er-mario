@@ -109,8 +109,14 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
 }
 
 /// How much a punch's worth of a blow builds up (Elden Ring's points: a regular enemy's resistance
-/// is some 150-250, a boss's 250-550), by element
-const BUILD: [f32; 4] = [0.0, 45.0, 45.0, 50.0];
+/// is some 70-250, a boss's 250-550), by element: a status takes a string of blows, never one or
+/// two (at 45 the hammer's frostbite came every other swing); frost the slowest, Elden Ring's
+/// quickest
+const BUILD: [f32; 4] = [0.0, 24.0, 28.0, 30.0];
+/// what any status takes at the least (a regular enemy with next to no resistance still takes a
+/// string: five of the hammer's heaviest, a dozen bites, a dozen boomerang throws or six or seven
+/// charged poison globs)
+const MIN_NEEDS: f32 = 160.0;
 /// each status set off adds this much of his resistance again (a boss's, a regular enemy's)
 const TOUGHER_BOSS: f32 = 0.75;
 const TOUGHER: f32 = 0.35;
@@ -338,7 +344,7 @@ pub fn struck(handle: &FieldInsHandle, attack: Attack, chest: Vec3, tick: u32) -
         m.procs[i] = 0;
     }
     let tougher = if boss { TOUGHER_BOSS } else { TOUGHER };
-    let needs = resist * (1.0 + tougher * m.procs[i] as f32);
+    let needs = resist.max(MIN_NEEDS) * (1.0 + tougher * m.procs[i] as f32);
     m.needs[i] = needs;
     m.build[i] += BUILD[i] * attack.weight();
     m.last[i] = tick;
@@ -616,5 +622,16 @@ mod tests {
         assert_eq!(of_attack(Attack::VenomCloud), Some(Element::Poison));
         assert_eq!(of_attack(Attack::Bomb), None);
         assert_eq!(of_attack(Attack::Hemorrhage), None);
+    }
+
+    #[test]
+    fn statuses_take_a_string_of_blows() {
+        let blows = |el: Element, attack: Attack, resist: f32| (resist.max(MIN_NEEDS) / (BUILD[el as usize] * attack.weight())).ceil() as u32;
+        // the hammer's heaviest on the least resistant regular enemy, and on one seen in the log
+        assert!(blows(Element::Frost, Attack::Titan, 68.0) >= 5);
+        assert!(blows(Element::Frost, Attack::Hammer, 135.0) >= 5);
+        assert!(blows(Element::Blood, Attack::Chomp, 68.0) >= 12);
+        // frost the slowest of them
+        assert!(BUILD[Element::Frost as usize] < BUILD[Element::Blood as usize]);
     }
 }
