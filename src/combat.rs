@@ -394,6 +394,15 @@ impl Attack {
         matches!(self, Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick)
     }
 
+    /// One swing of the hammer, one blow (its hits on the same enemy past the first fade:
+    /// SWING_FADE); the spin's turns and the drum's pounds are blows each.
+    fn one_swing(self) -> bool {
+        matches!(
+            self,
+            Attack::Hammer | Attack::HammerWide | Attack::HammerSmash | Attack::HammerAir | Attack::HammerRise | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd
+        )
+    }
+
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
         matches!(
@@ -776,6 +785,9 @@ pub struct Combat {
     bullet_at: HashMap<u64, u32>,
     /// stomps per enemy in a row since Mario last stood on the ground (their damage fades)
     stomp_run: HashMap<u64, u32>,
+    /// per target: the hammer blow on him now, the SM64 tick of its last hit, its hits so far (one
+    /// swing on a big body lands again and again: SWING_FADE)
+    swing_run: HashMap<u64, (Attack, u32, u32)>,
     /// blows on each enemy in the current string, and the tick of the last one (their damage fades
     /// in a long string: a showy combo isn't over in a second)
     string: HashMap<u64, (f32, u32)>,
@@ -797,7 +809,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new(), knocked: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), swing_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new(), knocked: HashMap::new() }
     }
 }
 
@@ -1654,7 +1666,7 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
         }
         // (not what burns or poisons on its own pace: no stance broken by standing in a cloud)
         if !attack.status() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::VenomCloud) {
-            crate::swing::add_stance(handle, attack.spec().3);
+            crate::swing::add_stance(handle, attack.spec().3 * scale.min(1.0));
         }
     }
     // the red NPC invaders are fights of their own, not two-hit mobs
@@ -1698,6 +1710,12 @@ fn take_pct(handle: &FieldInsHandle, pct: f32, what: &str) -> bool {
 /// Stomps in a row on the same body without touching the ground (bouncing up a big one is many):
 /// each takes half of the one before (100%, 50%, 25%...), down to STOMP_FLOOR.
 const STOMP_FADE: f32 = 0.5;
+/// The same hammer blow hitting the same enemy again (its hits come a cooldown and a hit-stop
+/// apart: Combat::deal; the drum's pounds and the spin's turns are blows of their own): each takes
+/// this much of the one before (100%, 50%, 25%...)
+const SWING_FADE: f32 = 0.5;
+/// (the longest gap there can be between a swing's hits: the smash's, Mega's)
+const SWING_GAP_MAX: u32 = 20;
 /// A string of blows on one enemy (no more than STRING_GAP ticks apart): the first STRING_FULL
 /// punches' worth count in full, then each blow a share of the one before (by its weight: a
 /// hammer's blow weighs two punches or more, a cyclone's a fraction of one), down to STRING_FLOOR
@@ -2286,6 +2304,9 @@ impl Combat {
         // running punch that lifted one instead of hitting it got in the way of the combos)
         for &(index, attack, _) in hits {
             let Some(target) = targets.get(index) else { continue };
+            // (a hammer swing landing on him again: what it's worth of a blow of its own, SWING_FADE;
+            // 1 for a blow)
+            let mut swing = 1.0;
             // (every bounce counts, also within the cooldown: quick climbing bounces did too)
             // (a head stomp at the top of a climb comes as a ground pound: it counts too)
             if matches!(attack, Attack::Stomp | Attack::GroundPound) {
@@ -2351,13 +2372,36 @@ impl Combat {
                 }
                 // stomps in a row on the same body (the head stomp's ground pound too): each worth
                 // less until he's back on the ground (bouncing up a big one was a lot of free damage)
-                let scale = if matches!(attack, Attack::Stomp | Attack::GroundPound) {
+                let mut scale = if matches!(attack, Attack::Stomp | Attack::GroundPound) {
                     let run = self.stomp_run.entry(target.key).or_insert(0);
                     *run += 1;
                     STOMP_FADE.powi(*run as i32 - 1).max(STOMP_FLOOR)
                 } else {
                     1.0
                 };
+                // one hammer swing landing on him again (a big body stays in its reach the whole
+                // swing, and each hit's hit-stop holds the swing while the cooldown runs out: Morgott
+                // took a backhand three times): each hit half the one before, the next blow whole
+                // again; a repeat counts only as much towards his stance, and not at all towards the
+                // status, the action command, the style, the MAX or a bullet of the game's
+                if attack.one_swing() {
+                    // (its hits come a cooldown and a hit-stop apart at most: Mega's are longer)
+                    let gap = attack.cooldown().max(crate::impact::stop(attack) + 1) + 1;
+                    if self.swing_run.len() > 64 {
+                        self.swing_run.retain(|_, r| tick.wrapping_sub(r.1) <= SWING_GAP_MAX);
+                    }
+                    let run = self.swing_run.entry(target.key).or_insert((attack, tick, 0));
+                    if run.0 != attack || tick.wrapping_sub(run.1) > gap {
+                        *run = (attack, tick, 0);
+                    }
+                    swing = SWING_FADE.powi(run.2 as i32);
+                    if run.2 > 0 {
+                        log(format!("combat: {attack:?} again in the same swing (hit {}), x{swing:.2}", run.2 + 1));
+                    }
+                    run.1 = tick;
+                    run.2 += 1;
+                    scale *= swing;
+                }
                 // a long string on the same enemy: past STRING_FULL blows each is worth a little
                 // less (a finisher less so), so long and showy combos don't melt it in a second
                 if self.string.len() > 64 {
@@ -2370,7 +2414,7 @@ impl Combat {
                 // (the giant fireball's burn and Mega's steps aren't blows of a string)
                 let before = run.0;
                 if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
-                    run.0 += (attack.percent().0 / STRING_UNIT).clamp(STRING_WEIGHT.0, STRING_WEIGHT.1);
+                    run.0 += (attack.percent().0 / STRING_UNIT).clamp(STRING_WEIGHT.0, STRING_WEIGHT.1) * swing;
                     run.1 = tick;
                 }
                 let fade = STRING_FADE.powf((run.0 - STRING_FULL).max(0.0)).max(STRING_FLOOR);
@@ -2384,7 +2428,7 @@ impl Combat {
                 // takes it off and ends the enemy)
                 // (the hammer's heavy blows break a strong enemy's stance, swing.rs)
                 if attack.posture() > 0.0 && !liftable(handle) && !crate::coop::guest() {
-                    crate::swing::add_stance(handle, attack.posture());
+                    crate::swing::add_stance(handle, attack.posture() * swing);
                 }
                 let took = take_share(handle, attack, scale * fade);
                 if took == Some(true) && !crate::coop::guest() {
@@ -2396,7 +2440,7 @@ impl Combat {
                 let chest = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 // the weapon's element (element.rs): its status builds up on him, and goes off (only
                 // from a blow that took something)
-                if took.is_some() {
+                if took.is_some() && swing == 1.0 {
                     if let Some(status) = crate::element::struck(handle, attack, chest, tick) {
                         self.extra_share(handle, status, 1.0, tick);
                     }
@@ -2412,12 +2456,12 @@ impl Combat {
                 }
                 // a finisher with the MAX ready (twelve blows without a hit): its MAX version
                 // (maxfin.rs; the boomerang's is its big throw, boomerang.rs)
-                if attack.finisher() && !attack.ranged() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
+                if attack.finisher() && swing == 1.0 && !attack.ranged() && self.max.is_none() && crate::weapons::current() != crate::weapons::RANG && crate::style::take_max() {
                     self.max = Some((attack, chest));
                 }
                 // the action command: X right on the blow (timing.rs)
-                if let Some(extra) = crate::timing::landed(handle, attack, chest, tick) {
-                    self.extra_share(handle, attack, extra * fade, tick);
+                if let Some(extra) = (swing == 1.0).then(|| crate::timing::landed(handle, attack, chest, tick)).flatten() {
+                    self.extra_share(handle, attack, extra * scale * fade, tick);
                 }
                 // the Mikiri: the world slows a moment, and a boss's stance cracks (swing.rs: a
                 // few of them open him up for the tail grab)
@@ -2446,7 +2490,7 @@ impl Combat {
                 }
             }
             let (bullet, ..) = attack.spec();
-            if !target.is_prop() && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
+            if !target.is_prop() && swing == 1.0 && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                 crate::style::hit(attack, target.key);
                 // (co-op: both on one enemy is a BROS!)
                 crate::coop::own_hit(target.key, glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.6, target.er.2));
@@ -2456,7 +2500,7 @@ impl Combat {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
-                if attack.finisher() && target.handle.is_some() {
+                if attack.finisher() && swing == 1.0 && target.handle.is_some() {
                     crate::style::finisher(at);
                 }
             }
@@ -2468,7 +2512,7 @@ impl Combat {
             let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::VenomCloud);
             let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
-            if light || !(heavy || due) {
+            if light || swing < 1.0 || !(heavy || due) {
                 continue;
             }
             self.bullet_at.insert(target.key, tick);

@@ -60,6 +60,87 @@ fn spark(pos: Vec3, size: f32, tint: [f32; 4]) {
     sparks.push(Spark { pos, born: Instant::now(), size, tint });
 }
 
+/// A blow's hold on the world (its hit-stop, SM64 ticks: Mario's move stands still that long, the
+/// ticks running on), its burst's size, a heavy thud too; None: no hold, no burst (the shots').
+fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
+    match attack {
+        Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::Shell => Some((1, 0.8, false)),
+        Attack::Meteor | Attack::Giro | Attack::Chain | Attack::AirHit | Attack::Rise => Some((2, 1.0, false)),
+        Attack::ChainEnd => Some((5, 1.4, true)),
+        // the hammer: every blow stops the world a moment, its heavy ones longer (a titan's)
+        Attack::HammerAir | Attack::HammerRise | Attack::Pound => Some((4, 1.2, false)),
+        Attack::Hammer | Attack::HammerWide => Some((6, 1.4, false)),
+        Attack::UppercutTop | Attack::Launch => Some((5, 1.4, true)),
+        Attack::Quake => Some((6, 1.5, true)),
+        Attack::TornadoEnd => Some((4, 1.3, true)),
+        Attack::GiroEnd => Some((6, 1.5, true)),
+        Attack::HammerSmash | Attack::QuakeBig => Some((8, 1.7, true)),
+        Attack::MeteorLand => Some((6, 1.6, true)),
+        Attack::FlurryEnd | Attack::Titan => Some((10, 1.9, true)),
+        Attack::GroundPound => Some((4, 1.3, true)),
+        Attack::Shockwave => Some((3, 1.0, true)),
+        // (the giant fireball's burn and Mega's steps: no hold, they come again and again)
+        Attack::FireSweep => Some((0, 0.7, false)),
+        Attack::Ember => Some((0, 0.5, false)),
+        Attack::Trample => Some((1, 0.9, false)),
+        // (a short one: bouncing up a boss, it held him in mid-air)
+        Attack::Stomp => Some((1, 0.9, false)),
+        Attack::Sweep | Attack::Spin => Some((2, 0.9, false)),
+        Attack::Dash => Some((2, 0.8, false)),
+        Attack::Punch | Attack::Kick => Some((2, 0.8, false)),
+        Attack::Rush => Some((2, 0.9, false)),
+        Attack::RushKick => Some((5, 1.4, true)),
+        // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
+        Attack::Rang | Attack::RangBig => Some((0, 0.7, false)),
+        Attack::Hook => Some((1, 0.6, false)),
+        Attack::Tongue => Some((1, 0.7, false)),
+        Attack::Egg => Some((1, 0.9, false)),
+        Attack::YoshiStomp => Some((3, 1.0, true)),
+        Attack::RangUpper => Some((2, 1.1, true)),
+        // the Chain Chomp: light blows on many, a heavy crash
+        Attack::Chomp | Attack::ChompAir => Some((2, 1.0, false)),
+        Attack::ChompSpin => Some((1, 0.8, false)),
+        Attack::ChompLaunch => Some((4, 1.3, true)),
+        Attack::ChompEnd => Some((5, 1.5, true)),
+        // timing: the Mikiri lands hard (its own flash: impact::mikiri), the dash strike a solid one
+        Attack::Mikiri => Some((4, 1.3, true)),
+        Attack::Bonk => Some((3, 1.1, false)),
+        // the trap kit hits on its own, away from Mario: no hold for him
+        Attack::Slip => Some((0, 0.9, false)),
+        Attack::ShellHit => Some((0, 1.0, false)),
+        Attack::Bomb => Some((0, 1.5, true)),
+        Attack::Boing => Some((0, 0.7, false)),
+        Attack::Rock => Some((1, 1.1, false)),
+        Attack::RockSlam => Some((4, 1.5, true)),
+        Attack::HomeRun => Some((6, 1.5, true)),
+        Attack::Bowled => Some((0, 0.9, false)),
+        Attack::RideBlow => Some((2, 1.2, false)),
+        Attack::RideSmash => Some((4, 1.6, true)),
+        Attack::Tether => Some((0, 1.4, true)),
+        Attack::SwingKick => Some((4, 1.3, true)),
+        // (MAX's own shows: no hold on Mario, maxfin.rs draws them)
+        Attack::MaxFlurry => Some((0, 0.8, false)),
+        Attack::MaxUpper => Some((0, 1.6, true)),
+        Attack::MaxQuake => Some((0, 1.2, true)),
+        Attack::MaxCyclone => Some((2, 1.4, true)),
+        Attack::RideCrash => Some((5, 1.7, true)),
+        Attack::BrosAttack => Some((6, 1.8, true)),
+        Attack::Sigil => Some((6, 1.7, true)),
+        Attack::SigilTap => Some((1, 0.8, false)),
+        Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => return None,
+    }
+}
+
+/// A blow's hit-stop as it lands now (Mega Mario's held longer), SM64 ticks.
+pub fn stop(attack: Attack) -> u32 {
+    let stop = feel(attack).map_or(0, |f| f.0);
+    if crate::mega::active() {
+        stop + stop / 2 + 1
+    } else {
+        stop
+    }
+}
+
 /// Game thread: a blow landed at `at` (the target's chest) from Mario at `from`.
 pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     // the super jump punch knocks coins out (Super Smash Bros.), the finishers stars
@@ -78,75 +159,10 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     }
     let wood = matches!(attack, Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Pound | Attack::Flurry | Attack::Giro);
     // (hit-stop in SM64 ticks, burst size, a heavy thud too)
-    let (stop, size, heavy) = match attack {
-        Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::Shell => (1, 0.8, false),
-        Attack::Meteor | Attack::Giro | Attack::Chain | Attack::AirHit | Attack::Rise => (2, 1.0, false),
-        Attack::ChainEnd => (5, 1.4, true),
-        // the hammer: every blow stops the world a moment, its heavy ones longer (a titan's)
-        Attack::HammerAir | Attack::HammerRise | Attack::Pound => (4, 1.2, false),
-        Attack::Hammer | Attack::HammerWide => (6, 1.4, false),
-        Attack::UppercutTop | Attack::Launch => (5, 1.4, true),
-        Attack::Quake => (6, 1.5, true),
-        Attack::TornadoEnd => (4, 1.3, true),
-        Attack::GiroEnd => (6, 1.5, true),
-        Attack::HammerSmash | Attack::QuakeBig => (8, 1.7, true),
-        Attack::MeteorLand => (6, 1.6, true),
-        Attack::FlurryEnd | Attack::Titan => (10, 1.9, true),
-        Attack::GroundPound => (4, 1.3, true),
-        Attack::Shockwave => (3, 1.0, true),
-        // (the giant fireball's burn and Mega's steps: no hold, they come again and again)
-        Attack::FireSweep => (0, 0.7, false),
-        Attack::Ember => (0, 0.5, false),
-        Attack::Trample => (1, 0.9, false),
-        // (a short one: bouncing up a boss, it held him in mid-air)
-        Attack::Stomp => (1, 0.9, false),
-        Attack::Sweep | Attack::Spin => (2, 0.9, false),
-        Attack::Dash => (2, 0.8, false),
-        Attack::Punch | Attack::Kick => (2, 0.8, false),
-        Attack::Rush => (2, 0.9, false),
-        Attack::RushKick => (5, 1.4, true),
-        // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
-        Attack::Rang | Attack::RangBig => (0, 0.7, false),
-        Attack::Hook => (1, 0.6, false),
-        Attack::Tongue => (1, 0.7, false),
-        Attack::Egg => (1, 0.9, false),
-        Attack::YoshiStomp => (3, 1.0, true),
-        Attack::RangUpper => (2, 1.1, true),
-        // the Chain Chomp: light blows on many, a heavy crash
-        Attack::Chomp | Attack::ChompAir => (2, 1.0, false),
-        Attack::ChompSpin => (1, 0.8, false),
-        Attack::ChompLaunch => (4, 1.3, true),
-        Attack::ChompEnd => (5, 1.5, true),
-        // timing: the Mikiri lands hard (its own flash: impact::mikiri), the dash strike a solid one
-        Attack::Mikiri => (4, 1.3, true),
-        Attack::Bonk => (3, 1.1, false),
-        // the trap kit hits on its own, away from Mario: no hold for him
-        Attack::Slip => (0, 0.9, false),
-        Attack::ShellHit => (0, 1.0, false),
-        Attack::Bomb => (0, 1.5, true),
-        Attack::Boing => (0, 0.7, false),
-        Attack::Rock => (1, 1.1, false),
-        Attack::RockSlam => (4, 1.5, true),
-        Attack::HomeRun => (6, 1.5, true),
-        Attack::Bowled => (0, 0.9, false),
-        Attack::RideBlow => (2, 1.2, false),
-        Attack::RideSmash => (4, 1.6, true),
-        Attack::Tether => (0, 1.4, true),
-        Attack::SwingKick => (4, 1.3, true),
-        // (MAX's own shows: no hold on Mario, maxfin.rs draws them)
-        Attack::MaxFlurry => (0, 0.8, false),
-        Attack::MaxUpper => (0, 1.6, true),
-        Attack::MaxQuake => (0, 1.2, true),
-        Attack::MaxCyclone => (2, 1.4, true),
-        Attack::RideCrash => (5, 1.7, true),
-        Attack::BrosAttack => (6, 1.8, true),
-        Attack::Sigil => (6, 1.7, true),
-        Attack::SigilTap => (1, 0.8, false),
-        Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => return,
-    };
+    let Some((stop, size, heavy)) = feel(attack) else { return };
     // Mega Mario: every blow lands like a heavy one, held longer, a bigger burst
     let mega = crate::mega::active();
-    let (stop, size, heavy) = if mega { (stop + stop / 2 + 1, size * 1.6, true) } else { (stop, size, heavy) };
+    let (stop, size, heavy) = if mega { (self::stop(attack), size * 1.6, true) } else { (stop, size, heavy) };
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
     // a finisher punches the camera in a little, the heavier the further
@@ -163,7 +179,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     let light = !heavy && !matches!(attack, Attack::Hammer | Attack::HammerWide);
     let (pick, loud) = (crate::rand01(), 0.6 + 0.4 * crate::rand01());
     worker::call("impact", move |_| unsafe {
-        sm64::sm64_er_hitstop(stop);
+        sm64::sm64_er_hitstop(stop as i32);
         if light {
             // (SM64's hit, now and then with a softer thump under it)
             sm64::sm64_play_sound_volume(SOUND_ACTION_HIT, loud);

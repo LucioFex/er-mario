@@ -89,7 +89,9 @@ Donkey Kong's hammer, nearly as tall as Mario (on his back too). Every blow has 
 can't be cut short (no dash, no jump until it has landed: a miss is punished), stops the world a
 moment when it lands (hit-stop), shakes the camera softly and throws up dust and 3D rubble; Mario's
 body squashes into the wind-up, stretches into the blow and sinks under the follow-through. Its
-heavy blows break strong enemies' stance and knock regular ones down.
+heavy blows break strong enemies' stance and knock regular ones down. A swing that stays on a big
+enemy (a boss's body fills its whole reach) lands on him again, each time for half the one before
+(100%, 50%, 25%...); the next blow is whole again.
 
 | Input | Move | Per hit (regular enemy) |
 |---|---|---|
