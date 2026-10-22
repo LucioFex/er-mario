@@ -93,19 +93,19 @@ heavy blows break strong enemies' stance and knock regular ones down.
 
 | Input | Move | Per hit (regular enemy) |
 |---|---|---|
-| X | Hammer Bro's chop, down across from over his shoulder | 13.5% |
-| X, X | King K. Rool's backhand, a wide sweep through everyone in front | 15% |
-| X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 21% |
-| Y (hold to charge) | Bowser's quake: tapped 16.5%; a level up 24% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 34% in 6 m | 16.5-34% |
-| X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 8% + 26% |
-| Y, X | Bowser spin: one blow all round each turn, the release flings them | 6% a turn + 15% |
+| X | Hammer Bro's chop, down across from over his shoulder | 12% |
+| X, X | King K. Rool's backhand, a wide sweep through everyone in front | 13% |
+| X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 19% |
+| Y (hold to charge) | Bowser's quake: tapped 15%; a level up 21% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 30% in 6 m | 15-30% |
+| X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 7% + 23% |
+| Y, X | Bowser spin: one blow all round each turn, the release flings them | 5% a turn + 13% |
 | back + X (or X, Y) | Launcher (golf swing): they fly high for an air combo | 12% |
-| forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 24% |
-| X in the air | Somersault swing | 10% |
-| Y in the air | Plunge: the higher he came down from, the more the slam charges (12 m: the titan's blow) | 16.5-34% |
-| X + A | Hammer upswing, up into the air with them | 13% |
+| forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 21% |
+| X in the air | Somersault swing | 9% |
+| Y in the air | Plunge: the higher he came down from, the more the slam charges (12 m: the titan's blow) | 15-30% |
+| X + A | Hammer upswing, up into the air with them | 11.5% |
 
-(Shares as they are in vanilla; Reforged takes 30% off. Bosses take a few % of their bar at most
+(Shares at the 0.6 damage factor: vanilla deals 5% less of them, Reforged 30% less. Bosses take a few % of their bar at most
 from the heaviest.) Y pressed during a swing's wind-up waits for it to land.
 
 Holding Y with the hammer charges the slam: Mario squats and trembles with the hammer raised (he can
@@ -365,7 +365,7 @@ close and risky hits.
 
 | Attack | Original | This fork |
 |---|---|---|
-| Hammer | 67% of enemy HP | **13.5-34%** per hit (see [the hammer](#new-moves)), the slowest and riskiest; its heavy blows knock regular enemies down and crack strong enemies' stance |
+| Hammer | 67% of enemy HP | **12-30%** per hit (see [the hammer](#new-moves)), the slowest and riskiest; its heavy blows knock regular enemies down and crack strong enemies' stance |
 | Punches, kicks, fist combos | 67% of enemy HP | **1-23%** per hit. A regular enemy takes about 10 punches; finishers hit hardest, the super jump punch's rising blows barely scratch. The game's own hit that goes with a blow (its reaction, its aggro) carries only 5% of the bare fist now: at 100% it added the whole fist on top (a third of a regular enemy's health per punch in Reforged) |
 | Grab and throw (LT + R3, B) | — | **1.5%** on landing, never a kill; whoever it bowls over takes the bowled share and goes down |
 | Boomerang | — | **2-4%** per pass (it hits going and coming back); the big one about 2% per hit while it hovers |
@@ -387,7 +387,7 @@ close and risky hits.
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
 | Capture: its attacks **5% / 8.5%**, charge **6%** each, wall slam | — | **11%** and the stance broken |
 
-(The shares above were worked out with a 0.75 damage factor; the current one is 0.6, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 20% off each (44% with Reforged; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 13% of them, more for the
+(The shares above were worked out with a 0.75 damage factor; the current one is 0.57, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 24% off each (44% with Reforged; the hammer's row is at 0.6 already, see its own table; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 11% of them (13% with Reforged; ini `boss_damage_factor`), more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.

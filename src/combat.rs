@@ -292,19 +292,19 @@ impl Attack {
             // the hammer: the heavy one, few blows and slow, each worth about two of the fists' (the
             // fists' finishers' worth at the least); the Chain Chomp's least of all, many at once
             // (15% off once it had frost on top: a regular enemy went in four swings)
-            Attack::Hammer => (22.5, "damage_hammer"),
-            Attack::HammerWide => (24.5, "damage_hammer_backhand"),
-            Attack::HammerSmash => (35.0, "damage_hammer_smash"),
-            Attack::Quake => (27.5, "damage_hammer_slam"),
-            Attack::QuakeBig => (39.5, "damage_hammer_slam_charged"),
-            Attack::Titan => (56.0, "damage_hammer_titan"),
-            Attack::HammerAir => (17.0, "damage_hammer_air"),
-            Attack::HammerRise => (21.0, "damage_hammer_rise"),
-            Attack::Pound => (13.0, "damage_hammer_pound"),
-            Attack::Flurry => (4.5, "damage_hammer_flurry"),
-            Attack::FlurryEnd => (43.0, "damage_hammer_giant"),
-            Attack::Giro => (9.5, "damage_hammer_spin"),
-            Attack::GiroEnd => (24.5, "damage_hammer_spin_end"),
+            Attack::Hammer => (20.0, "damage_hammer"),
+            Attack::HammerWide => (22.0, "damage_hammer_backhand"),
+            Attack::HammerSmash => (31.5, "damage_hammer_smash"),
+            Attack::Quake => (25.0, "damage_hammer_slam"),
+            Attack::QuakeBig => (35.5, "damage_hammer_slam_charged"),
+            Attack::Titan => (50.5, "damage_hammer_titan"),
+            Attack::HammerAir => (15.5, "damage_hammer_air"),
+            Attack::HammerRise => (19.0, "damage_hammer_rise"),
+            Attack::Pound => (11.5, "damage_hammer_pound"),
+            Attack::Flurry => (4.0, "damage_hammer_flurry"),
+            Attack::FlurryEnd => (38.5, "damage_hammer_giant"),
+            Attack::Giro => (8.5, "damage_hammer_spin"),
+            Attack::GiroEnd => (22.0, "damage_hammer_spin_end"),
             // the fists' rising spin kick: a punch and a bit, it's the air string's start
             Attack::Rise => (16.0, "damage_rise"),
             Attack::Chain => (12.0, "damage_string"),
@@ -633,6 +633,10 @@ const FIST_SHARE: u16 = 5;
 const BOSS_FACTOR: f32 = 0.13;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
 const DAMAGE_FACTOR: f32 = 0.6;
+/// Without Reforged (its enemies hold out on their own: REFORGED_DAMAGE), a little less still,
+/// and bosses a fifth less in all (Morgott went down in some 35 hammer blows)
+const VANILLA_DAMAGE: f32 = 0.95;
+const VANILLA_BOSS: f32 = 0.8 / VANILLA_DAMAGE;
 /// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
 const BULLET_EVERY: u32 = 30;
 /// the per-enemy cooldowns are kept this long (ticks: the longest of Attack::cooldown)
@@ -644,8 +648,8 @@ const KNOCK_EVERY: u32 = 105;
 const TRAMPLE_EVERY: u32 = 45;
 const INVADER_FACTOR: f32 = 0.25;
 /// Mega Mario's own slam against the hammer's (see take_share; it kept its weight when the
-/// hammer's slams lost a quarter, over two nerfs)
-const MEGA_SLAM: f32 = 0.673;
+/// hammer's slams lost a third, over three nerfs)
+const MEGA_SLAM: f32 = 0.74;
 
 /// Team types on the player's side (the player, co-op phantoms, summons and spirit ashes): Mario
 /// doesn't hurt those. Everyone else can be hit, friendly NPCs included, like with a weapon.
@@ -1618,10 +1622,12 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
-    let factor = DAMAGE_FACTOR * if reforged() { REFORGED_DAMAGE } else { 1.0 };
+    let reforged = reforged();
+    let factor = DAMAGE_FACTOR * if reforged { REFORGED_DAMAGE } else { VANILLA_DAMAGE };
     let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", factor);
     if boss {
-        pct *= config_f32("boss_damage_factor", BOSS_FACTOR) * attack.boss_bonus();
+        let boss_factor = BOSS_FACTOR * if reforged { 1.0 } else { VANILLA_BOSS };
+        pct *= config_f32("boss_damage_factor", boss_factor) * attack.boss_bonus();
     }
     // a counter, out of a perfect dodge (dodge.rs): blows up close, not shots from afar
     if crate::dodge::countering() && !attack.ranged() && !attack.status() {
