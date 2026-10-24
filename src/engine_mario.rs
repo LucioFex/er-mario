@@ -54,6 +54,18 @@ pub const GEAR_BONES: [&str; KIT - RANG] = [
     "L_Hand", "R_Hand", "L_Thigh_Skirt", "R_Thigh_Skirt",
 ];
 
+/// The kart (kartmesh.rs, in the legs piece): its parts' poses this frame in character space, and
+/// whether its bones are there to show them (assets::KART_FILE: else the overlay draws it, hud.rs).
+/// Its own list, apart from Mario's PARTS (the co-op pose packet stays as it is).
+pub const KART_PARTS: usize = crate::kartplay::PARTS;
+pub static KART: Mutex<Option<[PartPose; KART_PARTS]>> = Mutex::new(None);
+static KART_DRAWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The kart's parts have bones in the player's skeleton (it's drawn by the game itself).
+pub fn kart_drawn() -> bool {
+    KART_DRAWN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The bone the asset build put the hammer on (assets::HAMMER_BONE_FILE), if it did.
 fn hammer_bone() -> Option<String> {
     static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
@@ -211,6 +223,8 @@ pub fn to_character(parts: &[PartPose; PARTS], char_rot: Quat) -> [PartPose; PAR
 struct BoneMap {
     skeleton: usize,
     bones: [usize; PARTS],
+    /// the kart's (usize::MAX: none)
+    kart: [usize; KART_PARTS],
 }
 
 static BONES: Mutex<Option<BoneMap>> = Mutex::new(None);
@@ -340,8 +354,34 @@ fn map_bones(skeleton: usize) -> Option<BoneMap> {
         }
         bones[KIT + k] = b;
     }
-    log(format!("engine mario: skeleton {skeleton:#x} ({count} bones), part bones {:?}", &bones[1..]));
-    Some(BoneMap { skeleton, bones })
+    // the kart's bones (in the legs piece, assets::KART_FILE), by the same rule, all or none
+    let names: Vec<String> = std::fs::read_to_string(crate::paths::file(crate::assets::KART_FILE)).unwrap_or_default().lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    let mut kart = [usize::MAX; KART_PARTS];
+    for (k, name) in names.iter().enumerate().take(KART_PARTS) {
+        let Some(b) = all.iter().position(|n| n == name) else { continue };
+        let above_mario = bones[1..].iter().filter(|&&m| m < count).any(|&m| {
+            let mut p = parent_of(m);
+            let mut steps = 0;
+            while p >= 0 && steps < 64 {
+                if p as usize == b {
+                    return true;
+                }
+                p = parent_of(p as usize);
+                steps += 1;
+            }
+            false
+        });
+        if above_mario || parents.is_none() || bones.contains(&b) || kart.contains(&b) {
+            log(format!("engine mario: kart bone {name} skipped (above a bone of Mario's, or taken)"));
+            continue;
+        }
+        kart[k] = b;
+    }
+    if kart.contains(&usize::MAX) {
+        kart = [usize::MAX; KART_PARTS];
+    }
+    log(format!("engine mario: skeleton {skeleton:#x} ({count} bones), part bones {:?}, kart bones {:?}", &bones[1..], kart));
+    Some(BoneMap { skeleton, bones, kart })
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -473,7 +513,16 @@ pub fn apply(chr: usize) {
         }
         return;
     };
-    if let Some(head) = write_pose(&layout, &map.bones, &pose, false, true) {
+    KART_DRAWN.store(map.kart[0] != usize::MAX, std::sync::atomic::Ordering::Relaxed);
+    let kart = *KART.lock().unwrap_or_else(|e| e.into_inner());
+    let mut extra = [(usize::MAX, PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }); KART_PARTS];
+    if let Some(k) = kart.filter(|_| map.kart[0] != usize::MAX) {
+        for i in 0..KART_PARTS {
+            extra[i] = (map.kart[i], k[i]);
+        }
+    }
+    let extra: &[(usize, PartPose)] = if kart.is_some() { &extra } else { &[] };
+    if let Some(head) = write_pose(&layout, &map.bones, &pose, false, true, extra) {
         *LAST_HEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(head);
     }
 }
@@ -508,7 +557,7 @@ fn reassert_remote() {
         }
         let now = unsafe { *((l.model + b * 0x30) as *const [f32; 3]) };
         if Vec3::from(now).distance(Vec3::from(*want)) > 1e-4 {
-            write_pose(l, bones, pose, false, false);
+            write_pose(l, bones, pose, false, false, &[]);
         }
     }
 }
@@ -550,7 +599,7 @@ pub fn apply_remote(chr: usize, pose: &[PartPose; PARTS]) {
         }
     };
     if let Some(bones) = bones {
-        if let Some(head) = write_pose(&layout, &bones, pose, false, false) {
+        if let Some(head) = write_pose(&layout, &bones, pose, false, false, &[]) {
             let mut last = REMOTE_LAST.lock().unwrap_or_else(|e| e.into_inner());
             let entry = (chr, layout, bones, head, *pose, std::time::Instant::now());
             match last.iter_mut().find(|e| e.0 == chr) {
@@ -845,7 +894,7 @@ fn menu_pose(pose: usize) {
         }
     };
     if let Some(bones) = bones {
-        write_pose(&layout, &bones, &stand, true, false);
+        write_pose(&layout, &bones, &stand, true, false, &[]);
     }
 }
 
@@ -853,7 +902,8 @@ fn menu_pose(pose: usize) {
 /// `away`: hidden bones also go far below, each hidden branch by its first bone (in the menus the
 /// weapons hang on theirs and don't shrink with them; in the world the game aims the camera at
 /// some, so they stay put there). `root`: the player's own pose, which follows a grab's root bone.
-fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PARTS], away: bool, root: bool) -> Option<[f32; 3]> {
+/// `extra`: more bones and their poses (the kart's), pinned the same way.
+fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PARTS], away: bool, root: bool, extra: &[(usize, PartPose)]) -> Option<[f32; 3]> {
     let PoseLayout { model, local, parents, count, .. } = *layout;
     type Qs = (Vec3, Quat);
     let read = |base: usize, b: usize| -> Qs {
@@ -869,12 +919,13 @@ fn write_pose(layout: &PoseLayout, bones: &[usize; PARTS], pose: &[PartPose; PAR
     // bones that must keep scale 1: Mario's bones and their ancestors (the rest is scaled to 0,
     // which hides everything else on the Tarnished: weapons, face, fingers...)
     let mut keep = [false; 512];
-    for i in 1..PARTS {
-        let mut b = bones[i];
+    let pins = (1..PARTS).map(|i| (bones[i], pose[i])).chain(extra.iter().copied());
+    for (b, p) in pins {
+        let mut b = b;
         if b >= n {
             continue;
         }
-        pinned[b] = Some(((pose[i].pos, pose[i].rot), pose[i].stretch * pose[i].scale));
+        pinned[b] = Some(((p.pos, p.rot), p.stretch * p.scale));
         while b < n && !keep[b] {
             keep[b] = true;
             let p = parent_of(b);

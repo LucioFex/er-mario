@@ -31,6 +31,16 @@ pub fn set_position(pan: f32, volume: f32) {
     GAIN_R.store((angle.sin() * v).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The kart's engine (kartengine.rs) as the game thread last set it, and when: one not renewed for
+/// a quarter of a second (a pause, a load) fades out.
+static ENGINE: Mutex<Option<(crate::kartplay::Tone, std::time::Instant)>> = Mutex::new(None);
+const ENGINE_STALE: f32 = 0.25;
+
+/// The kart's engine sound now (None: none), mixed where Mario is.
+pub fn set_engine(tone: Option<crate::kartplay::Tone>) {
+    *ENGINE.lock().unwrap_or_else(|e| e.into_inner()) = tone.map(|t| (t, std::time::Instant::now()));
+}
+
 /// Frames waiting to be played (libsm64 uses this to decide how much to generate).
 pub fn queued() -> u32 {
     RING.lock().map(|r| r.len() as u32).unwrap_or(0)
@@ -101,6 +111,7 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
     let mut pos = 0.0f32;
     let mut cur = [0i16; 2];
     let mut next = [0i16; 2];
+    let mut engine = crate::kartengine::Engine::new();
     let stream = device
         .build_output_stream(
             &config.into(),
@@ -108,6 +119,7 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
                 let mut ring = RING.lock().unwrap_or_else(|e| e.into_inner());
                 let gl = f32::from_bits(GAIN_L.load(std::sync::atomic::Ordering::Relaxed));
                 let gr = f32::from_bits(GAIN_R.load(std::sync::atomic::Ordering::Relaxed));
+                let tone = ENGINE.lock().unwrap_or_else(|e| e.into_inner()).filter(|(_, at)| at.elapsed().as_secs_f32() < ENGINE_STALE).map(|(t, _)| t);
                 for frame in out.chunks_mut(channels) {
                     pos += step;
                     while pos >= 1.0 {
@@ -119,6 +131,8 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
                     let r = cur[1] as f32 + (next[1] as f32 - cur[1] as f32) * pos;
                     // fold SM64's (mostly centred) mix to mono and place it where Mario is
                     let mono = (l + r) * 0.5 / 32768.0 * std::f32::consts::SQRT_2;
+                    // (the kart's engine, where Mario is: he's in it)
+                    let mono = mono + engine.sample(tone.as_ref(), rate);
                     for (c, s) in frame.iter_mut().enumerate() {
                         // (hard to one side and close by it could go over: no clipping wrap)
                         *s = (mono * if c % 2 == 0 { gl } else { gr }).clamp(-1.0, 1.0);

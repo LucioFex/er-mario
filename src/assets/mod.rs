@@ -12,6 +12,7 @@ pub mod dcx;
 pub mod flver;
 pub mod gear;
 pub mod icons;
+pub mod kartmesh;
 pub mod kit;
 pub mod matbin;
 pub mod model;
@@ -24,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 17";
+const VERSION: &str = "er-mario assets 18";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -44,6 +45,9 @@ pub const GEAR_FILE: &str = "package/gear.txt";
 /// The bones the build put the trap kit on (kit.rs, in the gauntlets), one per line in the kit's
 /// part order; empty when it isn't there (engine_mario reads it)
 pub const KIT_FILE: &str = "package/kit.txt";
+/// The bones the build put the kart on (kartmesh.rs, in the legs piece), one per line in its parts'
+/// order; empty when it isn't there (engine_mario reads it: the overlay draws it then)
+pub const KART_FILE: &str = "package/kart.txt";
 
 /// The package files were complete when the game started (so me3 serves them this session).
 static READY: AtomicBool = AtomicBool::new(false);
@@ -238,6 +242,10 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     let kit = kit::build();
     let mut kit_bones: Option<Vec<String>> = None;
     let mut kit_ok = true;
+    // the kart in the legs piece (both LODs), its bones; its material copied like the gauntlets'
+    let kart = kartmesh::build();
+    let mut kart_bones: Option<Vec<String>> = None;
+    let mut kart_ok = true;
     for piece in PIECES {
         for (look, mesh, albedo, metal) in &looks {
             if piece != "bd" && *look != MODEL_MARIO {
@@ -267,7 +275,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                             log("assets: no bone left in the gauntlets for the Star Sword: the kit goes in without it");
                         }
                         let built = if fit {
-                            flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + bones.len(), &bones)
+                            flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + bones.len(), &bones, "kit")
                         } else {
                             Err(format!("only {} finger bones for {} things ({bones:?})", bones.len(), crate::engine_mario::KIT_PARTS))
                         };
@@ -287,9 +295,28 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                         }
                     }
                 }
+                // the legs: the kart into their FLVER and its swatches over their textures
+                let mut kart_in = false;
+                if piece == "lg" && *look == MODEL_MARIO {
+                    // (the far LOD only after the near one took it, on the same bones)
+                    let wanted = suffix.is_empty() || kart_bones.is_some();
+                    match kart_into_legs(&mut files, &kart, &id).and_then(|b| if wanted && kart_bones.as_ref().is_none_or(|k| *k == b) { Ok(b) } else { Err(format!("other bones than the near LOD's ({b:?})")) }) {
+                        Ok(bones) => {
+                            kart_in = true;
+                            kart_bones = Some(bones);
+                        }
+                        Err(e) => {
+                            log(format!("assets: no kart in the legs piece{suffix} ({e})"));
+                            kart_ok &= !suffix.is_empty();
+                            files = bnd4::read(&src)?;
+                        }
+                    }
+                }
                 for f in &mut files {
                     let lower = f.name.to_lowercase();
-                    if lower.ends_with(".flver") && kit_in {
+                    if (lower.ends_with(".flver") || lower.ends_with(".tpf")) && kart_in {
+                        // (done above)
+                    } else if lower.ends_with(".flver") && kit_in {
                         // (done above)
                     } else if lower.ends_with(".tpf") && kit_in {
                         if suffix.is_empty() {
@@ -331,8 +358,20 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     let mut files = bnd4::read(&mat)?;
     let src = files.iter().find(|f| f.name.ends_with("P[BD_M_1280]_Fabric.matbin")).ok_or("Vagabond material not found")?;
     let (name, data) = (src.name.clone(), src.data.clone());
-    // the gauntlets' own materials, for the kit's copy of them (its textures renamed)
+    // the gauntlets' own materials, for the kit's copy of them (its textures renamed); the legs'
+    // for the kart's
     let gauntlets: Vec<(String, Vec<u8>)> = files.iter().filter(|f| f.name.contains("AM_M_1280")).map(|f| (f.name.clone(), f.data.clone())).collect();
+    let legs: Vec<(String, Vec<u8>)> = files.iter().filter(|f| f.name.contains("LG_M_1280")).map(|f| (f.name.clone(), f.data.clone())).collect();
+    log(format!("assets: the legs' materials {:?}", legs.iter().map(|g| g.0.rsplit(['\\', '/']).next().unwrap_or("")).collect::<Vec<_>>()));
+    if kart_ok && kart_bones.is_some() {
+        for (lname, ldata) in &legs {
+            let mut data = ldata.clone();
+            tex::rename(&mut data, "LG_M_1280", "LG_M_0999");
+            matbin::clear_detail(&mut data);
+            let new = bnd4::File { id: files.iter().map(|f| f.id).max().unwrap_or(0) + 1, name: lname.replace("LG_M_1280", "LG_M_0999"), data };
+            files.push(new);
+        }
+    }
     log(format!("assets: the gauntlets' materials {:?}", gauntlets.iter().map(|g| g.0.rsplit(['\\', '/']).next().unwrap_or("")).collect::<Vec<_>>()));
     if kit_ok && kit_bones.is_some() {
         for (gname, gdata) in &gauntlets {
@@ -378,6 +417,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     }
     write(GEAR_FILE, if all_gear { b"1" } else { b"0" })?;
     write(KIT_FILE, kit_bones.filter(|_| kit_ok).map(|b| b.join("\n")).unwrap_or_default().as_bytes())?;
+    write(KART_FILE, kart_bones.filter(|_| kart_ok).map(|b| b.join("\n")).unwrap_or_default().as_bytes())?;
     step(0.95, "Building Yoshi");
     if let Err(e) = build_yoshi(&archives) {
         // (Torrent stays Torrent then: none of his files may be left half done)
@@ -389,6 +429,27 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
     write(STAMP, stamp().as_bytes())?;
     log(format!("assets: all built in {:.1} s", t0.elapsed().as_secs_f32()));
     Ok(())
+}
+
+/// The kart (kartmesh.rs) into a legs piece's files (`files`, read from its partsbnd): its FLVER
+/// gets the kart's parts on free twist bones (flver::kart_bones), its TPF the kit's swatches at
+/// their own sizes, both renamed to model `id`. The bones it went on.
+fn kart_into_legs(files: &mut [bnd4::File], kart: &[model::Tri], id: &str) -> Result<Vec<String>, String> {
+    let parts = crate::kartplay::PARTS;
+    let f = files.iter_mut().find(|f| f.name.to_lowercase().ends_with(".flver")).ok_or("the legs piece has no FLVER")?;
+    let fl = flver::Flver::new(f.data.clone())?;
+    let bones = flver::kart_bones(&fl, parts);
+    if bones.len() < parts {
+        return Err(format!("only {} free twist bones ({bones:?})", bones.len()));
+    }
+    let mut d = flver::build_kit(fl, kart, 0..parts, &bones, "kart")?;
+    tex::rename(&mut d, "LG_M_1280", &format!("LG_M_{id}"));
+    f.data = d;
+    let t = files.iter_mut().find(|f| f.name.to_lowercase().ends_with(".tpf")).ok_or("the legs piece has no TPF")?;
+    let mut data = tex::build_swatch_tpf(&t.data)?;
+    tex::rename(&mut data, "LG_M_1280", &format!("LG_M_{id}"));
+    t.data = data;
+    Ok(bones)
 }
 
 /// Yoshi in Torrent's place: his mesh into the body mesh of c8002, his colours and eyes over
@@ -415,4 +476,26 @@ fn build_yoshi(archives: &archive::Archives) -> Result<(), String> {
     }
     log(format!("assets: Yoshi built ({} vertices)", model.verts.len()));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The kart into the installed legs piece (C:\ER-Mario's package, built before the kart: its
+    /// buffers are there, emptied) through the game's Oodle (ER_GAME_DIR): it fits, on the six twist
+    /// bones; the result is written to ER_KART_OUT for the FLVER tools.
+    #[test]
+    #[ignore]
+    fn the_legs_take_the_kart() {
+        let path = std::env::var("ER_LEGS").unwrap_or_else(|_| r"C:\ER-Mario\package\parts\lg_m_0999.partsbnd.dcx".into());
+        let src = super::dcx::decompress(&std::fs::read(&path).expect("the legs piece")).expect("decompressed");
+        let mut files = super::bnd4::read(&src).expect("its files");
+        let before: Vec<usize> = files.iter().map(|f| f.data.len()).collect();
+        let bones = super::kart_into_legs(&mut files, &super::kartmesh::build(), "0999").expect("the kart in");
+        assert_eq!(bones, ["L_ThighTwist", "L_ThighTwist1", "R_ThighTwist1", "L_CalfTwist", "L_CalfTwist1", "R_CalfTwist"]);
+        // (the files keep their sizes: everything went into their own buffers)
+        assert_eq!(files.iter().map(|f| f.data.len()).collect::<Vec<_>>(), before);
+        if let Ok(out) = std::env::var("ER_KART_OUT") {
+            std::fs::write(out, super::dcx::compress(&super::bnd4::build(&src, &files)).expect("compressed")).expect("written");
+        }
+    }
 }

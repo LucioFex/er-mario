@@ -292,11 +292,11 @@ flickers by his left hand. It isn't doubled if you have the real Lantern lit, an
 you leave. `light = on / off` in `er_mario.ini` forces it; `light_areas = 30, 31, 32` sets which
 kinds of map count as dark (the log names each area as you enter it: `light: area m31 ...`).
 
-**The kart (in progress).** Yoshi is to become a Mario Kart kart with weighty physics
-(`src/kart.rs`: a chassis on four sprung wheels, Mario Kart's drift and boosts). First a test of
-whether the mod can drive Torrent itself: `kart_test = on` in `er_mario.ini`, then ride him; the
-stick (from the camera) moves him, and `logs/er_mario.log` says every 2 s how much the game moved
-him on top (`kart test: ...`) and then `kart test: Torrent can be driven` or `... fights back`.
+**The kart.** L3 is now Mario's own [Mario Kart kart](#mario-kart-kart) instead of the whistle
+for Yoshi. A test of whether the mod could drive Torrent himself (the kart's other way to be built)
+is still there: `kart_test = on` in `er_mario.ini` gives L3 back to the whistle; ride Torrent and
+`logs/er_mario.log` says every 2 s how much the game moved him on top of the mod (`kart test: ...`),
+then `kart test: Torrent can be driven` or `... fights back`.
 
 **Enemy grabs.** Elden Ring's grabs work on Mario: a troll's fist, a beast's jaws, a boss lifting
 him up. The game holds him and carries him through its throw while Mario dangles in its grip,
@@ -563,6 +563,52 @@ Logs: `cannon: planted at ...`, `cannon: not here (no open sky)`, `cannon: fired
 `cannon: landed 208 m off after 7.3 s`, `cannon: hit a wall`, `cannon: wing cap, flying on`,
 `cannon: pound from 31 m up`, `cannon: POUND on 3 (180 m off the cannon)`, `cannon: got out`.
 
+### Mario Kart kart
+
+**L3** (keyboard R) and Mario hops into his kart where he stands (`src/karting.rs`, `src/kart.rs`,
+`src/kartplay.rs`): Mario Kart's red kart with the M on its nose, fat tyres with gold hubs that
+spin and steer, a steering wheel he holds, two chrome exhausts. It drives like a small car with
+weight, not a cursor: a chassis of 180 kg on four sprung wheels, so it pitches as it brakes and
+accelerates, rolls in turns, bounces over bumps and off ramps, lands on its springs and can tumble
+(on its roof for two seconds it's put back on its wheels). On top of that, Mario Kart: drifts,
+mini-turbos, mushrooms, shells and bananas, coins for speed. It's for the open world (like
+Torrent: "NOT HERE" in a dungeon or a legacy dungeon) and needs room where he stands ("NO ROOM").
+L3 again and he hops out.
+
+| In the kart | What happens |
+|---|---|
+| RT | Throttle (25 m/s flat out, a little more with coins) |
+| LT | Brake; held at a standstill, reverse |
+| Left stick | Steer (the front wheels turn less the faster it goes) |
+| A | Hop. **Held while steering at speed: a drift** (sparks blue, orange, then purple: let go for a mini-turbo of 0.6 / 1 / 1.5 s). Off a ramp or a lip, A in the air is a **trick** (a barrel roll, "Yahoo!") and its landing a boost. A while a boost is on: a **super hop** |
+| LB | A mushroom: a 1.2 s boost (three, one back every 10 s) |
+| X | A green shell straight ahead, faster than the kart; it bounces off walls and ricochets between enemies (the trap kit's own, with its wait) |
+| Y | A banana dropped behind; held, thrown ahead as you let go (the kit's, two at most) |
+| RB | A Fire Flower fireball from the nose (one every 0.6 s) |
+| Right stick | Look round (Lakitu comes back behind after a second) |
+
+Lakitu's camera chases low behind the kart, leading into turns, swinging out in a drift and
+pulling back in a boost (streaks of wind at the screen's edges). The engine is synthesised by the
+mod (no recordings): a buzzing two-stroke that climbs with the speed, the tyres hissing in a drift
+(`kart_engine = 0.5` in `er_mario.ini` makes it quieter, `0` silent). **Coins** picked up while
+driving also count for the kart: up to ten, each a little more top speed (bottom right, with the
+mushrooms and the shell's and banana's waits).
+
+**Running into enemies:** a small one is flung away (it lands alive), a medium one is knocked back
+staggering and the kart bounces off, a big one or a boss barely feels it and **the kart spins
+out**: no cheese (once a second per enemy, three seconds for the big ones). **A blow on Mario**
+costs its health as usual, spins the kart out and knocks three coins out of it; a heavy blow that
+would send him flying throws him out of the kart. A fall from more than 22 m kills, as on foot.
+Spiritsprings need Torrent; the super hop is the kart's own.
+
+Logs: `kart: in at ...`, `kart: not here (not in the open world)`, `kart: mushroom (2 left)`,
+`kart: mini-turbo 3`, `kart: trick`, `kart: green shell`, `kart: banana dropped`,
+`kart: rammed ... (Small, 18.2 m/s, x0.91)`, `kart: hit, 3 coins lost (4 left)`, `kart: knocked out
+of the kart`, `kart: fell 31 m: lethal`, `kart: no ground ahead, slowing`, `kart: out (L3) after 42 s`,
+and every 10 s while driving `kart: 21.4 m/s, coins 6, wheels down 4, drift 0, mushrooms 2`. The
+model goes into the Mario set's legs piece (assets version 18: two launches after updating);
+`kart: drawn by the overlay` means it couldn't, and it's drawn over the game instead.
+
 ### Damage balance
 
 Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
@@ -595,6 +641,7 @@ close and risky hits.
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
 | Star Power | — | Blows **×1.2** (bosses ×1.1), stance **×1.5** (bosses ×1.25); STAR BLAST **9-21.5%** on everyone within 7 m by the time left (bosses about 1-2.4%) |
 | Portable cannon | — | Its pound **17%** on every enemy within 6 m of where he comes down (bosses about 1.9%); the one right under him takes the ground pound's too |
+| Kart | — | Running over a small enemy **8%** at 20 m/s (**2.4-12%** by the speed into it, it flies off and lands alive), bumping a medium one **5.7%** (**1.7-8.6%**, a stagger); a big one or a boss half that (bosses about 0.4%) and the kart spins out |
 | Attack on Titan hook | — | Strike **8%** at 20 m/s, **2.4-14.4%** by speed, **21.5%** at most on the nape from behind; glancing hit half (**1.2-7.2%**); bosses about **1.5%** at 20 m/s, **2.2%** at most (capped); zip-kick **5.7%**; blows on an enemy he vaulted **×1.3** for 1 s |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
 | Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
@@ -711,7 +758,7 @@ replaces this fork's DLL with the original one.
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab). With the Star Sword in the air: the pogo (three a jump) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom). It presses the game's own interact button, Y; if you moved it in the game's controls, set `pad_interact = A` (B, Y, LB, RB, BACK, START) in `er_mario.ini` |
-| L3 (left stick click) | R | Whistle for Yoshi (co-op: on release; held 0.6 s, warp to your partner) |
+| L3 (left stick click) | R | The [Mario Kart kart](#mario-kart-kart): in and out (co-op: on release; held 0.6 s, warp to your partner). With `kart_test = on`, the whistle for Yoshi |
 | Menu > Inventory > Use | same | Any item used from the inventory (Seamless Co-op's Tiny Great Pot and Effigy of Malenia, too): the game gets its use-item request while the menu is up and a second after it closes. A button still held from confirming in a menu (or ending a talk) doesn't make Mario jump: it's ignored until let go |
 | X / Y / RB / LT / LB on Yoshi | X: , or left mouse; Y: middle mouse; LT: K | Tongue, eggs, Mario's fireball, stomp, burst of speed |
 | | F9 | Switch between Lakitu's and Elden Ring's camera |

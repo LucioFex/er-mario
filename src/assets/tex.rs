@@ -287,16 +287,21 @@ pub fn mario_albedo_as(model: &MarioModel, luigi: bool) -> Image {
     img
 }
 
-/// The trap kit's albedo (kit.rs): its palette as a 4 x 4 grid of flat swatches.
+/// The trap kit's albedo (kit.rs): its palette as a KIT_GRID x KIT_GRID grid of flat swatches.
 pub fn kit_albedo() -> Image {
-    let mut img = Image::new(SIZE, SIZE, [0.5, 0.5, 0.5, 1.0]);
+    swatches(SIZE, SIZE)
+}
+
+/// The kit's palette drawn at `w` x `h` (any shape: each swatch a cell of w / KIT_GRID by
+/// h / KIT_GRID, so flver::kit_uv finds it at the same UV).
+pub fn swatches(w: usize, h: usize) -> Image {
+    let mut img = Image::new(w, h, [0.5, 0.5, 0.5, 1.0]);
     let grid = super::kit::KIT_GRID;
-    let cell = SIZE / grid;
     for (k, c) in super::kit::KIT_PALETTE.iter().enumerate() {
-        let (cx, cy) = ((k % grid) * cell, (k / grid) * cell);
-        for y in cy..cy + cell {
-            for x in cx..cx + cell {
-                img.px[y * SIZE + x] = [c[0], c[1], c[2], 1.0];
+        let (i, j) = (k % grid, k / grid);
+        for y in j * h / grid..(j + 1) * h / grid {
+            for x in i * w / grid..(i + 1) * w / grid {
+                img.px[y * w + x] = [c[0], c[1], c[2], 1.0];
             }
         }
     }
@@ -385,6 +390,7 @@ struct TpfTexture {
     off: usize,
     size: usize,
     mips: usize,
+    format: u8,
 }
 
 fn tpf_textures(t: &[u8]) -> Vec<TpfTexture> {
@@ -395,6 +401,7 @@ fn tpf_textures(t: &[u8]) -> Vec<TpfTexture> {
                 off: i32_at(t, a),
                 size: i32_at(t, a + 4),
                 mips: t[a + 10] as usize,
+                format: t[a + 8],
                 name: super::bnd4::wstr(t, i32_at(t, a + 12)).unwrap_or_default(),
             }
         })
@@ -433,6 +440,41 @@ pub fn build_tpf(tpf: &[u8], albedo: &Image, metal: bool) -> Result<Vec<u8>, Str
         } else if base.ends_with("_m") {
             // BC4: all 255 is metal everywhere
             vec![if metal { 0xFF } else { 0 }; tex.size - head]
+        } else {
+            continue;
+        };
+        if body.len() != tex.size - head {
+            return Err(format!("texture {} size mismatch ({} vs {})", tex.name, body.len(), tex.size - head));
+        }
+        t[tex.off + head..tex.off + tex.size].copy_from_slice(&body);
+    }
+    Ok(t)
+}
+
+/// The trap kit's palette over every albedo of an armour piece's TPF at its own size and shape
+/// (the legs' is 1024 x 2048: the kart), a flat normal map with a little shine, no metal.
+pub fn build_swatch_tpf(tpf: &[u8]) -> Result<Vec<u8>, String> {
+    // (TPF formats: 0 and 1 BC1, 103 BC4, 107 BC7; the others are left as they are)
+    let mut t = tpf.to_vec();
+    for tex in tpf_textures(tpf) {
+        let base = tex.name.strip_suffix("_l").unwrap_or(&tex.name);
+        let dds = &tpf[tex.off..tex.off + tex.size];
+        let head = dds_header(dds);
+        let (h, w) = (u32_at(dds, 12), u32_at(dds, 16));
+        let body = if base.ends_with("_a") && matches!(tex.format, 0 | 1) {
+            if w == 0 || h == 0 || w % 4 != 0 || h % 4 != 0 {
+                return Err(format!("unexpected albedo size {w}x{h}"));
+            }
+            bc1_mips(&swatches(w, h), tex.mips)
+        } else if base.ends_with("_n") && tex.format == 107 {
+            // BC7 mode 6, constant: flat normal, a painted shine
+            let mut bits: u128 = 1 << 6;
+            for (k, c7) in [64u128, 64, 64, 64, 60, 60, 127, 127].into_iter().enumerate() {
+                bits |= c7 << (7 + 7 * k);
+            }
+            bits.to_le_bytes().repeat((tex.size - head) / 16)
+        } else if base.ends_with("_m") && tex.format == 103 {
+            vec![0; tex.size - head]
         } else {
             continue;
         };
@@ -645,6 +687,21 @@ mod tests {
                 })
                 .collect();
             println!("{row}");
+        }
+    }
+
+    /// The kit's swatches at any shape: each colour where its UV is.
+    #[test]
+    fn swatches_at_any_shape() {
+        for (w, h) in [(1024, 2048), (512, 512), (256, 128)] {
+            let img = super::swatches(w, h);
+            assert_eq!((img.w, img.h, img.px.len()), (w, h, w * h));
+            for (k, c) in super::super::kit::KIT_PALETTE.iter().enumerate() {
+                let [u, v] = super::super::flver::kit_uv(k);
+                let (x, y) = ((u * w as f64) as usize, (v * h as f64) as usize);
+                let p = img.px[y * w + x];
+                assert!((0..3).all(|i| (p[i] - c[i]).abs() < 1e-6), "{w}x{h} swatch {k}: {p:?} vs {c:?}");
+            }
         }
     }
 

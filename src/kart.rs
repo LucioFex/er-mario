@@ -7,20 +7,18 @@
 //! like a sandbox car (GTA, BeamNG, Garry's Mod: no soft body), Mario Kart's drift and boosts on
 //! top. Metres, seconds, the game's world (Y up); `ray(from, to)` gives the map's first hit.
 
-#![allow(dead_code)] // (what carries it comes with the prototype's answer, kartproto.rs: Torrent or Mario)
-
 use glam::{Quat, Vec3};
 
 /// the chassis: mass (kg), its box (m: width, height, length), the wheels' mounts in it (m: right,
 /// up, forward), level with its middle: a kart sits low, its weight between long axles (with the
 /// mounts high and the wheelbase short, the throttle's own pull reared it up and over)
 const MASS: f32 = 180.0;
-const BOX: Vec3 = Vec3::new(1.4, 0.6, 2.2);
-const MOUNTS: [Vec3; 4] = [Vec3::new(0.65, 0.0, 1.0), Vec3::new(-0.65, 0.0, 1.0), Vec3::new(0.65, 0.0, -1.0), Vec3::new(-0.65, 0.0, -1.0)];
+pub const BOX: Vec3 = Vec3::new(1.4, 0.6, 2.2);
+pub const MOUNTS: [Vec3; 4] = [Vec3::new(0.65, 0.0, 1.0), Vec3::new(-0.65, 0.0, 1.0), Vec3::new(0.65, 0.0, -1.0), Vec3::new(-0.65, 0.0, -1.0)];
 /// the suspension: its length at rest with no load (m), the wheels' radius (m), its spring (N/m)
 /// and damper (N s/m): short and firm (a kart's)
-const SUSPENSION: f32 = 0.28;
-const WHEEL_R: f32 = 0.22;
+pub const SUSPENSION: f32 = 0.28;
+pub const WHEEL_R: f32 = 0.22;
 const SPRING: f32 = 6500.0;
 const DAMPER: f32 = 380.0;
 const GRAVITY: f32 = 9.81;
@@ -50,10 +48,10 @@ const DRIFT_SLIP: f32 = 0.52;
 /// the front wheels turn this far at most (degrees) slow, this far at the top speed
 const STEER_SLOW: f32 = 30.0;
 const STEER_FAST: f32 = 12.0;
-const TOP: f32 = 25.0;
+pub const TOP: f32 = 25.0;
 /// a hop (m/s up); a drift from this fast (m/s), steered at least this much; its levels' times (s)
 /// and the boosts they give (s)
-const HOP: f32 = 3.5;
+pub const HOP: f32 = 3.5;
 const DRIFT_FROM: f32 = 8.0;
 const DRIFT_STEER: f32 = 0.3;
 const DRIFT_LEVELS: [f32; 3] = [0.6, 1.2, 2.0];

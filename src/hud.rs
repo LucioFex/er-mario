@@ -1214,6 +1214,121 @@ fn draw_cannon(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], s
     }
 }
 
+/// The kart (karting.rs): the model itself only when the legs piece couldn't take it (the overlay's
+/// flat mesh then, seen through walls: the build's fallback), its exhausts' flames (SM64's flame
+/// frames in the drift's or the boost's colour, a glow), a boost's speed lines at the screen's
+/// edges, and its HUD at the bottom right: the kart's coins (of ten), the mushrooms, the shell's and
+/// the banana's waits.
+fn draw_kart(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2]) {
+    let Some(look) = crate::karting::look() else { return };
+    let Some(view) = View::now(size) else { return };
+    let clock = crate::flame::clock();
+    if !crate::engine_mario::kart_drawn() {
+        kart_mesh(dl, size, &look);
+    }
+    for (k, (mouth, out, tint, big)) in look.flames.iter().flatten().enumerate() {
+        // (three licks out of each pipe, flickering, the farther the smaller; a glow round its mouth)
+        for n in 0..3 {
+            let flick = 0.8 + 0.2 * (clock * 37.0 + k as f32 * 2.1 + n as f32 * 1.7).sin();
+            let at = *mouth + *out * (big * (0.2 + 0.45 * n as f32) * flick);
+            let c = view.cam(at);
+            if c.z < NEAR {
+                continue;
+            }
+            let h = big * (1.0 - 0.25 * n as f32) * flick * view.px / c.z;
+            let p = view.screen(c);
+            let frame = (clock * 24.0) as usize + n + k * 3;
+            dl.add_image(textures[IMG_FLAME + frame % 8], [p[0] - h * 0.5, p[1] - h * 0.5], [p[0] + h * 0.5, p[1] + h * 0.5]).col([tint[0], tint[1], tint[2], 0.9 - 0.2 * n as f32]).build();
+        }
+        let c = view.cam(*mouth);
+        if c.z >= NEAR {
+            let h = big * 1.6 * view.px / c.z;
+            let p = view.screen(c);
+            dl.add_image(textures[IMG_GLOW], [p[0] - h * 0.5, p[1] - h * 0.5], [p[0] + h * 0.5, p[1] + h * 0.5]).col([tint[0], tint[1], tint[2], 0.45]).build();
+        }
+    }
+    let Some(h) = crate::karting::hud() else { return };
+    let col = |c: [f32; 3], a: f32| imgui::ImColor32::from_rgba_f32s(c[0], c[1], c[2], a);
+    let [w, ht] = size;
+    // a boost: streaks of wind rushing past at the screen's edges
+    if h.boost > 0.0 {
+        let k = h.boost.min(1.0);
+        for i in 0..16u32 {
+            let seed = (i * 7919 + (clock * 12.0) as u32 * 104729) % 1000;
+            let a = seed as f32 / 1000.0 * std::f32::consts::TAU;
+            let (sx, sy) = (a.cos(), a.sin());
+            let r0 = 0.62 + 0.1 * ((seed % 97) as f32 / 97.0);
+            let r1 = r0 + 0.22;
+            let at = |r: f32| [w * 0.5 + sx * r * w * 0.55, ht * 0.5 + sy * r * ht * 0.55];
+            dl.add_line(at(r0), at(r1), col([1.0, 1.0, 1.0], 0.28 * k)).thickness(2.0).build();
+        }
+    }
+    // the HUD: bottom right, the kart's coins, the mushrooms, the shell and the banana
+    let px = ht / 240.0 * SIZE;
+    let g = 14.0 * px;
+    let (x0, y0) = (w - 108.0 * px, ht * 0.8);
+    dl.add_image(textures[IMG_COIN], [x0, y0], [x0 + g, y0 + g]).build();
+    dl.add_image(textures[IMG_MULTIPLY], [x0 + g, y0], [x0 + g * 2.0, y0 + g]).build();
+    let full = h.coins >= crate::kart::COINS;
+    for (k, ch) in h.coins.to_string().bytes().enumerate() {
+        let x = x0 + g * 2.0 + k as f32 * g * 0.75;
+        dl.add_image(textures[IMG_DIGITS + (ch - b'0') as usize], [x, y0], [x + g, y0 + g]).col(if full { [1.0, 0.85, 0.3, 1.0] } else { [1.0, 1.0, 1.0, 1.0] }).build();
+    }
+    let (left, next) = h.mushrooms;
+    let s = 12.0 * px;
+    for k in 0..crate::kartplay::MUSHROOMS {
+        let x = x0 + k as f32 * s * 1.15;
+        let y = y0 + g * 1.3;
+        let here = k < left;
+        dl.add_image(textures[IMG_MUSHROOM], [x, y], [x + s, y + s]).col([1.0, 1.0, 1.0, if here { 1.0 } else { 0.25 }]).build();
+        if k == left && next < 1.0 {
+            dl.add_rect([x, y + s + px], [x + s, y + s + px * 2.5], col([0.0, 0.0, 0.0], 0.6)).filled(true).build();
+            dl.add_rect([x, y + s + px], [x + s * next, y + s + px * 2.5], col([1.0, 0.3, 0.25], 0.9)).filled(true).build();
+        }
+    }
+    for (k, (img, ready)) in [(IMG_KIT + 1, h.shell), (IMG_KIT, h.banana)].into_iter().enumerate() {
+        let x = x0 + (crate::kartplay::MUSHROOMS as f32 + 0.4 + k as f32 * 1.15) * s * 1.15;
+        let y = y0 + g * 1.3;
+        dl.add_image(textures[img], [x, y], [x + s, y + s]).col([1.0, 1.0, 1.0, if ready >= 1.0 { 1.0 } else { 0.3 }]).build();
+        if ready < 1.0 {
+            dl.add_rect([x, y + s + px], [x + s, y + s + px * 2.5], col([0.0, 0.0, 0.0], 0.6)).filled(true).build();
+            dl.add_rect([x, y + s + px], [x + s * ready.clamp(0.0, 1.0), y + s + px * 2.5], col([1.0, 0.85, 0.2], 0.9)).filled(true).build();
+        }
+    }
+}
+
+thread_local! {
+    /// the kart's triangles for the fallback (part, points, normal, colour: its own axes)
+    static KART_TRIS: std::cell::OnceCell<Vec<(usize, [Vec3; 3], Vec3, [f32; 3])>> = const { std::cell::OnceCell::new() };
+}
+
+/// The kart drawn by the overlay (no bones for it in the legs piece: the build couldn't put it in).
+fn kart_mesh(dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], look: &crate::karting::Look) {
+    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        crate::log("kart: drawn by the overlay (no bones for it in the legs piece)");
+    }
+    KART_TRIS.with(|cell| {
+        let tris = cell.get_or_init(|| {
+            let k = crate::assets::kit::PER_METRE;
+            crate::assets::kartmesh::build()
+                .iter()
+                .map(|t| {
+                    let p = t.local.map(|l| Vec3::new(-l[0], l[1], l[2]) / k);
+                    let n = Vec3::new(-t.normal[0][0], t.normal[0][1], t.normal[0][2]);
+                    (t.part as usize, p, n, t.color[0])
+                })
+                .collect()
+        });
+        let mut mesh = Mesh::default();
+        for (part, p, n, c) in tris {
+            let (at, rot) = look.parts[(*part).min(look.parts.len() - 1)];
+            mesh.tris.push((p.map(|v| at + rot * (v * look.size)), rot * *n, *c));
+        }
+        mesh.draw(dl, size, 120.0, &[]);
+    });
+}
+
 /// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
 /// pixels a metre spans 1 m off.
 struct View {
@@ -1689,6 +1804,7 @@ impl ImguiRenderLoop for Overlay {
             draw_colossus(&dl, textures, size);
             draw_odm(&dl, size);
             draw_cannon(&dl, textures, size);
+            draw_kart(&dl, textures, size);
         }
 
         // Mario got hurt: the screen's edges flash red, fading

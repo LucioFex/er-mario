@@ -481,6 +481,31 @@ impl Fire {
         self.bursts.push(Burst::new(from, 0, tick));
     }
 
+    /// SM64's world re-centred on Mario where he was at `by` (lib.rs): the shots, kept in its places,
+    /// go with it (at a run or in the kart it comes round in the middle of a shot's flight).
+    pub fn recentre(&mut self, by: [f32; 3]) {
+        for shot in &mut self.shots {
+            for k in 0..3 {
+                shot.pos[k] -= by[k];
+            }
+        }
+    }
+
+    /// The kart's Fire Flower (karting.rs): a plain fireball from `from` (Elden Ring) along `dir`,
+    /// the kart's own speed along that way on top (`carry`, m/s: it'd be left behind), a flash.
+    pub fn kart_shot(&mut self, from: Vec3, dir: Vec3, carry: Vec3, origin: [f32; 3], tick: u32) {
+        let a = crate::collision::er_to_sm(origin, &HavokPosition(from.x, from.y, from.z, 0.0));
+        let tip = from + dir.normalize_or(Vec3::Z);
+        let b = crate::collision::er_to_sm(origin, &HavokPosition(tip.x, tip.y, tip.z, 0.0));
+        let d = Vec3::new(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize_or(Vec3::Z);
+        // (m/s to SM64's units a tick, mirrored on X)
+        let k = 1.0 / (scale() * 30.0);
+        let carry = Vec3::new(-carry.x, carry.y, carry.z) * k;
+        let vel = d * (SPEED[0] + carry.dot(d).max(0.0));
+        self.shots.push(Shot { pos: a, vel: vel.to_array(), level: 0, el: Element::Fire, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false, vis: -1.0, ground: None });
+        self.bursts.push(Burst::new(from, 0, tick));
+    }
+
     /// RB was the Star Power chord's (lib.rs, starpower.rs): the charge it started is no charge,
     /// nothing shows, nothing's thrown as it comes up.
     pub fn cancel_charge(&mut self) {

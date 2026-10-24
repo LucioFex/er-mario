@@ -54,7 +54,10 @@ mod ik;
 mod impact;
 mod juggle;
 mod kart;
+mod kartengine;
+mod kartplay;
 mod kartproto;
+mod karting;
 mod moving;
 mod noise;
 mod odm;
@@ -839,7 +842,7 @@ fn out_of_health(id: i32, action: u32) {
     const ACT_FLAG_SWIMMING: u32 = 0x2000;
     const ACT_STANDING_DEATH: u32 = 0x0002_1311;
     // (yoshi::active() is Torrent being Yoshi at all: on him is `ridden`)
-    let on_foot = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && yoshi::ridden().is_none() && !mega::active() && !rock::active() && !bossride::active();
+    let on_foot = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && yoshi::ridden().is_none() && !mega::active() && !rock::active() && !bossride::active() && !karting::holds();
     if !on_foot || !revive::go_down() {
         set_player_hp(0);
         return;
@@ -866,6 +869,7 @@ fn warp_to(m: &mut MarioState, to: glam::Vec3, player_ref: &PlayerIns) {
     colossus::release();
     odm::release();
     cannon::release();
+    karting::release();
     m.hook.drop();
     m.moving.clear(&mut m.havok);
     m.origin = [to.x, to.y, to.z];
@@ -1366,6 +1370,7 @@ fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
     colossus::release();
     odm::release();
     cannon::release();
+    karting::release();
     m.moving.clear(&mut m.havok);
     m.origin = [here.0, here.1, here.2];
     set_mario_position(m.id, [0.0, 0.0, 0.0]);
@@ -1918,7 +1923,11 @@ fn input_task() {
                 was && pressed.take().is_some()
             }
         };
-        if whistle && !busy && equip::select_whistle() {
+        // (v4 Part 4's plan B: L3 is the kart's, karting.rs; with `kart_test = on` it whistles for
+        // Torrent, kartproto.rs's test needs him)
+        if whistle && !mounted && !kartproto::enabled() {
+            karting::toggle();
+        } else if whistle && !busy && equip::select_whistle() {
             log("input: whistle (use item) requested");
             FRAMES.store(8, Ordering::Relaxed);
             if !mounted {
@@ -2290,6 +2299,7 @@ fn frame(data: &FD4TaskData) {
         odm::clear();
         starpower::clear();
         cannon::clear();
+        karting::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2457,6 +2467,7 @@ fn frame(data: &FD4TaskData) {
             odm::clear();
             starpower::clear();
             cannon::clear();
+            karting::clear();
             bat::clear();
             maxfin::clear();
             reaction::clear();
@@ -2734,6 +2745,8 @@ fn frame(data: &FD4TaskData) {
                 stick.1 > T || key(0x26),
                 stick.1 < -T || key(0x28),
             ];
+            // (in the kart: its racing chase, no zoom steps or first person from the seat)
+            let c = if karting::holds() { [false; 4] } else { c };
             let p = physics.position;
             let airborne = m.state.action & 0x800 != 0;
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
@@ -3070,6 +3083,7 @@ fn frame(data: &FD4TaskData) {
         style::clear();
         starpower::clear();
         cannon::clear();
+        karting::clear();
         timing::clear();
         m.traps.clear();
         rock::clear(m.id);
@@ -3100,6 +3114,7 @@ fn frame(data: &FD4TaskData) {
         odm::clear();
         starpower::clear();
         cannon::clear();
+        karting::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -3130,6 +3145,7 @@ fn frame(data: &FD4TaskData) {
             colossus::shift(glam::Vec3::from(d));
             odm::shift(glam::Vec3::from(d));
             cannon::shift(glam::Vec3::from(d));
+            karting::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
@@ -3255,6 +3271,42 @@ fn frame(data: &FD4TaskData) {
                 dpad[1] = false;
             }
         }
+        // in the kart (karting.rs): RT, LT, the stick, A, X, Y, LB and RB are its, nobody else's
+        let kart_pads = karting::holds().then(|| {
+            let g = pad.filter(|_| !m.dead && !frozen && gameplay).map(|p| p.Gamepad);
+            let trigger = |v: u8| {
+                let f = v as f32 / 255.0;
+                if f < 0.08 { 0.0 } else { f }
+            };
+            let held = |bit| g.is_some_and(|g| g.wButtons.contains(bit));
+            let mut p = kartplay::Pads {
+                rt: g.map_or(0.0, |g| trigger(g.bRightTrigger)),
+                lt: g.map_or(0.0, |g| trigger(g.bLeftTrigger)),
+                stick: glam::Vec2::new(inputs.stick_x, -inputs.stick_y),
+                a: inputs.button_a != 0,
+                x: held(XINPUT_GAMEPAD_X),
+                y: held(XINPUT_GAMEPAD_Y),
+                lb: held(XINPUT_GAMEPAD_LEFT_SHOULDER),
+                rb: held(XINPUT_GAMEPAD_RIGHT_SHOULDER),
+            };
+            // (the keyboard: forward and back are the throttle and the brake)
+            if let Some(k) = kbd::read().filter(|_| gameplay && !frozen && p.rt == 0.0 && p.lt == 0.0) {
+                p.rt = (-k.stick_y).max(0.0);
+                p.lt = k.stick_y.max(0.0);
+            }
+            p
+        });
+        // (what was held, for the presses after it: still held as he leaves it, they're no new ones)
+        let kart_raw = kart_pads.map(|_| ([inputs.button_a != 0, inputs.button_b != 0, inputs.button_z != 0, x_move, y_move, b_dash, b_fire, l_hammer, r3], b_hook));
+        if kart_pads.is_some() {
+            inputs.button_a = 0;
+            inputs.button_b = 0;
+            inputs.button_z = 0;
+            inputs.stick_x = 0.0;
+            inputs.stick_y = 0.0;
+            (b_fire, b_dash, y_move, x_move, l_hammer, b_hook, r3) = (false, false, false, false, false, false, false);
+            dpad = [false; 4];
+        }
         if let Ok(cam) = unsafe { CSCamera::instance() } {
             // the SM64 camera's direction when it's on (the game's own camera keeps running
             // underneath and may face elsewhere)
@@ -3290,7 +3342,8 @@ fn frame(data: &FD4TaskData) {
             let stale = m.last_query.is_none_or(|(q, tick)| p.distance(q) > 75.0 / size_factor() || m.ticks - tick >= 15);
             // on Torrent the game moves him and SM64's collision isn't used: no reading it at
             // riding speed, where it went stale every few frames (and straight away once he's off)
-            let riding = RIDING.load(Ordering::Relaxed);
+            // (nor in the kart: karting.rs keeps a flat floor under him)
+            let riding = RIDING.load(Ordering::Relaxed) || karting::holds();
             if riding {
                 m.last_query = None;
                 m.no_ground = 0;
@@ -3547,7 +3600,7 @@ fn frame(data: &FD4TaskData) {
         let shoved = {
             let p = player_ref.chr_ins.modules.physics.position;
             let nearest = targets.iter().filter(|t| !t.friendly() && !t.is_prop()).map(|t| glam::Vec3::new(t.er.0 - p.0, t.er.1 - p.1, t.er.2 - p.2).length()).min_by(f32::total_cmp);
-            let calm = hurt.is_none() && !bossride::active() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::untouchable(m.state.action) && !mega::active() && !blown::flying();
+            let calm = hurt.is_none() && !bossride::active() && !status::just_set_in() && !m.dead && !caps::shielded() && !moves::untouchable(m.state.action) && !mega::active() && !blown::flying() && !karting::holds();
             let calm = calm && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             shove::check(current_anim(&player_ref.chr_ins), nearest, calm)
         };
@@ -3574,8 +3627,9 @@ fn frame(data: &FD4TaskData) {
             }
             let me = to_er(m.origin, m.state.position);
             // (held up on his own floor with no map under him isn't standing anywhere)
-            coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0 && m.no_ground_since.is_none());
+            coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0 && m.no_ground_since.is_none() && (!karting::holds() || karting::grounded()));
             let n = coins::collect(glam::Vec3::new(me.0, me.1, me.2));
+            karting::coins(n);
             if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2)) {
                 log(format!("coins: {amount} coins recovered"));
                 style::callout("COINS BACK", None, [1.0, 0.85, 0.25], true, 0.0);
@@ -3641,7 +3695,7 @@ fn frame(data: &FD4TaskData) {
         let still = glam::Vec3::from(m.state.position).distance(glam::Vec3::from(m.prev_pos)) < 1.0;
         // standing still is normal with a boss by the tail
         // (and in the portable cannon: still in the barrel, the stick aims it)
-        if (pushing || hovering) && still && !m.dead && !FOLLOWING.load(Ordering::Relaxed) && !swing::holding() && !cannon::holds() {
+        if (pushing || hovering) && still && !m.dead && !FOLLOWING.load(Ordering::Relaxed) && !swing::holding() && !cannon::holds() && !karting::holds() {
             m.stuck_ticks += 1;
         } else {
             m.stuck_ticks = 0;
@@ -3667,7 +3721,7 @@ fn frame(data: &FD4TaskData) {
         let interacting = FOLLOWING.load(Ordering::Relaxed) || MENU_OPEN.load(Ordering::Relaxed) || game_driven(current_anim(&player_ref.chr_ins));
         // L1: the next weapon (held: the fists; not while holding anyone or riding: his hands are
         // busy, nor in the middle of one of the weapons' moves)
-        let hands_free = fire_allowed && !carry::holding();
+        let hands_free = fire_allowed && !carry::holding() && !karting::holds();
         let big = mega::active() || mega::changing();
         if big && m.moves.weapon != weapons::FISTS {
             m.moves.weapon = weapons::FISTS;
@@ -3765,7 +3819,10 @@ fn frame(data: &FD4TaskData) {
             }
         }
         // (R2 itself, for the hook's presses: also while the line or the colossus has the buttons)
-        let hook_held = b_hook;
+        let hook_held = b_hook || kart_raw.is_some_and(|r| r.1);
+        // (the kart took this tick's blow: its health only; a heavy one sent him flying off it)
+        let kart_soaked: bool;
+        let mut kart_blown: bool;
         // on a colossus or on the hook's rope (colossus.rs): its own buttons, nobody else's then
         {
             let (sx, sy) = (inputs.stick_x, inputs.stick_y);
@@ -3785,6 +3842,52 @@ fn frame(data: &FD4TaskData) {
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             };
+            // the kart (karting.rs): L3 in and out; in it, it drives and has his buttons; a blow on him
+            // is its spin-out (its health only), or off it if it sends him flying
+            let kart_out = {
+                const GROUNDED: u32 = 0x200 | 0x400;
+                const SUBMERGED: u32 = 0x0C0;
+                let a = m.state.action;
+                let on_ground = a & 0x800 == 0 && a & GROUNDED != 0 && a & 0x1C0 != SUBMERGED;
+                let free = allowed && fire_allowed && on_ground && !interacting && !mega::changing() && !colossus::active() && !odm::active() && !cannon::holds() && yoshi::ridden().is_none() && m.state.health >= 0x100;
+                let stay = allowed && !colossus::active() && !odm::active() && !cannon::holds();
+                let area = eldenring::cs::BlockId::from(i32::from(player_ref.chr_ins.block_id)).area();
+                // (Star Power's shrug takes a small one: no spin-out)
+                let hit = match hurt {
+                    Some(combat::Hurt::Hit(w)) if !shrug => Some(w),
+                    _ => None,
+                };
+                kart_blown = karting::holds() && hit.is_some_and(|w| blown::roll(w, &player_ref.chr_ins, me.feet));
+                let cam = unsafe { CSCamera::instance() }.ok().map(|c| {
+                    let v = |d: eldenring::position::PositionDelta| glam::Vec3::new(d.0, d.1, d.2);
+                    (v(c.pers_cam_1.forward()), v(c.pers_cam_1.up()), v(c.pers_cam_1.right()))
+                });
+                let kin = karting::In {
+                    pads: kart_pads.unwrap_or_default(),
+                    feet: me.feet,
+                    face: glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos()),
+                    action: a,
+                    dead: m.dead,
+                    paused: me.paused,
+                    can_start: free,
+                    can_stay: stay,
+                    overworld: matches!(area, 60 | 61),
+                    hurt: hit,
+                    blown: kart_blown,
+                    id: m.id,
+                    origin: m.origin,
+                    tick: m.ticks,
+                    cam,
+                };
+                karting::update(&kin, &targets, &mut m.combat, &player_ref.chr_ins, &mut m.traps, &mut m.fire, &ray)
+            };
+            if let Some(f) = kart_out.floor {
+                let floor: Vec<_> = flat_floor(f).into_iter().collect();
+                load_surfaces(&floor);
+                m.surfaces = floor;
+            }
+            kart_soaked = kart_out.soaked;
+            kart_blown &= kart_out.released;
             // the portable cannon first (cannon.rs): D-pad up held plants it (a tap is the wing cap's,
             // on its release: caps.rs gets it as a press this tick); in it, shot, pounding, it has his
             // buttons and nobody else is let at him
@@ -3793,7 +3896,7 @@ fn frame(data: &FD4TaskData) {
                 const SUBMERGED: u32 = 0x0C0;
                 let a = m.state.action;
                 let on_ground = a & 0x800 == 0 && a & GROUNDED != 0 && a & 0x1C0 != SUBMERGED;
-                let free = allowed && fire_allowed && on_ground && !mega::changing() && !colossus::active() && !odm::active() && yoshi::ridden().is_none() && m.state.health >= 0x100;
+                let free = allowed && fire_allowed && on_ground && !mega::changing() && !colossus::active() && !odm::active() && yoshi::ridden().is_none() && m.state.health >= 0x100 && !karting::holds();
                 let cin = cannon::In {
                     up: dpad[0],
                     a: inputs.button_a != 0,
@@ -3817,13 +3920,13 @@ fn frame(data: &FD4TaskData) {
                 cannon::update(&cin, &mut m.combat, &player_ref.chr_ins, &ray)
             };
             dpad[0] = can.wing_tap;
-            let allowed = allowed && !cannon::holds();
+            let allowed = allowed && !cannon::holds() && !karting::holds();
             // the AoT hook's line first (odm.rs): on it, colossus.rs gets nothing (an A on it near a
             // colossus would grab on)
             starpower::tick(1.0 / 30.0, me.feet + glam::Vec3::Y * 0.9, m.ticks);
             let line = odm::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray);
             let out = if line.consumed { colossus::Out { consumed: true, drop_hook: false } } else { colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray) };
-            let out = colossus::Out { consumed: out.consumed || can.consumed, drop_hook: out.drop_hook };
+            let out = colossus::Out { consumed: out.consumed || can.consumed || kart_out.consumed, drop_hook: out.drop_hook };
             drop(_perf8);
             // a button that went down while they had them stays theirs until it's let go (held on
             // after the line or the climb it was a new press for SM64 and the moves: the strike's X
@@ -3831,7 +3934,7 @@ fn frame(data: &FD4TaskData) {
             {
                 static EATEN: Mutex<[bool; 9]> = Mutex::new([false; 9]);
                 let mut eaten = EATEN.lock().unwrap_or_else(|e| e.into_inner());
-                let now = [inputs.button_a != 0, inputs.button_b != 0, inputs.button_z != 0, x_move, y_move, b_dash, b_fire, l_hammer, r3];
+                let now = kart_raw.map_or([inputs.button_a != 0, inputs.button_b != 0, inputs.button_z != 0, x_move, y_move, b_dash, b_fire, l_hammer, r3], |r| r.0);
                 for k in 0..9 {
                     eaten[k] = now[k] && (eaten[k] || out.consumed);
                 }
@@ -4102,9 +4205,11 @@ fn frame(data: &FD4TaskData) {
         let lava = !safe_lava(combat::lava_fight()) && LAVA_MATERIALS.contains(&player_ref.chr_ins.modules.physics.material_info.hit_material);
         let lift_k = size_factor();
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
-        let still_flying = blown::flying();
+        // (the kart's heavy blow rolled its flight above: that's this blow's, not one going on)
+        let still_flying = !kart_blown && blown::flying();
         let blown_away = match hurt {
-            Some(combat::Hurt::Hit(w)) if !still_flying && !shrug && !grab::just_released() && !status::just_set_in() => {
+            _ if kart_blown => true,
+            Some(combat::Hurt::Hit(w)) if !still_flying && !shrug && !kart_soaked && !grab::just_released() && !status::just_set_in() => {
                 const ACT_FLAG_SWIMMING: u32 = 0x2000;
                 const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
@@ -4162,6 +4267,8 @@ fn frame(data: &FD4TaskData) {
             // (Star Power's small hit: SM64's three quarters of a wedge a point, half again with no
             // cap on, fake_interaction.c; none while guarded)
             Some(combat::Hurt::Hit(w)) if shrug => Some(if shrug_costs { (if cap_on { w } else { w + (w + 1) / 2 }) as i32 * 3 * 0x40 } else { 0 }),
+            // (in the kart: what SM64's own blow would cost, no knockback)
+            Some(combat::Hurt::Hit(w)) if kart_soaked => Some((if cap_on { w } else { w + (w + 1) / 2 }) as i32 * 3 * 0x40),
             Some(combat::Hurt::Drain) => Some(0x100),
             _ => None,
         }
@@ -4232,7 +4339,7 @@ fn frame(data: &FD4TaskData) {
                 // (let go by an enemy: thrown off it already, the same)
                 // (the boulder: half of it, and it rolls on)
                 // (Star Power's small hit: the health, no knockback)
-                Some(combat::Hurt::Hit(_)) if still_flying || released || bled || rocking || shrug => unsafe {
+                Some(combat::Hurt::Hit(_)) if still_flying || released || bled || rocking || shrug || kart_soaked => unsafe {
                     sm64::sm64_set_mario_health(id, direct.unwrap_or(health_before) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
@@ -4413,6 +4520,10 @@ fn frame(data: &FD4TaskData) {
         PERF.lock().unwrap_or_else(|e| e.into_inner()).tick_ms += tt.elapsed().as_secs_f32() * 1000.0;
         match result {
             Some((state, mesh, colors, normals, mut parts, mut hits, combo, swing)) => {
+                // (in the kart: turned with it, his hands on its wheel)
+                if let Some(p) = parts.as_mut() {
+                    karting::pose_rider(p);
+                }
                 // (a scripted move's window strikes each enemy once: a hit-stop holds the move's
                 // tick while the real ticks and the blow's cooldown run on, and a big body stays in
                 // the window; one its blow didn't land on, it can still reach)
@@ -4847,13 +4958,16 @@ fn frame(data: &FD4TaskData) {
         // moving objects live in SM64 coordinates: rebuild them in the new frame (moving them there
         // would drag Mario along ~40 m, since SM64 carries whoever stands on a platform)
         m.moving.clear(&mut m.havok);
+        // (the fireballs fly in SM64's places: they go with it)
+        m.fire.recentre([mx, my, mz]);
         m.origin = [here.0, here.1, here.2];
         set_mario_position(m.id, [0.0, 0.0, 0.0]);
         m.state.position = [0.0, 0.0, 0.0];
         let caster = collision::Caster { filter: m.filter, origin: m.origin, player: player_ref };
         // (on Torrent this comes round every couple of seconds, and all SM64 needs under a
         // sitting Mario is some floor: the real one is read again when he's off)
-        let surfaces = if RIDING.load(Ordering::Relaxed) {
+        karting::recentred();
+        let surfaces = if RIDING.load(Ordering::Relaxed) || karting::holds() {
             flat_floor([0.0, 0.0, 0.0]).into_iter().collect()
         } else {
             havok_surfaces(&mut m.havok, m.origin, [0.0, 0.0, 0.0], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0, 0.0, 0.0]))
@@ -5066,6 +5180,7 @@ fn frame(data: &FD4TaskData) {
             log(format!("follow: grabbed (anim {cur})"));
             FOLLOW_STARTED.store(true, Ordering::Relaxed);
             m.moving.clear(&mut m.havok);
+            karting::release();
             *follow = Some((std::time::Instant::now(), LAST_FREE_ANIM.load(Ordering::Relaxed), cur));
             *armed = None;
         }
@@ -5088,6 +5203,7 @@ fn frame(data: &FD4TaskData) {
                 FOLLOW_STARTED.store(true, Ordering::Relaxed);
                 // no moving / dynamic collision (the fog wall itself) while the game walks him
                 m.moving.clear(&mut m.havok);
+                karting::release();
                 *follow = Some((std::time::Instant::now(), before, cur));
                 *armed = None;
             } else if t.elapsed().as_secs_f32() > 1.0 {
@@ -5318,6 +5434,8 @@ fn frame(data: &FD4TaskData) {
                 (None, Some(b)) => Some(seat(engine_mario::to_character(b, q))),
                 _ => None,
             };
+            // (a kart going: its poof)
+            karting::model_pose(alpha, q, glam::Vec3::new(p.0, p.1, p.2));
             return;
         }
     }
@@ -5503,6 +5621,8 @@ fn frame(data: &FD4TaskData) {
         _ => None,
     }
 ;
+    // the kart's parts on the legs piece's bones (karting.rs), between the same two ticks
+    karting::model_pose(alpha, q, glam::Vec3::new(pos.0, pos.1, pos.2));
 
     if EZ_MARIO.load(Ordering::Relaxed) {
         // wireframe of libsm64's own mesh over the engine model, to compare

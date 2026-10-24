@@ -120,7 +120,9 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         | Attack::Shock
         | Attack::ShockArc(_)
         | Attack::StarBlast
-        | Attack::CannonPound => None,
+        | Attack::CannonPound
+        | Attack::KartRam
+        | Attack::KartBump => None,
         _ => Some(current()),
     }
 }

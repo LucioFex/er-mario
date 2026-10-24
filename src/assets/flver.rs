@@ -480,7 +480,7 @@ fn write_mesh(f: &mut Flver, vb: &VertexBuffer, facesets: &[usize], full: usize,
 /// The trap kit (kit.rs) into mesh `target` of an armour FLVER (the gauntlets), every other mesh
 /// emptied: each part on a finger bone of its own (`bones`, skinned by this piece, not a parent of
 /// another bone). The kit's colours are swatches of its own albedo (tex::kit_albedo).
-pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones: &[String]) -> Result<Vec<u8>, String> {
+pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones: &[String], what: &str) -> Result<Vec<u8>, String> {
     let names = f.bone_names();
     let bone_ids: Vec<usize> = bones.iter().map(|n| names.iter().position(|b| b == n).ok_or(format!("no bone {n} in the piece"))).collect::<Result<_, _>>()?;
     // (a vertex holds its bone in a byte)
@@ -515,8 +515,22 @@ pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones
     let members = f.layout_members(vb.layout);
     const EXPECTED: [(i32, i32, i32); 7] = [(0, 2, 0), (12, 17, 3), (16, 17, 6), (20, 17, 2), (24, 19, 1), (28, 19, 10), (32, 22, 5)];
     let full = *mesh.facesets.iter().max_by_key(|&&fi| fsets[fi].count).ok_or("the piece's mesh has no facesets")?;
-    // its vertices: one per point, colour and (rough) normal, so a flat cap doesn't round off the
-    // side it meets
+    let (verts, tris) = kit_vertices(kit, parts.clone());
+    if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) {
+        return Err(format!("the piece's vertex layout is not the expected one ({} bytes, {:?})", vb.vsize, members));
+    }
+    if verts.len() > vb.vcount || tris.len() * 6 > fsets[full].length {
+        return Err(format!("no room for the {what}: {} vertices ({} fit), {} triangles ({} fit)", verts.len(), vb.vcount, tris.len(), fsets[full].length / 6));
+    }
+    write_mesh(&mut f, &vb, &mesh.facesets.clone(), full, &verts, &tris, &bone_ids)?;
+    crate::log(format!("assets: the {what} {} vertices, {} triangles (room for {}, {}), on {:?}", verts.len(), tris.len(), vb.vcount, fsets[full].length / 6, bones));
+    Ok(f.d)
+}
+
+/// The kit's (or the kart's) vertices as the FLVER holds them: one per point, colour and (rough)
+/// normal, so a flat cap doesn't round off the side it meets; each on its part's place in `parts`.
+/// And the triangles.
+pub fn kit_vertices(kit: &[Tri], parts: std::ops::Range<usize>) -> (Vec<Vertex>, Vec<[u16; 3]>) {
     let mut verts: Vec<Vertex> = Vec::new();
     let mut index: HashMap<(usize, [i64; 3], usize, [i64; 3]), usize> = HashMap::new();
     let mut tris = Vec::new();
@@ -544,21 +558,27 @@ pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones
         }
         tris.push(tri);
     }
-    if vb.vsize != 40 || members.get(..7) != Some(&EXPECTED[..]) {
-        return Err(format!("the piece's vertex layout is not the expected one ({} bytes, {:?})", vb.vsize, members));
-    }
-    if verts.len() > vb.vcount || tris.len() * 6 > fsets[full].length {
-        return Err(format!("no room for the kit: {} vertices ({} fit), {} triangles ({} fit)", verts.len(), vb.vcount, tris.len(), fsets[full].length / 6));
-    }
-    write_mesh(&mut f, &vb, &mesh.facesets.clone(), full, &verts, &tris, &bone_ids)?;
-    crate::log(format!("assets: the kit {} vertices, {} triangles (room for {}, {}), on {:?}", verts.len(), tris.len(), vb.vcount, fsets[full].length / 6, bones));
-    Ok(f.d)
+    (verts, tris)
 }
 
 /// The kit albedo's swatches: a KIT_GRID x KIT_GRID grid, each colour's UV at its middle.
 pub fn kit_uv(swatch: usize) -> [f64; 2] {
     let g = super::kit::KIT_GRID;
     [((swatch % g) as f64 + 0.5) / g as f64, ((swatch / g) as f64 + 0.5) / g as f64]
+}
+
+/// The bones the kart's parts go on in the legs piece (kartmesh.rs), in its parts' order: twist
+/// bones it skins with nothing under them and no one else's (R_ThighTwist is the gear's, the hips
+/// Mario's; the calves and feet carry the Tarnished's footsteps).
+const KART_BONES: [&str; 7] = ["L_ThighTwist", "L_ThighTwist1", "R_ThighTwist1", "L_CalfTwist", "L_CalfTwist1", "R_CalfTwist", "R_CalfTwist1"];
+
+/// The first `n` of KART_BONES that this piece skins and that are leaves in it.
+pub fn kart_bones(f: &Flver, n: usize) -> Vec<String> {
+    let names = f.bone_names();
+    let parent = |b: usize| i16::from_le_bytes([f.d[f.bone_off + b * 0x80 + 0x1C], f.d[f.bone_off + b * 0x80 + 0x1D]]);
+    let leaf = |b: usize| !(0..f.bones).any(|c| parent(c) as i32 == b as i32);
+    let skinned = |b: usize| i32_at(&f.d, f.bone_off + b * 0x80 + 0x3C) == 8;
+    KART_BONES.iter().filter(|n| names.iter().position(|b| b == *n).is_some_and(|b| b < 256 && skinned(b) && leaf(b))).take(n).map(|n| n.to_string()).collect()
 }
 
 /// The finger bones the kit can go on in an armour FLVER (the gauntlets): skinned by it, with no

@@ -29,6 +29,10 @@ fn oodle() -> Result<&'static Oodle, String> {
     static OODLE: OnceLock<Option<Oodle>> = OnceLock::new();
     OODLE
         .get_or_init(|| unsafe {
+            // (tests: ER_GAME_DIR, the game's folder)
+            #[cfg(test)]
+            let path = std::env::var("ER_GAME_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| super::archive::game_dir()).join("oo2core_6_win64.dll");
+            #[cfg(not(test))]
             let path = super::archive::game_dir().join("oo2core_6_win64.dll");
             let dll = LoadLibraryW(&HSTRING::from(path.as_os_str())).ok()?;
             Some(Oodle {

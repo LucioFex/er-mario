@@ -182,6 +182,9 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::ZipKick => Some((3, 1.2, false)),
         Attack::StarBlast => Some((8, 1.9, true)),
         Attack::CannonPound => Some((6, 1.8, true)),
+        // the kart: a jolt of a hold, the bump a heavy one
+        Attack::KartRam => Some((2, 1.2, false)),
+        Attack::KartBump => Some((3, 1.4, true)),
     }
 }
 
@@ -656,6 +659,28 @@ pub fn cannon_pound(feet: Vec3) {
     puffs(feet + Vec3::Y * 0.3, 12, 1.6);
     burst(feet + Vec3::Y * 0.6, 6, Bit::Star);
     crate::lakitu::shake(1.2);
+}
+
+/// The kart (karting.rs): up where he stands, a ring of dust, a puff and stars.
+pub fn kart_in(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.05, 1.8, 0.35, DUST);
+    puffs(feet + Vec3::Y * 0.3, 6, 0.8);
+    burst(feet + Vec3::Y * 0.8, 3, Bit::Star);
+}
+
+/// The kart's coins knocked out of it by a blow.
+pub fn kart_coins(at: Vec3, n: usize) {
+    burst(at + Vec3::Y * 0.8, n.max(1), Bit::Coin);
+}
+
+/// A spark off the kart's drift (its charge's colour), its size (m).
+pub fn kart_spark(at: Vec3, tint: [f32; 3], size: f32) {
+    spark(at, size, [tint[0], tint[1], tint[2], 1.0]);
+}
+
+/// Dust off its tyres.
+pub fn kart_dust(at: Vec3) {
+    puffs(at + Vec3::Y * 0.05, 1, 0.15);
 }
 
 /// A trap's thing gone (its time up): a puff of smoke.

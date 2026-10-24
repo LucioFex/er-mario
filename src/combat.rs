@@ -253,11 +253,15 @@ pub enum Attack {
     /// the portable cannon's pound (v4 Part 7, cannon.rs): LT in its flight, a shockwave on everyone
     /// round where he comes down
     CannonPound,
+    /// the kart (v4 Part 4, karting.rs): a small enemy run over and flung, a bigger one or a boss
+    /// bumped (its worth by the speed into it: Combat::deal_scaled)
+    KartRam,
+    KartBump,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 188] = [
+const CODES: [Attack; 190] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -285,6 +289,7 @@ const CODES: [Attack; 188] = [
     Attack::OdmStrike, Attack::OdmGlance, Attack::ZipKick,
     Attack::StarBlast,
     Attack::CannonPound,
+    Attack::KartRam, Attack::KartBump,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -410,6 +415,10 @@ impl Attack {
             Attack::ZipKick => Attack::Stomp.spec(),
             Attack::StarBlast => Attack::GroundPound.spec(),
             Attack::CannonPound => Attack::GroundPound.spec(),
+            // the kart: run over, a kick's weight (it flies off anyway, bat.rs); bumped, a stomp's
+            // stagger
+            Attack::KartRam => Attack::Kick.spec(),
+            Attack::KartBump => Attack::Stomp.spec(),
         }
     }
 
@@ -677,6 +686,10 @@ impl Attack {
             // the cannon's pound: a ground pound and a bit on everyone round him, once a minute (the
             // cannon's wait, its coins and its flight are the cost)
             Attack::CannonPound => (30.0, "damage_cannon_pound"),
+            // the kart: a punch and a bit at 20 m/s (0.3 to 1.5 of it by the speed into them); the
+            // fling and the stagger are the point, and every bump spins a big one's rammer out
+            Attack::KartRam => (14.0, "damage_kart_ram"),
+            Attack::KartBump => (10.0, "damage_kart_bump"),
         }
     }
 
@@ -852,6 +865,8 @@ impl Attack {
             Attack::StarBlast => 1.0,
             // (no cannon in a boss fight: a boss only takes it when one's near without its bar)
             Attack::CannonPound => 1.0,
+            // (a boss only takes the glancing half of it, and the kart spins out each time)
+            Attack::KartRam | Attack::KartBump => 1.0,
         }
     }
 
@@ -999,6 +1014,8 @@ impl Attack {
             Attack::OdmStrike => 8.0,
             Attack::StarBlast => 30.0,
             Attack::CannonPound => 20.0,
+            Attack::KartRam => 4.0,
+            Attack::KartBump => 8.0,
             _ => 0.0,
         }
     }
@@ -2956,7 +2973,7 @@ impl Combat {
                 // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
                 let stopped = crate::stopwatch::frozen(handle);
                 if stopped {
-                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound);
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound | Attack::KartBump);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
                 } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd | Attack::FrenzyEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
@@ -3207,7 +3224,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = attack.continuous() || matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound | Attack::KartBump);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || swing < 1.0 || !(heavy || due) {
                 continue;

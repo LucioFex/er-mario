@@ -941,7 +941,8 @@ s32 act_er_boss_ride(struct MarioState *m) {
 // on the AoT hook's line (odm.rs) the spin slash (8, spinning round), the flying kick (9) and the
 // backflip off a hit (10); the portable cannon (cannon.rs): in the barrel (11, SM64's own pose
 // there, hidden by the mod), shot from it (12, on his stomach, pitched `er_cling_pitch` up along his
-// flight) and the ground pound out of the flight (13: the spin, then the pound)
+// flight) and the ground pound out of the flight (13: the spin, then the pound); the kart
+// (karting.rs): seated in it (14), a throw from the seat (15)
 s32 er_cling_mode = 0;
 s16 er_cling_pitch = 0;
 
@@ -995,6 +996,15 @@ s32 act_er_cling(struct MarioState *m) {
             break;
         case 11: set_mario_animation(m, MARIO_ANIM_DIVE); break;
         case 12: set_mario_animation(m, MARIO_ANIM_AIRBORNE_ON_STOMACH); break;
+        // (the kart, karting.rs: seated, his slide's pose, his arms on the wheel by the mod's IK;
+        // a throw from the seat, the palm thrust from its start)
+        case 14: set_mario_animation(m, MARIO_ANIM_SLIDE); break;
+        case 15:
+            set_mario_animation(m, MARIO_ANIM_FIRST_PUNCH_FAST);
+            if (m->actionTimer == 0) {
+                set_anim_to_frame(m, 0);
+            }
+            break;
         case 13:
             if (m->actionTimer < 10) {
                 set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);

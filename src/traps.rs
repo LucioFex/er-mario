@@ -70,6 +70,8 @@ const CARRY: f32 = 0.6;
 const CARRY_MAX: f32 = 12.0;
 const SHELL_CARRY: f32 = 0.4;
 const BOOST_FADE: f32 = 3.0;
+/// ...and a shell off the kart's (karting.rs): its speed lasts
+const KART_FADE: f32 = 1.0;
 /// the blast's reach (m); the spring's super jump (SM64 units per tick up)
 const BLAST: f32 = 3.5;
 const SPRING_JUMP: f32 = 76.0;
@@ -137,6 +139,10 @@ struct Item {
     squash: f32,
     squash_vel: f32,
     gone: bool,
+    /// how far from Mario it lasts (m), how fast a shell's speed on top wears off (m/s each s): the
+    /// kart's things (karting.rs) farther, longer
+    away: f32,
+    fade: f32,
 }
 
 pub struct Traps {
@@ -349,7 +355,7 @@ impl Traps {
                 Kind::Bomb => FUSE,
                 Kind::Spring => SPRING_LIFE,
             };
-            if (it.pos - feet).length() > AWAY && it.kind != Kind::Bomb {
+            if (it.pos - feet).length() > it.away && it.kind != Kind::Bomb {
                 it.gone = true;
             }
             if it.age >= life {
@@ -482,7 +488,71 @@ impl Traps {
             squash: if kind == Kind::Spring { 0.5 } else { 0.0 },
             squash_vel: 0.0,
             gone: false,
+            away: AWAY,
+            fade: BOOST_FADE,
         });
+    }
+
+    /// One of the kit's things put out with no throw of Mario's (the kart's X and Y, karting.rs):
+    /// `kind` at `from` going `vel` (m/s), lasting until it's `away` m from Mario, a shell's speed
+    /// past its own wearing off slowly. Its stock and wait as the kit's (a buzz when it's not ready).
+    pub fn launch(&mut self, kind: Kind, from: Vec3, vel: Vec3, away: f32) -> bool {
+        if !self.available(kind) {
+            sound(SOUND_BUZZ, 0.5);
+            log(format!("traps: {kind:?} not ready"));
+            return false;
+        }
+        let now = self.now();
+        let part = match kind {
+            Kind::Banana => {
+                let slot = (0..2).find(|&k| !self.items.iter().any(|i| i.part == KIT_BANANA + k)).unwrap_or(0);
+                if let Some(b) = self.bananas.iter_mut().find(|b| **b <= now) {
+                    *b = now + BANANA_BACK;
+                }
+                KIT_BANANA + slot
+            }
+            Kind::Green | Kind::Red => {
+                self.shell = now + SHELL_BACK;
+                if kind == Kind::Green { KIT_GREEN_SHELL } else { KIT_RED_SHELL }
+            }
+            Kind::Bomb => {
+                self.bomb = now + BOMB_BACK;
+                KIT_BOMB
+            }
+            Kind::Spring => {
+                self.spring = now + SPRING_BACK;
+                KIT_SPRING
+            }
+        };
+        let own = match kind {
+            Kind::Green => GREEN_SPEED,
+            Kind::Red => RED_SPEED,
+            _ => 0.0,
+        };
+        let shell = matches!(kind, Kind::Green | Kind::Red);
+        log(format!("traps: {kind:?} out (the kart's)"));
+        crate::impact::kit_out(from);
+        self.items.push(Item {
+            kind,
+            part,
+            pos: from,
+            vel,
+            yaw: vel.x.atan2(vel.z),
+            spin: 0.0,
+            age: 0.0,
+            state: State::Flying,
+            hits: 0,
+            hit: Vec::new(),
+            tally: Vec::new(),
+            lock: None,
+            boost: if shell { (vel.with_y(0.0).length() - own).max(0.0) } else { 0.0 },
+            squash: 0.0,
+            squash_vel: 0.0,
+            gone: false,
+            away,
+            fade: KART_FADE,
+        });
+        true
     }
 
     /// Puts the things on their models: where each is, turned and squashed as it goes; the rest
@@ -683,7 +753,7 @@ fn banana_trip(it: &mut Item, near: &[combat::Target], player: &ChrIns, combat: 
 fn shell(it: &mut Item, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, near: &[combat::Target], player: &ChrIns, combat: &mut Combat, tick: u32) {
     let red = it.kind == Kind::Red;
     it.spin += DT * 18.0;
-    it.boost = (it.boost - BOOST_FADE * DT).max(0.0);
+    it.boost = (it.boost - it.fade * DT).max(0.0);
     // (the one it ricochets to: still there to hit, still in reach, not chased for good)
     if let Some((key, since)) = it.lock {
         let there = near

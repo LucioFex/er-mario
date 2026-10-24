@@ -47,7 +47,9 @@ pub const YOSHI: usize = 33;
 // inside the input task
 pub const INPUT_BOSSRIDE: usize = 34;
 pub const INPUT_MENU: usize = 35;
-const N: usize = 36;
+// v4 Part 4: the kart's tick (karting.rs)
+pub const KART: usize = 36;
+const N: usize = 37;
 const NAMES: [&str; N] = [
     "frame task",
     "HUD task",
@@ -85,6 +87,7 @@ const NAMES: [&str; N] = [
     "Yoshi and trample",
     "input: boss ride",
     "input: menus",
+    "kart",
 ];
 
 /// per part: slowest run and all runs together since the last report (ns)

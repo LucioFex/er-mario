@@ -18,13 +18,13 @@ use super::model::Tri;
 use crate::engine_mario::{KIT_BANANA, KIT_BOMB, KIT_GREEN_SHELL, KIT_RED_SHELL, KIT_ROCK, KIT_SPRING, KIT_SWORD};
 
 /// SM64 units per metre in the mesh (as the gear's)
-const PER_METRE: f32 = 400.0;
+pub(crate) const PER_METRE: f32 = 400.0;
 
 /// The kit albedo's swatches: KIT_GRID x KIT_GRID cells (tex::kit_albedo, flver::kit_uv).
 pub const KIT_GRID: usize = 8;
 
 /// The kit's colours: one swatch each in its albedo (tex::kit_albedo), in this order.
-pub const KIT_PALETTE: [[f32; 3]; 19] = [
+pub const KIT_PALETTE: [[f32; 3]; 27] = [
     [1.0, 0.86, 0.18],   // 0 banana yellow
     [0.36, 0.23, 0.09],  // 1 banana tips, brown
     [0.12, 0.66, 0.16],  // 2 shell green
@@ -44,6 +44,15 @@ pub const KIT_PALETTE: [[f32; 3]; 19] = [
     [0.9, 0.92, 0.97],   // 16 the sword's blade, silver-white
     [0.62, 0.84, 1.0],   // 17 its edges, light blue
     [0.78, 0.81, 0.88],  // 18 its ridge, a shade darker
+    // the kart (kartmesh.rs, in the legs piece: the same albedo)
+    [0.84, 0.07, 0.06],  // 19 the kart's red
+    [0.42, 0.03, 0.03],  // 20 its dark red
+    [0.05, 0.05, 0.06],  // 21 tyre black
+    [0.2, 0.2, 0.22],    // 22 the tread's grey
+    [0.12, 0.22, 0.6],   // 23 the seat's blue
+    [0.3, 0.3, 0.33],    // 24 the engine's grey
+    [0.86, 0.87, 0.9],   // 25 chrome
+    [0.1, 0.1, 0.12],    // 26 near black (the column, the bumpers' rubber)
 ];
 const _: () = assert!(KIT_PALETTE.len() <= KIT_GRID * KIT_GRID);
 
@@ -56,13 +65,13 @@ pub const SPRING_R: f32 = 0.22;
 pub const SPRING_H: f32 = 0.34;
 pub const ROCK_R: f32 = 0.62;
 
-struct Builder<'a> {
-    out: &'a mut Vec<Tri>,
-    part: i32,
+pub(crate) struct Builder<'a> {
+    pub out: &'a mut Vec<Tri>,
+    pub part: i32,
 }
 
 impl Builder<'_> {
-    fn tri(&mut self, p: [Vec3; 3], n: [Vec3; 3], color: usize) {
+    pub(crate) fn tri(&mut self, p: [Vec3; 3], n: [Vec3; 3], color: usize) {
         // (SM64 is mirrored on X: flver.rs flips it back, as for the gear)
         let local = p.map(|v| [-v.x * PER_METRE, v.y * PER_METRE, v.z * PER_METRE]);
         let normal = n.map(|v| [-v.x, v.y, v.z]);
@@ -71,7 +80,7 @@ impl Builder<'_> {
 
     /// A grid of quads: `point(i, j)` a point and its normal, `color(i, j)` each quad's colour.
     /// Collapsed edges (a pole) are skipped. `wrap`: columns that close on themselves.
-    fn grid(&mut self, cols: usize, rows: usize, wrap: bool, point: &dyn Fn(usize, usize) -> (Vec3, Vec3), color: &dyn Fn(usize, usize) -> usize) {
+    pub(crate) fn grid(&mut self, cols: usize, rows: usize, wrap: bool, point: &dyn Fn(usize, usize) -> (Vec3, Vec3), color: &dyn Fn(usize, usize) -> usize) {
         let col = |i: usize| if wrap { i % cols } else { i };
         for j in 0..rows {
             for i in 0..cols {
@@ -91,7 +100,7 @@ impl Builder<'_> {
     }
 
     /// A flat disc at `c` facing `n`.
-    fn disc(&mut self, c: Vec3, n: Vec3, r: f32, sides: usize, color: usize) {
+    pub(crate) fn disc(&mut self, c: Vec3, n: Vec3, r: f32, sides: usize, color: usize) {
         let u = n.any_orthonormal_vector();
         let v = n.cross(u);
         for s in 0..sides {
@@ -104,7 +113,7 @@ impl Builder<'_> {
     }
 
     /// A closed cylinder from `a` to `b`, radius `r`.
-    fn cylinder(&mut self, a: Vec3, b: Vec3, r: f32, sides: usize, color: usize, caps: bool) {
+    pub(crate) fn cylinder(&mut self, a: Vec3, b: Vec3, r: f32, sides: usize, color: usize, caps: bool) {
         let axis = (b - a).normalize_or(Vec3::Y);
         let u = axis.any_orthonormal_vector();
         let v = axis.cross(u);
@@ -291,7 +300,7 @@ const SWORD_T: f32 = 0.014;
 
 impl Builder<'_> {
     /// A triangle whichever way its points go: turned so it faces `out` (flat shaded).
-    fn face(&mut self, p: [Vec3; 3], out: Vec3, color: usize) {
+    pub(crate) fn face(&mut self, p: [Vec3; 3], out: Vec3, color: usize) {
         let n = (p[1] - p[0]).cross(p[2] - p[0]);
         if n.length_squared() < 1e-12 {
             return;
@@ -302,7 +311,7 @@ impl Builder<'_> {
 
     /// A flat convex outline (points in order) pushed `half` either way along `axis`: both faces
     /// and its rim.
-    fn slab(&mut self, outline: &[Vec3], axis: Vec3, half: f32, color: usize) {
+    pub(crate) fn slab(&mut self, outline: &[Vec3], axis: Vec3, half: f32, color: usize) {
         let c = outline.iter().copied().sum::<Vec3>() / outline.len() as f32;
         let n = outline.len();
         for side in [1.0f32, -1.0] {
@@ -321,7 +330,7 @@ impl Builder<'_> {
 
     /// A five-point star in the plane across `axis` round `c` (radius `r`, its first point toward
     /// `up`), `half` thick.
-    fn star(&mut self, c: Vec3, axis: Vec3, up: Vec3, r: f32, half: f32, color: usize) {
+    pub(crate) fn star(&mut self, c: Vec3, axis: Vec3, up: Vec3, r: f32, half: f32, color: usize) {
         let side = axis.cross(up).normalize_or(Vec3::Z);
         let pts: Vec<Vec3> = (0..10)
             .map(|k| {
