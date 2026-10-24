@@ -145,6 +145,12 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordThrust | Attack::SwordRise | Attack::SwordBreaker => Some((3, 1.2, false)),
         Attack::SwordSlash(_) | Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordCrossBurst | Attack::SwordFlurryEnd | Attack::SwordRave(_) | Attack::SwordIai | Attack::SwordLauncher | Attack::SwordGreatSpin(_) => Some((5, 1.4, true)),
         Attack::SwordCleave | Attack::SwordHelm | Attack::SwordHelmRing | Attack::SwordBreakerRing => Some((6, 1.6, true)),
+        // the fists' new ones: the jabs a tick (they come every 3), the charged and beat blows heavy
+        Attack::FistFlurry => Some((1, 0.7, false)),
+        Attack::MeteorPunch | Attack::Dropkick => Some((3, 1.2, false)),
+        Attack::FistFlurryEnd | Attack::SuperPunch(0) => Some((5, 1.4, true)),
+        Attack::HeavyHook => Some((6, 1.5, true)),
+        Attack::SuperPunch(_) => Some((8, 1.7, true)),
     }
 }
 

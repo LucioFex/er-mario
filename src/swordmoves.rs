@@ -1025,7 +1025,8 @@ mod tests {
             (SW_DRAW, "quick draw"),
             (SW_DRAW_AIR, "quick draw (air)"),
         ];
-        assert_eq!(MOVES.len(), SW_DRAW_AIR as usize + 1);
+        // (the other weapons' moves come after the sword's)
+        assert!(MOVES.len() > SW_DRAW_AIR as usize);
         for (id, name) in want {
             assert_eq!(sword(id).name, name, "id {id}");
             assert!(is_sword(id));

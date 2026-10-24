@@ -65,7 +65,12 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below) |
 | back, forward + X (fists) | **Bullet Bill punch**: a coil back, then Mario flies fist first at the enemy, up to 7 m (the stick is read against the enemy, not against where he faces). Landed, it can be cut at once into the dash, a jump, the string (X goes on at the second punch) or a swap |
-| X held through a dash | **Dodge Offset** (Bayonetta's): keep X down while you dash out of a string, and the next X goes on with the string's next blow instead of starting over |
+| X held through a dash | **Dodge Offset** (Bayonetta's): keep X down while you dash out of a string, and the next X goes on with the string's next blow instead of starting over. Every weapon: the fists' punches, the hammer's three swings, the Chomp's lash / sweep / slam, the sword's four cuts, the boomerang's throws |
+| mash X as the Bullet Bill punch lands | **Hundred-hand flurry**: ten jabs in a second, then an uppercut off a little hop that launches small and medium enemies |
+| X held, let go (fists) | **Super punch**: the fist drawn back, light gathering; let go for a step-in punch that sends them back, or on the gleam (1.5 s) for the full one that knocks them flat. Into a wall right behind them: **WALL!** (more damage and stance) |
+| X, (beat), X (fists) | **Heavy hook**: a beat after a lone first punch, a wide hook with his whole body turned into it |
+| forward + X in the air string (fists) | **Meteor punch**: driven down and ahead; an enemy up in the air is spiked into the ground and bounces once (hit it again to send it back up). Jumping in at an enemy, forward + X is still the air string's first kick |
+| back + X in the air (fists) | **Dropkick**: both feet into it, it flies off (into a wall: WALL!) |
 | RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's shot instead (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
@@ -452,6 +457,7 @@ close and risky hits.
 | Action command | — | **+30%** of the blow (every third **+50%**) |
 | Dash strike | — | **12%** |
 | Bullet Bill punch | — | **9%** (a kick's weight: it sends them back a little), on bosses ×1.3 |
+| Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; Super punch **11%** / full **15%**; heavy hook **12.5%**; meteor punch **7%**; dropkick **8%**; WALL! **+30%** of the blow |
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |

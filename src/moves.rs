@@ -106,6 +106,8 @@ const WEAPON_ACTIONS: [u32; 11] = [
 /// a switch that waited for a weapon's move to end is dropped after this many ticks
 const PENDING_TICKS: u32 = 45;
 const ACT_IDLE: u32 = 0x0C40_0201;
+/// SM64's first punch (a string's first blow)
+const ANIM_FIRST_PUNCH: i32 = 0x67;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
 /// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
@@ -253,6 +255,29 @@ fn fists_step(step: u32) -> Option<Request> {
         3 => Request::Action(ACT_PUNCHING, 6),
         _ => Request::Action(ACT_ER_CHAIN, 0),
     })
+}
+
+/// er_moves.c's hammer swings and Chomp blows in a string (their actionArg: the last is the
+/// string's end, it goes on there)
+const HAMMER_SWINGS: u32 = 3;
+const CHOMP_BLOWS: u32 = 3;
+
+/// The Dodge Offset's blow (Bayonetta's): `done` blows of the weapon's string so far, its next one
+/// (`rangs`: a boomerang in hand to throw).
+pub fn offset_step(weapon: u8, done: u32, rangs: bool) -> Option<Request> {
+    use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
+    match weapon {
+        FISTS => fists_step(done + 1),
+        HAMMER => Some(Request::Action(ACT_ER_HAMMER, done.min(HAMMER_SWINGS - 1))),
+        CHOMP => Some(Request::Action(ACT_ER_CHOMP, done.min(CHOMP_BLOWS - 1))),
+        SWORD => {
+            // (its four: past the finisher it starts over)
+            let step = if done <= (crate::script::SW_S4 - crate::script::SW_S1) as u32 { done as u16 } else { 0 };
+            Some(Request::Script { id: crate::script::SW_S1 + step, air: false, yaw: None })
+        }
+        RANG if rangs => Some(Request::Action(ACT_ER_THROW, 0)),
+        _ => None,
+    }
 }
 
 /// One of the combos' moves (combat.rs leaves their hits to `Hit`).
@@ -405,6 +430,10 @@ pub struct Moves {
     /// the scripted move playing as moves were last read (by its start's count), and since when
     play_was: Option<u32>,
     play_since: u32,
+    /// in the string's first punch last tick, and when it ended with no second (the heavy hook's
+    /// beat counts from there)
+    first_was: bool,
+    first_end: Option<u32>,
 }
 
 /// the sword's pogo bounces a jump (Link's down-thrust)
@@ -482,6 +511,8 @@ impl Moves {
             raves: 0,
             play_was: None,
             play_since: 0,
+            first_was: false,
+            first_end: None,
         }
     }
 
@@ -555,6 +586,59 @@ impl Moves {
             self.swap = Some((next, tick));
         }
         Some(next)
+    }
+
+    /// Blows of the string so far (the Dodge Offset's step): the Star Sword's by its string's move
+    /// playing or just ended, the others' by the X presses counted.
+    fn string_done(&self, tick: u32) -> u32 {
+        use crate::script::{SW_S1, SW_S4};
+        if self.weapon != crate::weapons::SWORD {
+            return self.x_chain;
+        }
+        let ended = self.sword_ended.filter(|(_, at)| tick.wrapping_sub(*at) <= STRING_OVER).map(|(id, _)| id);
+        self.sword_was.or(ended).filter(|id| (SW_S1..=SW_S4).contains(id)).map_or(0, |id| (id - SW_S1 + 1) as u32)
+    }
+
+    /// The weapon in hand's new moves (weaponplay.rs), as a request: `x` pressed now, `closer` back,
+    /// forward + X, `next`: the scripted move playing (if any) can be cut now, `first_ago`: ticks
+    /// since the string's first blow ended alone.
+    #[allow(clippy::too_many_arguments)]
+    fn weapon_move(&mut self, x: bool, closer: bool, air: bool, a: u32, script_on: bool, next: bool, first_ago: Option<u32>, tick: u32) -> Option<Request> {
+        use crate::combo::X;
+        let playing = self.script.active().filter(|_| script_on);
+        let playing_for = tick.wrapping_sub(self.play_since);
+        let mash_window = if playing.is_some() { crate::weaponplay::MASH_WINDOW.min(playing_for) } else { crate::weaponplay::MASH_WINDOW };
+        let input = crate::weaponplay::Input {
+            x,
+            x_held: self.grammar.held(X),
+            x_released: self.grammar.released(X),
+            back_forward: closer,
+            dir: Some(self.grammar.dir()),
+            mash: self.grammar.mash(X, mash_window),
+        };
+        let state = crate::weaponplay::State {
+            air,
+            playing: playing.map(|id| (id, next)),
+            landed: self.script.has_landed(),
+            dashing: dodging(a),
+            dashed: if dodging(a) { Some(0) } else { self.dash_seen.map(|t| tick.wrapping_sub(t)) },
+            first_blow_ended: first_ago,
+            mega: crate::mega::active(),
+            air_string: a == ACT_ER_AIR_COMBO || a == ACT_ER_UPPERCUT || crate::juggle::active(),
+        };
+        let id = crate::weaponplay::choose(self.weapon, &input, &state)?;
+        let m = crate::script::MOVES.get(id as usize)?;
+        self.script_buffer = None;
+        self.attack_seen = Some(tick);
+        self.chain_seen = Some(tick);
+        // (a string's heavy end: the next X starts it over)
+        if matches!(id, crate::script::HEAVY_HOOK | crate::script::SUPER_PUNCH | crate::script::FIST_FLURRY) || id == crate::script::SUPER_PUNCH + 1 {
+            self.x_chain = 0;
+        }
+        self.first_end = None;
+        let name = crate::weapons::NAMES.get(self.weapon as usize).copied().unwrap_or("?");
+        crate::log(format!("moves: {name}, {}", m.name));
+        Some(Request::Script { id, air: m.air, yaw: None })
     }
 
     /// The weapon's string, from its first blow (out of a scripted move's NEXT window).
@@ -676,6 +760,16 @@ impl Moves {
         }
         let punching = a == ACT_PUNCHING || a == ACT_MOVE_PUNCHING;
         let air = a & ACT_FLAG_AIR != 0;
+        // the string's first punch over with no second (SM64's own string takes a second X in it):
+        // a beat from now, X is the heavy hook
+        let first_now = punching && state.anim_id == ANIM_FIRST_PUNCH;
+        if std::mem::replace(&mut self.first_was, first_now) && !punching && self.x_chain == 1 {
+            self.first_end = Some(tick);
+        }
+        let first_ago = self.first_end.map(|t| tick.wrapping_sub(t));
+        if x_pressed || punching {
+            self.first_end = None;
+        }
         // on his feet and free to move (not knocked down or back, in a cutscene, in water, on a
         // ledge), or in the dash
         let on_foot = allowed
@@ -686,12 +780,13 @@ impl Moves {
         // next X (not for a press that's another move's: the closer, X + A)
         self.offset.tick(x, dodging(a), tick);
         let offset_x = x_pressed && !closer && !a_pressed && on_foot && !dodging(a) && !air;
-        if let Some(step) = self.offset.take(offset_x, tick).filter(|_| self.weapon == crate::weapons::FISTS && !crate::mega::active()) {
-            if let Some(r) = fists_step(step + 1) {
+        if let Some(step) = self.offset.take(offset_x, tick).filter(|_| !crate::mega::active()) {
+            if let Some(r) = offset_step(self.weapon, step, crate::boomerang::ready() > 0) {
                 self.x_chain = step + 1;
                 self.chain_seen = Some(tick);
                 self.attack_seen = Some(tick);
-                crate::log(format!("moves: Dodge Offset, the string goes on at step {}", step + 1));
+                let name = crate::weapons::NAMES.get(self.weapon as usize).copied().unwrap_or("?");
+                crate::log(format!("moves: Dodge Offset, {name} string goes on at step {}", step + 1));
                 return Some(r);
             }
         }
@@ -740,9 +835,16 @@ impl Moves {
                     crate::log("moves: air dash out of the move");
                     return Some(Request::Action(ACT_ER_AIR_DASH, 0));
                 }
-                self.offset.dash_started(x, self.x_chain, tick);
+                self.offset.dash_started(x, self.string_done(tick), tick);
                 crate::log("moves: dash out of the move");
                 return Some(Request::Action(ACT_ER_DASH, 0));
+            }
+            // the weapon's own scripted moves read their own windows (a charge let go, mashing as
+            // the Bullet Bill punch lands)
+            if !sword && allowed {
+                if let Some(r) = self.weapon_move(x_pressed || x_raw, closer, air, a, true, open(crate::script::NEXT), first_ago, tick) {
+                    return Some(r);
+                }
             }
             if x_pressed && open(crate::script::NEXT) && allowed && !closer && !sword {
                 if let Some(r) = self.string_opener(air) {
@@ -945,7 +1047,7 @@ impl Moves {
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
         // (not in a hammer blow's wind-up and impact: it's committed)
         if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() {
-            let step = if in_string { self.x_chain } else { 0 };
+            let step = if in_string { self.string_done(tick) } else { 0 };
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 self.offset.dash_started(x, step, tick);
@@ -958,6 +1060,13 @@ impl Moves {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 crate::log("moves: air dash");
                 return Some(Request::Action(ACT_ER_AIR_DASH, 0));
+            }
+        }
+        // the other weapons' scripted moves (weaponplay.rs): out of a standstill, a run, a punch, a
+        // jump or the air string
+        if !sword && !script_on && allowed && !locked && (ground || in_air) && (!combo(a) || matches!(a, ACT_ER_AIR_COMBO | ACT_ER_UPPERCUT)) {
+            if let Some(r) = self.weapon_move(x_pressed, closer, air, a, false, true, first_ago, tick) {
+                return Some(r);
             }
         }
         // the Star Sword in hand: X, Y and LT in the air are its moves alone (swordplay.rs)
@@ -1212,5 +1321,42 @@ impl Moves {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
+
+    fn action(r: Option<Request>) -> Option<(u32, u32)> {
+        match r {
+            Some(Request::Action(a, arg)) => Some((a, arg)),
+            _ => None,
+        }
+    }
+
+    fn script(r: Option<Request>) -> Option<u16> {
+        match r {
+            Some(Request::Script { id, air: false, .. }) => Some(id),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_dodge_offset_goes_on_with_every_weapons_string() {
+        // (the blows done so far: the next one comes)
+        assert_eq!(action(offset_step(FISTS, 1, true)), Some((ACT_PUNCHING, 3)));
+        assert_eq!(action(offset_step(FISTS, 2, true)), Some((ACT_PUNCHING, 6)));
+        assert_eq!(action(offset_step(FISTS, 5, true)), Some((ACT_ER_CHAIN, 0)));
+        assert_eq!(action(offset_step(HAMMER, 1, true)), Some((ACT_ER_HAMMER, 1)));
+        assert_eq!(action(offset_step(HAMMER, 7, true)), Some((ACT_ER_HAMMER, 2)));
+        assert_eq!(action(offset_step(CHOMP, 1, true)), Some((ACT_ER_CHOMP, 1)));
+        assert_eq!(action(offset_step(CHOMP, 5, true)), Some((ACT_ER_CHOMP, 2)));
+        assert_eq!(script(offset_step(SWORD, 1, true)), Some(crate::script::SW_S2));
+        assert_eq!(script(offset_step(SWORD, 3, true)), Some(crate::script::SW_S4));
+        assert_eq!(script(offset_step(SWORD, 4, true)), Some(crate::script::SW_S1));
+        assert_eq!(action(offset_step(RANG, 2, true)), Some((ACT_ER_THROW, 0)));
+        assert!(offset_step(RANG, 2, false).is_none());
     }
 }

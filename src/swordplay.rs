@@ -103,11 +103,13 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
     if is(&[SW_THRUST]) && s.landed && i.x && i.mash >= MASH {
         return Some(SW_STABS);
     }
-    // held past a blow: the charges (not in the dash: its dodge would end)
-    if i.x_held >= CHARGE_AFTER && i.x_released.is_none() && (free || is(&[SW_S1])) && !is(&[SW_WAVE_CHARGE]) && !s.dashing {
+    // held past a blow: the charges (not in the dash: its dodge would end; nor held from before
+    // it: X held through a dash is the Dodge Offset's)
+    let after_dash = |held: u32| !s.dashing && s.dashed.is_none_or(|d| held <= d);
+    if i.x_held >= CHARGE_AFTER && i.x_released.is_none() && (free || is(&[SW_S1])) && !is(&[SW_WAVE_CHARGE]) && after_dash(i.x_held) {
         return Some(SW_WAVE_CHARGE);
     }
-    if i.y_held >= CHARGE_AFTER && i.y_released.is_none() && (free || is(&[SW_SPIN])) && !s.dashing {
+    if i.y_held >= CHARGE_AFTER && i.y_released.is_none() && (free || is(&[SW_SPIN])) && after_dash(i.y_held) {
         return Some(SW_SPIN_CHARGE);
     }
     // X a tick or two before A: the first slash it began gives way to the spin jump
@@ -266,6 +268,10 @@ mod tests {
         assert_eq!(choose(&held_x, &State { dashing: true, dashed: Some(0), ..Default::default() }), None);
         let held_y = Input { y_held: CHARGE_AFTER, ..Default::default() };
         assert_eq!(choose(&held_y, &State { dashing: true, dashed: Some(0), ..Default::default() }), None);
+        // (X held through the dash is the Dodge Offset's, not a charge as it ends)
+        let held_x = Input { x_held: CHARGE_AFTER + 10, ..Default::default() };
+        assert_eq!(choose(&held_x, &State { dashed: Some(3), ..Default::default() }), None);
+        assert_eq!(choose(&held_x, &State { dashed: Some(40), ..Default::default() }), Some(SW_WAVE_CHARGE));
     }
 
     #[test]

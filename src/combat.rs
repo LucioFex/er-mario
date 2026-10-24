@@ -193,11 +193,20 @@ pub enum Attack {
     /// the sword's MAX (maxfin.rs): Star Cut End, a cut of lightning across everyone near, three
     /// times
     MaxStarCut,
+    /// the fists' new moves (v4 Part 3, fistmoves.rs): the hundred-hand flurry's jabs and its
+    /// uppercut, the Super punch (0 charged, 1 full), the heavy hook, the meteor punch in the air,
+    /// the dropkick
+    FistFlurry,
+    FistFlurryEnd,
+    SuperPunch(u8),
+    HeavyHook,
+    MeteorPunch,
+    Dropkick,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 142] = [
+const CODES: [Attack; 149] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -217,6 +226,7 @@ const CODES: [Attack; 142] = [
     Attack::Javelin(1), Attack::Javelin(2), Attack::Javelin(3), Attack::Storm, Attack::StormEnd,
     Attack::SwordSlash(0), Attack::SwordSlash(1), Attack::SwordSlash(2), Attack::SwordSlash(3), Attack::SwordWhirl, Attack::SwordWhirlEnd, Attack::SwordCleave, Attack::SwordThrust, Attack::SwordStab, Attack::SwordStabEnd, Attack::SwordRise, Attack::SwordSpinJump, Attack::SwordSpinJumpEnd, Attack::SwordWave, Attack::SwordWaveJust, Attack::SwordSpin, Attack::SwordGreatSpin(0), Attack::SwordGreatSpin(1), Attack::SwordGreatSpin(2), Attack::SwordHurricane, Attack::SwordHurricaneEnd, Attack::SwordCross, Attack::SwordCrossBurst, Attack::SwordLauncher, Attack::SwordHelm, Attack::SwordHelmRing, Attack::SwordIai, Attack::SwordFlurry, Attack::SwordFlurryEnd, Attack::SwordRave(0), Attack::SwordRave(1), Attack::SwordRave(2), Attack::SwordRave(3), Attack::SwordBreaker, Attack::SwordBreakerRing, Attack::SwordPogo, Attack::SwordDraw, Attack::SwordBeam,
     Attack::MaxStarCut,
+    Attack::FistFlurry, Attack::FistFlurryEnd, Attack::SuperPunch(0), Attack::SuperPunch(1), Attack::HeavyHook, Attack::MeteorPunch, Attack::Dropkick,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -310,6 +320,12 @@ impl Attack {
             Attack::SwordHelm => Attack::GroundPound.spec(),
             Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => Attack::Fire(1).spec(),
             Attack::MaxStarCut => Attack::Stomp.spec(),
+            // the fists' new ones: the jabs a punch's, the uppercut and the hook a stomp's, the
+            // Super punch sends them back (full: down), the dropkick sends them back
+            Attack::FistFlurry => Attack::Punch.spec(),
+            Attack::FistFlurryEnd | Attack::HeavyHook | Attack::MeteorPunch => Attack::Stomp.spec(),
+            Attack::SuperPunch(0) | Attack::Dropkick => Attack::Sweep.spec(),
+            Attack::SuperPunch(_) => Attack::GroundPound.spec(),
         }
     }
 
@@ -515,7 +531,21 @@ impl Attack {
             // (three of them on everyone within 8 m: the other MAX shows' worth)
             Attack::MaxStarCut => (5.0, "damage_max_star_cut"),
             Attack::PoisonTick => (1.6, "damage_poison"),
+            // the fists' new moves (Part 3): the flurry's worth in its jabs together and the launch,
+            // the charge and the beat worth more than a punch, the air blows a punch and a bit
+            Attack::FistFlurry => (2.0, "damage_fist_flurry"),
+            Attack::FistFlurryEnd => (10.0, "damage_fist_flurry_end"),
+            Attack::SuperPunch(0) => (19.0, "damage_super_punch"),
+            Attack::SuperPunch(_) => (26.0, "damage_super_punch_full"),
+            Attack::HeavyHook => (22.0, "damage_heavy_hook"),
+            Attack::MeteorPunch => (12.0, "damage_meteor_punch"),
+            Attack::Dropkick => (14.0, "damage_dropkick"),
         }
+    }
+
+    /// A blow that drives him back hard enough to slam him into a wall right behind (WALL!).
+    pub fn splats(self) -> bool {
+        matches!(self, Attack::SuperPunch(_) | Attack::Dropkick)
     }
 
     /// A status going off on him (element.rs): no blow of Mario's, none of a blow's bonuses.
@@ -659,6 +689,10 @@ impl Attack {
             | Attack::SwordBreakerRing
             | Attack::SwordPogo
             | Attack::SwordDraw => 1.3,
+            // (the fists up close, as their punches)
+            Attack::FistFlurry | Attack::MeteorPunch | Attack::Dropkick => 1.3,
+            Attack::FistFlurryEnd | Attack::SuperPunch(_) => 1.4,
+            Attack::HeavyHook => 1.6,
         }
     }
 
@@ -694,7 +728,7 @@ impl Attack {
             // stabs'); the cross cut's two crossing cuts one blow; its finishers' windows are a few
             // ticks long and the landing rings' as long as the fall: once each
             Attack::SwordSlash(_) | Attack::SwordRave(_) => 5,
-            Attack::SwordStab | Attack::SwordFlurry => 2,
+            Attack::SwordStab | Attack::SwordFlurry | Attack::FistFlurry => 2,
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
@@ -740,6 +774,9 @@ impl Attack {
                 | Attack::SwordFlurryEnd
                 | Attack::SwordRave(3)
                 | Attack::SwordBreakerRing
+                | Attack::FistFlurryEnd
+                | Attack::SuperPunch(1)
+                | Attack::HeavyHook
         )
     }
 
@@ -1039,6 +1076,22 @@ pub struct Target {
 
 /// `Target::er` lies this far under the feet (m): the game's bullets spawn 1 m above it
 const ER_UNDER_FEET: f32 = 0.6;
+
+/// a blow that drives an enemy into a wall this near behind it (m): WALL!, worth this much more of
+/// it, and this much more stance
+pub const WALL_REACH: f32 = 2.5;
+const WALL_BONUS: f32 = 0.3;
+const WALL_POISE: f32 = 30.0;
+
+/// Where the map is right behind an enemy at `chest` (Elden Ring world) driven away from Mario at
+/// `me`, within `reach` (m): the wall it's slammed into. `ray(from, to)`: the map's first hit.
+pub fn wall_behind(chest: glam::Vec3, me: glam::Vec3, reach: f32, ray: impl Fn(glam::Vec3, glam::Vec3) -> Option<glam::Vec3>) -> Option<glam::Vec3> {
+    let away = (chest - me).with_y(0.0);
+    if away.length() < 0.2 {
+        return None;
+    }
+    ray(chest, chest + away.normalize() * reach)
+}
 
 impl Target {
     /// Where its feet are (Elden Ring world; `er` is under them, for the bullets).
@@ -2639,13 +2692,18 @@ impl Combat {
                 if stopped {
                     let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
-                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher) && !hands_off(handle) {
+                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
                     let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
                     if !crate::juggle::try_launch(handle, me, radius_m, height_m, regular, stunned, high) && !crate::coop::guest() {
                         log_not_lifted(handle, radius_m, height_m, stunned);
+                    }
+                } else if matches!(attack, Attack::MeteorPunch) {
+                    // (driven down: up there it hits the ground and bounces once)
+                    if !crate::juggle::spike(handle) {
+                        crate::juggle::hit(handle, me);
                     }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
@@ -2693,8 +2751,9 @@ impl Combat {
                     Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
-                // the Bowser spin's release flings regular enemies away, like the giant fireball
-                if matches!(attack, Attack::GiroEnd) && blowable(handle) {
+                // the Bowser spin's release flings regular enemies away, like the giant fireball (the
+                // full Super punch and the dropkick too)
+                if matches!(attack, Attack::GiroEnd | Attack::SuperPunch(1) | Attack::Dropkick) && blowable(handle) {
                     let me = player.modules.physics.position;
                     crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
                 }
@@ -2875,6 +2934,31 @@ impl Combat {
     /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
     /// command's bonus, timing.rs; or a status going off, element.rs), with its own kill if it's the
     /// one that ends him.
+    /// Game thread, after the blows of a tick were dealt: those that drove an enemy into a wall right
+    /// behind it (`Attack::splats`) slam it there: WALL!, a share more of the blow, more stance.
+    /// `me`: Mario (Elden Ring world); `ray(from, to)`: the map's first hit.
+    pub fn wall_splats(&mut self, targets: &[Target], hits: &[(usize, Attack, bool)], me: glam::Vec3, tick: u32, ray: impl Fn(glam::Vec3, glam::Vec3) -> Option<glam::Vec3>) {
+        for &(i, attack, _) in hits {
+            if !attack.splats() {
+                continue;
+            }
+            let Some(t) = targets.get(i) else { continue };
+            let Some(handle) = t.handle.filter(|_| !t.friendly()) else { continue };
+            // (only a blow that landed now: `deal` marked his cooldown this tick)
+            if self.cooldown.get(&t.key) != Some(&tick) {
+                continue;
+            }
+            let chest = t.feet() + glam::Vec3::Y * (t.height * crate::scale() * 0.5).min(1.2);
+            let Some(wall) = wall_behind(chest, me, WALL_REACH, &ray) else { continue };
+            log(format!("combat: {attack:?} slams it into a wall {:.1} m behind (WALL!)", (wall - chest).length()));
+            crate::style::callout("WALL!", Some(wall + glam::Vec3::Y * 0.6), [1.0, 0.85, 0.4], true, 2.0);
+            crate::impact::element_spark(wall, [1.0, 0.9, 0.6], 1.6);
+            crate::lakitu::shake(0.35);
+            crate::swing::add_stance(&handle, WALL_POISE);
+            self.extra_share(&handle, attack, WALL_BONUS, tick);
+        }
+    }
+
     pub fn extra_share(&mut self, handle: &FieldInsHandle, attack: Attack, extra: f32, tick: u32) {
         if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
             return;
@@ -3084,6 +3168,21 @@ mod blade_tests {
 #[cfg(test)]
 mod tests {
     use super::{Attack, CODES};
+
+    #[test]
+    fn a_wall_right_behind_him_is_a_wall_splat() {
+        use glam::Vec3;
+        // (a wall at x = 3: the enemy at x = 1.5 driven away from Mario at x = 0)
+        let wall = |a: Vec3, b: Vec3| (a.x < 3.0 && b.x >= 3.0).then(|| Vec3::new(3.0, a.y, a.z));
+        let chest = Vec3::new(1.5, 0.9, 0.0);
+        assert!(super::wall_behind(chest, Vec3::ZERO, super::WALL_REACH, wall).is_some());
+        // (too far behind, or driven the other way)
+        assert!(super::wall_behind(Vec3::new(-1.5, 0.9, 0.0), Vec3::ZERO, super::WALL_REACH, wall).is_none());
+        assert!(super::wall_behind(chest, Vec3::new(5.0, 0.0, 0.0), super::WALL_REACH, wall).is_none());
+        // (right on top of him: no way to tell)
+        assert!(super::wall_behind(Vec3::new(0.0, 0.9, 0.0), Vec3::ZERO, super::WALL_REACH, wall).is_none());
+        assert!(Attack::SuperPunch(1).splats() && Attack::Dropkick.splats() && !Attack::Punch.splats());
+    }
 
     #[test]
     fn attack_codes_round_trip() {

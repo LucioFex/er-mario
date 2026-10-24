@@ -27,6 +27,7 @@ mod element;
 mod elemfx;
 mod engine_mario;
 mod fireball;
+mod fistmoves;
 mod flame;
 mod fx;
 mod grab;
@@ -72,6 +73,7 @@ mod swordplay;
 mod sword;
 mod swordmoves;
 mod wave;
+mod weaponplay;
 mod stats;
 mod timing;
 mod traps;
@@ -4172,10 +4174,38 @@ fn frame(data: &FD4TaskData) {
                     reach_ik(p, &state, f.reach, f.reach_pitch, blade.map(|b| (b, f.c.twist)));
                 }
             }
+            // the scripted move's tick ran (not held by a hit-stop): what it shows (before the weapons are posed: a heavy blow's squash), its hit window
+            let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);
+            if let Some(f) = script_ran {
+                combo.fx |= f.fx;
+            }
+            // (a scripted move swinging the hammer or the Chain Chomp: it holds them as er_moves.c's
+            // moves would, from the move's own curves)
+            if let Some(f) = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action)) {
+                if let (Some((yaw, pitch, _)), Some(h)) = (f.blade, f.held) {
+                    match weapon_on {
+                        weapons::HAMMER => {
+                            combo.hammer_scripted = 1;
+                            combo.hammer_yaw = yaw;
+                            combo.hammer_pitch = pitch;
+                            combo.hammer_scale = h.scale;
+                        }
+                        weapons::CHOMP => {
+                            combo.chomp_scripted = 1;
+                            combo.chomp_yaw = yaw;
+                            combo.chomp_reach = h.out;
+                            combo.chomp_height = h.up;
+                            combo.chomp_bite = h.bite;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
             // (the Chain Chomp's body hits like the hammer's head)
             let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
-            let sword_swing = parts.as_mut().and_then(|p| sword::pose(p, &state, blade, hands_free && !busy_hands));
+            // (the blade only the sword's: a hammer move's pointing would draw it out of sight)
+            let sword_swing = parts.as_mut().and_then(|p| sword::pose(p, &state, blade.filter(|_| weapon_on == weapons::SWORD), hands_free && !busy_hands));
             // (the weapon in hand's: another one still shrinking away after a swap reaches nothing)
             let swing = match weapon_on {
                 weapons::SWORD => sword_swing,
@@ -4183,11 +4213,6 @@ fn frame(data: &FD4TaskData) {
                 weapons::HAMMER => hammer_swing,
                 _ => None,
             };
-            // the scripted move's tick ran (not held by a hit-stop): what it shows, its hit window
-            let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);
-            if let Some(f) = script_ran {
-                combo.fx |= f.fx;
-            }
             let window = script_ran.and_then(|f| f.window.map(|w| w.1)).and_then(|w| script::window_open(w, state.action & 0x800 != 0));
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing, window) } else { Vec::new() };
             // (a long one: which part of it, for the log below)
@@ -4354,6 +4379,11 @@ fn frame(data: &FD4TaskData) {
                     };
                     if b_fire && m.fire.charging() && rising {
                         m.fire.put_out(&state, m.origin, m.ticks);
+                    }
+                    // (a blow that drove an enemy into a wall right behind it: WALL!)
+                    {
+                        let me = player_ref.chr_ins.modules.physics.position;
+                        m.combat.wall_splats(&targets, &hits, glam::Vec3::new(me.0, me.1, me.2), m.ticks, ray);
                     }
                     let _perf12 = perf::span(perf::FIREBALL);
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);

@@ -172,6 +172,12 @@ pub struct Move {
     pub blade_pitch: &'static [Key],
     pub blade_roll: &'static [Key],
     pub blade_held: (u16, u16),
+    /// in those ticks too: the hammer's size (1 its own), the Chain Chomp's place (SM64 units out
+    /// from him along the blade's yaw, up from his feet) and its mouth (0 shut, 1 wide open)
+    pub weapon_scale: &'static [Key],
+    pub out: &'static [Key],
+    pub up: &'static [Key],
+    pub bite: &'static [Key],
     pub windows: &'static [Window],
     pub cancels: &'static [Cancel],
     /// (tick, sound, volume: 0 at his body), one a tick
@@ -215,6 +221,10 @@ pub const BASE: Move = Move {
     blade_pitch: &[],
     blade_roll: &[],
     blade_held: (0, 0),
+    weapon_scale: &[],
+    out: &[],
+    up: &[],
+    bite: &[],
     windows: &[],
     cancels: &[],
     sounds: &[],
@@ -291,10 +301,20 @@ pub const SW_POGO: u16 = 32;
 pub const SW_DRAW: u16 = 33;
 pub const SW_DRAW_AIR: u16 = 34;
 
+/// the fists' new moves (v4 Part 3, fistmoves.rs; weaponplay.rs picks them)
+pub const FIST_FLURRY: u16 = 35;
+pub const FIST_CHARGE: u16 = 36;
+/// the Super punch, + 1 the full one
+pub const SUPER_PUNCH: u16 = 37;
+pub const HEAVY_HOOK: u16 = 39;
+pub const METEOR_PUNCH: u16 = 40;
+pub const FIST_DROPKICK: u16 = 41;
+
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
     (SW_S1..=SW_DRAW_AIR).contains(&id)
 }
+
 
 /// The move `id`'s data, if there is any (a name for the log).
 pub fn named(id: u16) -> &'static str {
@@ -388,6 +408,7 @@ const ZEUS: Move = Move {
     ..BASE
 };
 
+use crate::fistmoves as fist;
 use crate::swordmoves as sw;
 
 /// Every move by its id: the fists' and the sword's RB moves, then the Star Sword's (SW_S1 on,
@@ -428,6 +449,13 @@ pub const MOVES: &[Move] = &[
     sw::POGO,
     sw::DRAW,
     sw::DRAW_AIR,
+    fist::FLURRY,
+    fist::CHARGE,
+    fist::SUPER,
+    fist::SUPER_FULL_PUNCH,
+    fist::HOOK,
+    fist::METEOR,
+    fist::DROPKICK,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -442,9 +470,20 @@ pub struct Frame {
     pub window: Option<(usize, &'static Window)>,
     pub reach: f32,
     pub reach_pitch: f32,
-    /// where the held weapon points (yaw, pitch, roll degrees), in its held ticks
+    /// where the held weapon points (yaw, pitch, roll degrees), in its held ticks, and the rest of
+    /// how it's held then
     pub blade: Option<(f32, f32, f32)>,
+    pub held: Option<HeldPose>,
     pub fx: u32,
+}
+
+/// The held weapon's size and the Chain Chomp's place this tick (Move::weapon_scale, out, up, bite).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeldPose {
+    pub scale: f32,
+    pub out: f32,
+    pub up: f32,
+    pub bite: f32,
 }
 
 /// The move playing: which, its lunge's whole way, whether a blow of it landed.
@@ -539,7 +578,7 @@ impl Player {
         if t >= m.len {
             self.cur = None;
             let c = SM64ErScript { active: 1, end: 1, anim_id: -1, anim_frame: -1.0, squash: 1.0, ..Default::default() };
-            return Some(Frame { id, t, c, window: None, reach: 0.0, reach_pitch: 0.0, blade: None, fx: 0 });
+            return Some(Frame { id, t, c, window: None, reach: 0.0, reach_pitch: 0.0, blade: None, held: None, fx: 0 });
         }
         let tf = t as f32;
         let within = |(from, to): (u16, u16)| from <= t && t < to;
@@ -590,7 +629,8 @@ impl Player {
         };
         self.cancel = cancel;
         let blade = within(m.blade_held).then(|| (eval(m.blade_yaw, tf, 0.0), eval(m.blade_pitch, tf, 0.0), eval(m.blade_roll, tf, 0.0)));
-        Some(Frame { id, t, c, window, reach: eval(m.reach, tf, 0.0), reach_pitch: m.reach_pitch, blade, fx })
+        let held = within(m.blade_held).then(|| HeldPose { scale: eval(m.weapon_scale, tf, 1.0), out: eval(m.out, tf, 0.0), up: eval(m.up, tf, 0.0), bite: eval(m.bite, tf, 0.0) });
+        Some(Frame { id, t, c, window, reach: eval(m.reach, tf, 0.0), reach_pitch: m.reach_pitch, blade, held, fx })
     }
 }
 
@@ -722,6 +762,37 @@ mod tests {
     }
 
     #[test]
+    fn a_move_holds_the_hammer_and_the_chomp_too() {
+        static M: Move = Move {
+            name: "test",
+            len: 10,
+            blade_yaw: &[k(0, 10.0, Linear)],
+            blade_pitch: &[k(0, 20.0, Linear)],
+            weapon_scale: &[k(0, 1.0, Linear), k(4, 2.0, Linear)],
+            out: &[k(0, 150.0, Linear)],
+            up: &[k(0, 40.0, Linear), k(8, 80.0, Linear)],
+            bite: &[k(0, 0.0, Linear), k(8, 1.0, Linear)],
+            blade_held: (0, 9),
+            ..BASE
+        };
+        let moves = std::slice::from_ref(&M);
+        let mut p = Player::default();
+        p.start(0, None);
+        let w = p.frame_in(moves, 0, 0, 0, 100.0).unwrap().held.expect("held at its start");
+        assert_eq!((w.scale, w.out, w.up, w.bite), (1.0, 150.0, 40.0, 0.0));
+        let w = p.frame_in(moves, ACT_ER_SCRIPT, 0, 4, 100.0).unwrap().held.unwrap();
+        assert_eq!((w.scale, w.up, w.bite), (2.0, 60.0, 0.5));
+        // (past its held ticks: nothing in hand)
+        assert!(p.frame_in(moves, ACT_ER_SCRIPT, 0, 9, 100.0).unwrap().held.is_none());
+        // (no keys: its own size, at his hand)
+        static N: Move = Move { name: "plain", len: 4, blade_held: (0, 4), ..BASE };
+        let mut p = Player::default();
+        p.start(0, None);
+        let w = p.frame_in(std::slice::from_ref(&N), 0, 0, 0, 100.0).unwrap().held.unwrap();
+        assert_eq!((w.scale, w.out, w.up, w.bite), (1.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
     fn a_window_strikes_each_enemy_once() {
         // (a hit-stop holds the move's tick while the real ticks and the cooldown run on: the same
         // window again on the same enemy is no new blow)
@@ -773,10 +844,19 @@ mod tests {
     }
 
     #[test]
+    fn every_id_has_its_move() {
+        // (the last id of each table: indexing MOVES by an id with no data would panic)
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK] {
+            assert!((id as usize) < MOVES.len(), "{id}");
+        }
+        assert_eq!(MOVES.len(), FIST_DROPKICK as usize + 1);
+    }
+
+    #[test]
     fn every_move_is_well_formed() {
         for m in MOVES {
             assert!(m.len > 0, "{}", m.name);
-            for keys in [m.twist, m.pitch, m.roll, m.turn, m.speed, m.squash, m.dip, m.reach, m.blade_yaw, m.blade_pitch, m.blade_roll] {
+            for keys in [m.twist, m.pitch, m.roll, m.turn, m.speed, m.squash, m.dip, m.reach, m.blade_yaw, m.blade_pitch, m.blade_roll, m.weapon_scale, m.out, m.up, m.bite] {
                 assert!(keys.windows(2).all(|w| w[0].t <= w[1].t), "{}: keys out of order", m.name);
             }
             assert!(m.clips.windows(2).all(|w| w[0].from < w[1].from), "{}", m.name);

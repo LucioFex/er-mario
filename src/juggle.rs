@@ -47,6 +47,8 @@ const CATCH_AFTER: f32 = 0.25;
 /// the bounce off the ground (m/s up, and the share of the fall's sideways speed kept), and how
 /// high a blow on the bounce sends it again (m)
 const BOUNCE_UP: f32 = 4.5;
+/// spiked down (the meteor punch): it falls this fast (m/s) from the start
+const SPIKE_SPEED: f32 = 14.0;
 const BOUNCE_KEEP: f32 = 0.3;
 const RELAUNCH_HEIGHT: f32 = 2.6;
 /// a shot from afar lifts one hanging up there this much (m)
@@ -278,6 +280,19 @@ pub fn shot(h: &FieldInsHandle) {
         }
         Phase::Flying { .. } | Phase::Pulled { .. } => {}
     }
+}
+
+/// A blow drove `h` down (the fists' meteor punch): up there, it's slammed into the ground and
+/// bounces off it once (a blow then sends it up again). False if it isn't up there.
+pub fn spike(h: &FieldInsHandle) -> bool {
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) else { return false };
+    if matches!(j.phase, Phase::Bounce { .. } | Phase::Pulled { .. }) {
+        return false;
+    }
+    j.phase = Phase::Falling { vel: Vec3::new(0.0, -SPIKE_SPEED, 0.0), since: Instant::now() };
+    log("juggle: spiked down");
+    true
 }
 
 /// `h` isn't juggled any more (another move takes it: bat.rs), its gravity back.
