@@ -250,11 +250,14 @@ pub enum Attack {
     /// Star Power's STAR BLAST (v4 Part 6, starpower.rs): on everyone round him, its worth by the
     /// time left (Combat::deal_scaled)
     StarBlast,
+    /// the portable cannon's pound (v4 Part 7, cannon.rs): LT in its flight, a shockwave on everyone
+    /// round where he comes down
+    CannonPound,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 187] = [
+const CODES: [Attack; 188] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -281,6 +284,7 @@ const CODES: [Attack; 187] = [
     Attack::Steam, Attack::Plasma, Attack::Boiling, Attack::Ignition, Attack::Shatter, Attack::CrimsonSpikes, Attack::Hail, Attack::BloodBolt, Attack::CorrosiveArc, Attack::Rot,
     Attack::OdmStrike, Attack::OdmGlance, Attack::ZipKick,
     Attack::StarBlast,
+    Attack::CannonPound,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -405,6 +409,7 @@ impl Attack {
             Attack::OdmGlance => Attack::Kick.spec(),
             Attack::ZipKick => Attack::Stomp.spec(),
             Attack::StarBlast => Attack::GroundPound.spec(),
+            Attack::CannonPound => Attack::GroundPound.spec(),
         }
     }
 
@@ -669,6 +674,9 @@ impl Attack {
             // Star Power's blast: a giant fireball's worth and a half with all its time left (0.35
             // of that with none): the reward for an S and the time spent
             Attack::StarBlast => (45.0, "damage_star_blast"),
+            // the cannon's pound: a ground pound and a bit on everyone round him, once a minute (the
+            // cannon's wait, its coins and its flight are the cost)
+            Attack::CannonPound => (30.0, "damage_cannon_pound"),
         }
     }
 
@@ -842,6 +850,8 @@ impl Attack {
             Attack::ZipKick => 1.2,
             // (no more for a boss: they take 13% of the shares as it is, starpower.rs's numbers)
             Attack::StarBlast => 1.0,
+            // (no cannon in a boss fight: a boss only takes it when one's near without its bar)
+            Attack::CannonPound => 1.0,
         }
     }
 
@@ -988,6 +998,7 @@ impl Attack {
             // (the AoT hook's strike: a heavy blow's; the nape's more, odm.rs)
             Attack::OdmStrike => 8.0,
             Attack::StarBlast => 30.0,
+            Attack::CannonPound => 20.0,
             _ => 0.0,
         }
     }
@@ -2945,7 +2956,7 @@ impl Combat {
                 // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
                 let stopped = crate::stopwatch::frozen(handle);
                 if stopped {
-                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike | Attack::StarBlast);
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
                 } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd | Attack::FrenzyEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
@@ -3014,8 +3025,8 @@ impl Combat {
                 let big = target.height > STOMP_HEIGHT || target.radius > 120.0;
                 match attack {
                     Attack::Stomp => crate::squish::start(handle, 0.35, 0.0),
-                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash if big => crate::squish::start(handle, 0.35, 0.0),
-                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
+                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash | Attack::CannonPound if big => crate::squish::start(handle, 0.35, 0.0),
+                    Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash | Attack::CannonPound => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
                 // the full Super punch, the dropkick and the charged ice rocket send a regular enemy
@@ -3196,7 +3207,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = attack.continuous() || matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike | Attack::StarBlast);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike | Attack::StarBlast | Attack::CannonPound);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || swing < 1.0 || !(heavy || due) {
                 continue;

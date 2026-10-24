@@ -15,6 +15,7 @@ mod hook;
 mod parry;
 mod ride;
 mod caps;
+mod cannon;
 mod carpet;
 mod carry;
 mod chomp;
@@ -837,7 +838,8 @@ fn out_of_health(id: i32, action: u32) {
     const ACT_FLAG_AIR: u32 = 0x800;
     const ACT_FLAG_SWIMMING: u32 = 0x2000;
     const ACT_STANDING_DEATH: u32 = 0x0002_1311;
-    let on_foot = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !yoshi::active() && !mega::active() && !rock::active() && !bossride::active();
+    // (yoshi::active() is Torrent being Yoshi at all: on him is `ridden`)
+    let on_foot = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && yoshi::ridden().is_none() && !mega::active() && !rock::active() && !bossride::active();
     if !on_foot || !revive::go_down() {
         set_player_hp(0);
         return;
@@ -863,6 +865,7 @@ fn warp_to(m: &mut MarioState, to: glam::Vec3, player_ref: &PlayerIns) {
     impact::warp_puff(to);
     colossus::release();
     odm::release();
+    cannon::release();
     m.hook.drop();
     m.moving.clear(&mut m.havok);
     m.origin = [to.x, to.y, to.z];
@@ -1362,6 +1365,7 @@ fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
     log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
     colossus::release();
     odm::release();
+    cannon::release();
     m.moving.clear(&mut m.havok);
     m.origin = [here.0, here.1, here.2];
     set_mario_position(m.id, [0.0, 0.0, 0.0]);
@@ -1673,6 +1677,11 @@ static FOLLOWING: AtomicBool = AtomicBool::new(false);
 static RIDING: AtomicBool = AtomicBool::new(false);
 /// Yoshi is being ridden with the keyboard (Elden Ring's own camera shows then).
 static KEY_RIDE: AtomicBool = AtomicBool::new(false);
+/// A boss's health bar is up (a boss fight).
+fn boss_bar() -> bool {
+    unsafe { eldenring::cs::CSFeManImp::instance() }.is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()))
+}
+
 /// Elden Ring's "reverse camera X axis" option (System > Camera), each player's own.
 fn camera_x_reversed() -> bool {
     unsafe { eldenring::cs::GameDataMan::instance() }.is_ok_and(|g| g.game_settings.reverse_camera_xaxis)
@@ -2243,6 +2252,8 @@ fn frame(data: &FD4TaskData) {
     };
     // the AoT hook's line (odm.rs): a flick of the right stick moves its anchor to the next bone
     odm::right_stick(pad.map_or(0, |p| p.Gamepad.sThumbRX), pad.map_or(0, |p| p.Gamepad.sThumbRY));
+    // (in the portable cannon it aims the barrel, cannon.rs)
+    cannon::right_stick(pad.map_or(0, |p| p.Gamepad.sThumbRX), pad.map_or(0, |p| p.Gamepad.sThumbRY), camera_x_reversed());
     // On Yoshi with the keyboard: whichever of the two last steered him. The keys go by the
     // game's own camera (a stick can be turned to Lakitu's, keys can't), so that camera shows.
     let riding = RIDING.load(Ordering::Relaxed);
@@ -2278,6 +2289,7 @@ fn frame(data: &FD4TaskData) {
         colossus::clear();
         odm::clear();
         starpower::clear();
+        cannon::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2444,6 +2456,7 @@ fn frame(data: &FD4TaskData) {
             colossus::clear();
             odm::clear();
             starpower::clear();
+            cannon::clear();
             bat::clear();
             maxfin::clear();
             reaction::clear();
@@ -2711,8 +2724,8 @@ fn frame(data: &FD4TaskData) {
             // (a popup pausing the game freezes the camera's controls too)
             let frozen = WORLD_PAUSED.load(Ordering::Relaxed);
             let key = |vk: i32| !frozen && kbd::focused() && unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0;
-            // (on the AoT hook's line the right stick is its flick's, odm.rs)
-            let stick = pad.or(cam_pad).filter(|_| !frozen && !odm::holds_camera()).map(|p| (p.Gamepad.sThumbRX as i32, p.Gamepad.sThumbRY as i32)).unwrap_or((0, 0));
+            // (on the AoT hook's line the right stick is its flick's, odm.rs; in the cannon its aim's)
+            let stick = pad.or(cam_pad).filter(|_| !frozen && !odm::holds_camera() && !cannon::holds_camera()).map(|p| (p.Gamepad.sThumbRX as i32, p.Gamepad.sThumbRY as i32)).unwrap_or((0, 0));
             const T: i32 = 20000;
             // C-left, C-right, C-up, C-down
             let c = [
@@ -3056,6 +3069,7 @@ fn frame(data: &FD4TaskData) {
         juggle::clear();
         style::clear();
         starpower::clear();
+        cannon::clear();
         timing::clear();
         m.traps.clear();
         rock::clear(m.id);
@@ -3085,6 +3099,7 @@ fn frame(data: &FD4TaskData) {
         colossus::clear();
         odm::clear();
         starpower::clear();
+        cannon::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -3114,6 +3129,7 @@ fn frame(data: &FD4TaskData) {
             reaction::shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             odm::shift(glam::Vec3::from(d));
+            cannon::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
@@ -3216,7 +3232,9 @@ fn frame(data: &FD4TaskData) {
         }
         // frozen stiff or asleep (status.rs): no moving; asleep, presses wake him sooner
         let pressed = inputs.button_a != 0 || inputs.button_b != 0 || inputs.button_z != 0 || b_fire || b_dash || y_move || x_move;
-        if status::holds(pressed, m.id) {
+        // (the D-pad taken from him: no tap out of a hold that was going on, cannon.rs)
+        let frozen = status::holds(pressed, m.id) || revive::downed();
+        if frozen {
             inputs = sm64::SM64MarioInputs::default();
             (b_fire, b_dash, y_move, x_move, l_hammer, b_hook) = (false, false, false, false, false, false);
             dpad = [false; 4];
@@ -3622,7 +3640,8 @@ fn frame(data: &FD4TaskData) {
         let hovering = m.state.action & ACT_FLAG_AIR != 0;
         let still = glam::Vec3::from(m.state.position).distance(glam::Vec3::from(m.prev_pos)) < 1.0;
         // standing still is normal with a boss by the tail
-        if (pushing || hovering) && still && !m.dead && !FOLLOWING.load(Ordering::Relaxed) && !swing::holding() {
+        // (and in the portable cannon: still in the barrel, the stick aims it)
+        if (pushing || hovering) && still && !m.dead && !FOLLOWING.load(Ordering::Relaxed) && !swing::holding() && !cannon::holds() {
             m.stuck_ticks += 1;
         } else {
             m.stuck_ticks = 0;
@@ -3710,7 +3729,7 @@ fn frame(data: &FD4TaskData) {
                 starpower::blasted(me + glam::Vec3::Y * 0.9, worth, hits.len());
             }
         }
-        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !odm::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
+        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !odm::active() && !cannon::holds() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             sword::set_out(w == weapons::SWORD);
@@ -3766,11 +3785,45 @@ fn frame(data: &FD4TaskData) {
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             };
+            // the portable cannon first (cannon.rs): D-pad up held plants it (a tap is the wing cap's,
+            // on its release: caps.rs gets it as a press this tick); in it, shot, pounding, it has his
+            // buttons and nobody else is let at him
+            let can = {
+                const GROUNDED: u32 = 0x200 | 0x400;
+                const SUBMERGED: u32 = 0x0C0;
+                let a = m.state.action;
+                let on_ground = a & 0x800 == 0 && a & GROUNDED != 0 && a & 0x1C0 != SUBMERGED;
+                let free = allowed && fire_allowed && on_ground && !mega::changing() && !colossus::active() && !odm::active() && yoshi::ridden().is_none() && m.state.health >= 0x100;
+                let cin = cannon::In {
+                    up: dpad[0],
+                    a: inputs.button_a != 0,
+                    b: b_dash,
+                    lt: inputs.button_z != 0,
+                    left: glam::Vec2::new(inputs.stick_x, -inputs.stick_y),
+                    feet: me.feet,
+                    face: glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos()),
+                    action: a,
+                    dead: m.dead,
+                    paused: me.paused,
+                    frozen,
+                    free,
+                    can_stay: allowed,
+                    boss: boss_bar(),
+                    wing: caps::active() == Some(caps::WING),
+                    id: m.id,
+                    origin: m.origin,
+                    tick: m.ticks,
+                };
+                cannon::update(&cin, &mut m.combat, &player_ref.chr_ins, &ray)
+            };
+            dpad[0] = can.wing_tap;
+            let allowed = allowed && !cannon::holds();
             // the AoT hook's line first (odm.rs): on it, colossus.rs gets nothing (an A on it near a
             // colossus would grab on)
             starpower::tick(1.0 / 30.0, me.feet + glam::Vec3::Y * 0.9, m.ticks);
             let line = odm::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray);
             let out = if line.consumed { colossus::Out { consumed: true, drop_hook: false } } else { colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray) };
+            let out = colossus::Out { consumed: out.consumed || can.consumed, drop_hook: out.drop_hook };
             drop(_perf8);
             // a button that went down while they had them stays theirs until it's let go (held on
             // after the line or the climb it was a new press for SM64 and the moves: the strike's X
@@ -4663,8 +4716,7 @@ fn frame(data: &FD4TaskData) {
                     m.hook.tick(id, b_hook, hook_held, l2_held, x_move, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     drop(_perf16);
                 }
-                let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
-                    .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
+                let boss = boss_bar();
                 // D-pad down: whatever power is on comes off (the cap: caps.rs; the Rock, the Mega)
                 static DOWN_WAS: AtomicBool = AtomicBool::new(false);
                 let power_off = dpad[1] && !DOWN_WAS.swap(dpad[1], Ordering::Relaxed) && !MENU_OPEN.load(Ordering::Relaxed);
@@ -4674,7 +4726,7 @@ fn frame(data: &FD4TaskData) {
                     let feet = to_er(m.origin, state.position);
                     let free = gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person() && !m.dead;
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !mega::active() && !carry::holding() && !swing::holding();
-                    let can_start = free && can_stay && !mega::changing() && caps::active().is_none() && state.health >= 0x100;
+                    let can_start = free && can_stay && !mega::changing() && caps::active().is_none() && state.health >= 0x100 && !cannon::holds();
                     rock::tick(dpad[2], power_off, can_start, can_stay, id, state.action, glam::Vec3::new(feet.0, feet.1, feet.2));
                 }
                 let dpad = [dpad[0], dpad[1], false, dpad[3]];
@@ -4689,7 +4741,7 @@ fn frame(data: &FD4TaskData) {
                     let can_stay = !m.dead && !RIDING.load(Ordering::Relaxed);
                     let can_start = can_stay && gameplay && !MENU_OPEN.load(Ordering::Relaxed) && !lakitu::first_person();
                     const GROUNDED: u32 = 0x200 | 0x400;
-                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !rock::active() && !carry::holding() && !swing::holding();
+                    let can_start = can_start && state.action & 0x800 == 0 && state.action & GROUNDED != 0 && caps::active().is_none() && !rock::active() && !carry::holding() && !swing::holding() && !cannon::holds();
                     let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
                     let ray = |from: glam::Vec3, to: glam::Vec3| {
                         let d = to - from;
@@ -4849,7 +4901,7 @@ fn frame(data: &FD4TaskData) {
     drop(_perf17);
     // (held, his pose follows what the grab's animation does to the Tarnished's body)
     engine_mario::ROOT_FOLLOW.store(grabbed && !m.dead && !RIDING.load(Ordering::Relaxed), Ordering::Relaxed);
-    set_opacity(if cutscene || grab::swallowed() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
+    set_opacity(if cutscene || grab::swallowed() || cannon::hidden() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
 
     // event animations (fog walls, doors, ladders...): after an interact, if the Tarnished starts a
     // new animation, the game drives him and Mario follows until he's back to what he was doing

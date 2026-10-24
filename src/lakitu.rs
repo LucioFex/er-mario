@@ -298,6 +298,31 @@ pub fn set_anchor(a: Option<Vec3>) {
 const ANCHOR_TURN: f32 = 2.5;
 const ANCHOR_LEAN: f32 = 5.0;
 
+/// In the portable cannon (cannon.rs): the barrel's pivot and the way out of it, Lakitu behind it
+/// looking along it; shot out of it: his speed, the view keeping behind his way and up with him.
+#[derive(Clone, Copy)]
+pub enum CannonView {
+    Aim { pivot: Vec3, dir: Vec3 },
+    Flight { vel: Vec3 },
+}
+
+static CANNON: Mutex<Option<CannonView>> = Mutex::new(None);
+
+pub fn set_cannon(v: Option<CannonView>) {
+    *CANNON.lock().unwrap_or_else(|e| e.into_inner()) = v;
+}
+
+/// the barrel's view: this far behind the pivot and up (m), looking this far along the barrel (m),
+/// easing there at this rate; the flight's: turning round behind his way at this rate, this much
+/// farther back (m), his height followed at this rate
+const CANNON_BACK: f32 = 6.5;
+const CANNON_UP: f32 = 2.6;
+const CANNON_LOOK: f32 = 16.0;
+const CANNON_EASE: f32 = 6.0;
+const FLIGHT_TURN: f32 = 2.5;
+const FLIGHT_BACK: f32 = 3.0;
+const FLIGHT_FOLLOW: f32 = 8.0;
+
 /// the colossus view: backed off at most this far (m), sunk this share of his climb, leaning to its
 /// head at most this much (m)
 const COLOSSUS_MAX: f32 = 16.0;
@@ -483,6 +508,28 @@ pub fn update(
         return;
     }
     *HEAD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // in the portable cannon: behind the barrel, looking along it (a wall behind: in front of it)
+    let cannon = *CANNON.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(CannonView::Aim { pivot, dir }) = cannon {
+        let flat = dir.with_y(0.0).normalize_or(Vec3::Z);
+        let want = pivot - flat * CANNON_BACK + Vec3::Y * CANNON_UP;
+        let from = pivot + Vec3::Y * 0.6;
+        let want = hit(from, want).map_or(want, |h| h + (from - h).normalize_or_zero() * WALL_GAP);
+        cam.pos += (want - cam.pos) * (1.0 - (-CANNON_EASE * dt).exp());
+        // (out of it, the camera goes on from here)
+        cam.mario = mario;
+        cam.focus = mario + Vec3::Y * FOCUS_HEIGHT;
+        cam.leash = cam.pos;
+        let d = cam.pos - cam.focus;
+        cam.yaw = d.z.atan2(d.x);
+        cam.target_yaw = None;
+        write(render, (pivot + dir * CANNON_LOOK - cam.pos).normalize_or(flat), cam.pos);
+        return;
+    }
+    let flight = match cannon {
+        Some(CannonView::Flight { vel }) => Some(vel),
+        _ => None,
+    };
 
     // the focus: Mario's head; in the air the height follows slowly (no bobbing on jumps), unless
     // he falls below it
@@ -513,7 +560,13 @@ pub fn update(
     let crowd = (group.len() >= 2).then(|| group.iter().copied().sum::<Vec3>() / group.len() as f32);
     let air_fight = airborne && fight.is_some_and(|(c, up)| up || (c.y > mario.y + 0.3 && (c - mario).length() < AIR_NEAR));
     cam.air += (if air_fight { 1.0 } else { 0.0 } - cam.air) * rate(if air_fight { 3.0 } else { 1.2 });
-    let vy = if airborne && want.y > cam.focus.y - 0.5 { 1.2 + (AIR_FOLLOW - 1.2) * cam.air } else { 5.0 };
+    let vy = if flight.is_some() {
+        FLIGHT_FOLLOW
+    } else if airborne && want.y > cam.focus.y - 0.5 {
+        1.2 + (AIR_FOLLOW - 1.2) * cam.air
+    } else {
+        5.0
+    };
     cam.focus.y += (want.y - cam.focus.y) * rate(vy);
     // the lag must never put the focus into the ground (running uphill): at least half a metre
     // above the ground under Mario (not his feet: in a jump the focus should stay low)
@@ -739,10 +792,17 @@ pub fn update(
         let lean = ((a - head) * 0.4).clamp_length_max(ANCHOR_LEAN);
         cam.frame += (lean - cam.frame) * rate(1.5);
     }
+    // shot from the cannon: round behind his way
+    if let Some(v) = flight {
+        let to = v.with_y(0.0);
+        if to.length() > 1.0 && cam.target_yaw.is_none() && !manual {
+            cam.yaw += angle_diff((-to.z).atan2(-to.x), cam.yaw) * rate(FLIGHT_TURN);
+        }
+    }
     let height = height + cam.coloss * 0.15 - cam.coloss_sink;
     // (sunk, never below a man's height over the ground under him)
     let height = if cam.coloss_sink > 0.01 { height.max(ground + 1.2 - cam.focus.y) } else { height };
-    let dist = dist + cam.coloss;
+    let dist = dist + cam.coloss + if flight.is_some() { FLIGHT_BACK } else { 0.0 };
     // (the air fight: back a little, and lower relative to him, looking up at the fight)
     let (dist, height) = (dist + AIR_BACK * cam.air, height * (1.0 - AIR_LEVEL * cam.air));
     // the fight's framing: the view leans towards the enemy, so Mario and it share the screen

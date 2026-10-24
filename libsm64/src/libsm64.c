@@ -1153,6 +1153,22 @@ SM64_LIB_FN void sm64_er_cling(int32_t marioId, int mode, int start)
     }
 }
 
+/** er-mario: shot from the portable cannon (cling mode 12, cannon.rs): his body pitched this far
+ * up along his flight (radians) */
+SM64_LIB_FN void sm64_er_cling_pitch(float radians)
+{
+    extern s16 er_cling_pitch;
+    er_cling_pitch = (s16) (radians * (32768.0f / 3.14159265f));
+}
+
+/** er-mario: where a fall counts from (cannon.rs: out of its flight, no fall from the sky's height) */
+SM64_LIB_FN void sm64_er_set_peak(int32_t marioId, float y)
+{
+    struct MarioState *m = er_bind(marioId);
+    if (!m) return;
+    m->peakHeight = y;
+}
+
 /** er-mario: the next tick of a scripted move (script.rs), right before the tick */
 SM64_LIB_FN void sm64_er_script(const struct SM64ErScript *frame)
 {

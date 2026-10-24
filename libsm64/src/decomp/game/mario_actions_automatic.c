@@ -939,8 +939,11 @@ s32 act_er_boss_ride(struct MarioState *m) {
 // arg): hanging on to a limb, standing on top of it, leaping to the next, a blow, the charge of the
 // star strike (trembling), flying up the hook's line, hanging from the hook's rope, sliding down a limb;
 // on the AoT hook's line (odm.rs) the spin slash (8, spinning round), the flying kick (9) and the
-// backflip off a hit (10)
+// backflip off a hit (10); the portable cannon (cannon.rs): in the barrel (11, SM64's own pose
+// there, hidden by the mod), shot from it (12, on his stomach, pitched `er_cling_pitch` up along his
+// flight) and the ground pound out of the flight (13: the spin, then the pound)
 s32 er_cling_mode = 0;
+s16 er_cling_pitch = 0;
 
 s32 act_er_cling(struct MarioState *m) {
     mario_set_forward_vel(m, 0.0f);
@@ -990,6 +993,21 @@ s32 act_er_cling(struct MarioState *m) {
                 set_anim_to_frame(m, 0);
             }
             break;
+        case 11: set_mario_animation(m, MARIO_ANIM_DIVE); break;
+        case 12: set_mario_animation(m, MARIO_ANIM_AIRBORNE_ON_STOMACH); break;
+        case 13:
+            if (m->actionTimer < 10) {
+                set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);
+                if (m->actionTimer == 0) {
+                    play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+                }
+            } else {
+                set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
+                if (m->actionTimer == 10) {
+                    play_sound(SOUND_MARIO_GROUND_POUND_WAH, m->marioObj->header.gfx.cameraToObject);
+                }
+            }
+            break;
         default: set_mario_animation(m, MARIO_ANIM_IDLE_ON_LEDGE); break;
     }
     m->actionTimer++;
@@ -1000,6 +1018,10 @@ s32 act_er_cling(struct MarioState *m) {
         m->marioObj->header.gfx.pos[2] += (f32) ((m->actionTimer * 11) % 5 - 2) * 9.0f;
     }
     vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    // (shot from the cannon: his body along his flight, as SM64's act_shot_from_cannon tilts it)
+    if (m->actionArg == 12) {
+        m->marioObj->header.gfx.angle[0] = -er_cling_pitch;
+    }
     // (the spin slash: round and round as he comes in, a turn every seven ticks or so)
     if (m->actionArg == 8) {
         m->marioObj->header.gfx.angle[1] += (s16)(m->actionTimer * 0x2400);

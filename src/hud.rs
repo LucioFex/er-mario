@@ -1095,6 +1095,125 @@ fn draw_odm(dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2]) {
     }
 }
 
+/// The portable cannon (cannon.rs): SM64's cannon (a pink drum of a base, a dark barrel on two
+/// cheeks, its black mouth), popping up and sinking away; in it, the flight's dots, a gold ring where
+/// it lands with how far off, the power bar (the governor's cap a white mark on it; NO LANDING when
+/// nothing would); D-pad up held, a ring filling over his head.
+fn draw_cannon(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2]) {
+    let Some(h) = crate::cannon::hud() else { return };
+    let px = size[1] / 240.0 * SIZE;
+    let col = |c: [f32; 3], a: f32| imgui::ImColor32::from_rgba_f32s(c[0], c[1], c[2], a);
+    let clock = crate::flame::clock();
+    const GOLD: [f32; 3] = [1.0, 0.85, 0.35];
+    // (SM64's letters left to right from x, centred on y; how wide)
+    let print = |text: &str, x: f32, y: f32, g: f32, c: [f32; 4]| -> f32 {
+        let mut cx = x;
+        for ch in text.chars() {
+            if let Some(id) = glyph_for(ch) {
+                dl.add_image(textures[id], [cx, y - g * 0.5], [cx + g, y + g * 0.5]).col(c).build();
+            }
+            cx += g * 0.8;
+        }
+        cx - x
+    };
+    if let Some(c) = h.cannon.filter(|c| c.size > 0.02) {
+        let k = c.size;
+        let flat = c.dir.with_y(0.0).normalize_or(Vec3::Z);
+        let side = flat.cross(Vec3::Y).normalize_or(Vec3::X);
+        let out = (flat * c.pitch.cos() + Vec3::Y * c.pitch.sin()).normalize_or(flat);
+        let base = c.base;
+        let pivot = base + Vec3::Y * crate::cannon::PIVOT * k;
+        // (local x across, y along `y`, z the rest)
+        let turn = |y: Vec3| {
+            let z = side.cross(y).normalize_or(flat);
+            glam::Quat::from_mat3(&glam::Mat3::from_cols(side, y, z))
+        };
+        const PINK: [f32; 3] = [0.95, 0.52, 0.7];
+        const PINK_DARK: [f32; 3] = [0.74, 0.36, 0.55];
+        const BARREL: [f32; 3] = [0.15, 0.15, 0.21];
+        const RIM: [f32; 3] = [0.28, 0.28, 0.36];
+        let mut mesh = Mesh::default();
+        let r = 1.0 * k;
+        mesh.tube(&[base, base + Vec3::Y * 0.55 * k], &|_| r, 14, &|_| PINK_DARK);
+        mesh.ellipsoid(base + Vec3::Y * 0.55 * k, glam::Quat::IDENTITY, Vec3::new(r, 0.16 * k, r), 0.0, 3, 14, &|_, _| PINK);
+        for s in [-1.0f32, 1.0] {
+            mesh.ellipsoid(pivot + side * s * 0.52 * k - Vec3::Y * 0.15 * k, turn(Vec3::Y), Vec3::new(0.14 * k, 0.45 * k, 0.42 * k), 0.0, 4, 8, &|_, _| PINK);
+        }
+        let breech = pivot - out * crate::cannon::BREECH * k;
+        let muzzle = pivot + out * crate::cannon::MUZZLE * k;
+        let radii = [0.38 * k, 0.42 * k, 0.42 * k, 0.48 * k];
+        mesh.tube(&[breech, pivot, muzzle - out * 0.12 * k, muzzle], &|i| radii[i.min(3)], 12, &|i| if i == 3 { RIM } else { BARREL });
+        mesh.ellipsoid(breech, turn(out), Vec3::new(0.38 * k, 0.24 * k, 0.38 * k), 0.0, 4, 12, &|_, _| BARREL);
+        mesh.ellipsoid(muzzle - out * 0.03 * k, turn(out), Vec3::new(0.42 * k, 0.02 * k, 0.42 * k), 0.0, 2, 12, &|_, _| [0.03, 0.03, 0.05]);
+        mesh.draw(dl, size, 90.0, &[]);
+    }
+    // the flight's dots, fainter farther along; the landing's gold ring and its distance
+    let n = h.dots.len().max(1) as f32;
+    for (i, d) in h.dots.iter().enumerate() {
+        if let Some((p, z)) = project(*d, size) {
+            if z < 400.0 {
+                let r = (size[1] / z.max(1.0) * 0.1).clamp(1.5, 6.0);
+                dl.add_circle(p, r, col([1.0, 1.0, 1.0], 0.85 - 0.45 * i as f32 / n)).filled(true).build();
+            }
+        }
+    }
+    if let Some(l) = h.landing {
+        let r = 1.6 * (1.0 + 0.08 * (clock * 5.0).sin());
+        let pts: Vec<[f32; 2]> = (0..=24)
+            .filter_map(|i| {
+                let a = i as f32 / 24.0 * std::f32::consts::TAU;
+                project(l + Vec3::new(a.cos() * r, 0.1, a.sin() * r), size).map(|p| p.0)
+            })
+            .collect();
+        if pts.len() == 25 {
+            dl.add_polyline(pts, col(GOLD, 0.9)).thickness(3.0).build();
+        }
+        if let Some((p, _)) = project(l + Vec3::Y * 1.4, size) {
+            let mut buf = [0u8; 6];
+            let t = metres_of(h.metres.round().min(999.0) as u16, &mut buf);
+            let g = 10.0 * px;
+            print(t, p[0] - t.len() as f32 * g * 0.4, p[1], g, [1.0, 0.95, 0.7, 1.0]);
+        }
+    }
+    // in it: the power bar at the bottom (gold to red as it fills), its cap, what the buttons do
+    if let Some((power, cap)) = h.power {
+        let (w, bh) = (110.0 * px, 6.0 * px);
+        let (x0, y0) = (size[0] * 0.5 - w * 0.5, size[1] * 0.82);
+        dl.add_rect([x0 - px, y0 - px], [x0 + w + px, y0 + bh + px], col([0.0, 0.0, 0.0], 0.55)).filled(true).build();
+        if power > 0.0 {
+            let c = [1.0, 0.85 - 0.6 * power, 0.35 - 0.25 * power];
+            dl.add_rect([x0, y0], [x0 + w * power, y0 + bh], col(c, 0.95)).filled(true).build();
+        }
+        if cap < 1.0 && !h.blocked {
+            let x = x0 + w * cap;
+            dl.add_rect([x - px, y0 - 2.0 * px], [x + px, y0 + bh + 2.0 * px], col([1.0, 1.0, 1.0], 0.9)).filled(true).build();
+        }
+        let g = 8.0 * px;
+        if h.blocked {
+            let pulse = 0.6 + 0.4 * (clock * 6.0).sin();
+            let t = "NO LANDING";
+            print(t, size[0] * 0.5 - t.len() as f32 * g * 0.4, y0 - 7.0 * px, g, [1.0, 0.35, 0.3, pulse]);
+        }
+        let t = "A FIRE  B OUT";
+        print(t, size[0] * 0.5 - t.len() as f32 * g * 0.4, y0 + bh + 8.0 * px, g, [1.0, 1.0, 1.0, 0.75]);
+    }
+    // D-pad up held: a ring filling round over his head
+    if let Some((head, k)) = h.hold {
+        if let Some((c, _)) = project(head, size) {
+            let r = 9.0 * px;
+            dl.add_circle(c, r, col([0.0, 0.0, 0.0], 0.45)).thickness(3.0 * px).build();
+            let n = 24;
+            let pts: Vec<[f32; 2]> = (0..=n)
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * k.clamp(0.0, 1.0) * i as f32 / n as f32;
+                    [c[0] + a.cos() * r, c[1] + a.sin() * r]
+                })
+                .collect();
+            dl.add_polyline(pts, col([0.95, 0.52, 0.7], 0.95)).thickness(2.5 * px).build();
+        }
+    }
+}
+
 /// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
 /// pixels a metre spans 1 m off.
 struct View {
@@ -1569,6 +1688,7 @@ impl ImguiRenderLoop for Overlay {
             }
             draw_colossus(&dl, textures, size);
             draw_odm(&dl, size);
+            draw_cannon(&dl, textures, size);
         }
 
         // Mario got hurt: the screen's edges flash red, fading

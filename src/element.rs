@@ -119,7 +119,8 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         | Attack::PoisonTick
         | Attack::Shock
         | Attack::ShockArc(_)
-        | Attack::StarBlast => None,
+        | Attack::StarBlast
+        | Attack::CannonPound => None,
         _ => Some(current()),
     }
 }

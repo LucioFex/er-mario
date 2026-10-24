@@ -181,6 +181,7 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::OdmGlance => Some((2, 1.0, false)),
         Attack::ZipKick => Some((3, 1.2, false)),
         Attack::StarBlast => Some((8, 1.9, true)),
+        Attack::CannonPound => Some((6, 1.8, true)),
     }
 }
 
@@ -625,6 +626,36 @@ pub fn mikiri(at: Vec3) {
 pub fn kit_out(at: Vec3) {
     puffs(at, 2, 0.15);
     burst(at + Vec3::Y * 0.1, 1, Bit::Star);
+}
+
+/// The portable cannon (cannon.rs) up out of the ground at his feet: dust and a ring.
+pub fn cannon_up(feet: Vec3) {
+    ring(feet + Vec3::Y * 0.05, 1.6, 0.35, DUST);
+    puffs(feet + Vec3::Y * 0.2, 6, 0.8);
+}
+
+/// The cannon's shot out of its mouth (`way` out of it): smoke, a flash of white, a shake.
+pub fn cannon_fire(mouth: Vec3, way: Vec3) {
+    spark(mouth, 1.4, WHITE);
+    ring(mouth, 1.0, 0.25, WHITE);
+    puffs(mouth + way * 0.3, 6, 0.5);
+    crate::lakitu::shake(0.6);
+}
+
+/// Shot into a wall: SM64's stars off it, dust.
+pub fn cannon_wall(at: Vec3) {
+    burst(at, 5, Bit::Star);
+    puffs(at, 3, 0.3);
+}
+
+/// The cannon's pound coming down: a gold ring out to its shockwave's reach, dust, stars, a shake.
+pub fn cannon_pound(feet: Vec3) {
+    flash([1.0, 0.85, 0.5], 0.18, 0.3);
+    ring(feet + Vec3::Y * 0.1, crate::cannon::POUND_REACH, 0.5, GOLD);
+    ring(feet + Vec3::Y * 0.1, 3.0, 0.35, DUST);
+    puffs(feet + Vec3::Y * 0.3, 12, 1.6);
+    burst(feet + Vec3::Y * 0.6, 6, Bit::Star);
+    crate::lakitu::shake(1.2);
 }
 
 /// A trap's thing gone (its time up): a puff of smoke.

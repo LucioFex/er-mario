@@ -83,7 +83,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's own move instead, each with a 10 s giant (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
-| D-pad up | Wing cap (recharges in about 55 s) |
+| D-pad up | Wing cap, on a tap: it comes on as the button is let go (recharges in about 55 s). Held half a second: the [portable cannon](#portable-cannon) |
 | D-pad right | **Mega Mushroom** (see below) |
 
 **Weapons (LB).** A tap of LB takes the next weapon: fists, [Star Sword](#star-sword), hammer,
@@ -269,7 +269,7 @@ and Mario (or around the camera) turns see-through until it's out of the way.
 
 **Coins as a purse.** The coin counter (kept per character) is now money, and each coin still heals
 a wedge. The big abilities cost coins on top of their waits: **Capture 8**, **Mega Mushroom 8**,
-**Rock Mushroom 5**, **wing cap 3** (a "NEED COINS" if the purse is short; `src/coins.rs`).
+**Rock Mushroom 5**, **portable cannon 4**, **wing cap 3** (a "NEED COINS" if the purse is short; `src/coins.rs`).
 Like Elden Ring's runes, **half the purse is lost when Mario dies and stays in a bag where he last stood**
 (a fall into the abyss leaves it at the edge; it keeps its place through loads and warps):
 a big spinning coin in a golden glow under a soft golden column of light (seen from far off),
@@ -534,6 +534,35 @@ from behind)`, `odm: glancing hit at ...`, `odm: gas (1 left)`, `odm: flick to i
 `odm: re-anchor`, `odm: line dropped (caught on the scenery)`, `hook: zip-kick`,
 `odm: vault over it (...)`, `combat: from behind x1.3`, `hook: the rope's cone found a spot ...`.
 
+### Portable cannon
+
+**Hold D-pad up half a second** (a ring fills over Mario's head) and an SM64 cannon pops up out of
+the ground where he stands (`src/cannon.rs`): a pink base, a dark barrel; he hops in. It needs open
+sky over him (not indoors, not under a roof), no boss fight, **4 coins** (back if he gets out without
+firing), and it's ready again a minute after the shot. A quick tap of D-pad up is still the wing cap,
+which now comes on as the button is let go.
+
+| In the cannon | What happens |
+|---|---|
+| Left stick | Aims it, SM64's way: left and right turn the barrel, up aims lower, down higher |
+| Right stick | Aims it the camera's way (up aims higher) |
+| A held | Fills the power (the bar at the bottom, a second to full); let go and it fires |
+| B | Gets out (the coins back) |
+
+Lakitu's camera sits behind the barrel; white dots show the flight and a gold ring where it lands,
+with how far off: about **100 m** at no power to **300 m** at full (on flat ground at 45°). Mario
+flies in SM64's cannon flight, on his stomach with a "Yahoo!", and lands in a belly slide, or
+bounces off a wall with SM64's stars. **The wing cap** (a tap of D-pad up, before or during the
+flight) opens as he starts to fall, and he flies on. **LT in the flight** is a ground pound straight
+down: where he lands, a shockwave hits every enemy within 6 m. A flight out of the cannon never
+hurts him by the fall. If the game hasn't loaded the far end of a shot yet, the shot is capped short
+of it (a white mark on the power bar); with nothing loaded to land on at all, "NO LANDING".
+
+Logs: `cannon: planted at ...`, `cannon: not here (no open sky)`, `cannon: fired at 64% (44.4 m/s,
+42 deg), landing 212 m off`, `cannon: capped to 47% (the far landing isn't loaded)`,
+`cannon: landed 208 m off after 7.3 s`, `cannon: hit a wall`, `cannon: wing cap, flying on`,
+`cannon: pound from 31 m up`, `cannon: POUND on 3 (180 m off the cannon)`, `cannon: got out`.
+
 ### Damage balance
 
 Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
@@ -565,6 +594,7 @@ close and risky hits.
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
 | Star Power | — | Blows **×1.2** (bosses ×1.1), stance **×1.5** (bosses ×1.25); STAR BLAST **9-21.5%** on everyone within 7 m by the time left (bosses about 1-2.4%) |
+| Portable cannon | — | Its pound **17%** on every enemy within 6 m of where he comes down (bosses about 1.9%); the one right under him takes the ground pound's too |
 | Attack on Titan hook | — | Strike **8%** at 20 m/s, **2.4-14.4%** by speed, **21.5%** at most on the nape from behind; glancing hit half (**1.2-7.2%**); bosses about **1.5%** at 20 m/s, **2.2%** at most (capped); zip-kick **5.7%**; blows on an enemy he vaulted **×1.3** for 1 s |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
 | Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
@@ -672,7 +702,7 @@ replaces this fork's DLL with the original one.
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow |
 | A just before an enemy's blow | | Mikiri stomp |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer an ice block, the Chain Chomp a dark orb, the boomerang a poison glob (up to the 4 s charge); with the Star Sword its lightning (the skyward strike, the Zeus throw in the air, held 10 s the storm cloud) |
-| D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
+| D-pad | | Left Rock Mushroom, up Wing cap (a tap; held 0.5 s, the [portable cannon](#portable-cannon)), right Mega Mushroom, down takes the cap off (and interact) |
 | R3 | | Parry; with LT held, the grab |
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether. On a medium one: tapped the zip-kick, held the vault. On a big one: the [Attack on Titan hook](#attack-on-titan-hook) (stick orbits, B gas, X strikes, right stick changes the bone, A after a hit re-anchors). Held as it catches a spot high up (or one ahead and above): the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
 | LT held (crouched or sliding) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch. Thrown out of a slide or a run they carry his speed |

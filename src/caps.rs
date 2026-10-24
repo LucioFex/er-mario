@@ -1,7 +1,8 @@
 //! SM64's special caps: Metal, Wing and Vanish, on the pad's D-pad (SM64's own pickup animation,
 //! music and timer), each with a recharge after it comes off:
 //! - D-pad left: Metal (no hit hurts or knocks him back, his blows hit harder; SM64's heavy steps)
-//! - D-pad up: Wing (triple jump to fly, like in SM64)
+//! - D-pad up: Wing (triple jump to fly, like in SM64); a tap, it comes here as it's let go (held,
+//!   D-pad up is the portable cannon: cannon.rs)
 //! - D-pad down: off
 //! (D-pad right was the Vanish cap: it's the Mega Mushroom now, mega.rs)
 
