@@ -217,11 +217,23 @@ pub enum Attack {
     FrenzyEnd,
     /// the boomerang's skimming throw (rangmoves.rs, boomerang.rs): a pass of it
     RangSkim,
+    /// RB with the hammer, the Chomp, the boomerang (v4 Part 3c, rbmoves.rs): the ice rocket punch
+    /// by charge, the ice dive and its frost wave, the Glacier fist (each it passes) and its ring
+    /// of spikes; the dark beam by charge and the Abyss beam (a tick of it, beam.rs); the poison
+    /// sweep's spray (its carpet's ticks are VenomCloud's, carpet.rs)
+    IceRocket(u8),
+    IceDive,
+    FrostWave,
+    Glacier,
+    GlacierSpikes,
+    DarkBeam(u8),
+    AbyssBeam,
+    Spray,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 159] = [
+const CODES: [Attack; 173] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -243,6 +255,8 @@ const CODES: [Attack; 159] = [
     Attack::MaxStarCut,
     Attack::FistFlurry, Attack::FistFlurryEnd, Attack::SuperPunch(0), Attack::SuperPunch(1), Attack::HeavyHook, Attack::MeteorPunch, Attack::Dropkick,
     Attack::HammerCharge, Attack::HammerChargeSlam, Attack::HammerBro, Attack::Comet, Attack::CometRing, Attack::ChompRush, Attack::Lasso, Attack::Frenzy, Attack::FrenzyEnd, Attack::RangSkim,
+    Attack::IceRocket(0), Attack::IceRocket(1), Attack::IceRocket(2), Attack::IceRocket(3), Attack::IceDive, Attack::FrostWave, Attack::Glacier, Attack::GlacierSpikes,
+    Attack::DarkBeam(0), Attack::DarkBeam(1), Attack::DarkBeam(2), Attack::DarkBeam(3), Attack::AbyssBeam, Attack::Spray,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -349,6 +363,13 @@ impl Attack {
             Attack::HammerChargeSlam | Attack::CometRing => Attack::GroundPound.spec(),
             Attack::HammerBro | Attack::ChompRush => Attack::Kick.spec(),
             Attack::Lasso | Attack::Frenzy | Attack::RangSkim => Attack::Punch.spec(),
+            // the elements' RB moves: the rocket punch staggers as the shot of its charge would,
+            // the dive and its wave a stomp's, the Glacier a ground pound's; the beam's ticks and the
+            // spray a punch's
+            Attack::IceRocket(level) => Attack::Fire(level.min(3)).spec(),
+            Attack::IceDive | Attack::FrostWave => Attack::Stomp.spec(),
+            Attack::Glacier | Attack::GlacierSpikes => Attack::GroundPound.spec(),
+            Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Spray => Attack::Punch.spec(),
         }
     }
 
@@ -576,12 +597,30 @@ impl Attack {
             Attack::Frenzy => (3.0, "damage_chomp_frenzy"),
             Attack::FrenzyEnd => (8.0, "damage_chomp_frenzy_end"),
             Attack::RangSkim => (4.0, "damage_boomerang_skim"),
+            // the elements' RB moves (Part 3c): the rocket punch the ice block's worth by charge (it
+            // carries him in: no safer), the beam a little each tick (its worth in how long it pours
+            // and that it pierces), the Glacier a giant's on each it passes, the spray least (the
+            // carpet's poison is the rest)
+            Attack::IceRocket(0) => (14.0, "damage_ice_rocket"),
+            Attack::IceRocket(1) => (19.0, "damage_ice_rocket_charged"),
+            Attack::IceRocket(2) => (26.0, "damage_ice_rocket_charged_2"),
+            Attack::IceRocket(_) => (36.0, "damage_ice_rocket_max"),
+            Attack::IceDive => (16.0, "damage_ice_dive"),
+            Attack::FrostWave => (8.0, "damage_frost_wave"),
+            Attack::Glacier => (60.0, "damage_glacier"),
+            Attack::GlacierSpikes => (20.0, "damage_glacier_spikes"),
+            Attack::DarkBeam(0) => (2.0, "damage_dark_beam"),
+            Attack::DarkBeam(1) => (2.5, "damage_dark_beam_charged"),
+            Attack::DarkBeam(2) => (3.0, "damage_dark_beam_charged_2"),
+            Attack::DarkBeam(_) => (3.5, "damage_dark_beam_max"),
+            Attack::AbyssBeam => (2.5, "damage_abyss_beam"),
+            Attack::Spray => (4.0, "damage_poison_spray"),
         }
     }
 
     /// A blow that drives him back hard enough to slam him into a wall right behind (WALL!).
     pub fn splats(self) -> bool {
-        matches!(self, Attack::SuperPunch(_) | Attack::Dropkick)
+        matches!(self, Attack::SuperPunch(_) | Attack::Dropkick | Attack::IceRocket(_))
     }
 
     /// A status going off on him (element.rs): no blow of Mario's, none of a blow's bonuses.
@@ -631,6 +670,10 @@ impl Attack {
                 | Attack::Tether
                 | Attack::HammerBro
                 | Attack::RangSkim
+                | Attack::DarkBeam(_)
+                | Attack::AbyssBeam
+                | Attack::Glacier
+                | Attack::GlacierSpikes
         )
     }
 
@@ -734,6 +777,10 @@ impl Attack {
             Attack::HammerCharge | Attack::Comet | Attack::FrenzyEnd => 1.3,
             Attack::HammerChargeSlam | Attack::CometRing | Attack::ChompRush | Attack::Frenzy => 1.2,
             Attack::HammerBro | Attack::Lasso | Attack::RangSkim => 1.0,
+            Attack::IceRocket(level) => 1.0 + 0.15 * level.min(3) as f32,
+            Attack::IceDive => 1.2,
+            Attack::GlacierSpikes => 1.1,
+            Attack::FrostWave | Attack::Glacier | Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Spray => 1.0,
         }
     }
 
@@ -773,6 +820,10 @@ impl Attack {
             // (each small hammer strikes once itself: volley.rs; the frenzy's bites come 4 apart)
             Attack::HammerBro => 1,
             Attack::Frenzy => 3,
+            // (the beam's ticks and the Glacier's pass on their own pace: beam.rs, fireball.rs; the
+            // dive's wave once as he lands)
+            Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Glacier | Attack::GlacierSpikes => 1,
+            Attack::FrostWave => 30,
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
@@ -824,6 +875,8 @@ impl Attack {
                 | Attack::HammerChargeSlam
                 | Attack::CometRing
                 | Attack::FrenzyEnd
+                | Attack::IceRocket(3)
+                | Attack::GlacierSpikes
         )
     }
 
@@ -2750,6 +2803,9 @@ impl Combat {
                     | Attack::HammerBro
                     | Attack::Rang
                     | Attack::RangSkim
+                    | Attack::DarkBeam(_)
+                    | Attack::AbyssBeam
+                    | Attack::Glacier
             );
             if !own_pace && !paced && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                 cooled(&mut self.cooldown, target.key, attack, tick);
@@ -2822,6 +2878,9 @@ impl Combat {
                         | Attack::SwordBeam
                         | Attack::HammerBro
                         | Attack::RangSkim
+                        | Attack::DarkBeam(_)
+                        | Attack::AbyssBeam
+                        | Attack::Glacier
                 ) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
@@ -2840,7 +2899,7 @@ impl Combat {
                 }
                 // the Bowser spin's release flings regular enemies away, like the giant fireball (the
                 // full Super punch and the dropkick too)
-                if matches!(attack, Attack::GiroEnd | Attack::SuperPunch(1) | Attack::Dropkick) && blowable(handle) {
+                if matches!(attack, Attack::GiroEnd | Attack::SuperPunch(1) | Attack::Dropkick | Attack::IceRocket(2..=3)) && blowable(handle) {
                     let me = player.modules.physics.position;
                     crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
                 }

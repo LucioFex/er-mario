@@ -17,12 +17,12 @@
 //! Shots leave turned to the nearest enemy in front and home in on it a little on the way (a gentle
 //! curve, never a U-turn), and burst on walls and bodies. The
 //! damage goes through combat.rs like Mario's other hits.
-//! With another weapon in hand RB throws that weapon's element instead (element.rs), charged up to
-//! the full shot (4 s; the giant one and the sun are the fists' own):
-//! - the hammer's ice block: lobbed in an arc at the enemy, tumbling, it shatters where it lands
-//!   (the charged ones' shards hit whoever stands round it)
-//! - the Chain Chomp's dark orb: straight and quick, homing harder; charged it bores through
-//! - the boomerang's poison glob: lobbed, it bursts into a cloud that poisons whoever stays in it
+//! With another weapon in hand RB is that weapon's element's own move instead (v4 Part 3c,
+//! rbmoves.rs; element.rs), each with a 10 s giant: the hammer's ice rocket punch (its Glacier fist
+//! flies from here: a huge fist of ice straight through everyone in its way, a ring of ice spikes
+//! where it stops), the Chain Chomp's dark beam (beam.rs), the boomerang's poison sweep and its
+//! carpets (carpet.rs), the Star Sword's lightning (bolt.rs). The charge waits in `cast` for its
+//! move to let it go (`release`).
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -35,7 +35,7 @@ use glam::Vec3;
 use crate::combat::{self, Attack, Combat};
 use crate::collision::sm_to_er;
 use crate::element::Element;
-use crate::fx::{Blast, Cloud, FireFx, Orb, Pool, BLAST_LAUNCH, ORB_CHARGE, ORB_REFLECTED, ORB_STUCK};
+use crate::fx::{Blast, FireFx, Orb, Pool, BLAST_LAUNCH, ORB_CHARGE, ORB_REFLECTED, ORB_STUCK};
 use crate::{log, scale, sm64, worker};
 
 /// held this many SM64 ticks (30 a second): charge levels 1, 2, 3, the giant one and the sun
@@ -64,35 +64,23 @@ const HOME_CONE_COS: f32 = 0.5;
 const HOME_EVERY: u32 = 6;
 const HOME_TURN: [f32; 6] = [0.055, 0.05, 0.045, 0.04, 0.025, 0.02];
 const HOME_LOSE_COS: f32 = 0.17;
-/// the other elements' shots, by level 0-3: speed (units per tick), hit radius (units), drawn size
-/// (m); the lobbed ones' gravity (units per tick, each tick)
-const ICE_SPEED: [f32; 4] = [52.0, 48.0, 44.0, 40.0];
-const ICE_RADIUS: [f32; 4] = [30.0, 42.0, 56.0, 80.0];
-const ICE_SIZE: [f32; 4] = [0.45, 0.6, 0.8, 1.15];
-const DARK_SPEED: [f32; 4] = [95.0, 88.0, 80.0, 72.0];
-const DARK_RADIUS: [f32; 4] = [24.0, 34.0, 48.0, 70.0];
-const DARK_SIZE: [f32; 4] = [0.45, 0.65, 0.9, 1.4];
-const VENOM_SPEED: [f32; 4] = [44.0, 41.0, 38.0, 35.0];
-const VENOM_RADIUS: [f32; 4] = [28.0, 38.0, 50.0, 70.0];
-const VENOM_SIZE: [f32; 4] = [0.4, 0.55, 0.75, 1.05];
-const GRAVITY_ICE: f32 = 1.4;
-const GRAVITY_VENOM: f32 = 1.1;
-/// a lob gets to the enemy it's thrown at within this many ticks (farther off, it's thrown
-/// quicker, not higher); with no one to aim at it comes down about this many ticks out; it's gone
-/// after this many
-const LOB_TICKS: f32 = 40.0;
-const LOB_DEFAULT_TICKS: f32 = 24.0;
-const LOB_LIFE: u32 = 150;
-/// the dark orb homes in this much harder than a fireball
-const DARK_HOMING: f32 = 1.7;
-/// the charged ice blocks' shards: whoever stands this close (m) to where it shatters (level 2, 3)
-const SHARDS_REACH: [f32; 2] = [2.0, 2.8];
-/// the poison cloud, by the glob's level: how wide (m), how long (ticks); it poisons whoever is in
-/// it every this many ticks; at most this many at once (the oldest goes)
-const CLOUD_RADIUS: [f32; 4] = [1.2, 1.5, 2.0, 2.6];
-const CLOUD_TICKS: [u32; 4] = [60, 75, 90, 120];
-const CLOUD_BURN_EVERY: u32 = 15;
-const CLOUDS_MAX: usize = 6;
+/// the Glacier fist (the hammer's 10 s RB, rbmoves.rs): its speed (units per tick), hit radius
+/// (units), drawn size (m), how far it flies (units); its ring of spikes where it stops (m)
+const GLACIER_SPEED: f32 = 45.0;
+const GLACIER_RADIUS: f32 = 160.0;
+const GLACIER_SIZE: f32 = 3.2;
+const GLACIER_RANGE: f32 = 2500.0;
+const GLACIER_SPIKES: f32 = 4.5;
+/// the poison carpets (carpet.rs) by the sweep's charge: how wide (m), how long (ticks); the
+/// spray's pool in the air; the swamp
+const CARPET_RADIUS: [f32; 4] = [3.0, 4.0, 5.0, 6.0];
+const CARPET_TICKS: [u32; 4] = [180, 225, 270, 300];
+const POOL_RADIUS: [f32; 2] = [2.5, 5.0];
+const POOL_TICKS: u32 = 240;
+const SWAMP_RADIUS: f32 = 10.0;
+const SWAMP_TICKS: u32 = 360;
+/// the ice rocket's block on his fist, by charge (m)
+const FIST_SIZE: [f32; 4] = [0.45, 0.55, 0.7, 0.85];
 
 /// the full shot knocks regular enemies back this far (m), over this many ticks
 const PUSH: f32 = 3.0;
@@ -125,16 +113,10 @@ const SOUND_BOMB: i32 = 0x802E_2081_u32 as i32;
 /// charge steps: menu tick, short star, the secret jingle, the volcano, a boom
 const SOUND_CHARGE: [i32; 5] = [0x7000_F881_u32 as i32, 0x3016_0091, 0x7030_2081, SOUND_VOLCANO, SOUND_BOMB];
 const SOUND_BUZZ: i32 = 0x700E_0081;
-/// the ice block: a whoosh out, the snowman's bounce as it shatters, a box breaking when charged
+/// the Glacier fist: a whoosh out, the snowman's burst and a box breaking where it stops
 const SOUND_SWISH: i32 = 0x305C_0081;
 const SOUND_SNOW: i32 = 0x5064_C081;
 const SOUND_BREAK: i32 = 0x3041_C081;
-/// the dark orb: Snufit's shot, Bubba's bite as it lands
-const SOUND_SNUFIT: i32 = 0x504D_0081;
-const SOUND_BUBBA: i32 = 0x5073_4081;
-/// the poison glob: a bubble out, a bubble bursting; its cloud's quiet bubbling
-const SOUND_BUBBLE: i32 = 0x300B_0081;
-const SOUND_BUBBLE_2: i32 = 0x300D_0081;
 
 /// running, he throws it with a punch on the move
 const ACT_MOVE_PUNCHING: u32 = 0x0080_0457;
@@ -169,80 +151,30 @@ pub fn element_burst_ticks(el: Element, level: u8) -> u32 {
 }
 
 /// A shot's speed (units per tick), hit radius (units) and drawn size (m) by its element and level.
+/// A shot's speed (units per tick), hit radius (units): fire's by level; the hammer's Glacier fist
+/// (the only other element that throws one, rbmoves.rs).
 fn shot_speed(el: Element, level: u8) -> f32 {
-    let l = level.min(3) as usize;
-    match el {
-        Element::Fire | Element::Lightning => SPEED[level as usize],
-        Element::Frost => ICE_SPEED[l],
-        Element::Blood => DARK_SPEED[l],
-        Element::Poison => VENOM_SPEED[l],
-    }
+    if el == Element::Frost { GLACIER_SPEED } else { SPEED[level.min(SUN) as usize] }
 }
 
 fn shot_radius(el: Element, level: u8) -> f32 {
-    let l = level.min(3) as usize;
-    match el {
-        Element::Fire | Element::Lightning => RADIUS[level as usize],
-        Element::Frost => ICE_RADIUS[l],
-        Element::Blood => DARK_RADIUS[l],
-        Element::Poison => VENOM_RADIUS[l],
-    }
+    if el == Element::Frost { GLACIER_RADIUS } else { RADIUS[level.min(SUN) as usize] }
 }
 
+/// A shot's drawn size (m), and a puff's of another element (a charge put out).
 pub fn shot_size(el: Element, level: u8) -> f32 {
-    let l = level.min(3) as usize;
     match el {
         Element::Fire | Element::Lightning => SIZE[level.min(SUN) as usize],
-        Element::Frost => ICE_SIZE[l],
-        Element::Blood => DARK_SIZE[l],
-        Element::Poison => VENOM_SIZE[l],
-    }
-}
-
-/// a lobbed shot's gravity (units per tick, each tick; 0: it flies straight)
-fn gravity(el: Element) -> f32 {
-    match el {
-        Element::Frost => GRAVITY_ICE,
-        Element::Poison => GRAVITY_VENOM,
-        _ => 0.0,
+        Element::Frost if level >= GIANT => GLACIER_SIZE,
+        _ => 0.6,
     }
 }
 
 /// The blow a shot of `el` at `level` lands.
 fn shot_attack(el: Element, level: u8) -> Attack {
-    match el {
-        Element::Fire | Element::Lightning => Attack::Fire(level),
-        Element::Frost => Attack::Ice(level.min(3)),
-        Element::Blood => Attack::Dark(level.min(3)),
-        Element::Poison => Attack::Venom(level.min(3)),
-    }
+    if el == Element::Frost { Attack::Glacier } else { Attack::Fire(level) }
 }
 
-/// It goes on through whoever it hits: the full fireball, the charged dark orb.
-fn pierces(el: Element, level: u8) -> bool {
-    match el {
-        Element::Fire => level >= 3,
-        Element::Blood => level >= 2,
-        _ => false,
-    }
-}
-
-/// A lob's velocity (units per tick) from `hand` along `dir`, coming down on `target` (an enemy's
-/// chest, SM64) if there's one: quick enough to get there within LOB_TICKS, high enough to fall
-/// onto it.
-fn lob(hand: [f32; 3], dir: Vec3, speed: f32, g: f32, target: Option<[f32; 3]>) -> Vec3 {
-    let flat = Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
-    match target {
-        Some(p) => {
-            let (dx, dy, dz) = (p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]);
-            let d = (dx * dx + dz * dz).sqrt();
-            let h = speed.max(d / LOB_TICKS);
-            let t = (d / h).max(4.0);
-            flat * h + Vec3::Y * (dy / t + 0.5 * g * t)
-        }
-        None => flat * speed + Vec3::Y * (0.5 * g * LOB_DEFAULT_TICKS),
-    }
-}
 
 /// how long a burst is kept for its looks (ticks): the big ones' smoke and shock wave outlast
 /// their flames
@@ -363,16 +295,6 @@ impl Burst {
     }
 }
 
-/// The poison glob's cloud (Elden Ring: on the ground where it burst), poisoning whoever is in it
-struct PoisonCloud {
-    pos: Vec3,
-    born: u32,
-    life: u32,
-    radius: f32,
-    vis: f32,
-    vis_at: u32,
-}
-
 /// a pool of lava the sun left on the ground (Elden Ring)
 struct Ember {
     pos: Vec3,
@@ -402,21 +324,25 @@ pub struct Fire {
     doused: bool,
     /// the charge's element: the weapon in hand when RB went down (element.rs)
     el: Element,
-    clouds: Vec<PoisonCloud>,
-    last_cloud_burn: u32,
     shots: Vec<Shot>,
     bursts: Vec<Burst>,
     pushes: Vec<Push>,
     embers: Vec<Ember>,
     last_ember_burn: u32,
-    /// the Star Sword's: its cast asked for (its level, in the air, when) until its move lets go,
-    /// its bolts out there (bolt.rs) and its crescents (wave.rs)
-    cast: Option<(u8, bool, u32)>,
+    /// a charge of the other weapons' (the sword's lightning, the hammer's frost, the Chomp's
+    /// blood, the boomerang's poison) asked for (its element, level, in the air, when) until its
+    /// move lets go (rbmoves.rs); the sword's bolts (bolt.rs) and crescents (wave.rs), the hammer's
+    /// thrown small ones (volley.rs), the dark beam (beam.rs), the poison carpets (carpet.rs)
+    cast: Option<(Element, u8, bool, u32)>,
     cast_asked: bool,
     pub bolts: crate::bolt::Bolts,
     pub waves: crate::wave::Waves,
-    /// the hammer's thrown small ones (volley.rs)
     pub volley: crate::volley::Volley,
+    pub beam: crate::beam::Beam,
+    pub carpets: crate::carpet::Carpets,
+    /// the scripted move playing (lib.rs): the beam pours while its move plays, the ice rocket's
+    /// fist is in its block
+    playing: Option<u16>,
 }
 
 /// a sword cast whose move didn't let go within this (ticks: hurt, cut short) is lost
@@ -446,6 +372,7 @@ pub fn clear() {
     crate::bolt::clear();
     crate::wave::clear();
     crate::volley::clear();
+    crate::beam::clear();
 }
 
 fn sound(id: i32) {
@@ -472,8 +399,6 @@ impl Fire {
             level: 0,
             doused: false,
             el: Element::Fire,
-            clouds: Vec::new(),
-            last_cloud_burn: 0,
             shots: Vec::new(),
             bursts: Vec::new(),
             pushes: Vec::new(),
@@ -484,20 +409,52 @@ impl Fire {
             bolts: Default::default(),
             waves: Default::default(),
             volley: Default::default(),
+            beam: Default::default(),
+            carpets: Default::default(),
+            playing: None,
         }
     }
 
-    /// The sword's cast wants its move (script.rs's skyward strike, or the Zeus throw in the air):
-    /// once, as it's asked for.
-    pub fn take_cast(&mut self) -> Option<bool> {
-        let (_, air, _) = self.cast?;
-        (!std::mem::replace(&mut self.cast_asked, true)).then_some(air)
+    /// Every tick, before `tick`: the scripted move playing (script.rs), if any.
+    pub fn set_playing(&mut self, id: Option<u16>) {
+        self.playing = id;
     }
 
-    /// The sword's move lets the cast go now, from his hand `hand` facing `facing` (Elden Ring).
-    pub fn release(&mut self, hand: Vec3, facing: Vec3, origin: [f32; 3], tick: u32) {
-        if let Some((level, air, _)) = self.cast.take() {
-            self.bolts.cast(level, air, hand, facing, origin, tick);
+    /// A charge wants its move (rbmoves.rs `cast_move`): its element, level, in the air; once, as
+    /// it's asked for.
+    pub fn take_cast(&mut self) -> Option<(Element, u8, bool)> {
+        let (el, level, air, _) = self.cast?;
+        (!std::mem::replace(&mut self.cast_asked, true)).then_some((el, level, air))
+    }
+
+    /// The charge's move lets it go now, from his hand `hand` facing `facing` (Elden Ring): the
+    /// sword's bolts, the hammer's Glacier fist (its rocket punch and dive are the move's own
+    /// blows), the Chomp's beam, the boomerang's carpet.
+    pub fn release(&mut self, hand: Vec3, facing: Vec3, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let Some((el, level, air, _)) = self.cast.take() else { return };
+        let feet = er(origin, state.position);
+        match el {
+            Element::Lightning => self.bolts.cast(level, air, hand, facing, origin, tick),
+            Element::Frost if level >= GIANT => self.spawn(GIANT, Element::Frost, state, origin, tick),
+            Element::Frost | Element::Fire => {}
+            Element::Blood => {
+                let ticks = self.playing.and_then(crate::rbmoves::beam_ticks).unwrap_or(crate::rbmoves::BEAM_TICKS[0]);
+                self.beam.start(level, ticks as u32, hand, facing, origin, tick);
+            }
+            Element::Poison => {
+                let f = facing.with_y(0.0).normalize_or(Vec3::Z);
+                if air {
+                    // (a pool on the ground below him)
+                    let ground = ray(feet + Vec3::Y * 0.3, feet - Vec3::Y * 12.0).unwrap_or(feet);
+                    self.carpets.lay(ground, POOL_RADIUS[(level >= GIANT) as usize], f, std::f32::consts::PI, POOL_TICKS, false, tick);
+                } else if level >= GIANT {
+                    self.carpets.lay(feet, SWAMP_RADIUS, f, std::f32::consts::PI, SWAMP_TICKS, true, tick);
+                } else {
+                    let l = level.min(3) as usize;
+                    let half = (crate::rbmoves::SWEEP_SPAN[l] * 0.5).to_radians();
+                    self.carpets.lay(feet, CARPET_RADIUS[l], f, half, CARPET_TICKS[l], false, tick);
+                }
+            }
         }
     }
 
@@ -583,13 +540,8 @@ impl Fire {
             let since = *self.held_since.get_or_insert(tick);
             let held = tick.saturating_sub(since.max(self.ready_at));
             let level = CHARGE_TICKS.iter().filter(|&&t| held >= t).count() as u8;
-            // (the giant one and the sun are the fists' own, the storm cloud the sword's: the others
-            // stop at the full shot)
-            let level = match self.el {
-                Element::Fire => level,
-                Element::Lightning => level.min(crate::bolt::STORM_LEVEL),
-                _ => level.min(3),
-            };
+            // (the sun is the fists' own: the others stop at their 10 s giant)
+            let level = if self.el == Element::Fire { level } else { level.min(GIANT) };
             if level > self.level {
                 sound(SOUND_CHARGE[level as usize - 1]);
             }
@@ -613,22 +565,28 @@ impl Fire {
             }
         }
 
-        // (a sword cast whose move never let go: lost)
-        if self.cast.is_some_and(|(_, _, at)| tick.wrapping_sub(at) > CAST_WAIT) {
+        // (a cast whose move never let go: lost)
+        if self.cast.is_some_and(|(_, _, _, at)| tick.wrapping_sub(at) > CAST_WAIT) {
             self.cast = None;
-            log("bolt: the cast's move didn't let go: lost");
+            log("fireball: the cast's move didn't let go: lost");
         }
-        // the sword's bolts and crescents (in the game's physics coordinates: the map rays are those)
+        // the other weapons' (in the game's physics coordinates: the map rays are those)
         {
             let er_ray = |a: Vec3, b: Vec3| ray(a, b);
             self.bolts.tick(player, combat, origin, tick, &er_ray);
             self.waves.tick(player, combat, origin, tick, &er_ray);
             self.volley.tick(player, combat, origin, tick);
+            // (the dark beam from his hands, the way he faces, while its move plays)
+            let m = state.position;
+            let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+            let hand = er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]);
+            let casting = self.playing.and_then(crate::rbmoves::beam_ticks).is_some();
+            self.beam.tick(hand, Vec3::new(-fx, 0.0, fz), casting, player, combat, origin, tick, &er_ray);
+            self.carpets.tick(player, combat, origin, tick);
         }
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);
         self.burn_embers(origin, tick, player, combat);
-        self.burn_clouds(origin, tick, player, combat);
         // (the sun's later waves wait their turn)
         self.bursts.retain(|b| b.born > tick || tick - b.born < b.life());
         self.publish(state, origin, tick, &ray);
@@ -637,7 +595,6 @@ impl Fire {
     /// Mario's world was re-scaled (mega.rs): shots in flight, kept in its old units, go.
     pub fn drop_shots(&mut self) {
         self.shots.clear();
-        self.clouds.clear();
         self.pending = None;
     }
 
@@ -650,14 +607,13 @@ impl Fire {
     /// running or dashing.
     fn shoot(&mut self, id: i32, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         self.ready_at = tick + COOLDOWN[level as usize];
-        // the Star Sword: its own moves (the cast waits for its move to let go: `release`)
-        if self.el == Element::Lightning {
-            self.cast = Some((level, action_air(state.action), tick));
+        // the other weapons: their own moves (the cast waits for its move to let go: `release`)
+        if self.el != Element::Fire {
+            self.cast = Some((self.el, level, action_air(state.action), tick));
             self.cast_asked = false;
             return;
         }
         let (dir, _) = self.aim(state, origin, level);
-        let level = if self.el == Element::Fire { level } else { level.min(3) };
         let on_ground = state.action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0 && state.action & ACT_NO_THROW == 0;
         // the throw's kind: by charge level (er_moves.c ER_THROW_FIRE*)
         let kind = crate::moves::THROW_FIRE + match level {
@@ -728,23 +684,21 @@ impl Fire {
         let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
         let (dir, target) = self.aim(state, origin, level);
         let speed = shot_speed(el, level);
-        let g = gravity(el);
-        let vel = if g > 0.0 { lob(hand, dir, speed, g, target) } else { dir * speed };
+        // (the Glacier fist flies level, its enemy's height or not)
+        let dir = if el == Element::Frost { dir.with_y(0.0).normalize_or(Vec3::new(fx, 0.0, fz)) } else { dir };
+        let vel = dir * speed;
         self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, el, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false, vis: -1.0, ground: None });
         log(format!("fireball: {} level {level} shot{}", el.name(), if target.is_some() { ", aimed" } else { "" }));
         // a puff of it at his hand as it leaves
         self.bursts.push(Burst::of(el, er(origin, hand), 0, tick));
         if el != Element::Fire {
-            worker::call("element shot", move |_| unsafe {
-                match el {
-                    Element::Frost => sm64::sm64_play_sound_volume(SOUND_SWISH, 0.7),
-                    Element::Blood => sm64::sm64_play_sound_volume(SOUND_SNUFIT, 0.6),
-                    _ => sm64::sm64_play_sound_volume(SOUND_BUBBLE, 0.7),
-                }
-                if level >= 3 {
-                    sm64::sm64_play_sound_volume(SOUND_VOLCANO, 0.45);
-                }
+            // (the Glacier fist: a whoosh, a boom, Mario holding still a moment)
+            worker::call("glacier shot", move |_| unsafe {
+                sm64::sm64_play_sound_volume(SOUND_SWISH, 0.7);
+                sm64::sm64_play_sound_volume(SOUND_VOLCANO, 0.45);
+                sm64::sm64_er_hitstop(4);
             });
+            crate::lakitu::shake(0.8);
             return;
         }
         worker::call("fireball shot", move |_| unsafe {
@@ -775,8 +729,6 @@ impl Fire {
             }
             let prev = shot.pos;
             let next = [prev[0] + shot.vel[0], prev[1] + shot.vel[1], prev[2] + shot.vel[2]];
-            // (a lob falls)
-            shot.vel[1] -= gravity(shot.el);
             shot.age += 1;
             let r = shot_radius(shot.el, shot.level);
             // enemies first (one standing against a wall still takes the hit)
@@ -808,12 +760,9 @@ impl Fire {
                 }
                 let at = er(origin, [prev[0] + (next[0] - prev[0]) * k, prev[1] + (next[1] - prev[1]) * k, prev[2] + (next[2] - prev[2]) * k]);
                 self.bursts.push(Burst::of(shot.el, at, shot.level, tick));
+                // (the Glacier fist goes on through them all)
                 if shot.el != Element::Fire {
-                    self.landed(shot.el, shot.level, at, Some((t.key(), Vec3::new(t.er.0, t.er.1, t.er.2))), origin, tick, player, combat, ray);
-                    if pierces(shot.el, shot.level) {
-                        continue;
-                    }
-                    return false;
+                    continue;
                 }
                 if shot.level >= 3 {
                     sound(SOUND_BOMB);
@@ -832,14 +781,18 @@ impl Fire {
                 if shot.el == Element::Fire {
                     sound(if shot.level >= 3 { SOUND_BOMB } else { SOUND_FLAME_OUT });
                 } else {
-                    self.landed(shot.el, shot.level, p, None, origin, tick, player, combat, ray);
+                    self.glacier_end(p, origin, tick, player, combat, ray);
                 }
                 return false;
             }
             shot.pos = next;
-            let gone = if gravity(shot.el) > 0.0 { shot.age >= LOB_LIFE } else { shot.age as f32 * shot_speed(shot.el, shot.level) >= RANGE };
-            if gone {
-                self.bursts.push(Burst::of(shot.el, er(origin, next), 0, tick));
+            let range = if shot.el == Element::Frost { GLACIER_RANGE } else { RANGE };
+            if shot.age as f32 * shot_speed(shot.el, shot.level) >= range {
+                if shot.el == Element::Frost {
+                    self.glacier_end(er(origin, next), origin, tick, player, combat, ray);
+                } else {
+                    self.bursts.push(Burst::of(shot.el, er(origin, next), 0, tick));
+                }
                 return false;
             }
             true
@@ -1032,94 +985,22 @@ impl Fire {
         }
     }
 
-    /// Another element's shot landed at `at` (Elden Ring: on the enemy `hit`, his key and feet, or
-    /// the map): its sound, the charged ice block's shards on whoever else stands round it, the
-    /// poison glob's cloud.
-    #[allow(clippy::too_many_arguments)]
-    fn landed(&mut self, el: Element, level: u8, at: Vec3, hit: Option<(u64, Vec3)>, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
-        match el {
-            // (the sword's RB moves come with v4 Part 2: until then it throws as the fists do)
-            Element::Fire | Element::Lightning => {}
-            Element::Frost => {
-                if level >= 2 {
-                    let reach = SHARDS_REACH[(level >= 3) as usize];
-                    let near = combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), reach + 4.0, origin);
-                    let shards: Vec<(usize, Attack, bool)> = near
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, t)| t.shootable().is_some() && Some(t.key()) != hit.map(|h| h.0))
-                        .filter(|(_, t)| {
-                            let p = Vec3::new(t.er.0, t.er.1, t.er.2);
-                            (p - at).with_y(0.0).length() <= reach + t.radius * scale() && at.y + 1.5 >= p.y && at.y - 1.5 <= p.y + t.height * scale()
-                        })
-                        .map(|(i, _)| (i, Attack::Ice(0), false))
-                        .collect();
-                    if !shards.is_empty() {
-                        log(format!("fireball: the ice block's shards hit {}", shards.len()));
-                        combat.deal(player, &near, &shards, tick);
-                    }
-                }
-                if level >= 3 {
-                    crate::lakitu::shake(0.5);
-                }
-                worker::call("ice shatter", move |_| unsafe {
-                    sm64::sm64_play_sound_volume(SOUND_SNOW, 0.5);
-                    if level >= 2 {
-                        sm64::sm64_play_sound_volume(SOUND_BREAK, 0.3);
-                    }
-                });
-            }
-            Element::Blood => {
-                worker::call("dark orb", move |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUBBA, 0.3 + 0.08 * level as f32) });
-            }
-            Element::Poison => {
-                // (its cloud on the ground: at the feet of the one it hit, a lob comes down on a big
-                // one's head; else under it)
-                let ground = match hit {
-                    Some((_, feet)) => feet,
-                    None => ray(at + Vec3::Y * 0.3, at - Vec3::Y * 12.0).unwrap_or(at),
-                };
-                let l = level.min(3) as usize;
-                if self.clouds.len() >= CLOUDS_MAX {
-                    self.clouds.remove(0);
-                }
-                self.clouds.push(PoisonCloud { pos: ground, born: tick, life: CLOUD_TICKS[l], radius: CLOUD_RADIUS[l], vis: -1.0, vis_at: 0 });
-                worker::call("venom splash", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUBBLE_2, 0.6) });
-            }
+    /// The Glacier fist stops at `at` (Elden Ring: a wall, the end of its way): a ring of ice spikes
+    /// bursting from the ground round it.
+    fn glacier_end(&mut self, at: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let ground = ray(at + Vec3::Y * 0.5, at - Vec3::Y * 8.0).unwrap_or(at - Vec3::Y * 1.0);
+        let n = combat.blast(player, ground, GLACIER_SPIKES, Attack::GlacierSpikes, origin, tick);
+        self.bursts.push(Burst::of(Element::Frost, at, GIANT, tick));
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::TAU / 8.0;
+            self.bursts.push(Burst::of(Element::Frost, ground + Vec3::new(a.cos() * GLACIER_SPIKES * 0.7, 0.4, a.sin() * GLACIER_SPIKES * 0.7), 2, tick + 2 + k % 3));
         }
-    }
-
-    /// The poison clouds poison whoever stands in them, every CLOUD_BURN_EVERY ticks (once each
-    /// however many he stands in), and thin out after their time.
-    fn burn_clouds(&mut self, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat) {
-        self.clouds.retain(|c| tick.wrapping_sub(c.born) < c.life);
-        if self.clouds.is_empty() || tick.wrapping_sub(self.last_cloud_burn) < CLOUD_BURN_EVERY {
-            return;
-        }
-        self.last_cloud_burn = tick;
-        let mut done: Vec<u64> = Vec::new();
-        for c in &self.clouds {
-            let near = combat::nearby(&HavokPosition(c.pos.x, c.pos.y, c.pos.z, 0.0), c.radius + 4.0, origin);
-            let inside: Vec<(usize, Attack, bool)> = near
-                .iter()
-                .enumerate()
-                .filter(|(_, t)| t.shootable().is_some() && !done.contains(&t.key()))
-                .filter(|(_, t)| {
-                    let p = Vec3::new(t.er.0, t.er.1, t.er.2);
-                    (p - c.pos).with_y(0.0).length() <= c.radius + t.radius * scale() && p.y - c.pos.y > -1.0 && p.y - c.pos.y < 2.5
-                })
-                .map(|(i, _)| (i, Attack::VenomCloud, false))
-                .collect();
-            if inside.is_empty() {
-                continue;
-            }
-            done.extend(inside.iter().map(|(i, ..)| near[*i].key()));
-            combat.deal(player, &near, &inside, tick);
-        }
-        if !done.is_empty() {
-            // (soft: it comes again and again)
-            worker::call("venom cloud", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUBBLE, 0.18) });
-        }
+        crate::lakitu::shake(1.2);
+        worker::call("glacier spikes", |_| unsafe {
+            sm64::sm64_play_sound_volume(SOUND_SNOW, 0.6);
+            sm64::sm64_play_sound_volume(SOUND_BREAK, 0.45);
+        });
+        log(format!("fireball: the Glacier fist's spikes ({n} caught in them)"));
     }
 
     /// The full shot's knockback: regular enemies slide away from Mario (bosses stand their ground)
@@ -1221,13 +1102,18 @@ impl Fire {
             let flags = if b.launch { BLAST_LAUNCH } else { 0 };
             out.blasts.push(Blast { pos: b.pos, level: b.level, age: tick - b.born, size, ground: b.ground.flatten(), flags, vis, element: b.el as u8 });
         }
-        for c in &mut self.clouds {
-            let pos = c.pos + Vec3::Y * 0.6;
-            let vis = eased(&mut c.vis, &mut c.vis_at, tick, || eye.map_or(1.0, |e| visibility(e, pos, c.radius * k, true, ray)));
-            if vis >= 0.02 {
-                out.clouds.push(Cloud { pos: c.pos, age: tick.wrapping_sub(c.born), life: c.life, radius: c.radius * k, vis });
-            }
+        // the ice rocket punch's fist in its block of ice (rbmoves.rs), bigger by charge
+        if let Some(l) = self.playing.and_then(|id| match id {
+            crate::script::ICE_ROCKET..=crate::script::ICE_DIVE => Some((id - crate::script::ICE_ROCKET).min(3) as usize),
+            _ => None,
+        }) {
+            let m = state.position;
+            let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+            let fist = er(origin, [m[0] + fx * 70.0, m[1] + 70.0, m[2] + fz * 70.0]);
+            out.orbs.push(Orb { pos: fist, vel: er_vel(state.velocity), size: FIST_SIZE[l] * k, level: l as u8, age: tick, flags: ORB_CHARGE, ground: None, vis: 1.0, element: Element::Frost as u8 });
         }
+        out.beams = crate::beam::looks();
+        out.carpets = crate::carpet::looks();
         for e in &mut self.embers {
             let pos = e.pos + Vec3::Y * 0.3;
             let vis = eased(&mut e.vis, &mut e.vis_at, tick, || eye.map_or(1.0, |c| visibility(c, pos, EMBER_RADIUS * k, true, ray)));
@@ -1245,10 +1131,11 @@ fn home(shot: &mut Shot, origin: [f32; 3]) {
     if shot.stuck.is_some() {
         return;
     }
-    // (a lob turns only across: its fall is its own)
-    let lobbed = gravity(shot.el) > 0.0;
-    let full = Vec3::from(shot.vel);
-    let vel = if lobbed { full.with_y(0.0) } else { full };
+    // (the Glacier fist flies straight on)
+    if shot.el == Element::Frost {
+        return;
+    }
+    let vel = Vec3::from(shot.vel);
     let speed = vel.length();
     if speed < 1e-3 {
         return;
@@ -1275,16 +1162,16 @@ fn home(shot: &mut Shot, origin: [f32; 3]) {
         return;
     };
     let c = crate::collision::er_to_sm(origin, &HavokPosition(chest.x, chest.y, chest.z, 0.0));
-    let want = Vec3::new(c[0] - p[0], if lobbed { 0.0 } else { c[1] - p[1] }, c[2] - p[2]).normalize_or_zero();
+    let want = Vec3::new(c[0] - p[0], c[1] - p[1], c[2] - p[2]).normalize_or_zero();
     let cos = want.dot(dir);
     if want == Vec3::ZERO || cos < HOME_LOSE_COS {
         shot.homing = None;
         return;
     }
     let angle = cos.clamp(-1.0, 1.0).acos();
-    let turn = HOME_TURN[shot.level as usize] * if shot.el == Element::Blood { DARK_HOMING } else { 1.0 };
+    let turn = HOME_TURN[shot.level.min(SUN) as usize];
     let new = if angle <= turn { want } else { dir.lerp(want, turn / angle).normalize_or(dir) };
-    shot.vel = if lobbed { [new.x * speed, full.y, new.z * speed] } else { (new * speed).to_array() };
+    shot.vel = (new * speed).to_array();
 }
 
 /// Where the game's render camera is (Lakitu's, when on).

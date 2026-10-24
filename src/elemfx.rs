@@ -17,7 +17,7 @@ use glam::{Quat, Vec3};
 
 use crate::element::Element;
 use crate::flame::{across, cone, fbm, hash, noise, rgba, sphere, spread, Eye, Look, Sprite, Tri, FRAME_GLOW};
-use crate::fx::{Aura, Blast, Cloud, Mote, Orb, AURA_LONG, ORB_CHARGE};
+use crate::fx::{Aura, Beam, Blast, Carpet, Cloud, Mote, Orb, AURA_LONG, ORB_CHARGE};
 
 /// light from above, a little to the side
 const LIGHT: Vec3 = Vec3::new(0.3, 0.9, 0.25);
@@ -568,9 +568,125 @@ pub fn mote(look: &mut Look, m: &Mote, eye: &Eye, clock: f32) {
     }
 }
 
+/// A flat strip from `a` to `b`, `w` wide each side, turned to the eye (`side` across it).
+fn strip(look: &mut Look, a: Vec3, b: Vec3, side: Vec3, wa: f32, wb: f32, col: [f32; 4]) {
+    let (a0, a1, b0, b1) = (a - side * wa, a + side * wa, b - side * wb, b + side * wb);
+    look.tris.push(Tri { p: [a0, a1, b1], col });
+    look.tris.push(Tri { p: [a0, b1, b0], col });
+}
+
+/// The dark beam (beam.rs): a black core in a crimson shell and a haze round both, flickering and
+/// rippling along it, a glow at his hands and where it ends; the Abyss beam wider, with dark
+/// motes pulled in along it.
+pub fn beam(look: &mut Look, b: &Beam, eye: &Eye, clock: f32) {
+    let axis = b.to - b.from;
+    let len = axis.length();
+    if len < 0.05 || !b.from.is_finite() || !b.to.is_finite() {
+        return;
+    }
+    let dir = axis / len;
+    // (across it, seen from the eye: a strip turned to the camera from any side but along it)
+    let mid = (b.from + b.to) * 0.5;
+    let side = dir.cross(eye.pos - mid).normalize_or(dir.any_orthonormal_vector());
+    // (it swells in, holds, thins out at the end)
+    let fade = (b.t / 0.08).min(1.0) * ((1.0 - b.t) / 0.12).clamp(0.0, 1.0).max(0.25);
+    let r = b.radius * (0.6 + 0.4 * fade);
+    let n = ((len / 1.5).ceil() as usize).clamp(4, 16);
+    let abyss = b.kind == 1;
+    for i in 0..n {
+        let (t0, t1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
+        let (p0, p1) = (b.from + axis * t0, b.from + axis * t1);
+        // (rippling: each piece a little wider or narrower, moving down it)
+        let wob = |t: f32| 1.0 + 0.12 * ((t * len * 2.2 - clock * 14.0).sin()) + 0.06 * ((t * len * 5.3 + clock * 9.0).sin());
+        // (a tip at his hands, full past a metre)
+        let open = |t: f32| (t * len / 0.9).clamp(0.25, 1.0);
+        let (w0, w1) = (r * wob(t0) * open(t0), r * wob(t1) * open(t1));
+        strip(look, p0, p1, side, w0 * 1.7, w1 * 1.7, rgba(if abyss { HAZE_PURPLE } else { CRIMSON }, 0.16 * fade));
+        strip(look, p0, p1, side, w0, w1, rgba(mix(CRIMSON, BLOOD, 0.5), 0.5 * fade));
+        strip(look, p0, p1, side, w0 * 0.45, w1 * 0.45, rgba(DARK, 0.92 * fade));
+    }
+    glow(look, b.from, r * 4.5, CRIMSON, 0.55 * fade);
+    glow(look, b.from, r * 2.0, DARK, 0.7 * fade);
+    glow(look, b.to, r * 5.0, CRIMSON, 0.45 * fade);
+    // (sparks of it streaming down, the Abyss beam's dark motes drawn in toward it)
+    let motes = if abyss { 10 } else { 5 };
+    for k in 0..motes {
+        let h = hash(k, 3, 7);
+        let ph = (clock * (0.9 + 0.5 * h) + h).fract();
+        let around = Quat::from_axis_angle(dir, h * TAU) * side;
+        let off = if abyss { around * r * (2.6 - 2.2 * ph) } else { around * r * 0.6 };
+        glow(look, b.from + axis * ph + off, r * 0.5, if k % 2 == 0 { CRIMSON } else { DARK }, 0.6 * fade);
+    }
+}
+
+/// A carpet of poison (carpet.rs): a fan of see-through green and purple over the ground, darker
+/// at its heart, bubbles rising from it; the swamp deeper, with a haze over it.
+pub fn carpet(look: &mut Look, c: &Carpet, eye: &Eye, clock: f32) {
+    if c.radius < 0.05 || !c.center.is_finite() {
+        return;
+    }
+    // (it soaks in at the end; it spreads out at the start by its radius)
+    let fade = ((1.0 - c.t) / 0.15).clamp(0.0, 1.0);
+    if fade < 0.01 {
+        return;
+    }
+    let ground = c.center + Vec3::Y * 0.04;
+    let full = c.half >= std::f32::consts::PI - 1e-3;
+    let span = if full { TAU } else { c.half * 2.0 };
+    let n = ((span / 0.26).ceil() as usize).clamp(6, 28);
+    let at = |a: f32, r: f32| ground + Vec3::new(a.sin() * r, 0.0, a.cos() * r);
+    let start = if full { 0.0 } else { c.yaw - c.half };
+    let (outer, inner) = if c.swamp { (mix(VENOM, VENOM_DARK, 0.35), VENOM_DARK) } else { (VENOM, mix(VENOM, VENOM_DARK, 0.6)) };
+    for i in 0..n {
+        let (a0, a1) = (start + span * i as f32 / n as f32, start + span * (i + 1) as f32 / n as f32);
+        // (its edge a little ragged)
+        let rag = |a: f32| 1.0 - 0.08 * (a * 5.0 + clock * 0.6).sin().abs();
+        look.under.push(Tri { p: [ground, at(a0, c.radius * rag(a0)), at(a1, c.radius * rag(a1))], col: rgba(outer, (if c.swamp { 0.42 } else { 0.32 }) * fade) });
+        look.under.push(Tri { p: [ground, at(a0, c.radius * 0.6), at(a1, c.radius * 0.6)], col: rgba(inner, 0.28 * fade) });
+    }
+    // (bubbles rising, more over the swamp)
+    let seed = seed_of(c.center);
+    let bubbles = if c.swamp { 14 } else { 4 + (c.radius as i32).min(6) };
+    for i in 0..bubbles {
+        let h = hash(seed, i, 23);
+        let ph = (clock * (0.6 + 0.4 * h) + h).fract();
+        let a = start + span * hash(seed, i, 29);
+        let p = at(a, c.radius * 0.9 * hash(seed, i, 31).sqrt()) + Vec3::Y * (ph * 0.5);
+        bubble(look, p, 0.04 + 0.06 * h, eye.pos, if i % 3 == 0 { VENOM_DARK } else { VENOM }, (1.0 - ph) * 0.8 * fade);
+    }
+    if c.swamp {
+        for i in 0..6 {
+            let h = hash(seed, i, 37);
+            let a = i as f32 * TAU / 6.0 + clock * 0.15 * if i % 2 == 0 { 1.0 } else { -1.0 };
+            let p = at(a, c.radius * (0.3 + 0.5 * h)) + Vec3::Y * (0.5 + 0.3 * h);
+            glow(look, p, c.radius * 0.5, if i % 2 == 0 { HAZE_GREEN } else { HAZE_PURPLE }, 0.14 * fade);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_beam_and_the_carpets_draw_finite_faces() {
+        for (kind, t) in [(0u8, 0.0f32), (0, 0.5), (1, 0.97)] {
+            let mut look = Look::default();
+            beam(&mut look, &Beam { from: Vec3::new(0.0, 1.0, 0.0), to: Vec3::new(2.0, 1.5, 15.0), radius: 0.5, t, kind }, &eye(), 2.0);
+            assert!(!look.tris.is_empty());
+            assert!(look.tris.iter().all(|f| f.p.iter().all(|p| p.is_finite()) && f.col.iter().all(|c| c.is_finite())));
+        }
+        // (seen straight along it: still finite)
+        let mut look = Look::default();
+        beam(&mut look, &Beam { from: Vec3::new(0.0, 2.0, -9.0), to: Vec3::new(0.0, 2.0, 5.0), radius: 0.5, t: 0.5, kind: 0 }, &eye(), 1.0);
+        assert!(look.tris.iter().all(|f| f.p.iter().all(|p| p.is_finite())));
+        for (half, swamp) in [(1.0f32, false), (std::f32::consts::PI, true)] {
+            let mut look = Look::default();
+            carpet(&mut look, &Carpet { center: Vec3::ZERO, radius: 4.0, yaw: 0.5, half, t: 0.4, swamp }, &eye(), 3.0);
+            assert!(!look.under.is_empty());
+            assert!(look.under.iter().all(|f| f.p.iter().all(|p| p.is_finite()) && f.col[3] < 0.9));
+        }
+    }
 
     fn eye() -> Eye {
         Eye { pos: Vec3::new(0.0, 2.0, -10.0), px: 900.0, screen: 1080.0 }

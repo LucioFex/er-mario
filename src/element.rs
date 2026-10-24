@@ -88,6 +88,10 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         Attack::Dark(_) => Some(Element::Blood),
         Attack::Venom(_) | Attack::VenomCloud => Some(Element::Poison),
         Attack::Bolt(_) | Attack::BoltBlast | Attack::Javelin(_) | Attack::Storm | Attack::StormEnd => Some(Element::Lightning),
+        // (the RB moves': their element whatever is in hand by the time they land)
+        Attack::IceRocket(_) | Attack::IceDive | Attack::FrostWave | Attack::Glacier | Attack::GlacierSpikes => Some(Element::Frost),
+        Attack::DarkBeam(_) | Attack::AbyssBeam => Some(Element::Blood),
+        Attack::Spray => Some(Element::Poison),
         Attack::Slip
         | Attack::ShellHit
         | Attack::Bomb

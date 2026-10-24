@@ -322,6 +322,21 @@ pub const RANG_SKIM: u16 = 49;
 pub const RANG_PINCER: u16 = 50;
 pub const RANG_STEER: u16 = 51;
 pub const RANG_CATCH: u16 = 52;
+/// RB with the hammer, the Chain Chomp and the boomerang (rbmoves.rs: `cast_move` picks them):
+/// the ice rocket punch by charge (this to + 3), the ice dive, the Glacier fist (ground, air), the
+/// dark beam by charge (ground this to + 3, air from DARK_BEAM_AIR), the Abyss beam (ground, air),
+/// the poison sweep by charge, the spray in the air, the toxic swamp
+pub const ICE_ROCKET: u16 = 53;
+pub const ICE_DIVE: u16 = 57;
+pub const GLACIER: u16 = 58;
+pub const GLACIER_AIR: u16 = 59;
+pub const DARK_BEAM: u16 = 60;
+pub const DARK_BEAM_AIR: u16 = 64;
+pub const ABYSS: u16 = 68;
+pub const ABYSS_AIR: u16 = 69;
+pub const POISON_SWEEP: u16 = 70;
+pub const POISON_AIR: u16 = 74;
+pub const SWAMP: u16 = 75;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
@@ -429,6 +444,7 @@ use crate::chompmoves as chomp;
 use crate::fistmoves as fist;
 use crate::hammermoves as hammer;
 use crate::rangmoves as rang;
+use crate::rbmoves as rb;
 use crate::swordmoves as sw;
 
 /// Every move by its id: the fists' and the sword's RB moves, then the Star Sword's (SW_S1 on,
@@ -487,6 +503,29 @@ pub const MOVES: &[Move] = &[
     rang::PINCER,
     rang::STEER,
     rang::CATCH,
+    rb::ICE_ROCKETS[0],
+    rb::ICE_ROCKETS[1],
+    rb::ICE_ROCKETS[2],
+    rb::ICE_ROCKETS[3],
+    rb::ICE_DIVE_MOVE,
+    rb::GLACIER_MOVE,
+    rb::GLACIER_AIR_MOVE,
+    rb::DARK_BEAMS[0],
+    rb::DARK_BEAMS[1],
+    rb::DARK_BEAMS[2],
+    rb::DARK_BEAMS[3],
+    rb::DARK_BEAMS_AIR[0],
+    rb::DARK_BEAMS_AIR[1],
+    rb::DARK_BEAMS_AIR[2],
+    rb::DARK_BEAMS_AIR[3],
+    rb::ABYSS_MOVE,
+    rb::ABYSS_AIR_MOVE,
+    rb::POISON_SWEEPS[0],
+    rb::POISON_SWEEPS[1],
+    rb::POISON_SWEEPS[2],
+    rb::POISON_SWEEPS[3],
+    rb::POISON_AIR_MOVE,
+    rb::SWAMP_MOVE,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -880,10 +919,10 @@ mod tests {
     #[test]
     fn every_id_has_its_move() {
         // (the last id of each table: indexing MOVES by an id with no data would panic)
-        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH] {
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP] {
             assert!((id as usize) < MOVES.len(), "{id}");
         }
-        assert_eq!(MOVES.len(), RANG_CATCH as usize + 1);
+        assert_eq!(MOVES.len(), SWAMP as usize + 1);
     }
 
     #[test]

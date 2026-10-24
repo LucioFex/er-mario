@@ -314,6 +314,12 @@ pub fn build(look: &mut Look, fire: &FireFx, eye: &Eye, clock: f32) {
     for a in &fire.auras {
         crate::elemfx::aura(look, a, eye, clock);
     }
+    for b in &fire.beams {
+        crate::elemfx::beam(look, b, eye, clock);
+    }
+    for c in &fire.carpets {
+        crate::elemfx::carpet(look, c, eye, clock);
+    }
     for m in &fire.motes {
         crate::elemfx::mote(look, m, eye, clock);
     }

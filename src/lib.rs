@@ -7,6 +7,7 @@ mod assets;
 mod autopad;
 mod audio;
 mod blown;
+mod beam;
 mod bolt;
 mod boomerang;
 mod brosattack;
@@ -14,6 +15,7 @@ mod hook;
 mod parry;
 mod ride;
 mod caps;
+mod carpet;
 mod carry;
 mod chomp;
 mod chompmoves;
@@ -81,6 +83,7 @@ mod timing;
 mod traps;
 mod rock;
 mod rangmoves;
+mod rbmoves;
 mod volley;
 mod bat;
 mod maxfin;
@@ -3083,6 +3086,8 @@ fn frame(data: &FD4TaskData) {
             m.fire.bolts.shift(glam::Vec3::from(d));
             m.fire.waves.shift(glam::Vec3::from(d));
             m.fire.volley.shift(glam::Vec3::from(d));
+            m.fire.beam.shift(glam::Vec3::from(d));
+            m.fire.carpets.shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
@@ -4401,6 +4406,7 @@ fn frame(data: &FD4TaskData) {
                         m.combat.wall_splats(&targets, &hits, glam::Vec3::new(me.0, me.1, me.2), m.ticks, ray);
                     }
                     let _perf12 = perf::span(perf::FIREBALL);
+                    m.fire.set_playing(m.moves.script.active().filter(|_| script::is_script(state.action)));
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
                     drop(_perf12);
                     // R3: the parry (parry.rs); with L2 held, the grab (carry.rs: a small enemy, or a big one
@@ -4434,14 +4440,17 @@ fn frame(data: &FD4TaskData) {
                     light::hand(parts.as_ref().map(|p| feet + p[6].pos));
                     // the Star Sword's cast (bolt.rs): its move asked for, and let go off his hand
                     // (off the sword raised over him, on the ground) when the move says
-                    if let Some(air) = m.fire.take_cast() {
-                        m.moves.queue(moves::Request::Script { id: if air { script::ZEUS_THROW } else { script::SKY_STRIKE }, air, yaw: None }, m.ticks);
+                    if let Some((el, level, air)) = m.fire.take_cast() {
+                        if let Some(id) = rbmoves::cast_move(el, level, air) {
+                            m.moves.queue(moves::Request::Script { id, air: script::MOVES.get(id as usize).is_some_and(|mv| mv.air), yaw: None }, m.ticks);
+                        }
                     }
                     if combo.fx & script::FX_RELEASE != 0 {
                         let f = state.face_angle;
                         let facing = glam::Vec3::new(-f.sin(), 0.0, f.cos());
-                        let from = if state.action & 0x800 != 0 { hand } else { hand + glam::Vec3::Y * 0.9 };
-                        m.fire.release(from, facing, m.origin, m.ticks);
+                        // (the sword raised over him on the ground: its bolt off its tip)
+                        let from = if state.action & 0x800 != 0 || weapon_on != weapons::SWORD { hand } else { hand + glam::Vec3::Y * 0.9 };
+                        m.fire.release(from, facing, &state, m.origin, m.ticks, &ray);
                     }
                     // the sword's crescents (wave.rs) off its blow: the star wave, the JUST three, and a
                     // finisher's sword beam only at full health (Zelda's: 8 whole wedges)

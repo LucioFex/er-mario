@@ -80,7 +80,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | back, forward + X (boomerang) | **Skim**: thrown low and straight, Mario dashing after it up to the enemy; it comes back to his hand there |
 | X, (beat), X (boomerang) | **Pincer**: two at once curving out opposite ways and closing on the enemy from both sides (two in hand) |
 | X held (boomerang) | **Steered boomerang**: steered with the stick for up to 2 s (each enemy once); let X go and it comes back |
-| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's shot instead (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
+| RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's own move instead, each with a 10 s giant (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
 | D-pad up | Wing cap (recharges in about 55 s) |
@@ -412,15 +412,16 @@ hit-stop no longer lets one cut land again).
 
 ### Elements
 
-Each weapon imbues Mario's blows with one of Elden Ring's elements, and turns RB into a shot of
-it (`src/element.rs`; the looks in `src/elemfx.rs`):
+Each weapon imbues Mario's blows with one of Elden Ring's elements, and turns RB into a move of
+that element's own, never a fireball in another colour (`src/element.rs`, `src/rbmoves.rs`; the
+looks in `src/elemfx.rs`):
 
 | Weapon | Element | What it builds up | RB |
 |---|---|---|---|
 | Fists | Fire | Nothing: an enemy weak to fire takes more of every blow | The fireball (charges up to the giant one and the sun) |
-| Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | An ice block lobbed in an arc at the enemy, tumbling; it shatters (charged: its shards hit whoever stands round it) |
-| Chain Chomp | Blood | **Blood loss**: a burst of 12% | A dark orb with crimson cracks and two gleaming eyes: quick, homes in hard, charged it bores through |
-| Boomerang | Poison | **Poison**: about 1% a second for 20 s | A poison glob, lobbed; it bursts into a cloud that poisons whoever stays in it |
+| Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | **Ice rocket punch** (Doomfist's): the fist in a block of ice that grows with the charge, and Mario rockets fist first into the enemy, 6 / 8 / 11 / 14 m; it knocks the enemy back, and slams it into a wall right behind it (WALL!). In the air: the **ice dive**, a diving punch with a wave of frost where he lands. **10 s: the Glacier fist**: a huge fist of ice flies 25 m through everyone in its way, a ring of ice spikes bursting from the ground where it stops |
+| Chain Chomp | Blood | **Blood loss**: a burst of 12% | **Dark beam** (a small, evil kamehameha): black at its heart, crimson round it, pouring from his hands 0.4 / 0.67 / 0.93 / 1.2 s by charge, 18 m to the first wall, through everyone in it; in the air it holds him up while it lasts. **10 s: the Abyss beam**: two and a half seconds of a huge one, swept round with the stick, drawing regular enemies in toward its core |
+| Boomerang | Poison | **Poison**: about 1% a second for 20 s | **Poison sweep**: the arm swung across spraying, a carpet of poison over the ground in front of him: 120° and 3 m for 6 s up to all round and 6 m for 10 s by charge; whoever walks in it is poisoned every half second. In the air: sprayed down, a pool where it lands. **10 s: the toxic swamp**: two turns spraying, a 10 m swamp for 12 s, bubbling, slowing the enemies in it (bosses only a little) |
 | Star Sword | Lightning | **Shock**: a bolt from the sky on him (16%) that shakes his stance hard, and jumps to the two nearest enemies within 6 m (60% and 40% of it) | Its own moves: see [RB with the sword](#star-sword) |
 
 Every enemy takes them as Elden Ring has him: his resistance to each status (NpcParam) is what it
@@ -431,8 +432,8 @@ worth a little more or less (x0.8 to x1.25; for the statuses, against his own re
 others: each enemy has the one he resists least and the one he resists most): "WEAK" or "RESIST"
 over him the first time. A status
 set off makes him tougher to it for a while (a boss much more), and what's built up fades if he's
-left alone, so no weapon wins everywhere: switching pays. The other weapons' shots charge up to
-the full shot (4 s); the giant fireball and the sun stay the fists' own.
+left alone, so no weapon wins everywhere: switching pays. Every element's RB charges at 1, 2 and
+4 s, and to its giant at 10 s; the sun (20 s) stays the fists' own.
 
 Taking a weapon shows its element: a burst of it at Mario's hand with a soft SM64 sound, then now
 and then a mote round the weapon (embers, snowflakes of ice, wisps of darkness, bubbles). The HUD
@@ -459,7 +460,7 @@ close and risky hits.
 | Stomp | 50% of enemy HP | **12%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **21%**, boss bonus **×1.3**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **60%** within 9 m and its lava pools **4%** every half second (on bosses about 9% and 0.4%, as measured) |
-| Ice block, dark orb, poison glob | — | Ice **8-22%** by charge (charged, its shards **8%** on whoever stands round it); dark orb **6-16%**; poison glob **5-13%** and its cloud **1%** every half second |
+| The elements' RB moves | — | Ice rocket punch **8-20.5%** by charge (+ WALL!), ice dive **9%** + frost wave **4.5%**, Glacier fist **34%** on each it passes (regular enemies are blown away) + spikes **11%**; dark beam **1-2%** every tenth of a second by charge (**4.5-24%** in all), Abyss beam **1.4%** every tenth (about **36%** in all); poison sweep **2.3%** and its carpet **1%** every half second (+ poison) |
 | Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |
 | Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |

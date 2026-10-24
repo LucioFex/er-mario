@@ -162,6 +162,15 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::Frenzy => Some((1, 0.8, false)),
         Attack::FrenzyEnd => Some((4, 1.3, true)),
         Attack::RangSkim => Some((0, 0.7, false)),
+        // the elements' RB moves: the rocket punch lands hard (harder by charge), the dive and its
+        // wave a solid one; from afar (the beam's ticks, the Glacier) no hold for Mario
+        Attack::IceRocket(level) => Some((3 + level.min(3) as u32, 1.2 + 0.1 * level.min(3) as f32, level >= 2)),
+        Attack::IceDive => Some((4, 1.3, false)),
+        Attack::FrostWave => Some((3, 1.2, true)),
+        Attack::Glacier => Some((0, 1.8, true)),
+        Attack::GlacierSpikes => Some((0, 1.5, true)),
+        Attack::DarkBeam(_) | Attack::AbyssBeam => Some((0, 0.6, false)),
+        Attack::Spray => Some((1, 0.8, false)),
     }
 }
 

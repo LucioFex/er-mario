@@ -106,14 +106,49 @@ pub struct FireFx {
     pub clouds: Vec<Cloud>,
     pub auras: Vec<Aura>,
     pub motes: Vec<Mote>,
+    /// the Chain Chomp's dark beam (beam.rs), the boomerang's carpets of poison (carpet.rs)
+    pub beams: Vec<Beam>,
+    pub carpets: Vec<Carpet>,
 }
 
 impl FireFx {
-    pub const EMPTY: FireFx = FireFx { orbs: Vec::new(), blasts: Vec::new(), pools: Vec::new(), clouds: Vec::new(), auras: Vec::new(), motes: Vec::new() };
+    pub const EMPTY: FireFx =
+        FireFx { orbs: Vec::new(), blasts: Vec::new(), pools: Vec::new(), clouds: Vec::new(), auras: Vec::new(), motes: Vec::new(), beams: Vec::new(), carpets: Vec::new() };
 
     pub fn is_empty(&self) -> bool {
-        self.orbs.is_empty() && self.blasts.is_empty() && self.pools.is_empty() && self.clouds.is_empty() && self.auras.is_empty() && self.motes.is_empty()
+        self.orbs.is_empty()
+            && self.blasts.is_empty()
+            && self.pools.is_empty()
+            && self.clouds.is_empty()
+            && self.auras.is_empty()
+            && self.motes.is_empty()
+            && self.beams.is_empty()
+            && self.carpets.is_empty()
     }
+}
+
+/// The dark beam (beam.rs): from his hands to where it ends, how wide (m), how far through its
+/// time (0-1), which (0 the dark beam, 1 the Abyss beam)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Beam {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub radius: f32,
+    pub t: f32,
+    pub kind: u8,
+}
+
+/// A carpet of poison on the ground (carpet.rs): its middle, how far it has spread (m), the way
+/// its arc faces (yaw, radians) and its half (radians: π all round), how far through its life
+/// (0-1), a swamp
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Carpet {
+    pub center: Vec3,
+    pub radius: f32,
+    pub yaw: f32,
+    pub half: f32,
+    pub t: f32,
+    pub swamp: bool,
 }
 
 /// A bolt of the sword's lightning (bolt.rs): its ends, its zigzag's seed, how far through its life
@@ -308,6 +343,11 @@ impl WorldFx {
             b.1 += d;
         }
         self.thrown.iter_mut().for_each(|t| t.pos += d);
+        for b in &mut self.fire.beams {
+            b.from += d;
+            b.to += d;
+        }
+        self.fire.carpets.iter_mut().for_each(|c| c.center += d);
         for s in &mut self.streaks {
             s.iter_mut().for_each(|p| p.0 += d);
         }
@@ -507,6 +547,24 @@ impl WorldFx {
             w.angle(t.spin);
             w.unit(t.size);
         });
+        // (added with the elements' own RB moves, Part 3c, at the end again)
+        w.most = most.min(2);
+        w.records(&self.fire.beams, |w, b| {
+            w.pos(b.from);
+            w.pos(b.to);
+            w.unit(b.radius / 4.0);
+            w.unit(b.t);
+            w.out.push(b.kind);
+        });
+        w.most = most.min(6);
+        w.records(&self.fire.carpets, |w, c| {
+            w.pos(c.center);
+            w.unit(c.radius / 16.0);
+            w.angle(c.yaw);
+            w.unit(c.half / std::f32::consts::PI);
+            w.unit(c.t);
+            w.out.push(c.swamp as u8);
+        });
     }
 
     /// The partner's from `b` (positions around their Tarnished: `shifted` puts them where we show
@@ -561,6 +619,12 @@ impl WorldFx {
         }
         if r.at < r.b.len() {
             fx.thrown = r.records(|r| Some(Thrown { pos: r.pos()?, yaw: r.angle()?, spin: r.angle()?, size: r.unit()? }))?;
+        }
+        if r.at < r.b.len() {
+            fx.fire.beams = r.records(|r| Some(Beam { from: r.pos()?, to: r.pos()?, radius: r.unit()? * 4.0, t: r.unit()?, kind: r.u8()? }))?;
+            fx.fire.carpets = r.records(|r| {
+                Some(Carpet { center: r.pos()?, radius: r.unit()? * 16.0, yaw: r.angle()?, half: r.unit()? * std::f32::consts::PI, t: r.unit()?, swamp: r.u8()? == 1 })
+            })?;
         }
         Some(fx)
     }
@@ -746,6 +810,7 @@ mod tests {
                 clouds: vec![Cloud { pos: at(4.0), age: 12, life: 90, radius: 2.0, vis: 1.0 }],
                 auras: vec![Aura { pos: at(5.0), height: 2.2, radius: 0.6, element: 3, age: 7, left: 0.5 }],
                 motes: vec![Mote { pos: at(0.4), element: 1, t: 0.25, size: 0.1 }],
+                ..Default::default()
             },
             streaks: vec![vec![(at(1.0), 0.2), (at(2.0), 0.6)]],
             rangs: vec![(vec![at(4.0), at(5.0)], 0.55)],
@@ -769,6 +834,9 @@ mod tests {
             blade: vec![(at(0.6), at(0.2), 0.3), (at(0.9), at(0.3), 0.1)],
             thrown: vec![Thrown { pos: at(2.5), yaw: 1.0, spin: 3.0, size: 0.42 }],
         };
+        let mut fx = fx;
+        fx.fire.beams = vec![Beam { from: at(0.5), to: at(12.0), radius: 0.55, t: 0.4, kind: 1 }];
+        fx.fire.carpets = vec![Carpet { center: at(3.0), radius: 5.0, yaw: -1.2, half: 1.5, t: 0.3, swamp: true }];
         let mut out = Vec::new();
         fx.encode(here, &mut out);
         let got = WorldFx::decode(&out).expect("reads").shifted(here);
@@ -777,6 +845,11 @@ mod tests {
         assert!(close(c.pos, at(3.5)) && yaw_off.min(std::f32::consts::TAU - yaw_off) < 0.001 && (c.roll + 35.0).abs() < 1.0, "{c:?}");
         assert!((c.width - 2.8).abs() < 0.05 && (c.alpha - 0.6).abs() < 0.01 && c.kind == 1);
         assert_eq!(got.blade.len(), 2);
+        let b = got.fire.beams[0];
+        assert!(close(b.from, at(0.5)) && close(b.to, at(12.0)) && (b.radius - 0.55).abs() < 0.02 && (b.t - 0.4).abs() < 0.01 && b.kind == 1, "{b:?}");
+        let c = got.fire.carpets[0];
+        let yaw_off = (c.yaw - -1.2f32).rem_euclid(std::f32::consts::TAU);
+        assert!(close(c.center, at(3.0)) && (c.radius - 5.0).abs() < 0.07 && yaw_off.min(std::f32::consts::TAU - yaw_off) < 0.01 && (c.half - 1.5).abs() < 0.01 && c.swamp, "{c:?}");
         let t = got.thrown[0];
         assert!(close(t.pos, at(2.5)) && (t.yaw - 1.0).abs() < 0.01 && (t.spin - 3.0).abs() < 0.01 && (t.size - 0.42).abs() < 0.01, "{t:?}");
         assert!(close(got.blade[1].0, at(0.9)) && close(got.blade[1].1, at(0.3)) && (got.blade[0].2 - 0.3).abs() < 0.01);
@@ -810,7 +883,7 @@ mod tests {
         let mut none = Vec::new();
         WorldFx::default().encode(here, &mut none);
         // (two bytes for each empty record list at the end)
-        assert!(none.len() < 40, "{}", none.len());
+        assert!(none.len() < 48, "{}", none.len());
         assert!(WorldFx::decode(&none).expect("reads").is_empty());
         // cut short: doesn't read
         assert!(WorldFx::decode(&out[..out.len() - 1]).is_none());
@@ -869,13 +942,14 @@ mod tests {
         let mut older = vec![out[0], out[1] - 1];
         older.extend_from_slice(&out[2..2 + size - 1]);
         older.extend_from_slice(&out[2 + size..]);
-        // (and without the eight lists at the end: each an empty record list, two bytes)
-        older.truncate(older.len() - 16);
+        // (and without the ten lists at the end: each an empty record list, two bytes)
+        older.truncate(older.len() - 20);
         let got = WorldFx::decode(&older).expect("reads");
         assert_eq!(got.fire.orbs.len(), 1);
         assert!(got.fire.orbs[0].element == 0 && got.fire.orbs[0].level == 3);
         assert!(got.fire.clouds.is_empty() && got.fire.auras.is_empty() && got.fire.motes.is_empty());
         assert!(got.bolts.is_empty() && got.storms.is_empty() && got.crescents.is_empty() && got.blade.is_empty() && got.thrown.is_empty());
+        assert!(got.fire.beams.is_empty() && got.fire.carpets.is_empty());
     }
 
     #[test]
