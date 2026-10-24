@@ -403,13 +403,35 @@ pub fn clear() {
 /// radius, height: the coins are drawn over the game's picture, so anyone standing in front of
 /// one has to hide it here). A coin shows if its middle or its top is in view.
 pub fn update_visibility(cam: Vec3, bodies: &[(Vec3, f32, f32)], blocked: impl Fn(Vec3, Vec3) -> bool) {
-    for c in COINS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
-        c.visible = [0.32, 0.6].iter().any(|&h| {
-            let p = c.pos + Vec3::Y * h;
-            !bodies.iter().any(|&b| behind(cam, p, b)) && !blocked(cam, p)
-        });
+    // (a third of them a tick, each looked at again three ticks later; their rays cast with the
+    // coins let go: the overlay draws them from the render thread and would wait on the rays)
+    static TURN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let turn = TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % VIS_EVERY;
+    let todo: Vec<(usize, Vec3)> = COINS.lock().unwrap_or_else(|e| e.into_inner()).iter().enumerate().filter(|(i, _)| i % VIS_EVERY == turn).map(|(i, c)| (i, c.pos)).collect();
+    if todo.is_empty() {
+        return;
+    }
+    let seen: Vec<(usize, Vec3, bool)> = todo
+        .into_iter()
+        .map(|(i, pos)| {
+            let open = [0.32, 0.6].iter().any(|&h| {
+                let p = pos + Vec3::Y * h;
+                !bodies.iter().any(|&b| behind(cam, p, b)) && !blocked(cam, p)
+            });
+            (i, pos, open)
+        })
+        .collect();
+    let mut coins = COINS.lock().unwrap_or_else(|e| e.into_inner());
+    for (i, pos, open) in seen {
+        // (the same coin: one picked up meanwhile shifts the rest)
+        if let Some(c) = coins.get_mut(i).filter(|c| c.pos.distance(pos) < 1.0) {
+            c.visible = open;
+        }
     }
 }
+
+/// each coin's view of the camera looked at again every this many ticks
+const VIS_EVERY: usize = 3;
 
 /// Whether the body (an upright cylinder) stands between the camera and `p`.
 fn behind(cam: Vec3, p: Vec3, (feet, radius, height): (Vec3, f32, f32)) -> bool {

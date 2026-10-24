@@ -687,6 +687,13 @@ The ground pound is slow and leaves Mario open, so it's worth the risk.
   faster (1 s); the log records the whole timeline from death to respawn.
 - **Fewer hitches in fights.** The game's raycast check of each collision triangle is remembered,
   so fast combat moves no longer re-check hundreds of triangles every few frames.
+- **Less of the mod's time per frame in big fights.** The characters near Mario are walked once a
+  tick and shared by everything that asks (blows, shots, the hook, the kit, the kart...) instead of
+  once per question; Torrent and a homing fireball's target are looked up by their handles; the
+  settings file is read by a thread of its own; Mario's SM64 mesh is copied out of the tick only for
+  the debug draws; the coins' line-of-sight rays and the colossus / hook HUDs no longer hold locks
+  the overlay waits on; the overlay works out the camera once a frame. The `perf:` lines in the log
+  (with `debug = 1`) show the mod's time per part, a new `character roster` among them.
 
 All gameplay changes live in `src/combat.rs`, `src/lib.rs` and a few small, commented
 `er-mario:` patches inside `libsm64/src/decomp/game/` and `libsm64/src/fake_interaction.c`.

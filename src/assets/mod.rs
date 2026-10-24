@@ -302,6 +302,7 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                     let wanted = suffix.is_empty() || kart_bones.is_some();
                     match kart_into_legs(&mut files, &kart, &id).and_then(|b| if wanted && kart_bones.as_ref().is_none_or(|k| *k == b) { Ok(b) } else { Err(format!("other bones than the near LOD's ({b:?})")) }) {
                         Ok(bones) => {
+                            log(format!("assets: the kart in the legs piece{suffix}, on {}", bones.join(", ")));
                             kart_in = true;
                             kart_bones = Some(bones);
                         }

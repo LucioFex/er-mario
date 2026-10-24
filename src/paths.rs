@@ -78,23 +78,39 @@ pub fn base_assets() -> Option<PathBuf> {
 
 /// `key = value` from er_mario.ini (lines starting with # or ; are comments).
 pub fn config(key: &str) -> Option<String> {
-    // (asked for every frame and every blow: read from the disk at most every 2 s)
-    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> = std::sync::Mutex::new(None);
-    let text = {
-        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if cache.as_ref().is_none_or(|(at, _)| at.elapsed().as_secs_f32() > 2.0) {
-            *cache = Some((std::time::Instant::now(), std::fs::read_to_string(file(CONFIG)).ok()));
-        }
-        cache.as_ref().and_then(|(_, t)| t.clone())?
-    };
-    text.lines().find_map(|line| {
-        let line = line.trim();
-        if line.starts_with('#') || line.starts_with(';') {
-            return None;
-        }
-        let (k, v) = line.split_once('=')?;
-        (k.trim().eq_ignore_ascii_case(key)).then(|| v.trim().trim_matches('"').to_string())
-    })
+    // (asked for every frame and every blow: read from the parsed lines, which a thread of its own
+    // reads from the disk again every 2 s; an open on the game's thread could take milliseconds,
+    // the antivirus looking at it, the very reason the log is written by a thread of its own)
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        *INI.write().unwrap_or_else(|e| e.into_inner()) = std::fs::read_to_string(file(CONFIG)).map(|t| parse(&t)).unwrap_or_default();
+        // (no thread to be had: the first read stays, no panic here for every config() after)
+        let _ = std::thread::Builder::new().name("er_mario ini".into()).spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let lines = std::fs::read_to_string(file(CONFIG)).map(|t| parse(&t)).unwrap_or_default();
+            *INI.write().unwrap_or_else(|e| e.into_inner()) = lines;
+        });
+    });
+    let key = key.to_ascii_lowercase();
+    INI.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())
+}
+
+/// er_mario.ini as last read (config).
+static INI: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
+
+/// er_mario.ini's `key = value` lines, keys in lower case, in the file's order (the first of a key
+/// counts); comments (# or ;) and lines without '=' left out, values unquoted.
+pub fn parse(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.starts_with('#') || line.starts_with(';') {
+                return None;
+            }
+            let (k, v) = line.split_once('=')?;
+            Some((k.trim().to_ascii_lowercase(), v.trim().trim_matches('"').to_string()))
+        })
+        .collect()
 }
 
 /// The ROM file: `rom = ...` from the config (absolute, or relative to the mod folder), else the
@@ -139,7 +155,20 @@ pub fn read_rom() -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::reforged_addons;
+    use super::{parse, reforged_addons};
+
+    #[test]
+    fn reads_the_ini_as_config_did() {
+        let text = "# a comment\n ; another\nrom = C:\\roms\\sm64.z64\n  Kart_Engine =0.5  \nlight = \"on\"\nnot a line\nrom = second\nkey=a=b\n";
+        let p = parse(text);
+        assert_eq!(p.iter().find(|(k, _)| k == "rom").map(|(_, v)| v.as_str()), Some("C:\\roms\\sm64.z64"));
+        assert_eq!(p.iter().find(|(k, _)| k == "kart_engine").map(|(_, v)| v.as_str()), Some("0.5"));
+        assert_eq!(p.iter().find(|(k, _)| k == "light").map(|(_, v)| v.as_str()), Some("on"));
+        assert_eq!(p.iter().find(|(k, _)| k == "key").map(|(_, v)| v.as_str()), Some("a=b"));
+        assert!(!p.iter().any(|(k, _)| k.starts_with('#') || k.starts_with(';') || k.contains("not a line")));
+        // (the first of a key counts, as config's lookup found it)
+        assert_eq!(p.iter().filter(|(k, _)| k == "rom").count(), 2);
+    }
 
     #[test]
     fn finds_reforged_addons() {

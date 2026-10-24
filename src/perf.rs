@@ -49,7 +49,9 @@ pub const INPUT_BOSSRIDE: usize = 34;
 pub const INPUT_MENU: usize = 35;
 // v4 Part 4: the kart's tick (karting.rs)
 pub const KART: usize = 36;
-const N: usize = 37;
+// v4 Part 8: the walk of every character, once a tick (combat.rs's roster)
+pub const ROSTER: usize = 37;
+const N: usize = 38;
 const NAMES: [&str; N] = [
     "frame task",
     "HUD task",
@@ -88,6 +90,7 @@ const NAMES: [&str; N] = [
     "input: boss ride",
     "input: menus",
     "kart",
+    "character roster",
 ];
 
 /// per part: slowest run and all runs together since the last report (ns)

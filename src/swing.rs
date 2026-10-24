@@ -113,6 +113,7 @@ fn hold_at(chr: &mut eldenring::cs::ChrIns, home: Vec3) {
     ph.position = HavokPosition(home.x, home.y + 0.5, home.z, 0.0);
     ph.chr_proxy_pos_update_requested = true;
     ph.gravity_disabled = false;
+    crate::combat::moved(&chr.field_ins_handle, home + Vec3::Y * 0.5);
     let fall = &mut chr.modules.fall;
     fall.fall_timer = 0.0;
     unsafe { *((&mut **fall as *mut eldenring::cs::CSChrFallModule as *mut u8).add(0x1C)) = 0 };

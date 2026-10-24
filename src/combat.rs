@@ -1381,6 +1381,8 @@ const AIM_MAX_RISE: f32 = 8.0;
 pub fn handle_key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
 }
+// (a key is the handle's 8 bytes: chest_by_key turns one back into the handle)
+const _: () = assert!(std::mem::size_of::<FieldInsHandle>() == 8);
 
 /// An enemy, one Mario's blows land on, as a weapon's would: anyone not on the player's side, but
 /// the friends' teams (`FRIENDLY_TEAMS`) and the human NPCs (c0000: merchants, quest NPCs) of the
@@ -1587,60 +1589,130 @@ pub fn last_attacker(player: &ChrIns) -> (Option<u32>, f32) {
 /// position, halfway up its body, at most 1.5 m above its feet).
 pub fn chest_by_key(key: u64) -> Option<glam::Vec3> {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return None };
-    for set in wcm.chr_sets.iter().flatten() {
-        for chr in set.characters() {
-            let chr: &ChrIns = chr;
-            if handle_key(&chr.field_ins_handle) != key {
-                continue;
-            }
-            if chr.modules.data.hp <= 0 || crate::swing::is_down(&chr.field_ins_handle) || crate::carry::is_carried(&chr.field_ins_handle) {
-                return None;
-            }
-            let (p, ph) = (chr.modules.physics.position, &chr.modules.physics);
-            let h = ph.hit_height.max(ph.chr_hit_height);
-            let h = if h.is_finite() && h > 0.3 { h.min(3.0) } else { 1.6 };
-            return Some(glam::Vec3::new(p.0, p.1 + h * 0.5, p.2));
+    // (the key is the handle: looked up by it, every homing or stuck shot asks every tick; the walk
+    // of every character only if that finds nobody)
+    let handle = unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&key) };
+    let by_handle = wcm.chr_ins_by_handle(&handle).filter(|c| handle_key(&c.field_ins_handle) == key);
+    let chr = by_handle.or_else(|| wcm.chr_sets.iter().flatten().flat_map(|set| set.characters()).map(|c| &*c).find(|c| handle_key(&c.field_ins_handle) == key))?;
+    if chr.modules.data.hp <= 0 || crate::swing::is_down(&chr.field_ins_handle) || crate::carry::is_carried(&chr.field_ins_handle) {
+        return None;
+    }
+    let (p, ph) = (chr.modules.physics.position, &chr.modules.physics);
+    let h = ph.hit_height.max(ph.chr_hit_height);
+    let h = if h.is_finite() && h > 0.3 { h.min(3.0) } else { 1.6 };
+    Some(glam::Vec3::new(p.0, p.1 + h * 0.5, p.2))
+}
+
+/// Whether a character at `pos` is within `range` of `center` as `nearby` takes it: flat distance
+/// and height difference both no more than `range` (m).
+fn within(center: [f32; 3], range: f32, pos: [f32; 3]) -> bool {
+    let (dx, dy, dz) = (pos[0] - center[0], pos[1] - center[1], pos[2] - center[2]);
+    dx * dx + dz * dz <= range * range && dy.abs() <= range
+}
+
+/// The characters that could be near (alive, not team 0, not Torrent, not switched off), walked once
+/// a tick (`new_tick`) and shared by every `nearby` of it: in a fight it's asked a dozen times a tick
+/// (the blows' targets, the kit, the shots, the hook, the stance watch...), each a walk of every
+/// character the game has loaded. The non-hittable kinds are kept too, for the diagnostics.
+struct Roster {
+    stamp: u64,
+    chrs: Vec<(FieldInsHandle, [f32; 3], bool)>,
+}
+
+/// the walk's places are looked through with this much more reach (m): its characters' own moves
+/// since (the exact reach is checked where each is now)
+const ROSTER_SLACK: f32 = 2.0;
+static ROSTER: std::sync::Mutex<Roster> = std::sync::Mutex::new(Roster { stamp: u64::MAX, chrs: Vec::new() });
+static STAMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A new SM64 tick or frame (lib.rs): the next `nearby` walks the characters again.
+pub fn new_tick() {
+    STAMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The mod put this character at `at` (carry.rs's hands, swing.rs's way back): the walk's place
+/// for it too, or a `nearby` later in the tick would look for it where it was (more than the slack
+/// away). (Skipped if the roster is being read: it's this tick's walk then, made after the move.)
+pub fn moved(handle: &FieldInsHandle, at: glam::Vec3) {
+    if let Ok(mut roster) = ROSTER.try_lock() {
+        if let Some(entry) = roster.chrs.iter_mut().find(|c| c.0 == *handle) {
+            entry.1 = [at.x, at.y, at.z];
         }
     }
-    None
 }
 
 /// Characters within `range` metres of `center` (not the player, alive).
 pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Target> {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return Vec::new() };
     let mut out = Vec::new();
-    for set in wcm.chr_sets.iter().flatten() {
-        for chr in set.characters() {
-            let chr: &ChrIns = chr;
-            if !hittable(chr.chr_type) {
-                // diagnostics: what else is near Mario (once each)
+    let mut roster = ROSTER.lock().unwrap_or_else(|e| e.into_inner());
+    let stamp = STAMP.load(std::sync::atomic::Ordering::Relaxed);
+    if roster.stamp != stamp {
+        let _span = crate::perf::span(crate::perf::ROSTER);
+        roster.chrs.clear();
+        // (Torrent's handle asked for once: is_torrent asks the game's data for it each time)
+        let mount = unsafe { eldenring::cs::GameDataMan::instance() }.ok().map(|g| handle_key(&g.main_player_game_data.mount_handle));
+        for set in wcm.chr_sets.iter().flatten() {
+            for chr in set.characters() {
+                let chr: &ChrIns = chr;
                 let p = chr.modules.physics.position;
-                let (dx, dz) = (p.0 - center.0, p.2 - center.2);
-                if dx * dx + dz * dz < range * range && !matches!(chr.chr_type, ChrType::Local) {
-                    static SKIPPED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
-                    let key = handle_key(&chr.field_ins_handle);
-                    let mut skipped = SKIPPED.lock().unwrap_or_else(|e| e.into_inner());
-                    if !skipped.contains(&key) {
-                        skipped.push(key);
-                        log(format!("combat: skipped character of type {:?}, team {}, hp {}", chr.chr_type, chr.team_type, chr.modules.data.hp));
+                if !hittable(chr.chr_type) {
+                    if !matches!(chr.chr_type, ChrType::Local) {
+                        roster.chrs.push((chr.field_ins_handle, [p.0, p.1, p.2], false));
                     }
+                    continue;
                 }
-                continue;
+                // (team 0 belongs to no side: the game's invisible helpers, e.g. one at every grace
+                // with ~1900 HP and a 0.1 m body, which Mario could punch to death)
+                // (switched off by an event script: a boss's next phase waiting where the first fights)
+                if chr.modules.data.hp <= 0 || chr.team_type == 0 || mount == Some(handle_key(&chr.field_ins_handle)) || chr.debug_flags.character_disabled() {
+                    continue;
+                }
+                roster.chrs.push((chr.field_ins_handle, [p.0, p.1, p.2], true));
             }
-            // (team 0 belongs to no side: the game's invisible helpers, e.g. one at every grace with
-            // ~1900 HP and a 0.1 m body, which Mario could punch to death)
-            if chr.modules.data.hp <= 0 || chr.team_type == 0 || is_torrent(chr) {
-                continue;
+        }
+        // (stamped once whole: a walk cut short by a panic is walked again)
+        roster.stamp = stamp;
+    }
+    let at = [center.0, center.1, center.2];
+    for (handle, pos, hit) in roster.chrs.iter() {
+        // (where the walk saw it, with room for its move since: then where it is now, by its handle:
+        // gone since, it's left out)
+        if !within(at, range + ROSTER_SLACK, *pos) {
+            continue;
+        }
+        // (the lookup's answer checked: a set's lookup may go by the index alone)
+        let Some(chr) = wcm.chr_ins_by_handle(handle).filter(|c| c.field_ins_handle == *handle) else {
+            static LOST: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+            let key = handle_key(handle);
+            let mut lost = LOST.lock().unwrap_or_else(|e| e.into_inner());
+            if lost.len() < 512 && !lost.contains(&key) {
+                lost.push(key);
+                log(format!("combat: a character of the walk not found by its handle ({key:#x})"));
             }
-            // (switched off by an event script: a boss's next phase waiting where the first fights)
-            if chr.debug_flags.character_disabled() {
-                continue;
+            continue;
+        };
+        // (and still alive: a blow of this tick's may have finished it)
+        if *hit && chr.modules.data.hp <= 0 {
+            continue;
+        }
+        let now = chr.modules.physics.position;
+        if !within(at, range, [now.0, now.1, now.2]) {
+            continue;
+        }
+        if !*hit {
+            // diagnostics: what else is near Mario (once each)
+            static SKIPPED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+            let key = handle_key(&chr.field_ins_handle);
+            let mut skipped = SKIPPED.lock().unwrap_or_else(|e| e.into_inner());
+            if !skipped.contains(&key) {
+                skipped.push(key);
+                log(format!("combat: skipped character of type {:?}, team {}, hp {}", chr.chr_type, chr.team_type, chr.modules.data.hp));
             }
+            continue;
+        }
+        {
             let p = chr.modules.physics.position;
-            let (dx, dy, dz) = (p.0 - center.0, p.1 - center.1, p.2 - center.2);
-            if dx * dx + dz * dz > range * range || dy.abs() > range {
-                continue;
-            }
             if let Some(why) = helper_why(chr) {
                 static HELPERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
                 let key = handle_key(&chr.field_ins_handle);
@@ -1694,6 +1766,7 @@ pub fn nearby(center: &HavokPosition, range: f32, origin: [f32; 3]) -> Vec<Targe
             });
         }
     }
+    drop(roster);
     // breakable props (barrels, crates...)
     for (index, p, layer) in crate::havok_col::props_near(glam::Vec3::new(center.0, center.1, center.2), range) {
         let lift = if layer == 0x1e { 0.4 } else { 0.0 };
@@ -3541,6 +3614,16 @@ mod blade_tests {
 #[cfg(test)]
 mod tests {
     use super::{Attack, CODES};
+
+    #[test]
+    fn within_reach_flat_and_up() {
+        let c = [10.0, 5.0, -3.0];
+        assert!(super::within(c, 8.0, [15.0, 7.0, 0.0]));
+        assert!(super::within(c, 8.0, [18.0, 5.0, -3.0]), "on the edge");
+        assert!(!super::within(c, 8.0, [16.0, 5.0, 3.0]), "flat: 8.5 m off");
+        assert!(!super::within(c, 8.0, [10.0, 13.5, -3.0]), "8.5 m up");
+        assert!(!super::within(c, 8.0, [10.0, -3.5, -3.0]), "8.5 m down");
+    }
 
     #[test]
     fn each_blow_keeps_its_own_pace_on_an_enemy() {

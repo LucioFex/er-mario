@@ -1331,6 +1331,7 @@ fn kart_mesh(dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], look: &crat
 
 /// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
 /// pixels a metre spans 1 m off.
+#[derive(Clone, Copy)]
 struct View {
     eye: Vec3,
     right: Vec3,
@@ -1374,6 +1375,11 @@ impl View {
     }
     fn screen(&self, c: Vec3) -> [f32; 2] {
         [self.size[0] * 0.5 * (1.0 + c.x / (c.z * self.kx)), self.size[1] * 0.5 * (1.0 - c.y / (c.z * self.ky))]
+    }
+    /// a world point -> its screen pixel (None behind the camera) and how far ahead it is
+    fn project(&self, p: Vec3) -> Option<([f32; 2], f32)> {
+        let c = self.cam(p);
+        (c.z >= 0.1).then(|| (self.screen(c), c.z))
     }
 }
 
@@ -1600,22 +1606,16 @@ fn camera_position() -> Option<Vec3> {
     Some(Vec3::new(c.0, c.1, c.2))
 }
 
+thread_local! {
+    /// the camera as this frame's overlay sees it (render sets it first): every coin, tag, ring and
+    /// dot is projected through it, not through the camera asked for again and its axes made again
+    static FRAME_VIEW: std::cell::Cell<Option<View>> = const { std::cell::Cell::new(None) };
+}
+
 /// World position -> screen pixel (None behind the camera), and its distance.
 fn project(p: Vec3, size: [f32; 2]) -> Option<([f32; 2], f32)> {
-    let cam = unsafe { CSCamera::instance() }.ok()?;
-    let pers = &cam.pers_cam_1;
-    let v = |d: eldenring::position::PositionDelta| Vec3::new(d.0, d.1, d.2);
-    let c = pers.position();
-    let (right, up, fwd) = (v(pers.right()).normalize_or_zero(), v(pers.up()).normalize_or_zero(), v(pers.forward()).normalize_or_zero());
-    let d = p - Vec3::new(c.0, c.1, c.2);
-    let z = d.dot(fwd);
-    if z < 0.1 {
-        return None;
-    }
-    let t = (pers.fov * 0.5).tan();
-    let x = d.dot(right) / (z * t * size[0] / size[1]);
-    let y = d.dot(up) / (z * t);
-    Some(([size[0] * 0.5 * (1.0 + x), size[1] * 0.5 * (1.0 - y)], z))
+    let view = FRAME_VIEW.get().filter(|v| v.size == size).or_else(|| View::now(size))?;
+    view.project(p)
 }
 
 impl ImguiRenderLoop for Overlay {
@@ -1675,6 +1675,7 @@ impl ImguiRenderLoop for Overlay {
             return;
         }
         let size = ui.io().display_size;
+        FRAME_VIEW.set(View::now(size));
         let textures = &self.textures;
         let dl = ui.get_foreground_draw_list();
         let image = |id: usize, x: f32, y: f32, w: f32, h: f32| {
@@ -3152,5 +3153,34 @@ mod tests {
         let mut m = [0u8; 6];
         assert_eq!(metres_of(48, &mut m), "48M");
         assert_eq!(metres_of(999, &mut m), "999M");
+    }
+
+    #[test]
+    fn the_frames_view_projects_as_the_camera_did() {
+        // a camera at (1, 2, 3) turned a quarter round +y (looking down +x), 60 degrees of view, 16:9
+        let size = [1920.0, 1080.0];
+        let ky = (60f32.to_radians() * 0.5).tan();
+        let view = View { eye: Vec3::new(1.0, 2.0, 3.0), right: Vec3::new(0.0, 0.0, -1.0), up: Vec3::Y, fwd: Vec3::X, kx: ky * size[0] / size[1], ky, px: size[1] * 0.5 / ky, size };
+        // (the old project(): per point, from the camera's own axes)
+        let old = |p: Vec3| {
+            let d = p - view.eye;
+            let z = d.dot(view.fwd);
+            if z < 0.1 {
+                return None;
+            }
+            let x = d.dot(view.right) / (z * ky * size[0] / size[1]);
+            let y = d.dot(view.up) / (z * ky);
+            Some(([size[0] * 0.5 * (1.0 + x), size[1] * 0.5 * (1.0 - y)], z))
+        };
+        for p in [Vec3::new(11.0, 2.0, 3.0), Vec3::new(6.0, 4.5, -1.0), Vec3::new(40.0, -3.0, 9.0), Vec3::new(1.05, 2.0, 3.0), Vec3::new(-5.0, 2.0, 3.0)] {
+            let (now, then) = (view.project(p), old(p));
+            assert_eq!(now.is_some(), then.is_some(), "{p}");
+            if let (Some((a, za)), Some((b, zb))) = (now, then) {
+                assert!((a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01 && (za - zb).abs() < 1e-4, "{p}: {a:?} {b:?}");
+            }
+        }
+        // straight ahead: the middle of the screen
+        let (c, z) = view.project(Vec3::new(11.0, 2.0, 3.0)).unwrap();
+        assert!((c[0] - 960.0).abs() < 0.01 && (c[1] - 540.0).abs() < 0.01 && (z - 10.0).abs() < 1e-4);
     }
 }

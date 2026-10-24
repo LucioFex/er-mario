@@ -2111,6 +2111,8 @@ fn frame(data: &FD4TaskData) {
         perf::frame_start();
     }
     let _span = perf::span(perf::FRAME);
+    // (a new frame: the characters near are looked for again, combat::nearby)
+    combat::new_tick();
     // once, a few seconds in (every mod's DLL loaded by then): what a memory check costs here
     {
         static BENCHED: AtomicBool = AtomicBool::new(false);
@@ -3196,6 +3198,8 @@ fn frame(data: &FD4TaskData) {
     while m.acc >= 1.0 / 30.0 {
         m.acc -= 1.0 / 30.0;
         SM64_TICKS.fetch_add(1, Ordering::Relaxed);
+        // (each tick its own walk of the characters near: the last one moved them)
+        combat::new_tick();
         let mut inputs = sm64::SM64MarioInputs::default();
         // RB is the fireball (fireball.rs), B the dash and Y the special moves (moves.rs); B is
         // SM64's B like X while Mario holds an enemy (the throw) or rides
@@ -4308,6 +4312,7 @@ fn frame(data: &FD4TaskData) {
                 log(format!("script: {}, X held: up with it", mv.name));
             }
         }
+        let mesh_drawn = EZ_MARIO.load(Ordering::Relaxed) || DEBUG_DRAW.load(Ordering::Relaxed);
         let result = worker::call("tick", move |ctx| {
             // (the co-op leash held him back last tick, or he warped: from there)
             if let Some([x, y, z]) = leash_fix {
@@ -4434,8 +4439,9 @@ fn frame(data: &FD4TaskData) {
             audio::push(&buf[..(frames * 2 * 2).min(buf.len())]);
             let sound_ms = job_start.elapsed().as_secs_f32() * 1000.0 - mario_ms;
             let n = ctx.geo.used() * 9;
-            let mut mats = vec![0f32; 64 * 16];
-            let mut tri_part = vec![0i32; sm64::GEO_MAX_TRIANGLES];
+            // (on the stack: every tick)
+            let mut mats = [0f32; 64 * 16];
+            let mut tri_part = [0i32; sm64::GEO_MAX_TRIANGLES];
             let count = unsafe {
                 sm64::sm64_er_get_parts(mats.as_mut_ptr(), tri_part.as_mut_ptr(), std::ptr::null_mut(), std::ptr::null_mut())
             };
@@ -4502,7 +4508,10 @@ fn frame(data: &FD4TaskData) {
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing, window) } else { Vec::new() };
             // (a long one: which part of it, for the log below)
             *LONG_TICK.lock().unwrap_or_else(|e| e.into_inner()) = (job_start.elapsed().as_secs_f32() * 1000.0, mario_ms, sound_ms, state.action);
-            (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
+            // (SM64's own mesh only for the debug draws, F8 / F11: it's ~110 KB a tick with its colours
+            // and normals, which nothing reads)
+            let mesh = if mesh_drawn { ctx.geo.position[..n].to_vec() } else { Vec::new() };
+            (state, mesh, Vec::new(), Vec::new(), parts, hits, combo, swing)
         });
         drop(tick_span);
         // the log showed SM64 ticks of 40-75 ms (a hitch each): where they go
@@ -5401,8 +5410,8 @@ fn frame(data: &FD4TaskData) {
                     // (his body's sounds and the mod's, for the co-op partner, as after the main tick)
                     coop::take_own_sounds();
                     unsafe { sm64::sm64_set_mario_position(id, sm[0], sm[1], sm[2]) };
-                    let mut mats = vec![0f32; 64 * 16];
-                    let mut tri_part = vec![0i32; sm64::GEO_MAX_TRIANGLES];
+                    let mut mats = [0f32; 64 * 16];
+                    let mut tri_part = [0i32; sm64::GEO_MAX_TRIANGLES];
                     let count = unsafe {
                         sm64::sm64_er_get_parts(mats.as_mut_ptr(), tri_part.as_mut_ptr(), std::ptr::null_mut(), std::ptr::null_mut())
                     };

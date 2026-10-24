@@ -386,11 +386,10 @@ pub fn tick() {
     }
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let torrent = (unsafe { WorldChrMan::instance_mut() }).ok().and_then(|wcm| {
-        let found: Option<&mut ChrIns> =
-            wcm.summon_buddy_chr_set.characters().chain(wcm.chr_sets.iter().flatten().flat_map(|set| set.characters())).find(|c| combat::is_torrent(c));
         // ridden he's quicker than Torrent: his animations play faster, and cover more ground
         // with it (not while Mario gets on or off, those are played in step with the rider's)
         let mounted = wcm.main_player.as_ref().is_some_and(|p| p.chr_ins.modules.ride.is_mounted);
+        let found = torrent_of(wcm);
         found.map(|c| {
             // (and not in the air: a jump at that speed is over before it has begun)
             let t = &c.modules.time_act;
@@ -491,6 +490,44 @@ pub fn tick() {
         s.pose[JAW] = (p, (Quat::from_rotation_x(-0.6 * jaw) * q).normalize());
     }
 }
+
+/// Torrent (combat::is_torrent) by the mount's handle, where the game keeps him: every frame a walk
+/// of every character loaded (hundreds in the open world) was how he was found, the game's data
+/// asked for again for each. If the handle finds nobody (he isn't out, most of the time) the walk
+/// still looks, at most every WALK_EVERY s, in case he's somewhere the handle doesn't lead: found so,
+/// it's every frame again from then on, as it was.
+fn torrent_of(wcm: &mut WorldChrMan) -> Option<&mut ChrIns> {
+    let gdm = unsafe { eldenring::cs::GameDataMan::instance() }.ok()?;
+    let handle = gdm.main_player_game_data.mount_handle;
+    let key = combat::handle_key(&handle);
+    let his = |c: &ChrIns| combat::handle_key(&c.field_ins_handle) == key;
+    if !handle.is_empty() {
+        // (the lookup's answer checked: a set's lookup may go by the index alone)
+        if wcm.chr_ins_by_handle(&handle).is_some_and(his) {
+            return wcm.chr_ins_by_handle_mut(&handle);
+        }
+        if wcm.summon_buddy_chr_set.chr_ins_by_handle(&handle).is_some_and(his) {
+            return wcm.summon_buddy_chr_set.chr_ins_by_handle_mut(&handle);
+        }
+    }
+    static WALKED: Mutex<Option<Instant>> = Mutex::new(None);
+    static BY_WALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !BY_WALK.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut walked = WALKED.lock().unwrap_or_else(|e| e.into_inner());
+        if walked.is_some_and(|at| at.elapsed().as_secs_f32() < WALK_EVERY) {
+            return None;
+        }
+        *walked = Some(Instant::now());
+    }
+    let found = wcm.summon_buddy_chr_set.characters().chain(wcm.chr_sets.iter().flatten().flat_map(|set| set.characters())).find(|c| his(c));
+    if found.is_some() && !BY_WALK.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        log(format!("yoshi: Torrent found by the walk, not by his handle ({key:x}): walked every frame"));
+    }
+    found
+}
+
+/// without Torrent found by his handle, the walk of every character looks for him this often (s)
+const WALK_EVERY: f32 = 0.5;
 
 /// The co-op partners' Torrents (a c8002 that isn't ours): their pose moved on from how each
 /// moves, their hooves and tack silenced (only with Yoshi built, and in a session).

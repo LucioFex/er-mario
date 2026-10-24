@@ -224,7 +224,6 @@ struct State {
     prev: [bool; 4],
     /// the spots held last, for their speed: whose (its key), when, (id, where)
     last_spots: (u64, Option<Instant>, Vec<(u32, Vec3)>),
-    hud: Option<Hud>,
     /// Mario's libsm64 id (to let go of him from outside the tick)
     id: i32,
 }
@@ -237,9 +236,11 @@ static STATE: Mutex<State> = Mutex::new(State {
     sigils: Vec::new(),
     prev: [false; 4],
     last_spots: (0, None, Vec::new()),
-    hud: None,
     id: -1,
 });
+/// what hud.rs draws, in a lock of its own: the overlay (render thread) reads it every frame, and the
+/// state's lock is held through the tick's rays and walks
+static HUD: Mutex<Option<Hud>> = Mutex::new(None);
 
 /// What hud.rs draws: his grip (0-1, None off a colossus), whether it thrashes, the star strike's
 /// charge (0-1), the stars (where, the way out of the body there, strikes left of SIGIL_HITS) and
@@ -255,7 +256,7 @@ pub struct Hud {
 }
 
 pub fn hud() -> Option<Hud> {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).hud.clone()
+    HUD.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// On a colossus or on the rope.
@@ -310,7 +311,7 @@ pub fn rope_pivot() -> Option<Vec3> {
 pub fn clear() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.phase = Phase::Idle;
-    s.hud = None;
+    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     s.grip = 1.0;
     crate::lakitu::set_colossus(None);
 }
@@ -333,7 +334,7 @@ pub fn release() {
         return;
     }
     s.phase = Phase::Idle;
-    s.hud = None;
+    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let id = s.id;
     drop(s);
     crate::lakitu::set_colossus(None);
@@ -686,7 +687,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
     if !allowed {
         if !matches!(s.phase, Phase::Idle) {
             s.phase = Phase::Idle;
-            s.hud = None;
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
             drop(s);
             log("colossus: let go (not allowed now)");
             crate::lakitu::set_colossus(None);
@@ -695,7 +696,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             }
             return out;
         }
-        s.hud = None;
+        *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
         crate::lakitu::set_colossus(None);
         return out;
     }
@@ -727,7 +728,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
                     return out;
                 }
             }
-            s.hud = None;
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
             crate::lakitu::set_colossus(None);
         }
         Phase::Cling { mob, spot, since, charge, strike_until, last_tap } => {
@@ -871,7 +872,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             s.phase = Phase::Cling { mob, spot, since, charge, strike_until, last_tap };
             let (feet, face) = hold(&t, &sp, m.feet);
             let charged = charge.map_or(0.0, |c| (c.elapsed().as_secs_f32() / STRIKE_FULL).min(1.0));
-            s.hud = Some(Hud { grip: Some(s.grip), shaking: shake > 1.0, charge: charged, stars: stars_of(&s, &t), next: next.map(|n| n.at), mario: feet });
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = Some(Hud { grip: Some(s.grip), shaking: shake > 1.0, charge: charged, stars: stars_of(&s, &t), next: next.map(|n| n.at), mario: feet });
             crate::lakitu::set_colossus(Some((t.feet, t.height, t.radius, t.head())));
             drop(s);
             place(id, origin, feet, face, mode, true);
@@ -997,7 +998,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             } else {
                 s.phase = Phase::Slide { mob, from, to, along, speed, since };
             }
-            s.hud = Some(Hud { grip: Some(s.grip), shaking: false, charge: 0.0, stars: stars_of(&s, &t), next: None, mario: at });
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = Some(Hud { grip: Some(s.grip), shaking: false, charge: 0.0, stars: stars_of(&s, &t), next: None, mario: at });
             drop(s);
             place(id, origin, at, dir.with_y(0.0), SLIDE, true);
             sound(SOUND_SLIDE, 0.2 + 0.2 * speed / SLIDE_FASTEST);
@@ -1128,7 +1129,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             }
             let cam = t_now.as_ref().map(|t| (t.feet, t.height, t.radius, t.head()));
             crate::lakitu::set_colossus(cam);
-            s.hud = None;
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
             drop(s);
             place(id, origin, next - Vec3::Y * HANG_DROP, vel.with_y(0.0), SWING, true);
         }
@@ -1317,7 +1318,7 @@ mod tests {
     #[test]
     fn a_leap_goes_up_unless_the_stick_says_otherwise() {
         let t = giant();
-        let s = State { phase: Phase::Idle, grip: 1.0, fall_wait: None, chain: 0, sigils: Vec::new(), prev: [false; 4], last_spots: (0, None, Vec::new()), hud: None, id: -1 };
+        let s = State { phase: Phase::Idle, grip: 1.0, fall_wait: None, chain: 0, sigils: Vec::new(), prev: [false; 4], last_spots: (0, None, Vec::new()), id: -1 };
         let knee = t.spot(2).unwrap();
         let up = pick_leap(&t, &knee, Vec3::ZERO, &s).unwrap();
         assert!(up.at.y > knee.at.y);

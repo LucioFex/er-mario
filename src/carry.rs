@@ -254,6 +254,7 @@ pub fn update(hands: Option<Vec3>, face: f32, action: u32) {
             let at = p - Vec3::Y * (height * 0.45) + fwd * 0.25;
             ph.position = HavokPosition(at.x, at.y, at.z, 0.0);
             ph.chr_proxy_pos_update_requested = true;
+            crate::combat::moved(&chr.field_ins_handle, at);
             ph.gravity_disabled = true;
             let q = glam::Quat::from_rotation_y(std::f32::consts::PI - face);
             ph.orientation = eldenring::rotation::Quaternion(q.x, q.y, q.z, q.w);

@@ -326,7 +326,6 @@ struct State {
     gas: u8,
     /// buttons last tick: A, B, X, R2
     prev: [bool; 4],
-    hud: Option<Hud>,
     /// a flick of the right stick waiting for the line (x right, y up), and whether the stick is out
     flick: Option<Vec2>,
     stick_out: bool,
@@ -334,7 +333,10 @@ struct State {
     id: i32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { phase: Phase::Idle, gas: GAS_CHARGES, prev: [false; 4], hud: None, flick: None, stick_out: false, id: -1 });
+static STATE: Mutex<State> = Mutex::new(State { phase: Phase::Idle, gas: GAS_CHARGES, prev: [false; 4], flick: None, stick_out: false, id: -1 });
+/// what hud.rs draws, in a lock of its own: the overlay (render thread) reads it every frame, and the
+/// state's lock is held through the tick's rays and walks
+static HUD: Mutex<Option<Hud>> = Mutex::new(None);
 /// the enemies vaulted lately (handle key, when): blows on them from behind count for more
 static BEHIND: Mutex<Vec<(u64, Instant)>> = Mutex::new(Vec::new());
 
@@ -351,7 +353,7 @@ pub struct Hud {
 }
 
 pub fn hud() -> Option<Hud> {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).hud
+    *HUD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// On the line, or vaulting.
@@ -447,7 +449,7 @@ pub fn cancel() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if let Phase::Line { line, .. } = s.phase {
         s.phase = Phase::Idle;
-        s.hud = None;
+        *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let id = s.id;
         drop(s);
         crate::lakitu::set_anchor(None);
@@ -460,7 +462,7 @@ pub fn cancel() {
 pub fn clear() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.phase = Phase::Idle;
-    s.hud = None;
+    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     s.gas = GAS_CHARGES;
     drop(s);
     crate::lakitu::set_anchor(None);
@@ -473,7 +475,7 @@ pub fn release() {
         return;
     }
     s.phase = Phase::Idle;
-    s.hud = None;
+    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let id = s.id;
     drop(s);
     crate::lakitu::set_anchor(None);
@@ -550,7 +552,7 @@ pub struct Out {
 /// Off the line now: why (the log), with what speed he falls on (Elden Ring, m/s).
 fn off(mut s: std::sync::MutexGuard<'_, State>, why: &str, vel: Vec3, kick: bool) -> Out {
     s.phase = Phase::Idle;
-    s.hud = None;
+    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let id = s.id;
     drop(s);
     crate::lakitu::set_anchor(None);
@@ -580,7 +582,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
         if let Phase::Line { line, .. } = s.phase {
             return if m.dead {
                 s.phase = Phase::Idle;
-                s.hud = None;
+                *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 drop(s);
                 crate::lakitu::set_anchor(None);
                 Out::default()
@@ -597,13 +599,13 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             return off(s, "not allowed now", Vec3::ZERO, false);
         }
         s.phase = Phase::Idle;
-        s.hud = None;
+        *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
         return Out::default();
     }
     let phase = s.phase;
     match phase {
         Phase::Idle => {
-            s.hud = None;
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Out::default()
         }
         Phase::Rebound { at, vel, face, pose, since, until } => {
@@ -710,7 +712,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
             // (a blow on him, or SM64 took him elsewhere: off)
             if tick.wrapping_sub(since) > SETTLE && m.action != colossus::ACT_ER_CLING {
                 s.phase = Phase::Idle;
-                s.hud = None;
+                *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 drop(s);
                 crate::lakitu::set_anchor(None);
                 log("odm: knocked off the line");
@@ -784,7 +786,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
                 // a colossus: A as he got there grabs on (colossus.rs climbs it)
                 if grab && colossus::is_colossus(t.radius, t.height) && colossus::grab_at(&t, line.pos) {
                     s.phase = Phase::Idle;
-                    s.hud = None;
+                    *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
                     drop(s);
                     crate::lakitu::set_anchor(None);
                     log(format!("odm: grabbed on at {speed:.1} m/s"));
@@ -801,7 +803,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
                 let since = tick + crate::impact::stop(attack);
                 s.gas = GAS_CHARGES;
                 s.phase = Phase::Rebound { at: feet, vel: rebound(line.pos - target), face, pose, since, until: since + REBOUND_ARC + REBOUND_TICKS };
-                s.hud = None;
+                *HUD.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 drop(s);
                 crate::lakitu::set_anchor(None);
                 let near = combat::nearby(&HavokPosition(t.feet.x, t.feet.y, t.feet.z, 0.0), t.radius + 6.0, origin);
@@ -843,7 +845,7 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
                 DIVE
             };
             s.phase = Phase::Line { mob, bone, part, line, at, since, struck, grab, cut };
-            s.hud = Some(Hud { anchor: at, hand: line.pos, tier: tier(speed), window: step.to_contact <= STRIKE_WINDOW, gas: s.gas, mario: feet });
+            *HUD.lock().unwrap_or_else(|e| e.into_inner()) = Some(Hud { anchor: at, hand: line.pos, tier: tier(speed), window: step.to_contact <= STRIKE_WINDOW, gas: s.gas, mario: feet });
             drop(s);
             crate::lakitu::set_anchor(Some(at));
             if speed > LINES_FROM {
