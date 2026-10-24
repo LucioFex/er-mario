@@ -16,24 +16,48 @@ const MASS: f32 = 180.0;
 pub const BOX: Vec3 = Vec3::new(1.4, 0.6, 2.2);
 pub const MOUNTS: [Vec3; 4] = [Vec3::new(0.65, 0.0, 1.0), Vec3::new(-0.65, 0.0, 1.0), Vec3::new(0.65, 0.0, -1.0), Vec3::new(-0.65, 0.0, -1.0)];
 /// the suspension: its length at rest with no load (m), the wheels' radius (m), its spring (N/m)
-/// and damper (N s/m): short and firm (a kart's)
-pub const SUSPENSION: f32 = 0.28;
+/// and damper (N s/m): long and soft enough for Elden Ring's ground, which is nowhere flat (a
+/// kart's short firm one bounced off every bump, its wheels in the air half the time)
+pub const SUSPENSION: f32 = 0.40;
 pub const WHEEL_R: f32 = 0.22;
-const SPRING: f32 = 6500.0;
-const DAMPER: f32 = 380.0;
+const SPRING: f32 = 4500.0;
+const DAMPER: f32 = 520.0;
+/// the wheels' rays start this far above their mounts (m): the game's rays find nothing from
+/// under the ground, and a bump coming up over a mount took its wheel off the ground
+const RAY_UP: f32 = 0.3;
+/// ...and reach this far past the spring's full length (m): with the ground there the tyre still
+/// touches (it drives, it steers) and its corner is held down to it with this share of its quarter
+/// of the weight. Mario Kart's karts hug the ground; a free sprung one flew off every crest.
+pub const SNAP: f32 = 0.3;
+const STICK: f32 = 1.0;
+/// a hop or a launch lets go of the ground for this long (s)
+const LIFT: f32 = 0.4;
+/// a spring pushes at most this many of its quarter of the weight (up a step it's pressed right in)
+const PUSH_MOST: f32 = 10.0;
+/// ...and its damper works off its spring's pace up to this (m/s)
+const RATE_MOST: f32 = 8.0;
+/// a tyre's pull across leans the chassis only this share of what it would (Mario Kart's never
+/// roll over in a turn; it still leans into it)
+const TYRE_LEAN: f32 = 0.35;
 const GRAVITY: f32 = 9.81;
 /// the drive (N, all four: under what the tyres hold, no wheelspin), the brake (N), the air and
 /// road's drag (N per (m/s)²; N per m/s: TOP at full throttle), a boost's thrust (N, on the chassis
 /// itself, Mario Kart's: past what the tyres could), a coin's drive (N, up to COINS)
-const DRIVE: f32 = 2000.0;
-const BRAKE: f32 = 3000.0;
-const DRAG: f32 = 2.48;
+const DRIVE: f32 = 2600.0;
+const BRAKE: f32 = 3400.0;
+const DRAG: f32 = 1.98;
 const ROLLING: f32 = 18.0;
-const BOOST_DRIVE: f32 = 1800.0;
-const COIN_DRIVE: f32 = 26.0;
+const BOOST_DRIVE: f32 = 2400.0;
+const COIN_DRIVE: f32 = 34.0;
 pub const COINS: u32 = 10;
 /// the tyres' grip (μ), the rear ones' in a drift; how hard they hold against sliding sideways
-const GRIP: f32 = 1.2;
+const GRIP: f32 = 1.5;
+/// a tyre on the ground holds at least as if it bore this share of its quarter of the weight
+/// (Mario Kart's: cresting a bump, its spring nearly let out, it still drives and steers)
+const TOUCH_LOAD: f32 = 0.8;
+/// on the ground, pressed down with its speed (N per (m/s)²): over the crests at speed it stays
+/// on them, as Mario Kart's do (off a ramp, its wheels off the ground, none)
+const DOWNFORCE: f32 = 0.9;
 const DRIFT_GRIP: f32 = 0.85;
 const SLIP_HOLD: f32 = 0.5;
 /// a drift is Mario Kart's, held round its way (not a spin-out): it turns at this rate (radians a
@@ -48,7 +72,7 @@ const DRIFT_SLIP: f32 = 0.52;
 /// the front wheels turn this far at most (degrees) slow, this far at the top speed
 const STEER_SLOW: f32 = 30.0;
 const STEER_FAST: f32 = 12.0;
-pub const TOP: f32 = 25.0;
+pub const TOP: f32 = 32.0;
 /// a hop (m/s up); a drift from this fast (m/s), steered at least this much; its levels' times (s)
 /// and the boosts they give (s)
 pub const HOP: f32 = 3.5;
@@ -60,12 +84,14 @@ const DRIFT_BOOST: [f32; 4] = [0.0, 0.6, 1.0, 1.5];
 const MUSHROOM: f32 = 1.2;
 /// the bumpers: reach past the box (m), how much a wall gives back (0-1)
 const BUMPER: f32 = 0.15;
+/// ...looked for this high over its middle (m)
+const BUMPER_UP: f32 = 0.5;
 const BOUNCE: f32 = 0.3;
 /// the chassis' own corners on the ground (on its roof, its side, a landing too hard for the
 /// springs): pushed out stiffly (N/m, N s/m), rubbing (μ)
 const BODY_SPRING: f32 = 20000.0;
 const BODY_DAMPER: f32 = 1500.0;
-const BODY_GRIP: f32 = 0.6;
+const BODY_GRIP: f32 = 0.25;
 /// in the air, a soft pull upright (N m per unit tilt) and the spin damped (per s)
 const AIR_RIGHT: f32 = 60.0;
 const AIR_SPIN_DAMP: f32 = 0.6;
@@ -90,13 +116,21 @@ pub struct Input {
 }
 
 /// One wheel: how far its spring is pressed in (m), where it touches the ground (or not), how far
-/// it's turned (radians) and rolled round (radians).
-#[derive(Clone, Copy, Debug, Default)]
+/// it's turned (radians) and rolled round (radians), how far under its mount it is (m: its spring's
+/// length, or the ground's, past it, in the reach that holds it to the ground).
+#[derive(Clone, Copy, Debug)]
 pub struct Wheel {
     pub compression: f32,
     pub contact: Option<Vec3>,
     pub turn: f32,
     pub roll: f32,
+    pub reach: f32,
+}
+
+impl Default for Wheel {
+    fn default() -> Wheel {
+        Wheel { compression: 0.0, contact: None, turn: 0.0, roll: 0.0, reach: SUSPENSION }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -116,12 +150,14 @@ pub struct Kart {
     upset: f32,
     /// the hop's A last tick
     hop_was: bool,
+    /// a hop or a launch: this long (s) it isn't held to the ground (nor pressed onto it)
+    lift: f32,
 }
 
 impl Kart {
     /// A kart at `pos`, turned `yaw` (radians round Y; 0 faces +Z).
     pub fn new(pos: Vec3, yaw: f32) -> Kart {
-        Kart { pos, rot: Quat::from_rotation_y(yaw), vel: Vec3::ZERO, spin: Vec3::ZERO, wheels: [Wheel::default(); 4], coins: 0, drifting: None, boost: 0.0, upset: 0.0, hop_was: false }
+        Kart { pos, rot: Quat::from_rotation_y(yaw), vel: Vec3::ZERO, spin: Vec3::ZERO, wheels: [Wheel::default(); 4], coins: 0, drifting: None, boost: 0.0, upset: 0.0, hop_was: false, lift: 0.0 }
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -140,6 +176,17 @@ impl Kart {
     /// How fast it goes along its way (m/s; backwards below 0).
     pub fn speed(&self) -> f32 {
         self.vel.dot(self.forward())
+    }
+
+    /// Thrown up off the ground at `speed` (m/s, along its up: the super hop).
+    pub fn launch(&mut self, speed: f32) {
+        self.vel += self.up() * speed;
+        self.lift = LIFT;
+    }
+
+    /// How high its middle rests over flat ground (m): on its springs pressed in by its weight.
+    pub fn rest_height() -> f32 {
+        SUSPENSION - MASS * GRAVITY / 4.0 / SPRING + WHEEL_R
     }
 
     /// Wheels on the ground.
@@ -201,49 +248,53 @@ impl Kart {
         if self.boost > 0.0 {
             force += fwd * BOOST_DRIVE;
         }
-        let contacts = self.grounded().max(1) as f32;
         let quarter = MASS / 4.0;
         for (w, mount) in self.wheels.iter_mut().zip(MOUNTS) {
             let at = self.pos + self.rot * mount;
             let reach = SUSPENSION + WHEEL_R;
-            let hit = ray(at, at - up * reach);
+            let hit = ray(at + up * RAY_UP, at - up * (reach + SNAP));
             let front = mount.z > 0.0;
             w.turn = if front { steer } else { 0.0 };
             let Some(p) = hit else {
                 w.compression = 0.0;
                 w.contact = None;
+                w.reach = SUSPENSION;
                 continue;
             };
-            let length = (at - p).length() - WHEEL_R;
+            // (the ground over the mount: fully pressed in and more, it pushes back hard)
+            let length = (p - at).dot(-up) - WHEEL_R;
             let compression = (SUSPENSION - length).max(0.0);
-            let rate = (compression - w.compression) / h;
+            // (no faster than this: up a step, its spring pressed in at once, the damper alone
+            // threw it over backwards)
+            let rate = ((compression - w.compression) / h).clamp(-RATE_MOST, RATE_MOST);
             w.compression = compression;
             w.contact = Some(p);
-            // the spring and its damper, along the chassis' up
-            let push = (SPRING * compression + DAMPER * rate).max(0.0);
+            w.reach = length.clamp(0.0, SUSPENSION + SNAP);
+            // the spring and its damper, along the chassis' up; past its full length, held down
+            // (through its middle: pulled down at its corner, over a dip, it dived nose first
+            // into the next bump)
+            let push = (SPRING * compression + DAMPER * rate).clamp(0.0, quarter * GRAVITY * PUSH_MOST);
+            let stick = if length > SUSPENSION && self.lift <= 0.0 { quarter * GRAVITY * STICK } else { 0.0 };
             let spring = up * push;
+            force -= up * stick;
             // the tyre: the way it rolls, and across it
             let wheel_fwd = Quat::from_axis_angle(up, -w.turn) * fwd;
             let wheel_side = wheel_fwd.cross(up);
             let r = p - self.pos;
             let v = self.vel + self.spin.cross(r);
             let (v_fwd, v_side) = (v.dot(wheel_fwd), v.dot(wheel_side));
-            // pushed along (or braked: at a standstill the brake backs it up), dragged
-            let mut along = drive_total / contacts;
-            if i.brake > 0.05 {
-                along -= if speed > 0.5 { i.brake * BRAKE } else { i.brake * DRIVE * 0.4 } / contacts;
-            }
-            along -= v_fwd * ROLLING / 4.0;
+            // dragged along (the drive and the brake are the chassis', below)
+            let along = -v_fwd * ROLLING / 4.0;
             // held against sliding sideways, the rear ones loose in a drift
             let grip = GRIP * if self.drifting.is_some() && !front { DRIFT_GRIP } else { 1.0 };
             let across = -v_side * quarter / h * SLIP_HOLD;
             // (the friction circle: no more than the tyre's load allows, both together)
-            let most = grip * push;
+            let most = grip * push.max(quarter * GRAVITY * TOUCH_LOAD);
             let tyre = Vec3::new(along, across, 0.0);
             let tyre = if tyre.length() > most { tyre * (most / tyre.length().max(1e-6)) } else { tyre };
-            let f = spring + wheel_fwd * tyre.x + wheel_side * tyre.y;
-            force += f;
-            torque += r.cross(f);
+            let grip_f = wheel_fwd * tyre.x + wheel_side * tyre.y;
+            force += spring + grip_f;
+            torque += r.cross(spring) + (r - up * (r.dot(up) * (1.0 - TYRE_LEAN))).cross(grip_f);
             w.roll += v_fwd / WHEEL_R * h;
         }
         // its corners on the ground: pushed out, rubbing along
@@ -266,6 +317,16 @@ impl Kart {
             force += f;
             torque += r.cross(f);
         }
+        // driven (or braked: at a standstill the brake backs it up) through its middle while a wheel
+        // touches: split among the wheels down, with the two of one side on a bump the whole drive
+        // went through them and spun it round
+        if self.grounded() > 0 {
+            let mut along = drive_total;
+            if i.brake > 0.05 {
+                along -= if speed > 0.5 { i.brake * BRAKE } else { i.brake * DRIVE * 0.4 };
+            }
+            force += fwd * along;
+        }
         // the drift held round its way: its turn kept to a rate, the stick opening or tightening it
         if let Some((way, _)) = self.drifting {
             let pace = (speed / 15.0).clamp(0.5, 1.2);
@@ -276,10 +337,16 @@ impl Kart {
         // the air's drag
         let v2 = self.vel.length();
         force -= self.vel * (DRAG * v2);
+        // on the ground: pressed down onto it with its speed
+        if on_ground && self.lift <= 0.0 {
+            force -= up * (DOWNFORCE * flat_speed * flat_speed);
+        }
         // a hop off the ground
         if hop && on_ground {
             self.vel += up * HOP;
+            self.lift = LIFT;
         }
+        self.lift = (self.lift - h).max(0.0);
         // in the air: a soft pull upright, the spin calmed (it doesn't flip on its own)
         if self.grounded() == 0 && !body_contact {
             torque += up.cross(Vec3::Y) * AIR_RIGHT;
@@ -304,12 +371,14 @@ impl Kart {
         let body_spin = self.rot.inverse() * self.spin + body_torque / Self::inertia() * h;
         self.spin = self.rot * body_spin;
         let next = self.pos + self.vel * h;
-        // the bumpers: a wall ahead or behind (where it's going), it bounces off
+        // the bumpers: a wall ahead or behind (where it's going), it bounces off (looked for at its
+        // roof's height: lower down, the next bump's or a hill's rise was a wall, and it stopped
+        // dead on rough ground; the springs and the chassis take what's lower)
         let way = self.vel.with_y(0.0);
         if way.length() > 0.1 {
             let d = way.normalize();
             let reach = BOX.z * 0.5 + BUMPER;
-            let from = self.pos + up * 0.2;
+            let from = self.pos + up * BUMPER_UP;
             if ray(from, from + d * (reach + way.length() * h)).is_some() {
                 let into = self.vel.dot(d);
                 if into > 0.0 {
@@ -349,6 +418,7 @@ mod tests {
     use super::*;
 
     /// The map as a height over (x, z), and walls: a ray's first hit (marched, then halved down).
+    /// As the game's rays: one that starts under the ground finds nothing (no face from inside).
     fn world(height: impl Fn(f32, f32) -> f32 + Copy, wall_z: Option<f32>) -> impl Fn(Vec3, Vec3) -> Option<Vec3> {
         move |a: Vec3, b: Vec3| {
             if let Some(z) = wall_z {
@@ -362,7 +432,7 @@ mod tests {
             }
             let below = |p: Vec3| p.y <= height(p.x, p.z);
             if below(a) {
-                return Some(a);
+                return None;
             }
             let n = 24;
             let mut prev = 0.0;
@@ -413,13 +483,94 @@ mod tests {
     fn the_throttle_takes_it_to_its_top_speed() {
         let ray = flat();
         let mut k = Kart::new(Vec3::new(0.0, 0.8, 0.0), 0.0);
-        run(&mut k, Input { throttle: 1.0, ..Default::default() }, 12.0, &ray);
-        assert!(k.speed() > 21.0 && k.speed() < 27.0, "{}", k.speed());
+        run(&mut k, Input::default(), 1.0, &ray);
+        // (quick off the line: Mario Kart's, 20 m/s in under 2.5 s)
+        run(&mut k, Input { throttle: 1.0, ..Default::default() }, 2.5, &ray);
+        assert!(k.speed() > 20.0, "{}", k.speed());
+        run(&mut k, Input { throttle: 1.0, ..Default::default() }, 9.5, &ray);
+        assert!(k.speed() > 29.0 && k.speed() < 34.0, "{}", k.speed());
         assert!(k.pos.z > 100.0 && k.pos.x.abs() < 2.0, "{}", k.pos);
         // (a boost: faster)
         let top = k.speed();
         run(&mut k, Input { throttle: 1.0, mushroom: true, ..Default::default() }, 0.5, &ray);
         assert!(k.speed() > top + 1.0, "{} {top}", k.speed());
+    }
+
+    /// Elden Ring's ground is nowhere flat: bumps of 12 and 25 cm every metre or two, driven over
+    /// in four lanes.
+    #[test]
+    fn on_rough_ground_it_keeps_its_wheels_down_and_its_speed() {
+        let mut runs = Vec::new();
+        for (amp, lane) in [0.12f32, 0.25].into_iter().flat_map(|a| [0.0f32, 3.1, 7.7, 12.4].map(|l| (a, l))) {
+            let h = move |x: f32, z: f32| amp * ((x * 1.3).sin() * (z * 0.9).cos() + (z * 2.1 + x * 0.4).sin() * 0.5);
+            let ray = world(h, None);
+            let mut k = Kart::new(Vec3::new(lane, 1.0, 0.0), 0.0);
+            run(&mut k, Input::default(), 2.0, &ray);
+            let (mut down, mut ticks, mut scraped) = (0usize, 0usize, 0usize);
+            for _ in 0..(6.0 * 30.0) as usize {
+                k.step(&Input { throttle: 1.0, ..Default::default() }, 1.0 / 30.0, &ray);
+                down += k.grounded();
+                ticks += 1;
+                // (its chassis' bottom corners in the ground)
+                let corners = [Vec3::new(0.5, -0.5, 0.5), Vec3::new(-0.5, -0.5, 0.5), Vec3::new(0.5, -0.5, -0.5), Vec3::new(-0.5, -0.5, -0.5)];
+                if corners.iter().any(|&c| {
+                    let at = k.pos + k.rot * (c * BOX);
+                    at.y < h(at.x, at.z)
+                }) {
+                    scraped += 1;
+                }
+            }
+            runs.push((amp, lane, down as f32 / ticks as f32, k.speed(), scraped as f32 / ticks as f32));
+        }
+        // 12 cm: every lane on its wheels, fast, never on its belly
+        for &(_, lane, wheels, speed, scraped) in runs.iter().filter(|r| r.0 < 0.2) {
+            assert!(wheels >= 3.5 && speed > 27.0 && scraped == 0.0, "12 cm lane {lane}: {wheels:.2} wheels down, {speed:.1} m/s, in the ground {:.0}%", scraped * 100.0);
+        }
+        // 25 cm (half a metre crest to dip, every metre or two: rougher than most of the map): on
+        // the whole still on its wheels and quick, a corner's touch now and then
+        let rough: Vec<_> = runs.iter().filter(|r| r.0 > 0.2).collect();
+        let mean = |f: fn(&(f32, f32, f32, f32, f32)) -> f32| rough.iter().map(|r| f(r)).sum::<f32>() / rough.len() as f32;
+        let (wheels, speed, scraped) = (mean(|r| r.2), mean(|r| r.3), mean(|r| r.4));
+        assert!(wheels >= 2.8 && speed > 22.0 && scraped <= 0.2, "25 cm: {wheels:.2} wheels down, {speed:.1} m/s, in the ground {:.0}% ({rough:?})", scraped * 100.0);
+    }
+
+    /// A hop (A) and a launch (the super hop) leave the ground: holding it to the ground over the
+    /// crests mustn't keep it from jumping.
+    #[test]
+    fn a_hop_and_a_launch_leave_the_ground() {
+        let ray = flat();
+        for launch in [false, true] {
+            let mut k = Kart::new(Vec3::new(0.0, 0.8, 0.0), 0.0);
+            run(&mut k, Input { throttle: 1.0, ..Default::default() }, 2.0, &ray);
+            if launch {
+                k.launch(4.5);
+            } else {
+                k.step(&Input { throttle: 1.0, hop: true, ..Default::default() }, 1.0 / 30.0, &ray);
+            }
+            let mut off = 0;
+            for _ in 0..30 {
+                k.step(&Input { throttle: 1.0, ..Default::default() }, 1.0 / 30.0, &ray);
+                off += usize::from(k.grounded() == 0);
+            }
+            assert!(off >= 3, "launch {launch}: {off} ticks off the ground");
+            assert!(k.up().y > 0.9);
+        }
+    }
+
+    /// Up a step (a rock, a kerb) at speed: it rides up onto it, no backflip off its springs.
+    #[test]
+    fn up_a_step_it_rides_onto_it() {
+        for step in [0.35f32, 0.6] {
+            let ray = world(move |_, z| if z > 25.0 { step } else { 0.0 }, None);
+            let mut k = Kart::new(Vec3::new(0.0, 0.8, 0.0), 0.0);
+            let mut lowest = 1.0f32;
+            for _ in 0..(6.0 * 30.0) as usize {
+                k.step(&Input { throttle: 1.0, ..Default::default() }, 1.0 / 30.0, &ray);
+                lowest = lowest.min(k.up().y);
+            }
+            assert!(lowest > 0.5, "step {step}: tipped to {lowest:.2}");
+            assert!(k.pos.z > 40.0 && k.up().y > 0.9 && k.grounded() >= 3, "step {step}: {k:?}");
+        }
     }
 
     #[test]

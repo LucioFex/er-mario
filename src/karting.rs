@@ -25,7 +25,6 @@ const TICK: f32 = 1.0 / 30.0;
 /// the hop in (ticks: the kart pops up meanwhile); the kart's middle this high over his feet as it
 /// comes (m: about where its springs hold it)
 const HOP_IN: u32 = 10;
-const REST_HEIGHT: f32 = 0.45;
 /// room for it: nothing within this ahead and behind, to each side (m), at knee height, nor over
 /// his head this high
 const ROOM_LONG: f32 = 1.6;
@@ -337,6 +336,8 @@ pub struct In {
     pub can_stay: bool,
     pub overworld: bool,
     pub hurt: Option<u32>,
+    /// who hit him (its character id), if the game says
+    pub by: Option<u32>,
     pub blown: bool,
     pub id: i32,
     pub origin: [f32; 3],
@@ -423,7 +424,7 @@ pub fn update(inp: &In, targets: &[Target], combat: &mut Combat, player: &ChrIns
             sound(SOUND_COINS, 0.3);
             crate::impact::kart_coins(ride.kart.pos, lost as usize);
         }
-        log(format!("kart: hit, {lost} coins lost ({} left)", ride.kart.coins));
+        log(format!("kart: hit by {}, {lost} coins lost ({} left)", inp.by.map_or("nobody known".to_string(), |id| format!("c{id:04}")), ride.kart.coins));
     }
     // coins picked up: kart coins (more top speed, up to ten)
     let picked = std::mem::take(&mut s.coins);
@@ -562,7 +563,7 @@ fn drive(ride: &mut Ride, pads: &Pads, inp: &In, targets: &[Target], combat: &mu
         crate::lakitu::shake(0.4);
     }
     if acts.super_hop {
-        k.vel += k.up() * kartplay::SUPER_HOP;
+        k.launch(kartplay::SUPER_HOP);
         sound(SOUND_BOING, 0.4);
         log("kart: super hop");
     } else if now.grounded >= 2 && k.vel.y - vel_was.y > 2.5 {
@@ -725,7 +726,7 @@ fn summon(s: &mut State, inp: &In, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
     if blocked {
         return buzz("no room", Some("NO ROOM"));
     }
-    let kart = Kart::new(inp.feet + Vec3::Y * REST_HEIGHT, face.x.atan2(face.z));
+    let kart = Kart::new(inp.feet + Vec3::Y * Kart::rest_height(), face.x.atan2(face.z));
     let model = kartplay::model(&kart, 0.0, 0.0, &[0.0; 4]);
     s.ride = Some(Ride {
         kart,

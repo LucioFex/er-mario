@@ -1199,19 +1199,42 @@ fn draw_cannon(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], s
     }
     // D-pad up held: a ring filling round over his head
     if let Some((head, k)) = h.hold {
-        if let Some((c, _)) = project(head, size) {
-            let r = 9.0 * px;
-            dl.add_circle(c, r, col([0.0, 0.0, 0.0], 0.45)).thickness(3.0 * px).build();
-            let n = 24;
-            let pts: Vec<[f32; 2]> = (0..=n)
-                .map(|i| {
-                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * k.clamp(0.0, 1.0) * i as f32 / n as f32;
-                    [c[0] + a.cos() * r, c[1] + a.sin() * r]
-                })
-                .collect();
-            dl.add_polyline(pts, col([0.95, 0.52, 0.7], 0.95)).thickness(2.5 * px).build();
-        }
+        hold_ring(dl, size, head, k, [0.95, 0.52, 0.7]);
     }
+    // recharging: how many seconds until the next (bottom right, over the kart's)
+    if let Some(left) = h.recharge {
+        let g = 10.0 * px;
+        let (x, y) = (size[0] - 112.0 * px, size[1] * 0.8 - g * 1.6);
+        let w = print("CANNON ", x, y, g, [1.0, 1.0, 1.0, 0.7]);
+        let mut d = [0u8; 5];
+        print(digits_of(left.ceil() as u16, &mut d), x + w, y, g, [GOLD[0], GOLD[1], GOLD[2], 0.9]);
+    }
+}
+
+/// A button held toward something: a ring filling round over his head (`head`), `k` of the way,
+/// in `tint`.
+fn hold_ring(dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2], head: Vec3, k: f32, tint: [f32; 3]) {
+    let col = |c: [f32; 3], a: f32| imgui::ImColor32::from_rgba_f32s(c[0], c[1], c[2], a);
+    let px = size[1] / 240.0 * SIZE;
+    if let Some((c, _)) = project(head, size) {
+        let r = 9.0 * px;
+        dl.add_circle(c, r, col([0.0, 0.0, 0.0], 0.45)).thickness(3.0 * px).build();
+        let n = 24;
+        let pts: Vec<[f32; 2]> = (0..=n)
+            .map(|i| {
+                let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * k.clamp(0.0, 1.0) * i as f32 / n as f32;
+                [c[0] + a.cos() * r, c[1] + a.sin() * r]
+            })
+            .collect();
+        dl.add_polyline(pts, col(tint, 0.95)).thickness(2.5 * px).build();
+    }
+}
+
+/// L3 held toward the whistle (lib.rs): where over Mario's head, how far (0-1).
+static L3_RING: std::sync::Mutex<Option<(Vec3, f32)>> = std::sync::Mutex::new(None);
+
+pub fn set_l3_ring(ring: Option<(Vec3, f32)>) {
+    *L3_RING.lock().unwrap_or_else(|e| e.into_inner()) = ring;
 }
 
 /// The kart (karting.rs): the model itself only when the legs piece couldn't take it (the overlay's
@@ -1806,6 +1829,10 @@ impl ImguiRenderLoop for Overlay {
             draw_odm(&dl, size);
             draw_cannon(&dl, textures, size);
             draw_kart(&dl, textures, size);
+            // L3 held toward the whistle: Yoshi's green
+            if let Some((head, k)) = *L3_RING.lock().unwrap_or_else(|e| e.into_inner()) {
+                hold_ring(&dl, size, head, k, [0.35, 0.85, 0.3]);
+            }
         }
 
         // Mario got hurt: the screen's edges flash red, fading

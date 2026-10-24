@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 18";
+const VERSION: &str = "er-mario assets 19";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -443,7 +443,11 @@ fn kart_into_legs(files: &mut [bnd4::File], kart: &[model::Tri], id: &str) -> Re
     if bones.len() < parts {
         return Err(format!("only {} free twist bones ({bones:?})", bones.len()));
     }
+    let mesh = fl.roomiest().ok_or("the legs piece has no mesh")?;
     let mut d = flver::build_kit(fl, kart, 0..parts, &bones, "kart")?;
+    // (its mesh is the Belt's, whose material's colour is a shared belt texture, emptied with the
+    // detail ones: the kart came out grey. The Fabric's is the piece's own, the swatches)
+    flver::wear(&mut d, mesh, "Fabric")?;
     tex::rename(&mut d, "LG_M_1280", &format!("LG_M_{id}"));
     f.data = d;
     let t = files.iter_mut().find(|f| f.name.to_lowercase().ends_with(".tpf")).ok_or("the legs piece has no TPF")?;

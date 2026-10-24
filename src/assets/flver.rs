@@ -157,6 +157,12 @@ impl Flver {
         self.d[fs.offset..fs.offset + fs.length].fill(0);
     }
 
+    /// The mesh with the most room (vertices), the one the kit and the kart go into.
+    pub fn roomiest(&self) -> Option<usize> {
+        let meshes = self.meshes();
+        (0..meshes.len()).max_by_key(|&m| meshes[m].vbufs.first().map_or(0, |&v| self.vertex_buffers(v).vcount))
+    }
+
     /// Every mesh emptied (no triangles).
     pub fn empty(mut self) -> Vec<u8> {
         for fs in self.facesets() {
@@ -501,8 +507,7 @@ pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones
     // (the things lie on the ground metres away from the character)
     put_f32s(&mut f.d, 0x28, &[-20.0, -2.0, -20.0, 20.0, 12.0, 20.0]);
     let (meshes, fsets) = (f.meshes(), f.facesets());
-    // the mesh with the most room
-    let target = (0..meshes.len()).max_by_key(|&m| meshes[m].vbufs.first().map_or(0, |&v| f.vertex_buffers(v).vcount)).ok_or("the piece has no mesh")?;
+    let target = f.roomiest().ok_or("the piece has no mesh")?;
     for (mi, m) in meshes.iter().enumerate() {
         if mi != target {
             for &fi in &m.facesets {
@@ -739,4 +744,57 @@ pub fn build_mount(mut f: Flver, bones: &[&str], verts: &[MountVertex], tris: &[
     }
     crate::log(format!("assets: mount mesh {} vertices, {} triangles", verts.len(), tris.len()));
     Ok(f.d)
+}
+
+/// Mesh `mesh` drawn with the material named `name` (one of the piece's own).
+pub fn wear(d: &mut [u8], mesh: usize, name: &str) -> Result<(), String> {
+    if !d.starts_with(b"FLVER\0") || d.len() < 0x80 {
+        return Err("not a FLVER".into());
+    }
+    let c = |o: usize| u32_at(d, o) as usize;
+    let (dummies, materials, bones, meshes) = (c(0x14), c(0x18), c(0x1C), c(0x20));
+    if mesh >= meshes {
+        return Err(format!("no mesh {mesh} ({meshes} of them)"));
+    }
+    let names: Vec<String> = (0..materials).map(|m| super::bnd4::wstr(d, i32_at(d, 0x80 + dummies * 0x40 + m * 0x20) as usize).unwrap_or_default()).collect();
+    let m = names.iter().position(|n| n == name).ok_or(format!("no material {name} ({names:?})"))?;
+    let a = 0x80 + dummies * 0x40 + materials * 0x20 + bones * 0x80 + mesh * 0x30 + 4;
+    d[a..a + 4].copy_from_slice(&(m as i32).to_le_bytes());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wear;
+
+    /// A FLVER with no dummies or bones, `names` for its materials and one mesh on the first.
+    fn piece(names: &[&str]) -> Vec<u8> {
+        let mut d = vec![0u8; 0x400];
+        d[..6].copy_from_slice(b"FLVER\0");
+        let put = |d: &mut Vec<u8>, o: usize, v: i32| d[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        put(&mut d, 0x18, names.len() as i32);
+        put(&mut d, 0x20, 1);
+        let mut text = 0x300;
+        for (i, n) in names.iter().enumerate() {
+            put(&mut d, 0x80 + i * 0x20, text as i32);
+            for (k, c) in n.encode_utf16().enumerate() {
+                d[text + k * 2..text + k * 2 + 2].copy_from_slice(&c.to_le_bytes());
+            }
+            text += (n.len() + 1) * 2;
+        }
+        d
+    }
+
+    #[test]
+    fn a_mesh_takes_another_of_the_pieces_materials() {
+        let mut d = piece(&["Metal_2side", "Fabric", "Leahter", "Belt"]);
+        let mesh = 0x80 + 4 * 0x20;
+        d[mesh + 4..mesh + 8].copy_from_slice(&3i32.to_le_bytes());
+        wear(&mut d, 0, "Fabric").unwrap();
+        assert_eq!(i32::from_le_bytes(d[mesh + 4..mesh + 8].try_into().unwrap()), 1);
+        // (one it doesn't have: left as it was)
+        assert!(wear(&mut d, 0, "Velvet").is_err());
+        assert!(wear(&mut d, 1, "Fabric").is_err());
+        assert_eq!(i32::from_le_bytes(d[mesh + 4..mesh + 8].try_into().unwrap()), 1);
+    }
 }

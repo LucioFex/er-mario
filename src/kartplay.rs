@@ -129,6 +129,8 @@ pub struct Driver {
     trick_boost: bool,
     /// in the air: how long, and whether it left the ground going up
     air: Option<(f32, bool)>,
+    /// how fast it went up on its last tick on the ground (m/s)
+    ground_vy: f32,
     hop_wait: f32,
     drift_was: u8,
 }
@@ -145,6 +147,7 @@ impl Driver {
             trick: None,
             trick_boost: false,
             air: None,
+            ground_vy: 0.0,
             hop_wait: 0.0,
             drift_was: 0,
         }
@@ -181,12 +184,17 @@ impl Driver {
         // off the ground: since when, and going up as it left (a lip, a ramp, a hop); down again: a
         // trick's boost
         if k.grounded == 0 {
+            // (going up as it left it: by its first tick off the ground gravity, and the hold to
+            // the ground over a crest, took some of it)
             match self.air.as_mut() {
                 Some((t, _)) => *t += dt,
-                None => self.air = Some((0.0, k.vy >= TRICK_UP)),
+                None => self.air = Some((0.0, k.vy.max(self.ground_vy) >= TRICK_UP)),
             }
-        } else if k.grounded >= 2 && self.air.take().is_some() && std::mem::take(&mut self.trick_boost) {
-            acts.landed_trick = true;
+        } else {
+            self.ground_vy = k.vy;
+            if k.grounded >= 2 && self.air.take().is_some() && std::mem::take(&mut self.trick_boost) {
+                acts.landed_trick = true;
+            }
         }
         let a_pressed = pressed(p.a, self.prev.a);
         if spinning {
@@ -360,8 +368,9 @@ pub fn model(k: &Kart, spin: f32, roll: f32, wheel_spin: &[f32; 4]) -> Model {
     let vis = visual(k, spin, roll);
     let mut parts = [(k.pos, vis); PARTS];
     for (i, w) in k.wheels.iter().enumerate() {
-        // (hung under its mount by the spring's length now: all of it in the air)
-        let local = kart::MOUNTS[i] - Vec3::Y * (kart::SUSPENSION - w.compression);
+        // (under its mount where it touches: the spring's length, or past it on the ground it's
+        // held to; all of it in the air)
+        let local = kart::MOUNTS[i] - Vec3::Y * w.reach;
         let rot = vis * Quat::from_rotation_y(-w.turn) * Quat::from_rotation_x(wheel_spin[i]);
         parts[WHEELS + i] = (k.pos + vis * local, rot.normalize());
     }
@@ -620,6 +629,11 @@ mod tests {
         d.tick(&Pads::default(), &ground(), DT);
         d.tick(&Pads::default(), &KartNow { vy: -3.0, ..up }, DT);
         assert!(!d.tick(&a_press, &KartNow { vy: -3.0, ..up }, DT).trick);
+        // going up as it left the ground counts, though gravity took some by its first tick off it
+        let mut d = Driver::new();
+        d.tick(&Pads::default(), &KartNow { vy: 2.6, ..ground() }, DT);
+        d.tick(&Pads::default(), &KartNow { vy: 1.4, ..up }, DT);
+        assert!(d.tick(&a_press, &KartNow { vy: 1.1, ..up }, DT).trick);
     }
 
     #[test]

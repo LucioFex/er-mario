@@ -292,11 +292,12 @@ fn rock(b: &mut Builder) {
 }
 
 /// the Star Sword: where the blade starts and its tip (m up its part's Y), its width at the guard
-/// and its thickness
-pub const SWORD_BASE: f32 = 0.075;
-pub const SWORD_TIP: f32 = 0.89;
-const SWORD_W: f32 = 0.07;
-const SWORD_T: f32 = 0.014;
+/// and its thickness. A greatsword (the user: "a toothpick" at 0.9 m by 7 cm): for a 1.25 m Mario,
+/// a blade longer than he is tall to his shoulders, broad, a two-handed grip.
+pub const SWORD_BASE: f32 = 0.12;
+pub const SWORD_TIP: f32 = 1.45;
+const SWORD_W: f32 = 0.16;
+const SWORD_T: f32 = 0.024;
 
 impl Builder<'_> {
     /// A triangle whichever way its points go: turned so it faces `out` (flat shaded).
@@ -359,8 +360,9 @@ impl Builder<'_> {
 /// a gold Power Star inlaid on both faces by the guard, two little white Wing Cap wings for its
 /// guard (the Master Sword's), a red grip ringed in gold, a yellow star for its pommel.
 fn sword(b: &mut Builder) {
-    // the blade: a flat hexagon across, tapering up to a point
-    let slices: [(f32, f32); 6] = [(SWORD_BASE, 1.0), (0.25, 0.97), (0.55, 0.89), (0.74, 0.83), (0.8, 0.78), (SWORD_TIP, 0.0)];
+    // the blade: a flat hexagon across, tapering up to a point (its slices at shares of its length)
+    let along = |f: f32| SWORD_BASE + (SWORD_TIP - SWORD_BASE) * f;
+    let slices: [(f32, f32); 6] = [(along(0.0), 1.0), (along(0.215), 0.97), (along(0.583), 0.89), (along(0.816), 0.83), (along(0.89), 0.78), (along(1.0), 0.0)];
     let section = |w: f32, t: f32| -> [Vec3; 6] {
         let (w, t) = (SWORD_W * 0.5 * w, SWORD_T * 0.5 * t);
         [Vec3::new(0.0, 0.0, w), Vec3::new(t, 0.0, w * 0.45), Vec3::new(t, 0.0, -w * 0.45), Vec3::new(0.0, 0.0, -w), Vec3::new(-t, 0.0, -w * 0.45), Vec3::new(-t, 0.0, w * 0.45)]
@@ -382,35 +384,37 @@ fn sword(b: &mut Builder) {
     // its ridge: a thin darker strip up the middle of each flat (a hair proud of it)
     for s in [1.0f32, -1.0] {
         let x = SWORD_T * 0.5 * s + 0.0008 * s;
-        let pts = [Vec3::new(x, 0.13, 0.004), Vec3::new(x, 0.74, 0.003), Vec3::new(x, 0.74, -0.003), Vec3::new(x, 0.13, -0.004)];
+        let (lo, hi) = (along(0.07), along(0.816));
+        let pts = [Vec3::new(x, lo, 0.007), Vec3::new(x, hi, 0.005), Vec3::new(x, hi, -0.005), Vec3::new(x, lo, -0.007)];
         b.face([pts[0], pts[1], pts[2]], Vec3::X * s, 18);
         b.face([pts[0], pts[2], pts[3]], Vec3::X * s, 18);
     }
     // the Power Star inlaid on both faces, just above the guard
     for s in [1.0f32, -1.0] {
-        b.star(Vec3::new((SWORD_T * 0.5 + 0.002) * s, 0.12, 0.0), Vec3::X, Vec3::Y, 0.022, 0.0015, 9);
+        b.star(Vec3::new((SWORD_T * 0.5 + 0.002) * s, SWORD_BASE + 0.08, 0.0), Vec3::X, Vec3::Y, 0.04, 0.0015, 9);
     }
     // the guard: a gold block, and a Wing Cap wing each side swept up
-    b.slab(&[Vec3::new(0.0, 0.04, -0.035), Vec3::new(0.0, 0.04, 0.035), Vec3::new(0.0, 0.08, 0.035), Vec3::new(0.0, 0.08, -0.035)], Vec3::X, 0.02, 9);
+    b.slab(&[Vec3::new(0.0, 0.06, -0.07), Vec3::new(0.0, 0.06, 0.07), Vec3::new(0.0, 0.12, 0.07), Vec3::new(0.0, 0.12, -0.07)], Vec3::X, 0.03, 9);
     for s in [1.0f32, -1.0] {
-        let wing = [(0.03, 0.035), (0.03, 0.09), (0.075, 0.125), (0.12, 0.155), (0.11, 0.11), (0.07, 0.06)];
+        let wing = [(0.045, 0.0525), (0.045, 0.135), (0.1125, 0.1875), (0.18, 0.2325), (0.165, 0.165), (0.105, 0.09)];
         let outline: Vec<Vec3> = wing.iter().map(|&(z, y)| Vec3::new(0.0, y, z * s)).collect();
-        b.slab(&outline, Vec3::X, 0.008, 5);
+        b.slab(&outline, Vec3::X, 0.012, 5);
     }
-    // the grip, red, ringed in gold; the pommel a yellow star
-    b.cylinder(Vec3::new(0.0, -0.105, 0.0), Vec3::new(0.0, 0.04, 0.0), 0.016, 8, 6, false);
-    for y in [-0.095, 0.022] {
-        b.cylinder(Vec3::new(0.0, y - 0.007, 0.0), Vec3::new(0.0, y + 0.007, 0.0), 0.0195, 8, 9, true);
+    // the grip (both hands), red, ringed in gold; the pommel a yellow star
+    b.cylinder(Vec3::new(0.0, -0.24, 0.0), Vec3::new(0.0, 0.06, 0.0), 0.02, 8, 6, false);
+    for y in [-0.23, 0.045] {
+        b.cylinder(Vec3::new(0.0, y - 0.009, 0.0), Vec3::new(0.0, y + 0.009, 0.0), 0.025, 8, 9, true);
     }
-    b.star(Vec3::new(0.0, -0.14, 0.0), Vec3::X, Vec3::NEG_Y, 0.038, 0.01, 0);
+    b.star(Vec3::new(0.0, -0.27, 0.0), Vec3::X, Vec3::NEG_Y, 0.045, 0.012, 0);
 }
 
 #[cfg(test)]
 mod tests {
     /// The kit's own vertex count (as the FLVER writer dedups them) and triangles: the gauntlets'
     /// buffers are checked at build time, this only keeps it from growing by accident.
-    /// The Star Sword along its part's +Y (the grip at the origin, the tip ~0.9 m up), its blade's
-    /// flat facing X, its wings out along Z; every normal a unit one.
+    /// The Star Sword along its part's +Y (the grip at the origin, the tip ~1.45 m up: a greatsword
+    /// for a 1.25 m Mario, its grip long enough for both hands), its blade's flat facing X, its wings
+    /// out along Z; every normal a unit one.
     #[test]
     fn the_sword() {
         let tris: Vec<_> = super::build().into_iter().filter(|t| t.part == crate::engine_mario::KIT_SWORD as i32).collect();
@@ -418,11 +422,15 @@ mod tests {
         let pts: Vec<[f32; 3]> = tris.iter().flat_map(|t| t.local).map(|p| [-p[0] / super::PER_METRE, p[1] / super::PER_METRE, p[2] / super::PER_METRE]).collect();
         let lo_hi = |k: usize| (pts.iter().map(|p| p[k]).fold(f32::MAX, f32::min), pts.iter().map(|p| p[k]).fold(f32::MIN, f32::max));
         let (y0, y1) = lo_hi(1);
-        assert!(y0 > -0.2 && y0 < -0.1 && y1 > 0.85 && y1 < 0.95, "from {y0} to {y1}");
+        assert!(y0 > -0.32 && y0 < -0.22 && y1 > 1.4 && y1 < 1.5, "from {y0} to {y1}");
         let (z0, z1) = lo_hi(2);
-        assert!(z1 - z0 < 0.3 && z1 > 0.1 && z0 < -0.1, "wings from {z0} to {z1}");
+        assert!(z1 - z0 < 0.48 && z1 > 0.16 && z0 < -0.16, "wings from {z0} to {z1}");
         let (x0, x1) = lo_hi(0);
-        assert!(x1 - x0 < 0.06, "{x0}..{x1} thick");
+        assert!(x1 - x0 < 0.09, "{x0}..{x1} thick");
+        // (a broad blade: 15 cm or so across along its middle, its slices there)
+        let mid: Vec<f32> = pts.iter().filter(|p| (p[1] - 0.65).abs() < 0.3).map(|p| p[2]).collect();
+        let width = mid.iter().fold(f32::MIN, |a, &b| a.max(b)) - mid.iter().fold(f32::MAX, |a, &b| a.min(b));
+        assert!(width > 0.13 && width < 0.2, "{width} across");
         for t in &tris {
             for n in t.normal {
                 let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();

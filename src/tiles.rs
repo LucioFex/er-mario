@@ -119,10 +119,34 @@ pub fn parse(s: &str) -> Axes {
     a
 }
 
+/// A jump of the player's physics place by more than this (m) that the world origin's shift doesn't
+/// account for is a warp (a grace, a fast travel), not the floating origin moving.
+pub const WARP_FAR: f32 = 5.0;
+
+/// Whether the player's physics position jumping by `jump` while the world origin (chunk_position)
+/// moved by `origin_moved` (None: it's not known, a map loading) is a warp: the floating origin
+/// moves both alike, a warp moves him through the world.
+pub fn warped(jump: Vec3, origin_moved: Option<Vec3>) -> bool {
+    origin_moved.is_none_or(|o| (jump - o).length() > WARP_FAR)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use eldenring::cs::BlockId;
+
+    #[test]
+    fn a_warp_is_a_jump_the_origin_doesnt_account_for() {
+        // the floating origin's steps: he and the origin move alike
+        assert!(!warped(Vec3::new(32.0, -0.003, 0.0), Some(Vec3::new(32.0, 0.0, 0.0))));
+        assert!(!warped(Vec3::new(-32.0, 8.0, 24.0), Some(Vec3::new(-32.0, 8.0, 24.0))));
+        // a fast travel: the place jumps, the origin with it only in part, or not at all
+        assert!(warped(Vec3::new(141.1, 817.8, 87.8), Some(Vec3::ZERO)));
+        assert!(warped(Vec3::new(-120.0, -791.9, -72.0), Some(Vec3::new(-96.0, -768.0, -64.0))));
+        // (a map loading, its origin not there yet)
+        assert!(warped(Vec3::new(3.0, 0.0, 3.0), None));
+        assert!(!warped(Vec3::new(3.0, 0.0, 3.0), Some(Vec3::new(3.0, 0.0, 3.0))));
+    }
 
     fn id(area: u8, x: u8, z: u8, index: u8) -> i32 {
         i32::from(BlockId::from_parts(area, x, z, index))

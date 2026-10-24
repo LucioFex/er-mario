@@ -1,10 +1,10 @@
 //! The portable cannon (v4 Part 7): D-pad up held half a second plants an SM64 cannon where Mario
 //! stands (under open sky, out of a boss fight, a few coins, once a minute); he hops in, the stick
 //! aims it (SM64's way: up aims lower; the right stick the camera's way), A held fills its power and
-//! let go fires him 100-300 m in SM64's cannon flight, its arc and landing shown first. The wing cap
-//! (a tap of D-pad up, now on the button's release) opens as he falls; LT on the way is a ground
-//! pound that lands as a shockwave on the enemies round him. A far landing the game hasn't loaded
-//! yet caps the shot.
+//! let go fires him 35-100 m in SM64's cannon flight, its arc and landing shown first (a tap of
+//! D-pad up is still the wing cap, on the button's release, but it doesn't take over a cannon's
+//! flight); LT on the way is a ground pound that lands as a shockwave on the enemies round him. A
+//! far landing the game hasn't loaded yet caps the shot. Its wait shows on the HUD.
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -29,8 +29,9 @@ pub const GRAVITY: f32 = 9.0;
 pub const TERMINAL: f32 = 22.5;
 const DRAG: f32 = 0.45;
 const SLOWEST: f32 = 3.0;
-/// out of the barrel by power (m/s): about 100 m at 45° on flat ground, 300 m
-pub const SPEED: (f32, f32) = (31.0, 52.0);
+/// out of the barrel by power (m/s): about 35 m at 45° on flat ground, 100 m (a third of what it
+/// was: 100-300 m crossed a map in a few shots)
+pub const SPEED: (f32, f32) = (18.0, 29.5);
 /// the preview: rays between points this many ticks apart, at most this long a flight (s), a dot
 /// every this long (s)
 const ARC_STEP: u32 = 6;
@@ -363,7 +364,8 @@ pub struct Look {
 }
 
 /// What hud.rs draws: the cannon, the flight's dots and its landing (how far off), the power and
-/// the governor's cap while in it (None: out of it), no landing at all, the hold's ring.
+/// the governor's cap while in it (None: out of it), no landing at all, the hold's ring, the
+/// seconds until it's ready again (the user: "it says WAIT, but how long?").
 #[derive(Clone, Default)]
 pub struct Hud {
     pub cannon: Option<Look>,
@@ -373,11 +375,13 @@ pub struct Hud {
     pub power: Option<(f32, f32)>,
     pub blocked: bool,
     pub hold: Option<(Vec3, f32)>,
+    pub recharge: Option<f32>,
 }
 
 pub fn hud() -> Option<Hud> {
     let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let mut h = Hud { hold: s.holding, ..Hud::default() };
+    let recharge = s.ready_at.map(|t| t.saturating_duration_since(Instant::now()).as_secs_f32()).filter(|&w| w > 0.0);
+    let mut h = Hud { hold: s.holding, recharge, ..Hud::default() };
     match s.phase {
         Phase::Rising { base, yaw, since } => {
             let t = (TICKS.load(std::sync::atomic::Ordering::Relaxed).wrapping_sub(since) as f32 / RISE_TICKS as f32).min(1.0);
@@ -402,7 +406,7 @@ pub fn hud() -> Option<Hud> {
             h.cannon = Some(Look { base, dir: flat_of(yaw), pitch, size: size * size * (3.0 - 2.0 * size) });
         }
     }
-    (h.cannon.is_some() || h.hold.is_some()).then_some(h)
+    (h.cannon.is_some() || h.hold.is_some() || h.recharge.is_some()).then_some(h)
 }
 
 /// the tick the cannon last ran on (for the HUD's rise)
@@ -505,7 +509,6 @@ pub struct In {
     pub free: bool,
     pub can_stay: bool,
     pub boss: bool,
-    pub wing: bool,
     pub id: i32,
     pub origin: [f32; 3],
     pub tick: u32,
@@ -762,16 +765,8 @@ pub fn update(inp: &In, combat: &mut Combat, player: &ChrIns, ray: &impl Fn(Vec3
                 let_him_go(inp, vel * 0.5);
                 return out;
             }
-            // the wing cap on, and falling: SM64's flight on from here (its cannon's)
-            if inp.wing && vel.y < 0.0 {
-                s.phase = Phase::Grace { until: tick + GRACE_TICKS };
-                drop(s);
-                crate::lakitu::set_cannon(None);
-                log("cannon: wing cap, flying on");
-                let flat = vel.with_y(0.0);
-                hand_back(id, inp.origin, pos, flat, ACT_FLYING, units(vel.length()).min(100.0), 0.0, GRACE_DROP);
-                return out;
-            }
+            // (the wing cap doesn't take over the flight: from the top of a shot, SM64's flight went
+            // on for hundreds of metres more, a map crossed in a few)
             // LT: the pound
             if pressed[2] {
                 s.phase = Phase::Pound { pos, since: tick, from };
@@ -999,11 +994,12 @@ mod tests {
     }
 
     #[test]
-    fn a_hundred_to_three_hundred_metres() {
+    fn thirty_five_to_a_hundred_metres() {
+        // (a third of what it was: 100-300 m crossed a map in a few shots)
         let low = range(0.0, std::f32::consts::FRAC_PI_4);
         let high = range(1.0, std::f32::consts::FRAC_PI_4);
-        assert!((90.0..=110.0).contains(&low), "{low}");
-        assert!((280.0..=320.0).contains(&high), "{high}");
+        assert!((30.0..=40.0).contains(&low), "{low}");
+        assert!((90.0..=110.0).contains(&high), "{high}");
         assert!(range(0.5, std::f32::consts::FRAC_PI_4) > low && range(0.5, std::f32::consts::FRAC_PI_4) < high);
         assert_eq!(launch_speed(-1.0), SPEED.0);
         assert_eq!(launch_speed(2.0), SPEED.1);
@@ -1036,7 +1032,7 @@ mod tests {
         assert!(at.y.abs() < 1e-3);
         let r = range(0.0, 0.7);
         assert!((at.x - r).abs() < 3.0, "{} vs {r}", at.x);
-        assert!(t > 3.0 && t < 6.0, "{t}");
+        assert!(t > 1.5 && t < 4.0, "{t}");
         // (its dots: up and over, none past the landing)
         assert!(a.dots.len() > 10);
         assert!(a.dots.iter().all(|d| d.y >= 0.0 && d.x <= at.x + 1e-3));
@@ -1051,13 +1047,13 @@ mod tests {
         let pitch = std::f32::consts::FRAC_PI_4;
         // all there: as wanted
         assert_eq!(cap_power(from, Vec3::X, pitch, 0.8, &ground), Some(0.8));
-        // only the first 200 m loaded: under what reaches past it, more than the least
-        let p = cap_power(from, Vec3::X, pitch, 1.0, &ground_to(200.0)).expect("some");
+        // only the first 70 m loaded: under what reaches past it, more than the least
+        let p = cap_power(from, Vec3::X, pitch, 1.0, &ground_to(70.0)).expect("some");
         assert!(p > 0.1 && p < 1.0, "{p}");
-        let landed = arc(from, launch(Vec3::X, pitch, launch_speed(p)), &ground_to(200.0)).landing.unwrap().0;
-        assert!(landed.x > 150.0 && landed.x < 200.0, "{landed}");
+        let landed = arc(from, launch(Vec3::X, pitch, launch_speed(p)), &ground_to(70.0)).landing.unwrap().0;
+        assert!(landed.x > 50.0 && landed.x < 70.0, "{landed}");
         // nothing loaded at all: no shot
-        assert_eq!(cap_power(from, Vec3::X, pitch, 1.0, &ground_to(50.0)), None);
+        assert_eq!(cap_power(from, Vec3::X, pitch, 1.0, &ground_to(15.0)), None);
     }
 
     #[test]
@@ -1065,7 +1061,7 @@ mod tests {
         let from = Vec3::new(0.0, 1.0, 0.0);
         let pitch = std::f32::consts::FRAC_PI_4;
         let lands = |p: f32, ray: &dyn Fn(Vec3, Vec3) -> Option<Vec3>| arc(from, launch(Vec3::X, pitch, launch_speed(p)), &ray).landing.is_some();
-        for (edge, wanted) in [(1e9, 0.8), (200.0, 1.0), (50.0, 1.0)] {
+        for (edge, wanted) in [(1e9, 0.8), (70.0, 1.0), (15.0, 1.0)] {
             let ray = ground_to(edge);
             let mut s = Search::new(wanted);
             let mut steps = 0;

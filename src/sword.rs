@@ -19,9 +19,9 @@ const R_HAND: usize = 9;
 
 /// on his back: the grip this far up his spine from the shoulder and behind him (m); the blade
 /// down across to his left hip this much
-const BACK_UP: f32 = 0.06;
+const BACK_UP: f32 = 0.25;
 const BACK_OUT: f32 = 0.13;
-const BACK_ACROSS: f32 = 0.5;
+const BACK_ACROSS: f32 = 1.25;
 /// to his hand and back (share a tick: the draw takes ~5 ticks, a flourish of a turn in it)
 const TO_HAND: f32 = 0.22;
 const TO_BACK: f32 = 0.18;
@@ -307,9 +307,12 @@ mod tests {
         p[R_UPPER_ARM].pos = Vec3::new(-0.15, 0.9, 0.0);
         let fwd = Vec3::Z;
         let (grip, dir, across) = slung(&p, fwd);
-        // behind him, over his right shoulder, pointing down toward his left
-        assert!(grip.z < -0.05 && grip.x < 0.0 && grip.y > 0.9);
-        assert!(dir.y < -0.7 && dir.x > 0.2, "{dir:?}");
+        // behind him, its hilt up over his right shoulder, pointing down across toward his left
+        assert!(grip.z < -0.05 && grip.x < 0.0 && grip.y > 1.05, "{grip:?}");
+        assert!(dir.y < -0.45 && dir.x > 0.5, "{dir:?}");
+        // (a greatsword: its tip clear of the ground he stands on)
+        let tip = grip + dir * crate::assets::kit::SWORD_TIP;
+        assert!(tip.y > 0.15, "its tip at {tip:?}");
         // its flat against his back
         let flat = dir.cross(across.normalize());
         assert!(flat.z.abs() > 0.9, "{flat:?}");

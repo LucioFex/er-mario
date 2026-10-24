@@ -75,6 +75,7 @@ mod save_backup;
 mod shove;
 mod paths;
 mod perf;
+mod presses;
 mod revive;
 mod script;
 mod sm64;
@@ -169,6 +170,63 @@ const LAVA_MATERIALS: [i32; 6] = [7, 24, 27, 39, 47, 62];
 const COLLISION_LAYERS: [u32; 11] = [0x1e, 0x2e, 0x37, 0x38, 0x39, 0x3a, 0x46, 0x47, 0x48, 0x49, 0x51];
 /// Raycast filter for the ground probes.
 const RAY_FILTER: u32 = 0x08;
+/// Pushing the stick on his feet and going nowhere for a second: what's in his way, for the log
+/// (invisible walls after a fast travel, 2026-10-24): SM64's walls within 1.5 m (from the game's
+/// collision or the rays' fallback), and whether the game's own ray that way finds anything. Once
+/// in 10 s at most.
+fn blocked_report(m: &MarioState, inputs: &sm64::SM64MarioInputs, player: &PlayerIns) {
+    static STILL: Mutex<(u32, [f32; 3], Option<std::time::Instant>)> = Mutex::new((0, [0.0; 3], None));
+    const ACT_GROUP_MASK: u32 = 0x1C0;
+    const ACT_GROUP_MOVING: u32 = 0x040;
+    let mut s = STILL.lock().unwrap_or_else(|e| e.into_inner());
+    let pushing = inputs.stick_x.hypot(inputs.stick_y) > 0.6 && m.state.action & ACT_GROUP_MASK == ACT_GROUP_MOVING && !karting::holds();
+    let p = m.state.position;
+    if !pushing || s.0 == 0 {
+        *s = (u32::from(pushing), p, s.2);
+        return;
+    }
+    s.0 += 1;
+    let moved = ((p[0] - s.1[0]).powi(2) + (p[2] - s.1[2]).powi(2)).sqrt() / scale();
+    if moved > 0.5 {
+        *s = (1, p, s.2);
+        return;
+    }
+    if s.0 < 30 || s.2.is_some_and(|t| t.elapsed().as_secs_f32() < 10.0) {
+        return;
+    }
+    s.2 = Some(std::time::Instant::now());
+    s.0 = 0;
+    let reach = 1.5 * scale();
+    let walls: Vec<&sm64::SM64Surface> = m
+        .surfaces
+        .iter()
+        .filter(|w| collision::is_wall(w))
+        .filter(|w| {
+            let c = w.vertices.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0] as f32 / 3.0, a[1] + v[1] as f32 / 3.0, a[2] + v[2] as f32 / 3.0]);
+            ((c[0] - p[0]).powi(2) + (c[1] - p[1]).powi(2) + (c[2] - p[2]).powi(2)).sqrt() < reach
+        })
+        .collect();
+    let feet = to_er(m.origin, p);
+    let way = glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos());
+    let game = unsafe { eldenring::cs::CSHavokMan::instance() }.ok().and_then(|h| {
+        h.phys_world.cast_ray(RAY_FILTER, &HavokPosition(feet.0, feet.1 + 0.5, feet.2, 0.0), eldenring::position::PositionDelta(way.x * 1.5, 0.0, way.z * 1.5), player)
+    });
+    log(format!(
+        "blocked: pushing for a second and going nowhere at {:?} (action {:#x}): {} of SM64's walls within 1.5 m (from {}), the game's ray ahead {}",
+        (feet.0, feet.1, feet.2),
+        m.state.action,
+        walls.len(),
+        if m.last_query_havok { "the game's collision" } else { "the rays' fallback" },
+        game.map_or("finds nothing".to_string(), |h| format!("hits {:.2} m off", ((h.0 - feet.0).powi(2) + (h.2 - feet.2).powi(2)).sqrt()))
+    ));
+}
+
+/// The world origin's shift (the player's chunk_position), if the map has one (not while loading).
+fn chunk_of(player: &PlayerIns) -> Option<glam::Vec3> {
+    let c = player.chr_ins.chunk_position;
+    Some(glam::Vec3::new(c.0, c.1, c.2)).filter(|v| v.is_finite())
+}
+
 /// Lifts Mario 1 m (out of places he's stuck in).
 const VK_F1: i32 = 0x70;
 const VK_F7: i32 = 0x76;
@@ -182,8 +240,8 @@ static AUTO_STARTED: AtomicBool = AtomicBool::new(false);
 static DEBUG_DRAW: AtomicBool = AtomicBool::new(false);
 /// A menu or popup is open: the game gets the whole pad, Mario gets none.
 static MENU_OPEN: AtomicBool = AtomicBool::new(false);
-/// how long after a menu closes the game may still use an item asked for in it (input_task)
-const MENU_USE_AFTER: Duration = Duration::from_millis(1000);
+/// L3 held toward the whistle: how far (0-1, f32 bits; 0 none), for the ring over Mario
+static L3_FILL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static PAD: Mutex<Option<(XINPUT_STATE, std::time::Instant)>> = Mutex::new(None);
 
 /// A diagnostic line: only in the log with `debug = 1` (players' logs stay short).
@@ -501,6 +559,11 @@ struct MarioState {
     prev_mesh: Vec<f32>,
     prev_pos: [f32; 3],
     last_set: Option<[f32; 3]>,
+    /// the world origin's shift (chunk_position) when last_set was: a jump it doesn't account for
+    /// is a warp (tiles::warped)
+    last_chunk: Option<glam::Vec3>,
+    /// a warp: SM64's world re-centred on him and its collision read again (the frame's re-centre)
+    reload_world: bool,
     last_query: Option<(glam::Vec3, u32)>,
     last_query_havok: bool,
     /// Mario's body parts relative to him (this tick and the previous one), for the engine model
@@ -1847,17 +1910,27 @@ fn input_task() {
     // while getting off was queued and whistled him back as soon as Mario was down)
     // the inventory's "Use" (Seamless Co-op's pot and effigy, any item used from the menu): the
     // game's own use-item request goes through while a menu is up and a moment after it closes (it
-    // closes as the item comes out). Outside menus the pad's X never reaches the game (it's
-    // Mario's punch), so no punch uses an item.
+    // closes as the item comes out), unless X or R was pressed since (presses.rs: a talk counts as
+    // a menu, and the punch right after one used the quick slot's whistle). Outside menus the pad's
+    // X never reaches the game (it's Mario's punch), so no punch uses an item.
     let from_menu = {
         static WAS: AtomicBool = AtomicBool::new(false);
-        static LEFT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        static LEFT: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+        static X_WAS: AtomicBool = AtomicBool::new(false);
         let open = MENU_OPEN.load(Ordering::Relaxed);
+        let x = pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_X)) || (kbd::focused() && unsafe { GetAsyncKeyState(0x52) } as u16 & 0x8000 != 0);
+        let x_pressed = x && !X_WAS.swap(x, Ordering::Relaxed);
+        if !x {
+            X_WAS.store(false, Ordering::Relaxed);
+        }
         let mut left = LEFT.lock().unwrap_or_else(|e| e.into_inner());
         if WAS.swap(open, Ordering::Relaxed) && !open {
-            *left = Some(std::time::Instant::now());
+            *left = Some((std::time::Instant::now(), false));
         }
-        open || left.is_some_and(|t| t.elapsed() < MENU_USE_AFTER)
+        if let Some((_, pressed)) = left.as_mut() {
+            *pressed |= x_pressed && !open;
+        }
+        presses::item_from_menu(open, left.map(|(t, _)| t.elapsed().as_secs_f32()), left.is_some_and(|(_, p)| p))
     };
     {
         static ASKED: AtomicBool = AtomicBool::new(false);
@@ -1881,15 +1954,19 @@ fn input_task() {
     ] {
         *bits(a) &= keep;
     }
-    // L3 (or R): Mario uses the item in the quick slot, the Spectral Steed Whistle if it's there
-    // (RB is the fireball, RT the hook). With a partner (co-op) the whistle waits for the release:
-    // held WARP_HOLD instead, Mario warps to the partner (leash.rs: stuck, lost, a wall between).
+    // L3 (or R): a tap (let go within presses::YOSHI_HOLD) the kart (karting.rs), held that long
+    // the item in the quick slot, the Spectral Steed Whistle if it's there: Yoshi (a ring fills over
+    // Mario meanwhile). On Torrent and with `kart_test = on` (kartproto.rs's test needs him) it's
+    // the whistle as it's pressed. With a partner (co-op) a tap waits for the release: held
+    // WARP_HOLD instead, Mario warps to the partner (leash.rs: stuck, lost, a wall between).
     {
         static HELD: AtomicBool = AtomicBool::new(false);
         static PRESSED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        static HOLD: Mutex<presses::Hold> = Mutex::new(presses::Hold::NEW);
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         const WARP_HOLD: f32 = 0.6;
-        let rb = kbd::focused()
-            && !MENU_OPEN.load(Ordering::Relaxed)
+        let in_game = kbd::focused() && !MENU_OPEN.load(Ordering::Relaxed);
+        let rb = in_game
             && (pad.is_some_and(|p| p.Gamepad.wButtons.contains(XINPUT_GAMEPAD_LEFT_THUMB))
                 || unsafe { GetAsyncKeyState(0x52) } as u16 & 0x8000 != 0);
         // The key is held for a few frames. Not while he's getting on or off (a second whistle
@@ -1898,41 +1975,71 @@ fn input_task() {
         let busy = ride_busy;
         let giant = mega::active() || mega::changing();
         let was = HELD.swap(rb, Ordering::Relaxed);
-        let whistle = {
+        #[derive(PartialEq)]
+        enum L3 {
+            Kart,
+            Whistle,
+        }
+        let now = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f32();
+        let mut hold = HOLD.lock().unwrap_or_else(|e| e.into_inner());
+        // (a menu up, the window left: dropped, its release no tap)
+        if !in_game {
+            hold.cancel();
+        }
+        let act = {
             let mut pressed = PRESSED.lock().unwrap_or_else(|e| e.into_inner());
-            if rb && !was {
-                if giant {
-                    // (Yoshi can't carry a giant: Lakitu's buzz)
-                    worker::call("whistle buzz", |_| unsafe { sm64::sm64_play_sound_global(0x700E_0081) });
-                    false
-                } else if coop::active() && !coop::partners().is_empty() {
+            if rb && !was && giant {
+                // (Yoshi can't carry a giant: Lakitu's buzz; this press is spent)
+                worker::call("whistle buzz", |_| unsafe { sm64::sm64_play_sound_global(0x700E_0081) });
+                hold.swallow(now);
+                None
+            } else if coop::active() && !coop::partners().is_empty() {
+                if rb && !was {
                     *pressed = Some(std::time::Instant::now());
-                    false
+                    None
+                } else if rb {
+                    if pressed.is_some_and(|t| t.elapsed().as_secs_f32() >= WARP_HOLD) {
+                        *pressed = None;
+                        log("input: L3 held: warp to the partner asked for");
+                        leash::call();
+                    }
+                    None
                 } else {
-                    true
+                    // (let go before WARP_HOLD: the kart after all, or on Torrent the whistle)
+                    (was && pressed.take().is_some()).then_some(L3::Kart)
                 }
-            } else if rb {
-                if pressed.is_some_and(|t| t.elapsed().as_secs_f32() >= WARP_HOLD) {
-                    *pressed = None;
-                    log("input: L3 held: warp to the partner asked for");
-                    leash::call();
-                }
-                false
+            } else if mounted || kartproto::enabled() {
+                (rb && !was).then_some(L3::Whistle)
             } else {
-                // (let go before WARP_HOLD: the whistle after all)
-                was && pressed.take().is_some()
+                match hold.step(rb, now, presses::YOSHI_HOLD) {
+                    // (a hold begun before he grew is nothing either)
+                    _ if giant => None,
+                    Some(presses::Press::Tap) => Some(L3::Kart),
+                    // (in the kart a hold is nothing: out of it first)
+                    Some(presses::Press::Held) if !karting::holds() => {
+                        log("input: L3 held: the whistle (Yoshi)");
+                        Some(L3::Whistle)
+                    }
+                    _ => None,
+                }
             }
         };
-        // (v4 Part 4's plan B: L3 is the kart's, karting.rs; with `kart_test = on` it whistles for
-        // Torrent, kartproto.rs's test needs him)
-        if whistle && !mounted && !kartproto::enabled() {
-            karting::toggle();
-        } else if whistle && !busy && equip::select_whistle() {
-            log("input: whistle (use item) requested");
-            FRAMES.store(8, Ordering::Relaxed);
-            if !mounted {
-                yoshi::call();
+        // (the ring over him once the hold is a quarter of the way: a tap shows none; only where the
+        // hold is the whistle's: on foot, alone, not a giant)
+        let single = !(coop::active() && !coop::partners().is_empty()) && !mounted && !kartproto::enabled();
+        let fill = hold.fill(now, presses::YOSHI_HOLD);
+        L3_FILL.store(if fill > 0.25 && single && !giant && !karting::holds() { fill.to_bits() } else { 0 }, Ordering::Relaxed);
+        drop(hold);
+        match act {
+            Some(L3::Kart) if !mounted && !kartproto::enabled() => karting::toggle(),
+            Some(_) if !busy && equip::select_whistle() => {
+                log("input: whistle (use item) requested");
+                FRAMES.store(8, Ordering::Relaxed);
+                if !mounted {
+                    yoshi::call();
+                }
             }
+            _ => {}
         }
         if busy && FRAMES.swap(0, Ordering::Relaxed) > 1 {
             kbd::use_item_key(false);
@@ -2434,6 +2541,7 @@ fn frame(data: &FD4TaskData) {
             gameover::reset();
         }
         hud::set_kit(None);
+        hud::set_l3_ring(None);
         if !rebuild {
             let mut pending = PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
             // every 0.25 s: empty the armour (model reload), then put the old loadout back
@@ -2632,6 +2740,8 @@ fn frame(data: &FD4TaskData) {
             prev_mesh: Vec::new(),
             prev_pos: [0.0; 3],
             last_set: None,
+            last_chunk: None,
+            reload_world: false,
             last_query: None,
             last_query_havok: false,
             parts: None,
@@ -3129,6 +3239,15 @@ fn frame(data: &FD4TaskData) {
         let d = [p.0 - last[0], p.1 - last[1], p.2 - last[2]];
         if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() > 2.0 {
             log(format!("world origin shifted by {d:?}"));
+            // (a warp, a fast travel, moves him through the world, not the world round him: the
+            // collision SM64 has, and the mod's of it, are the old place's. Read again where he is)
+            let origin_moved = chunk_of(player_ref).zip(m.last_chunk).map(|(now, was)| now - was);
+            if tiles::warped(glam::Vec3::from(d), origin_moved) {
+                log(format!("world: a warp (the origin moved {origin_moved:?}): SM64's world read again where he is"));
+                m.wall_memory.clear();
+                m.last_query = None;
+                m.reload_world = true;
+            }
             // (a load or a warp: Mega Mario wouldn't know whether he fits where he lands; not the
             // floating origin's steps as he walks, tens of metres: his frame shifts with them)
             let far = (d[0] * d[0] + d[2] * d[2]).sqrt() > 150.0;
@@ -3877,6 +3996,7 @@ fn frame(data: &FD4TaskData) {
                     can_stay: stay,
                     overworld: matches!(area, 60 | 61),
                     hurt: hit,
+                    by: hit.and_then(|_| combat::last_attacker(&player_ref.chr_ins).0),
                     blown: kart_blown,
                     id: m.id,
                     origin: m.origin,
@@ -3916,7 +4036,6 @@ fn frame(data: &FD4TaskData) {
                     free,
                     can_stay: allowed,
                     boss: boss_bar(),
-                    wing: caps::active() == Some(caps::WING),
                     id: m.id,
                     origin: m.origin,
                     tick: m.ticks,
@@ -4747,7 +4866,7 @@ fn frame(data: &FD4TaskData) {
                         let f = state.face_angle;
                         let facing = glam::Vec3::new(-f.sin(), 0.0, f.cos());
                         // (the sword raised over him on the ground: its bolt off its tip)
-                        let from = if state.action & 0x800 != 0 || weapon_on != weapons::SWORD { hand } else { hand + glam::Vec3::Y * 0.9 };
+                        let from = if state.action & 0x800 != 0 || weapon_on != weapons::SWORD { hand } else { hand + glam::Vec3::Y * assets::kit::SWORD_TIP };
                         m.fire.release(from, facing, &state, m.origin, m.ticks, &ray);
                     }
                     // the sword's crescents (wave.rs) off its blow: the star wave, the JUST three, and a
@@ -4889,6 +5008,7 @@ fn frame(data: &FD4TaskData) {
                 }
                 m.state = state;
                 m.mesh = mesh;
+                blocked_report(m, &inputs, player_ref);
                 // co-op: past the leash's pull the way out from the partner gets stiffer (leash.rs)
                 if coop::active() && !m.dead {
                     let (b, a) = (to_er(m.origin, m.prev_pos), to_er(m.origin, m.state.position));
@@ -4952,12 +5072,21 @@ fn frame(data: &FD4TaskData) {
         }
     }
 
+    // L3 held toward the whistle (the input task's): its ring over him, every frame (no SM64 tick
+    // in a follow, a pause or a load: it would stay up)
+    let l3 = f32::from_bits(L3_FILL.load(Ordering::Relaxed));
+    hud::set_l3_ring((l3 > 0.0).then(|| {
+        let me = to_er(m.origin, m.state.position);
+        (glam::Vec3::new(me.0, me.1 + 1.9, me.2), l3)
+    }));
+
     // keep SM64 coordinates small: re-centre its world on Mario when he travels far
     let [mx, my, mz] = m.state.position;
     // (not in a zip, whose end is in the old frame, unless far out)
     let anchored = m.state.action == moves::ACT_ER_ZIP;
     let limit = if anchored { 8000.0 } else { 4000.0 };
-    if mx.abs() > limit || mz.abs() > limit || my.abs() > limit {
+    let warp = std::mem::take(&mut m.reload_world);
+    if mx.abs() > limit || mz.abs() > limit || my.abs() > limit || warp {
         let here = collision::sm_to_er(m.origin, m.state.position);
         log(format!("re-centring SM64 world at {:?} (mario was at {:?})", (here.0, here.1, here.2), m.state.position));
         // (a hold's floor height moves with the frame)
@@ -4981,6 +5110,9 @@ fn frame(data: &FD4TaskData) {
         } else {
             havok_surfaces(&mut m.havok, m.origin, [0.0, 0.0, 0.0], player_ref).unwrap_or_else(|| collision::build(&caster, [0.0, 0.0, 0.0]))
         };
+        // (after a warp, nothing read yet is no reason to keep the old place's: a floor of his own
+        // under him until the map's there)
+        let surfaces = if surfaces.is_empty() && warp { flat_floor([0.0, 0.0, 0.0]).into_iter().collect() } else { surfaces };
         if !surfaces.is_empty() {
             load_surfaces(&surfaces);
             m.surfaces = surfaces;
@@ -5433,6 +5565,7 @@ fn frame(data: &FD4TaskData) {
             m.state.position = sm;
             m.prev_pos = sm;
             m.last_set = Some([p.0, p.1, p.2]);
+            m.last_chunk = chunk_of(player_ref);
             physics.gravity_disabled = false;
             // (the game steers the Tarnished here; Mario's SM64 facing is set to his every tick,
             // and the pose converted with that same tick's facing, so it stays put on his body
@@ -5587,6 +5720,7 @@ fn frame(data: &FD4TaskData) {
     let smooth = if a.distance(b) < 200.0 { a.lerp(b, alpha) } else { b };
     let pos = to_er(m.origin, smooth.into());
     m.last_set = Some([pos.0, pos.1, pos.2]);
+    m.last_chunk = chunk_of(player_ref);
 
     // positional voice: pan by Mario's side of the camera, quieter with distance
     if let Ok(cam) = unsafe { CSCamera::instance() } {

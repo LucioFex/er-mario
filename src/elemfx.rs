@@ -28,8 +28,9 @@ const FROST: [f32; 3] = [0.85, 0.94, 1.0];
 /// the dark orb's: its black, its cracks, its rim
 const DARK: [f32; 3] = [0.05, 0.0, 0.02];
 const CRACK: [f32; 3] = [1.0, 0.16, 0.22];
-/// lightning's glow
+/// lightning's glow, and its white-hot sparks
 const THUNDER: [f32; 3] = [1.0, 0.92, 0.45];
+const SPARK: [f32; 3] = [0.92, 0.97, 1.0];
 const CRIMSON: [f32; 3] = [0.7, 0.04, 0.1];
 const BLOOD: [f32; 3] = [0.55, 0.02, 0.05];
 /// the poison's: its green, its purple, the haze
@@ -171,6 +172,7 @@ pub fn shot(look: &mut Look, o: &Orb, eye: &Eye, clock: f32) {
         let c = match el {
             Element::Frost => ICE_EDGE,
             Element::Blood => CRIMSON,
+            Element::Lightning => THUNDER,
             _ => VENOM,
         };
         glow(look, o.pos, o.size * 1.6, c, 0.8 * vis);
@@ -181,7 +183,43 @@ pub fn shot(look: &mut Look, o: &Orb, eye: &Eye, clock: f32) {
     match el {
         Element::Frost => ice_block(look, o, eye.pos, clock, age, level, charge, back, vis),
         Element::Blood => dark_orb(look, o, eye.pos, clock, age, level, charge, back, lod, vis),
+        Element::Lightning => spark_orb(look, o, eye.pos, clock, level, charge, lod, vis),
         _ => venom_glob(look, o, eye.pos, clock, age, level, charge, back, lod, vis),
+    }
+}
+
+/// Lightning's ball (the Star Sword's charge in his hand): a white-hot core shivering, its yellow
+/// glow, arcs crackling off it (a new zigzag every couple of ticks); charging, sparks pulled in.
+#[allow(clippy::too_many_arguments)]
+fn spark_orb(look: &mut Look, o: &Orb, eye: Vec3, clock: f32, level: u8, charge: bool, lod: usize, vis: f32) {
+    let r = o.size * 0.32;
+    let (rings, slices) = (((4 + level as usize) / lod.max(1)).max(3), ((7 + 2 * level as usize) / lod.max(1)).max(5));
+    let t = clock;
+    blob(look, o.pos, r, rings, slices, eye, &|n| 1.0 + 0.1 * (n.x * 5.0 + t * 30.0).sin() * (n.y * 4.0 - t * 23.0).cos(), &|_, f| rgba(mix(SPARK, THUNDER, (1.0 - f) * 0.7), (0.85 + 0.15 * f) * vis));
+    glow(look, o.pos, o.size * (1.6 + 0.25 * level as f32), THUNDER, (0.4 + 0.1 * level as f32) * vis);
+    glow(look, o.pos, o.size * 0.7, SPARK, 0.7 * vis);
+    // the arcs: from the core out, zigzagging, each a new shape every couple of ticks
+    let beat = (t * 15.0).floor() as i32;
+    for i in 0..(3 + level as usize) {
+        let mut at = o.pos + spread(i * 7 + beat as usize % 97, 23) * r;
+        let way = spread(i * 3 + 11 + beat as usize % 53, 19);
+        let reach = o.size * (0.5 + 0.12 * level as f32);
+        for k in 0..4 {
+            let jag = spread(i * 13 + k * 5 + beat as usize % 89, 29) * reach * 0.35;
+            let next = at + way * reach * 0.25 + jag;
+            let side = (next - at).cross(eye - at).normalize_or(Vec3::Y);
+            let w = o.size * 0.035 * (1.0 - k as f32 * 0.2);
+            strip(look, at, next, side, w, w * 0.8, rgba(if k == 0 { SPARK } else { THUNDER }, (0.95 - 0.15 * k as f32) * vis));
+            at = next;
+        }
+    }
+    if charge {
+        // sparks drawn in to his hand
+        for i in 0..6 {
+            let k = (t * 1.6 + i as f32 / 6.0).fract();
+            let d = spread(i * 4 + 3, 20);
+            glow(look, o.pos + d * o.size * (1.5 - 1.2 * k), o.size * 0.14, if i % 2 == 0 { SPARK } else { THUNDER }, 0.9 * k * vis);
+        }
     }
 }
 
@@ -399,6 +437,20 @@ pub fn burst(look: &mut Look, b: &Blast, eye: &Eye) {
                 glow(look, b.pos + d * size * (0.2 + 0.9 * t) + Vec3::Y * t * 0.5, size * (0.7 + 1.2 * t), [0.1, 0.0, 0.03], 0.5 * (1.0 - t) * vis);
             }
         }
+        Element::Lightning => {
+            // a white flash, sparks thrown out and fading
+            if t < 0.25 {
+                let e = t / 0.25;
+                glow(look, b.pos, size * (0.8 + 1.6 * e), SPARK, (1.0 - e) * 0.9 * vis);
+            }
+            glow(look, b.pos, size * (1.2 + 1.2 * t), THUNDER, 0.45 * (1.0 - t) * vis);
+            let n = 8 + 3 * b.level.min(3) as usize;
+            for i in 0..n {
+                let h = hash(seed, i as i32, 9);
+                let p = b.pos + spread(i, n) * size * (0.3 + (2.0 + 2.0 * h) * s);
+                glow(look, p, 0.05 + 0.04 * h + 0.02 * level, if i % 3 == 0 { SPARK } else { THUNDER }, (1.0 - t) * vis);
+            }
+        }
         _ => {
             // a ring of goo splashing out, drops flung up and falling
             let e = t.min(0.6) / 0.6;
@@ -516,6 +568,19 @@ pub fn aura(look: &mut Look, a: &Aura, eye: &Eye, clock: f32) {
                 let at = a.pos + Vec3::new(ang.cos(), 0.0, ang.sin()) * rad * 0.7 + Vec3::Y * h * (0.6 - 0.55 * ph);
                 glow(look, at, 0.06, BLOOD, (1.0 - ph) * (1.6 - s).min(1.0) * 0.9);
             }
+        }
+        Element::Lightning => {
+            // sparks crackling about him, a flicker of yellow light
+            let k = if a.left > 0.0 { (a.left / 0.1).min(1.0) } else { 0.0 };
+            let flash = burst.filter(|s| *s < 0.5).map_or(0.0, |s| 1.0 - s / 0.5);
+            let beat = (clock * 12.0).floor() as i32;
+            for i in 0..6 {
+                let hh = hash(seed + beat, i, 41);
+                let ang = hh * TAU * 3.0 + i as f32;
+                let at = a.pos + Vec3::new(ang.cos(), 0.0, ang.sin()) * rad * (0.5 + 0.5 * hh) + Vec3::Y * h * (0.15 + 0.8 * hash(seed + beat, i, 43));
+                glow(look, at, 0.06 + 0.06 * hh, if i % 2 == 0 { SPARK } else { THUNDER }, (0.85 * k).max(flash));
+            }
+            glow(look, chest, rad * (2.0 + 2.0 * flash), THUNDER, (0.1 * k).max(0.5 * flash));
         }
         _ => {
             if a.left > 0.0 {
@@ -721,6 +786,33 @@ mod tests {
         let mut look = Look::default();
         cloud(&mut look, &Cloud { pos: Vec3::ZERO, age: 30, life: 90, radius: 2.0, vis: 1.0 }, &eye(), 3.0);
         assert!(!look.sprites.is_empty());
+    }
+
+    /// The sword's charge in his hand is lightning's own (it was the venom glob: every element but
+    /// fire, frost and blood fell to it), near and far.
+    #[test]
+    fn lightnings_charge_is_its_own_not_the_venom_glob() {
+        let near = |c: [f32; 4], k: [f32; 3]| (0..3).all(|i| (c[i] - k[i]).abs() < 0.08);
+        for level in 0..=3u8 {
+            for (eye_at, flags) in [(eye().pos, ORB_CHARGE), (eye().pos, 0), (Vec3::new(0.0, 2.0, -500.0), ORB_CHARGE)] {
+                let mut look = Look::default();
+                let o = Orb { pos: Vec3::new(0.0, 2.0, 0.0), vel: Vec3::ZERO, size: 0.4 + 0.2 * level as f32, level, age: 9, flags, ground: None, vis: 1.0, element: Element::Lightning as u8 };
+                shot(&mut look, &o, &Eye { pos: eye_at, ..eye() }, 1.5);
+                let cols: Vec<[f32; 4]> = look.tris.iter().map(|t| t.col).chain(look.sprites.iter().map(|s| s.tint)).collect();
+                assert!(!cols.is_empty(), "level {level}: nothing drawn");
+                assert!(look.tris.iter().all(|t| t.p.iter().all(|p| p.is_finite()) && t.col.iter().all(|c| c.is_finite())));
+                assert!(!cols.iter().any(|&c| [VENOM, VENOM_DARK, HAZE_GREEN, HAZE_PURPLE].iter().any(|&k| near(c, k))), "level {level}: poison's colours");
+                assert!(cols.iter().any(|&c| near(c, THUNDER) || near(c, SPARK)), "level {level}: no lightning colour");
+            }
+            // (its burst as it leaves his hand, and its mark on an enemy: lightning's too)
+            for age in [0, 4, 10] {
+                let mut look = Look::default();
+                burst(&mut look, &Blast { pos: Vec3::new(0.0, 1.0, 0.0), level, age, size: 0.8, ground: None, flags: 0, vis: 1.0, element: Element::Lightning as u8 }, &eye());
+                aura(&mut look, &Aura { pos: Vec3::ZERO, height: 2.0, radius: 0.5, element: Element::Lightning as u8, age, left: 0.6 }, &eye(), 2.0);
+                let cols: Vec<[f32; 4]> = look.tris.iter().map(|t| t.col).chain(look.sprites.iter().map(|s| s.tint)).collect();
+                assert!(!cols.is_empty() && !cols.iter().any(|&c| [VENOM, VENOM_DARK, HAZE_GREEN, HAZE_PURPLE].iter().any(|&k| near(c, k))), "level {level} age {age}: poison's colours");
+            }
+        }
     }
 
     #[test]
