@@ -286,6 +286,18 @@ pub fn set_colossus(c: Option<(Vec3, f32, f32, Vec3)>) {
     *COLOSSUS.lock().unwrap_or_else(|e| e.into_inner()) = c;
 }
 
+/// On the AoT hook's line (odm.rs): the bone it's anchored to; the view turns round behind Mario to
+/// look at it, leaning its way, both on screen.
+static ANCHOR: Mutex<Option<Vec3>> = Mutex::new(None);
+
+pub fn set_anchor(a: Option<Vec3>) {
+    *ANCHOR.lock().unwrap_or_else(|e| e.into_inner()) = a;
+}
+
+/// the line's view: how fast it turns round to the bone, how far it leans its way at most (m)
+const ANCHOR_TURN: f32 = 2.5;
+const ANCHOR_LEAN: f32 = 5.0;
+
 /// the colossus view: backed off at most this far (m), sunk this share of his climb, leaning to its
 /// head at most this much (m)
 const COLOSSUS_MAX: f32 = 16.0;
@@ -715,6 +727,16 @@ pub fn update(
             cam.yaw += angle_diff(want, cam.yaw) * rate(0.8);
         }
         let lean = ((top - head) * 0.35).clamp_length_max(COLOSSUS_LEAN);
+        cam.frame += (lean - cam.frame) * rate(1.5);
+    }
+    // on the AoT hook's line: from behind him at the bone (the right stick is the line's then)
+    if let Some(a) = *ANCHOR.lock().unwrap_or_else(|e| e.into_inner()) {
+        let to = (a - mario).with_y(0.0);
+        if to.length() > 0.5 && cam.target_yaw.is_none() {
+            let want = (-to.z).atan2(-to.x);
+            cam.yaw += angle_diff(want, cam.yaw) * rate(ANCHOR_TURN);
+        }
+        let lean = ((a - head) * 0.4).clamp_length_max(ANCHOR_LEAN);
         cam.frame += (lean - cam.frame) * rate(1.5);
     }
     let height = height + cam.coloss * 0.15 - cam.coloss_sink;

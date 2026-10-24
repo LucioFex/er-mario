@@ -1900,11 +1900,16 @@ s32 act_er_air_throw(struct MarioState *m) {
 
 /** where the hook pulls him (SM64 units, hook.rs keeps it on a moving enemy), and to what: 0 an
  * enemy (he pops up in front of it, ready for an air string), 1 a floor (he lands), 2 a wall (he
- * clings to it a moment, A wall kicks off it) */
+ * clings to it a moment, A wall kicks off it), 3 a medium enemy (the zip-kick: a kick off it, up
+ * into the air) */
 f32 er_zip_target[3] = { 0.0f, 0.0f, 0.0f };
 s32 er_zip_kind = 0;
 #define ER_ZIP_MAX 40
 #define ER_ZIP_CLING 24
+/* the zip-kick: its pose this long (ticks), bounced up and back off it (units a tick) */
+#define ER_ZIP_KICK 10
+#define ER_ZIP_KICK_UP 38.0f
+#define ER_ZIP_KICK_BACK -8.0f
 /* lying along the line drawn tipping into it, and up from it at the wall, over this many ticks
  * (the pitch drawn last) */
 #define ER_ZIP_EASE 3
@@ -1936,6 +1941,21 @@ s32 act_er_zip(struct MarioState *m) {
         vec3s_set(m->marioObj->header.gfx.angle, t < ER_ZIP_EASE - 1 ? (s16)(sErZipPitch * (ER_ZIP_EASE - 2 - t) / ER_ZIP_EASE) : 0, m->faceAngle[1], 0);
         return FALSE;
     }
+    // the zip-kick: kicked off it, bouncing up and back (hook.rs lands its blow), his air string free
+    if (m->actionState == 2) {
+        set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+        switch (perform_air_step(m, 0)) {
+            case AIR_STEP_LANDED:
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            case AIR_STEP_HIT_LAVA_WALL:
+                lava_boost_on_wall(m);
+                return TRUE;
+        }
+        if (t >= ER_ZIP_KICK) {
+            return set_mario_action(m, ACT_FREEFALL, 0);
+        }
+        return FALSE;
+    }
 
     f32 dx = er_zip_target[0] - m->pos[0];
     f32 dy = er_zip_target[1] - m->pos[1];
@@ -1962,7 +1982,19 @@ s32 act_er_zip(struct MarioState *m) {
             m->marioObj->header.gfx.angle[0] = (s16)(sErZipPitch * (ER_ZIP_EASE - 1) / ER_ZIP_EASE);
             return FALSE;
         }
-        if (er_zip_kind == 0) {
+        if (er_zip_kind == 3 && dist <= speed) {
+            er_sound(m, SOUND_ACTION_HIT_2);
+            er_sound(m, SOUND_MARIO_PUNCH_HOO);
+            set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+            set_anim_to_frame(m, 0);
+            m->vel[1] = ER_ZIP_KICK_UP;
+            mario_set_forward_vel(m, ER_ZIP_KICK_BACK);
+            m->actionState = 2;
+            m->actionTimer = 0;
+            m->marioObj->header.gfx.angle[0] = 0;
+            return FALSE;
+        }
+        if (er_zip_kind == 0 || er_zip_kind == 3) {
             m->vel[1] = 26.0f;
             mario_set_forward_vel(m, 4.0f);
             er_sound(m, SOUND_ACTION_TWIRL);
@@ -3111,107 +3143,11 @@ s32 act_er_home_run(struct MarioState *m) {
     return FALSE;
 }
 
-/** what Mario swings round (SM64 units: its middle at his hand's height), set by hook.rs every
- * tick, and whether he lets go now */
-f32 er_pole_centre[3] = { 0.0f, 0.0f, 0.0f };
-s32 er_pole_release = 0;
-/** how far out he swings (SM64 units: the enemy's body and a bit, hook.rs) */
-f32 er_pole_radius = 190.0f;
-/** the fastest he goes along the circle (units a tick): round a big body the swing turns slower */
-#define ER_POLE_STEP 135.0f
-static f32 sErPoleAngle = 0.0f;
-static f32 sErPoleSpin = 0.0f;
-static f32 sErPoleRadius = 0.0f;
-#define ER_POLE_MAX 120
-#define ER_POLE_SPIN_FROM 0.12f
-#define ER_POLE_SPIN_TO 0.5f
-/* lying out along the line: his pitch, and the lean drawn last (the swing kick straightens up
- * from them, keeping this much of them each tick: it stood up at once) */
-#define ER_POLE_PITCH 0x0C00
-#define ER_SWING_KICK_STRAIGHTEN 0.6f
-static s16 sErPoleRoll = 0;
-
-/**
- * R2 held on a big enemy hooked (hook.rs): Mario swings round it on the hook's line like round an
- * SM64 pole, faster and faster, lying out along the line; let go (R2 up, or it's been long), he
- * flies off along the swing's tangent into a flying kick (ACT_ER_SWING_KICK).
- */
-s32 act_er_pole_swing(struct MarioState *m) {
-    s32 t = m->actionTimer++;
-    f32 dx = m->pos[0] - er_pole_centre[0];
-    f32 dz = m->pos[2] - er_pole_centre[2];
-    f32 nx, nz, want[3];
-
-    if (t == 0) {
-        sErPoleAngle = atan2f(dz, dx);
-        sErPoleRadius = sqrtf(dx * dx + dz * dz);
-        if (sErPoleRadius < er_pole_radius) {
-            sErPoleRadius = er_pole_radius;
-        }
-        if (sErPoleRadius > er_pole_radius + 160.0f) {
-            sErPoleRadius = er_pole_radius + 160.0f;
-        }
-        sErPoleSpin = ER_POLE_SPIN_FROM;
-        set_mario_animation(m, MARIO_ANIM_DIVE);
-        er_sound(m, SOUND_MARIO_WHOA);
-    }
-    if (er_pole_release || t >= ER_POLE_MAX) {
-        // off along the tangent, with the speed of the swing
-        f32 speed = sErPoleSpin * sErPoleRadius;
-        f32 tx = -sinf(sErPoleAngle), tz = cosf(sErPoleAngle);
-        if (speed > 92.0f) {
-            speed = 92.0f;
-        }
-        er_pole_release = 0;
-        m->faceAngle[1] = atan2s(tz, tx);
-        mario_set_forward_vel(m, speed);
-        m->vel[1] = 26.0f;
-        return set_mario_action(m, ACT_ER_SWING_KICK, 0);
-    }
-    // round and round, faster; the line shortening a little (pulled in)
-    sErPoleSpin = er_lerp(sErPoleSpin, ER_POLE_SPIN_TO, 0.06f);
-    // (round a big body the turn is slower: his speed along the circle at most ER_POLE_STEP)
-    if (sErPoleSpin * sErPoleRadius > ER_POLE_STEP) {
-        sErPoleSpin = ER_POLE_STEP / sErPoleRadius;
-    }
-    sErPoleAngle += sErPoleSpin;
-    sErPoleRadius = er_lerp(sErPoleRadius, er_pole_radius, 0.04f);
-    want[0] = er_pole_centre[0] + cosf(sErPoleAngle) * sErPoleRadius;
-    want[1] = er_pole_centre[1] - 40.0f;
-    want[2] = er_pole_centre[2] + sinf(sErPoleAngle) * sErPoleRadius;
-    m->vel[0] = want[0] - m->pos[0];
-    m->vel[1] = (want[1] - m->pos[1]) * 0.5f;
-    m->vel[2] = want[2] - m->pos[2];
-
-    m->forwardVel = sqrtf(m->vel[0] * m->vel[0] + m->vel[2] * m->vel[2]);
-    nx = -sinf(sErPoleAngle);
-    nz = cosf(sErPoleAngle);
-    m->faceAngle[1] = atan2s(nz, nx);
-    switch (perform_air_step(m, 0)) {
-        case AIR_STEP_HIT_WALL:
-            // (a wall in the way: off he goes)
-            er_pole_release = 1;
-            break;
-        case AIR_STEP_HIT_LAVA_WALL:
-            lava_boost_on_wall(m);
-            return TRUE;
-        case AIR_STEP_LANDED:
-            break;
-    }
-    // (lying out along the line, leaning into the swing)
-    m->marioObj->header.gfx.angle[0] = ER_POLE_PITCH;
-    m->marioObj->header.gfx.angle[2] = (s16)(-0x1800 * (sErPoleSpin / ER_POLE_SPIN_TO));
-    sErPoleRoll = m->marioObj->header.gfx.angle[2];
-    if (t % 8 == 0) {
-        er_sound_soft(SOUND_ACTION_SPIN, 0.25f);
-    }
-    return FALSE;
-}
-
 #define ER_SWING_KICK_HITS 12
 #define ER_SWING_KICK_END 40
 
-/** Off the pole swing: a flying kick along the swing, hitting what it meets. */
+/** Off the rope (colossus.rs) or the AoT hook's line (odm.rs): a flying kick along the swing,
+ * hitting what it meets. */
 s32 act_er_swing_kick(struct MarioState *m) {
     s32 t = m->actionTimer++;
     if (t == 0) {
@@ -3233,12 +3169,6 @@ s32 act_er_swing_kick(struct MarioState *m) {
         case AIR_STEP_HIT_LAVA_WALL:
             lava_boost_on_wall(m);
             return TRUE;
-    }
-    // (out of the swing's lean, straightening up)
-    if (m->prevAction == ACT_ER_POLE_SWING) {
-        f32 keep = powf(ER_SWING_KICK_STRAIGHTEN, (f32) t);
-        m->marioObj->header.gfx.angle[0] = (s16)(ER_POLE_PITCH * keep);
-        m->marioObj->header.gfx.angle[2] = (s16)(sErPoleRoll * keep);
     }
     if (t >= 8 && (m->input & INPUT_B_PRESSED)) {
         return set_mario_action(m, er_air_attack(), 0);

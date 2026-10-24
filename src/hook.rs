@@ -1,18 +1,20 @@
 //! The hook (R2, the middle mouse button), Devil May Cry's Snatch with a Mario touch: Mario flings it out
 //! of his hand (er_moves.c's ER_THROW_HOOK), it flies to the enemy he looks at (the nearest one in
 //! front of the camera) or, with none there, to the spot of the map the camera looks at:
-//! - an enemy of any size: Mario flies to it, popping up in front of it for an air string
-//!   (er_moves.c act_er_zip)
+//! - a small enemy: Mario flies to it, popping up in front of it for an air string (er_moves.c
+//!   act_er_zip); a medium one: the zip ends in a kick off it, up into the air (the zip-kick), or,
+//!   R2 held, he vaults over it to land behind it (odm.rs)
+//! - a big one: the cap anchors to the bone nearest the middle of the screen, the AoT hook's line
+//!   (odm.rs: orbit, reel in, the strike)
 //! - with L2 held (any time, on the ground or in the air) it's the other way round: a small enemy
 //!   is pulled in to him (juggle.rs), hung in front of him if he's in the air, ready for the next
 //!   blow; a medium one too, but the same one only every MEDIUM_EVERY seconds; a big one (a boss, a
 //!   strong enemy) only gets the little hit: it doesn't come and Mario doesn't go. L2 never takes
 //!   the map
-//! - R2 held after it took Mario to a medium or big enemy: he swings round it for 4 s, faster and
-//!   faster; let go and he's flung off along the swing with its inertia into a flying kick (from
-//!   one big enemy to the next, or to get away); riding one is L2 + R3 by it only (bossride.rs)
+//! - riding one is L2 + R3 by it only (bossride.rs)
 //! - a wall: he flies to it and clings to it a moment (A: a wall kick off it); a floor or a ledge:
-//!   he lands there
+//!   he lands there; R2 held on a spot high up, the rope (colossus.rs), looked for ahead and above in
+//!   a cone when the camera looks at the sky or the ground
 //! It finds enemies on its own: the near ones all around him (the nearest first, those in front of
 //! him or the camera before those behind), the far ones only where he or the camera looks. The map
 //! is fair game once per airtime: after a wall or a ledge it only clinks off them until he's back on
@@ -60,8 +62,11 @@ const SOUND_BUZZ: i32 = 0x700E_0081;
 enum Aim {
     /// an enemy: its handle, body (m: radius, height), and whether it's small enough to drag in
     Enemy { mob: FieldInsHandle, radius: f32, height: f32, drag: bool, medium: bool },
-    /// a spot on the map (Elden Ring), and whether it's a floor (aimed down at it)
-    Map { at: Vec3, floor: bool },
+    /// a big enemy's bone (odm.rs): the line's anchor
+    Bone { mob: FieldInsHandle, bone: u32, radius: f32, height: f32 },
+    /// a spot on the map (Elden Ring), whether it's a floor (aimed down at it), whether the cone
+    /// found it (only the rope's: R2 let go, the cap just comes back)
+    Map { at: Vec3, floor: bool, cone: bool },
     /// nothing there: out to its reach, then back; or the map when it isn't fair game (a clink there)
     Miss { at: Vec3, clink: bool },
 }
@@ -75,9 +80,11 @@ enum Phase {
     Pulling,
     /// pulling him (since this tick)
     Zipping(u32),
-    /// R2 held on a big one: Mario swings round it (since this tick)
-    Swinging(u32),
-    /// R2 held as it caught a spot high up or a colossus: Mario swings on the rope (colossus.rs)
+    /// on a medium one with R2 still held (since this tick): let go, the zip-kick; held on, the vault
+    Deciding(u32),
+    /// on a big one's bone: the AoT hook's line (odm.rs)
+    Odm,
+    /// R2 held as it caught a spot high up: Mario swings on the rope (colossus.rs)
     Roping,
     Back,
 }
@@ -91,13 +98,14 @@ pub struct Hook {
     pressed: bool,
     /// a wall or a ledge was hooked this airtime (the next only clinks off)
     map_used: bool,
-    /// X held last tick (the home run); the next pole swing allowed from this tick
+    /// X held last tick (the home run)
     x_held: bool,
-    swing_ready: u32,
-    /// Mario's libsm64 id (to let go of a swing when the hook is dropped)
-    id: i32,
     /// L2 was held when it was thrown: it pulls the enemy in instead of taking Mario there
     pull: bool,
+    /// the zip-kick's blow landed (once a zip)
+    kicked: bool,
+    /// a throw asked for without R2 (the AoT hook's rebound A, odm.rs)
+    force: bool,
 }
 
 /// What hud.rs draws: his hand, the cap's spot, its spin (radians).
@@ -151,7 +159,7 @@ const ACT_FLAG_INVULNERABLE: u32 = 0x0002_0000;
 
 impl Hook {
     pub fn new() -> Self {
-        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, swing_ready: 0, id: -1, pull: false }
+        Hook { phase: None, aim: Aim::Miss { at: Vec3::ZERO, clink: false }, pos: Vec3::ZERO, born: 0, ready_at: 0, pressed: false, map_used: false, x_held: false, pull: false, kicked: false, force: false }
     }
 
     /// Mario's world was re-scaled (mega.rs), he died, the game moves him: a hook out goes.
@@ -163,23 +171,29 @@ impl Hook {
             self.map_used = false;
             self.pressed = true;
         }
-        // (mid-swing: libsm64 lets go too, or he'd go round the spot where it was)
-        if matches!(self.phase, Some(Phase::Swinging(_))) {
-            let id = self.id;
-            worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
+        // (on the AoT hook's line: off it, falling on)
+        if matches!(self.phase, Some(Phase::Odm)) {
+            crate::odm::cancel();
         }
         if self.phase.take().is_some() {
             clear();
         }
     }
 
-    /// Game thread, after every SM64 tick: R2 (`button`), whether he may throw it now, what his moves
-    /// did (`mv`), his state, feet and hand (Elden Ring). Throws it, flies it, pulls.
+    /// The AoT hook's rebound A (odm.rs): a throw on the next tick, as if R2 went down.
+    pub fn rethrow(&mut self) {
+        self.force = true;
+    }
+
+    /// Game thread, after every SM64 tick: R2 (`button`; `held`: the trigger itself, also while the
+    /// line or the colossus has the buttons), whether he may throw it now, what his moves did (`mv`),
+    /// his state, feet and hand (Elden Ring). Throws it, flies it, pulls.
     #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         id: i32,
         button: bool,
+        held: bool,
         l2: bool,
         x: bool,
         allowed: bool,
@@ -194,12 +208,14 @@ impl Hook {
         ray: impl Fn(Vec3, Vec3) -> Option<Vec3>,
     ) {
         const DT: f32 = 1.0 / 30.0;
-        self.id = id;
-        let pressed = button && !self.pressed;
-        self.pressed = button;
+        // (a press is the trigger going down, not its being handed back: held through the line or a
+        // vault, then given back, it's no new throw)
+        let pressed = (button && !self.pressed) || std::mem::take(&mut self.force);
+        self.pressed = held;
         let x_pressed = x && !self.x_held;
         self.x_held = x;
-        let air = state.action & ACT_FLAG_AIR != 0;
+        // (held up by colossus.rs or odm.rs, on a limb or off a hit: off the ground all the same)
+        let air = state.action & ACT_FLAG_AIR != 0 || state.action == crate::colossus::ACT_ER_CLING;
         // back on his feet: the map is fair game again
         if !air && state.action != moves::ACT_ER_ZIP && !matches!(self.phase, Some(Phase::Zipping(_))) {
             self.map_used = false;
@@ -233,6 +249,8 @@ impl Hook {
         }
         let Some(phase) = self.phase else { return };
         let mut next = Some(phase);
+        // (off the AoT hook's line: no wait for the next)
+        let mut quick = false;
         match phase {
             Phase::Winding(since) => {
                 let let_go = mv.throw_kind > 0 && mv.throw_kind as u32 - 1 == moves::THROW_HOOK;
@@ -255,6 +273,13 @@ impl Hook {
                             self.pos
                         }
                     },
+                    Aim::Bone { mob, bone, .. } => match crate::odm::bone_at(&mob, bone) {
+                        Some(p) => p,
+                        None => {
+                            next = Some(Phase::Back);
+                            self.pos
+                        }
+                    },
                     Aim::Map { at, .. } | Aim::Miss { at, .. } => at,
                 };
                 let d = to - self.pos;
@@ -264,7 +289,7 @@ impl Hook {
                         self.pos = to;
                         let v = state.velocity;
                         let vel = Vec3::new(-v[0], v[1], v[2]) * crate::scale() * 30.0;
-                        next = self.latch(id, feet, vel, button, origin, tick, air, player, combat);
+                        next = self.latch(id, feet, vel, button, origin, tick, air, player, combat, &ray);
                     } else {
                         self.pos += d / d.length() * step;
                     }
@@ -285,65 +310,54 @@ impl Hook {
                     _ => next = Some(Phase::Back),
                 }
             }
-            // R2 still held a moment after it caught a big one: he swings round it instead
-            Phase::Zipping(since)
-                if button
-                    && allowed
-                    && tick.wrapping_sub(since) >= SWING_HOLD
-                    && tick >= self.swing_ready
-                    && state.action == moves::ACT_ER_ZIP
-                    && matches!(self.aim, Aim::Enemy { drag, medium, mob, radius, height } if (!drag || medium) && chest(&mob, height).is_some_and(|(c, _)| (c - feet).with_y(0.0).length() <= radius + SWING_NEAR)) =>
-            {
-                if let Aim::Enemy { mob, radius, height, .. } = self.aim {
-                    match chest(&mob, height) {
-                        Some((c, _)) => {
-                            let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
-                            // (out past its body: round a boss, not through it)
-                            let out = (radius + BODY + 0.5) / crate::scale();
-                            log("hook: pole swing");
-                            worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], out, 1) });
-                            next = Some(Phase::Swinging(tick));
-                        }
-                        None => next = Some(Phase::Back),
-                    }
-                }
-            }
-            Phase::Swinging(since) => {
-                let Aim::Enemy { mob, height, .. } = self.aim else { return };
-                let swinging = state.action == moves::ACT_ER_POLE_SWING || tick.wrapping_sub(since) < 2;
-                // (riding one is L2 + R3 by it only, bossride.rs: no mount off the hook)
-                match chest(&mob, height).filter(|_| swinging) {
-                    Some((c, _)) => {
-                        self.pos = c;
-                        let sm = er_to_sm(origin, &HavokPosition(c.x, c.y, c.z, 0.0));
-                        // (R2 up: let go, off along the swing)
-                        let mode = if button && allowed { 0 } else { 2 };
-                        worker::call("pole swing", move |_| unsafe { sm64::sm64_er_pole(id, sm[0], sm[1], sm[2], 0.0, mode) });
-                        if mode == 2 {
-                            log("hook: let go of the swing");
-                            self.swing_ready = tick + SWING_COOLDOWN;
-                            next = Some(Phase::Back);
-                        }
-                    }
-                    None => {
-                        // (it's gone, or he's out of the swing: libsm64 lets go too)
-                        worker::call("pole off", move |_| unsafe { sm64::sm64_er_pole(id, 0.0, 0.0, 0.0, 0.0, 2) });
-                        self.swing_ready = tick + SWING_COOLDOWN;
-                        next = Some(Phase::Back);
-                    }
-                }
-            }
             Phase::Zipping(since) => {
                 // the pull's end on an enemy that moves; done once he's off the line
                 if tick.wrapping_sub(since) >= 2 && state.action != moves::ACT_ER_ZIP {
                     next = Some(Phase::Back);
-                } else if let Aim::Enemy { mob, radius, height, .. } = self.aim {
+                } else if let Aim::Enemy { mob, radius, height, medium, .. } = self.aim {
                     match chest(&mob, height) {
                         Some((c, f)) => {
                             self.pos = c;
                             let to = zip_to_enemy(feet, f, radius, height);
                             let sm = er_to_sm(origin, &HavokPosition(to.x, to.y, to.z, 0.0));
-                            worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], 0, 0) });
+                            // (a medium one: the zip-kick, its blow once as he gets to it)
+                            let kind = if medium { 3 } else { 0 };
+                            worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], kind, 0) });
+                            if medium && !self.kicked && (c - hand).length() <= radius + KICK_REACH {
+                                self.kicked = true;
+                                self.zip_kick(&mob, radius, origin, tick, player, combat);
+                            }
+                        }
+                        None => next = Some(Phase::Back),
+                    }
+                }
+            }
+            // on a big one's bone (odm.rs reels him in): the cap where the line's anchored; off it,
+            // the cap's back at once, ready for the next (the rebound's A or R2: the next bone)
+            Phase::Odm => match crate::odm::anchor() {
+                Some(p) => self.pos = p,
+                None => {
+                    quick = true;
+                    next = None;
+                }
+            },
+            // a medium one caught with R2 held: let go soon, the zip-kick; held 0.2 s from the throw,
+            // the vault over it
+            Phase::Deciding(_) => {
+                if let Aim::Enemy { mob, radius, height, .. } = self.aim {
+                    match chest(&mob, height) {
+                        Some((c, _)) => {
+                            self.pos = c;
+                            if !button || !allowed {
+                                next = self.zip_kick_to(id, &mob, radius, height, feet, origin, tick);
+                            } else if tick.wrapping_sub(self.born) >= VAULT_HOLD {
+                                next = if crate::odm::vault(&mob, feet, tick, &ray) {
+                                    log("hook: the vault over it");
+                                    Some(Phase::Back)
+                                } else {
+                                    self.zip_kick_to(id, &mob, radius, height, feet, origin, tick)
+                                };
+                            }
                         }
                         None => next = Some(Phase::Back),
                     }
@@ -369,15 +383,15 @@ impl Hook {
                 }
             }
         }
-        // (a swing lasts as long as it does: C lets go after 4 s)
-        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Swinging(_) | Phase::Roping)) {
+        // (the line and the rope last as long as they do: odm.rs, colossus.rs let go)
+        if next.is_some() && tick.wrapping_sub(self.born) > LIFE && next != Some(Phase::Back) && !matches!(next, Some(Phase::Odm | Phase::Roping)) {
             next = Some(Phase::Back);
         }
-        if tick.wrapping_sub(self.born) > LIFE + 150 && next != Some(Phase::Roping) {
+        if tick.wrapping_sub(self.born) > LIFE + 150 && !matches!(next, Some(Phase::Odm | Phase::Roping)) {
             next = None;
         }
         if next.is_none() {
-            self.ready_at = tick + COOLDOWN;
+            self.ready_at = tick + if quick { 0 } else { COOLDOWN };
         }
         self.phase = next;
         let shown = matches!(self.phase, Some(p) if !matches!(p, Phase::Winding(_)));
@@ -443,23 +457,44 @@ impl Hook {
             log(format!("hook: no enemy taken ({hidden} out of sight, {aside} outside the aim)"));
         }
         let (aim, at) = match enemy {
+            // a big one (not L2's): the bone nearest the middle of the screen, the line's anchor
+            // (odm.rs); none there, the zip as ever
+            Some((_, Aim::Enemy { mob, radius, height, drag: false, medium }, c)) if !self.pull => match crate::odm::aim(&mob, hand, reach) {
+                Some((bone, p)) => (Aim::Bone { mob, bone, radius, height }, p),
+                None => (Aim::Enemy { mob, radius, height, drag: false, medium }, c),
+            },
             Some((_, aim, c)) => (aim, c),
             None => {
                 // the map where the camera looks (a little up without Lakitu)
                 let dir = look.unwrap_or((face + Vec3::Y * 0.2).normalize());
                 let from = feet + Vec3::Y * CHEST;
-                match ray(from, from + dir * reach) {
+                let hit = ray(from, from + dir * reach);
+                // (nothing there, the sky: a spot for the rope ahead and above, if R2 stays held; a
+                // wall ahead is the zip and the cling, a floor or a ledge the zip there, as ever)
+                let floor_at = |p: Vec3| {
+                    let near = p - dir * 0.3;
+                    ray(near + Vec3::Y * 0.4, near - Vec3::Y * 0.6).is_some()
+                };
+                let cone = || {
+                    let far = reach.min(CONE_REACH).min(crate::colossus::rope_reach(feet, origin));
+                    let hits: Vec<(Vec3, Option<Vec3>)> = crate::odm::cone_dirs(flat).into_iter().map(|d| (d, ray(from, from + d * far))).collect();
+                    let spot = crate::odm::cone_pick(&hits, from, feet, flat)?;
+                    let d = spot - from;
+                    log(format!("hook: the rope's cone found a spot {:.1} m ahead, {:.0} deg up", d.with_y(0.0).length(), (d.y / d.length()).asin().to_degrees()));
+                    Some(spot)
+                };
+                match hit {
                     // (L2 only takes enemies: it flies out and back)
                     Some(_) if self.pull => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
                     // (once an airtime: then it only clinks off)
                     Some(p) if self.map_used => (Aim::Miss { at: p, clink: true }, p),
-                    Some(p) => {
-                        // (a floor if there's ground right under a spot just short of it)
-                        let near = p - dir * 0.3;
-                        let floor = ray(near + Vec3::Y * 0.4, near - Vec3::Y * 0.6).is_some();
-                        (Aim::Map { at: p, floor }, p)
-                    }
-                    None => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
+                    // (a floor if there's ground right under a spot just short of it)
+                    Some(p) => (Aim::Map { at: p, floor: floor_at(p), cone: false }, p),
+                    None if self.pull || self.map_used => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
+                    None => match cone() {
+                        Some(c) => (Aim::Map { at: c, floor: false, cone: true }, c),
+                        None => (Aim::Miss { at: from + dir * reach, clink: false }, from + dir * reach),
+                    },
                 }
             }
         };
@@ -468,7 +503,10 @@ impl Hook {
             match aim {
                 Aim::Enemy { drag: true, .. } if self.pull => "an enemy, to pull in",
                 Aim::Enemy { .. } if self.pull => "a big enemy (L2: only a tap)",
+                Aim::Enemy { medium: true, .. } => "a medium enemy, to fly to (R2 held: the vault)",
                 Aim::Enemy { .. } => "an enemy, to fly to",
+                Aim::Bone { .. } => "a big enemy's bone, the line",
+                Aim::Map { cone: true, .. } => "a spot for the rope",
                 Aim::Map { floor: true, .. } => "a floor",
                 Aim::Map { .. } => "a wall",
                 Aim::Miss { clink: true, .. } => "the map again this airtime (clinks off)",
@@ -478,6 +516,7 @@ impl Hook {
         self.aim = aim;
         self.phase = Some(Phase::Winding(tick));
         self.born = tick;
+        self.kicked = false;
         self.pos = hand;
         // he turns to it and flings his arm
         let me = Vec3::from(state.position);
@@ -494,19 +533,25 @@ impl Hook {
 
     /// It got there: a pull, or the zip. What's next.
     #[allow(clippy::too_many_arguments)]
-    fn latch(&mut self, id: i32, feet: Vec3, vel: Vec3, button: bool, origin: [f32; 3], tick: u32, air: bool, player: &ChrIns, combat: &mut Combat) -> Option<Phase> {
+    fn latch(&mut self, id: i32, feet: Vec3, vel: Vec3, button: bool, origin: [f32; 3], tick: u32, air: bool, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Option<Phase> {
         match self.aim {
+            Aim::Bone { mob, bone, radius, height } => {
+                self.tap(&mob, radius, origin, tick, player, combat);
+                if crate::odm::start(&mob, bone, feet, vel, tick) {
+                    log("hook: on the line");
+                    return Some(Phase::Odm);
+                }
+                // (its body or bone gone: the zip as ever)
+                let Some((_, f)) = chest(&mob, height) else { return Some(Phase::Back) };
+                let to = zip_to_enemy(feet, f, radius, height);
+                let sm = er_to_sm(origin, &HavokPosition(to.x, to.y, to.z, 0.0));
+                worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], 0, 1) });
+                self.aim = Aim::Enemy { mob, radius, height, drag: false, medium: false };
+                Some(Phase::Zipping(tick))
+            }
             Aim::Enemy { mob, radius, height, drag, medium } => {
                 // its little hit (a flinch, a point of style), then in it comes, or he goes
-                let here = HavokPosition(self.pos.x, self.pos.y, self.pos.z, 0.0);
-                let near = combat::nearby(&here, 4.0 + radius, origin);
-                if let Some(i) = near.iter().position(|t| t.shootable().is_some_and(|h| key(h) == key(&mob))) {
-                    combat.deal(player, &near, &[(i, Attack::Hook, false)], tick);
-                }
-                sound(SOUND_LATCH, 0.6);
-                crate::impact::hook_latch(self.pos);
-                // (an enemy gives the wall back)
-                self.map_used = false;
+                self.tap(&mob, radius, origin, tick, player, combat);
                 // (L2: the enemy comes, if it's small or medium; a big one, or a medium one pulled
                 // not long ago, only gets the tap)
                 if self.pull {
@@ -521,11 +566,17 @@ impl Hook {
                     sound(SOUND_BUZZ, 0.35);
                     return Some(Phase::Back);
                 }
-                // (R2 held on a colossus: the rope from its highest spot in reach, colossus.rs;
-                // let go, the zip, and Mario catches on to it as he gets there)
-                if button && crate::colossus::is_colossus(radius, height) && crate::colossus::start_rope(None, Some(&mob), feet, vel, air, origin) {
-                    log("hook: the rope, on a colossus");
-                    return Some(Phase::Roping);
+                // a medium one: R2 let go already, the zip-kick; held, it's decided on (0.2 s from
+                // the throw: the vault over it, odm.rs)
+                if medium {
+                    if button && tick.wrapping_sub(self.born) >= VAULT_HOLD && crate::odm::vault(&mob, feet, tick, ray) {
+                        log("hook: the vault over it");
+                        return Some(Phase::Back);
+                    }
+                    if button && tick.wrapping_sub(self.born) < VAULT_HOLD {
+                        return Some(Phase::Deciding(tick));
+                    }
+                    return self.zip_kick_to(id, &mob, radius, height, feet, origin, tick);
                 }
                 let Some((_, f)) = chest(&mob, height) else { return Some(Phase::Back) };
                 let to = zip_to_enemy(feet, f, radius, height);
@@ -534,16 +585,26 @@ impl Hook {
                 worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], 0, 1) });
                 Some(Phase::Zipping(tick))
             }
-            Aim::Map { at, floor } => {
+            Aim::Map { at, floor, cone } => {
+                // (the cone's spot is only the rope's: R2 let go, the cap comes back)
+                if cone && !button {
+                    log("hook: the rope's spot, R2 let go");
+                    return Some(Phase::Back);
+                }
                 self.map_used = true;
                 sound(SOUND_CLINK, 0.55);
                 crate::impact::hook_latch(at);
                 // R2 held on a spot high above him, aimed up at it (a branch, a ledge, a ceiling;
                 // a wall ahead is the zip and the cling, as ever): the rope there
-                let up = (at - feet).normalize_or_zero().y > 0.45;
+                let up = cone || (at - feet).normalize_or_zero().y > 0.45;
                 if button && up && at.y > feet.y + crate::colossus::ROPE_ABOVE && crate::colossus::start_rope(Some(at), None, feet, vel, air, origin) {
                     log("hook: the rope, on the map");
                     return Some(Phase::Roping);
+                }
+                // (the cone's spot is no place to zip to: a ceiling, a branch over him)
+                if cone {
+                    log("hook: the rope's spot, no rope there");
+                    return Some(Phase::Back);
                 }
                 // a floor: his feet on it; a wall: his chest at the spot, his body against it
                 let (to, kind) = if floor {
@@ -581,15 +642,50 @@ fn medium_pulled(mob: &FieldInsHandle) {
     list.push((key(mob), Instant::now()));
 }
 
-/// R2 held this many ticks after the hook caught a big one: the pole swing; at most one this often
-const SWING_HOLD: u32 = 6;
-/// ...once he's this close to its body (m): from farther the swing's circle would be a jump
-const SWING_NEAR: f32 = 3.0;
-const SWING_COOLDOWN: u32 = 90;
+/// R2 held this many ticks from the throw on a medium one: the vault over it (let go sooner, the
+/// zip-kick); the zip-kick's blow from his hand this far off its body (m)
+const VAULT_HOLD: u32 = 6;
+const KICK_REACH: f32 = 1.3;
+/// the rope's cone looks this far (m)
+const CONE_REACH: f32 = 25.0;
 /// the tether's second enemy within this far of the first (m)
 const TETHER_RANGE: f32 = 15.0;
 
 impl Hook {
+    /// The hook's little hit on `mob` as it latches (a flinch, a point of style), and its sound.
+    fn tap(&mut self, mob: &FieldInsHandle, radius: f32, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat) {
+        let here = HavokPosition(self.pos.x, self.pos.y, self.pos.z, 0.0);
+        let near = combat::nearby(&here, 4.0 + radius, origin);
+        if let Some(i) = near.iter().position(|t| t.shootable().is_some_and(|h| key(h) == key(mob))) {
+            combat.deal(player, &near, &[(i, Attack::Hook, false)], tick);
+        }
+        sound(SOUND_LATCH, 0.6);
+        crate::impact::hook_latch(self.pos);
+        // (an enemy gives the wall back)
+        self.map_used = false;
+    }
+
+    /// Off to medium enemy `mob`: the zip that ends in the kick (zip kind 3).
+    #[allow(clippy::too_many_arguments)]
+    fn zip_kick_to(&self, id: i32, mob: &FieldInsHandle, radius: f32, height: f32, feet: Vec3, origin: [f32; 3], tick: u32) -> Option<Phase> {
+        let (_, f) = chest(mob, height)?;
+        let to = zip_to_enemy(feet, f, radius, height);
+        let sm = er_to_sm(origin, &HavokPosition(to.x, to.y, to.z, 0.0));
+        log("hook: Mario flies to it, the zip-kick");
+        worker::call("hook zip", move |_| unsafe { sm64::sm64_er_zip(id, sm[0], sm[1], sm[2], 3, 1) });
+        Some(Phase::Zipping(tick))
+    }
+
+    /// The zip-kick's blow on medium enemy `mob` as he gets to it.
+    fn zip_kick(&self, mob: &FieldInsHandle, radius: f32, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat) {
+        let here = HavokPosition(self.pos.x, self.pos.y, self.pos.z, 0.0);
+        let near = combat::nearby(&here, 4.0 + radius, origin);
+        if let Some(i) = near.iter().position(|t| t.shootable().is_some_and(|h| key(h) == key(mob))) {
+            log("hook: zip-kick");
+            combat.deal(player, &near, &[(i, Attack::ZipKick, false)], tick);
+        }
+    }
+
     /// The tether's other enemy: the best one near the first, other than it, in sight of it.
     fn second(&self, first: &FieldInsHandle, feet: Vec3, origin: [f32; 3], ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Option<FieldInsHandle> {
         let at = self.pos;

@@ -193,9 +193,12 @@ at (up to 20 m):
 
 | It catches | What happens |
 |---|---|
-| An enemy of any size | Mario flies to it and pops up in front of it for an air combo |
+| A small enemy | Mario flies to it and pops up in front of it for an air combo |
+| A medium enemy (up to 1.4 m wide and 3.4 m tall) | Tapped: the **zip-kick**, he flies to it and kicks off it, bouncing up into the air for the air string. Held (0.2 s from the throw; the cap waits on it a moment if it got there sooner): the **vault**, a flip over its head landing behind it, facing it (BEHIND!: his blows on it count ×1.3 for a second) |
+| A big enemy (a boss, a strong or huge one) | The **Attack on Titan hook**: the cap anchors to the bone nearest the middle of the screen (see [below](#attack-on-titan-hook)) |
 | A wall | Mario flies to it and clings to it a moment: A wall kicks off it, LT lets go |
 | A floor or a ledge | Mario flies there and lands |
+| Nothing (the sky), RT held | A spot for **the rope** ahead and above him in a cone (a branch, a ledge, a ceiling 6-25 m off, best about 50° up); tapped, the cap only comes back |
 | **LT held** (any time, ground or air) + RT: a small enemy | Dragged in to Mario; in the air it hangs in front of him, ready for the air string |
 | LT + RT: a medium enemy (a stronger or wider regular one, up to 1.4 m wide and 3.4 m tall) | Dragged in too, but the same one only every 5 s, and in the air it drops in front of him (no endless juggle) |
 | LT + RT: a big enemy (a boss, a strong one) | Only a tiny hit: it doesn't come and Mario doesn't go |
@@ -337,9 +340,8 @@ Timing, gadgets, hook tricks, finishers and power-ups (spec: `docs/superpowers/s
 | LT held + R3 (on his feet) | **Grab** | The nearest enemy in front within arm's reach (the next one if that can't be taken): a small one is carried like a Bob-omb, B throws it far (it flies like the home run, bowls over whoever it meets and lands alive, hardly hurt: the fun is the throw, not the damage); this is the only way to grab: no blow or dive picks one up; a medium or big one stunned, its stance broken (by the game's poise, a Mikiri, a wall slam: a soft chime tells), by the tail, never ridden then: spin the stick, B lets go and it flies (3-8% when it lands) |
 | RT on a small enemy, then X | **Home run** | Batted away along the camera, bowling over whoever it meets |
 | RT on one enemy, RT on another | **Tether** | The two yanked into each other |
-| RT held on a medium or big enemy (after Mario flew to it) | **Pole swing** | Mario swings round it for 4 s, faster and faster. Let go and he's flung off along the swing with its inertia into a flying kick: swing between big enemies, or get away. Held to the end, he lands on its back (Capture) |
-| A in the air next to a colossus (an enemy taller than 3.6 m or wider than 1.6 m), or RT tapped on one | **Climb the colossus** (Shadow of the Colossus) | Mario grabs on to the spot nearest him: its bones are the spots (feet, knees, hips, hands, arms, shoulders, back, neck, head, tail: they move with it), and one whose bones can't be read gets spots round its body. Hanging, his **grip** (a ring by him) runs down, faster the harder it thrashes, and comes back standing on its back or head; out of grip, or hit, he falls. A leaps to the next spot (the stick picks which way, else up), B lets go, LT held **slides him down the limb**, spot to spot and faster and faster (A off it jumps with all that speed, RT throws the rope and the slide's speed feeds the swing; off the limb's end he's flung), RT throws the rope from up there. Two **weak points** glow faintly on it (pale gold stars, clearer as he nears them: its head, and its back or a limb): X held on one charges the star strike (he trembles), let go it lands, harder the longer it charged (WEAK POINT!, a stance crack, a slow moment); X tapped anywhere else is a small blow. Every star struck out: **COLOSSAL!**, its stance broken (the tail grab's moment). The camera backs off by its size and sinks below him as he climbs, looking up at the beast |
-| RT held as the cap catches a spot high above (a branch, a ledge, a ceiling) or a colossus | **The rope** (Spider-Man, Bionic Commando, a tetherball) | Mario swings from it on a rope, a real pendulum. On a colossus it hangs from its highest steady spot in reach (head, neck, back, shoulders, never a flailing hand) and follows it smoothly: run past one, hook it and the run carries him round and round its body (never through it), the stick pumping the swing. A held climbs up the rope (shorter and faster, off the ground), B held lets more out; on the ground he runs along it, the rope taken up. All the way up, A grabs on to that spot. RT let go: off along the swing with all its speed and a bit more, up (the catapult), in a flying kick that hits whoever it meets. Rope to rope in the air; near a colossus's spot, A grabs on. RT tapped is the zip, as before. The hook's reach and the rope's length go by the place: shut in, 20 m as ever; out in the open by a huge colossus, up to 50 m of hook and 40 m of rope |
+| A in the air next to a colossus (an enemy taller than 7.5 m or wider than 3 m: the really huge ones), or A as the AoT hook's line brings him to one | **Climb the colossus** (Shadow of the Colossus) | Mario grabs on to the spot nearest him: its bones are the spots (feet, knees, hips, hands, arms, shoulders, back, neck, head, tail: they move with it), and one whose bones can't be read gets spots round its body. Hanging, his **grip** (a ring by him) runs down, faster the harder it thrashes, and comes back standing on its back or head; out of grip, or hit, he falls. A leaps to the next spot (the stick picks which way, else up), B lets go, LT held **slides him down the limb**, spot to spot and faster and faster (A off it jumps with all that speed, RT throws the rope and the slide's speed feeds the swing; off the limb's end he's flung), RT throws the rope from up there. Two **weak points** glow faintly on it (pale gold stars, clearer as he nears them: its head, and its back or a limb): X held on one charges the star strike (he trembles), let go it lands, harder the longer it charged (WEAK POINT!, a stance crack, a slow moment); X tapped anywhere else is a small blow. Every star struck out: **COLOSSAL!**, its stance broken (the tail grab's moment). The camera backs off by its size and sinks below him as he climbs, looking up at the beast |
+| RT held as the cap catches a spot high above (a branch, a ledge, a ceiling; with nothing where the camera looks, one ahead and above in a cone), or RT thrown from on a colossus | **The rope** (Spider-Man, Bionic Commando) | Mario swings from it on a rope, a real pendulum. Thrown from on a colossus it hangs from its highest steady spot in reach (head, neck, back, shoulders, never a flailing hand) and follows it smoothly, round its body (never through it), the stick pumping the swing. A held climbs up the rope (shorter and faster, off the ground), B held lets more out; on the ground he runs along it, the rope taken up. All the way up, A grabs on to that spot. RT let go: off along the swing with all its speed and a bit more, up (the catapult), in a flying kick that hits whoever it meets. Rope to rope in the air; near a colossus's spot, A grabs on. RT tapped is the zip, as before. The hook's reach and the rope's length go by the place: shut in, 20 m as ever; out in the open by a huge colossus, up to 50 m of hook and 40 m of rope |
 | LT + R3 next to a medium or big enemy worn down to half its health (the only way up) | **Capture** (Odyssey) | Only once it's at half its health or less: a gold ring with Mario's face closes in over its head for a moment, with a soft chime, when it gets there (God of War's prompt). Up on its back (RT can be let go) it fights for Mario for 30 s: the stick steers it, X / Y its own light / heavy attacks, which hurt the enemies in its reach in front of it, B a charge that bowls enemies over; blows meant for Mario hit it instead (worn out, he hops off), and its own blows and throws never hurt or unseat him; A or RT again hops off behind it; into a wall: WALL SLAM, its stance broken. One rooted to its spot (a giant plant: it never moved while you fought it) only turns where the stick points, to aim its attacks (no walking, no charge). Big and medium enemies, not bosses with a health bar. 20 s wait after it |
 
 Creative kills get a **skillshot** (style points and a callout): AIR RAID, STOMPED, ROCK BOTTOM,
@@ -474,6 +476,35 @@ with a moment of slow motion, the camera punched in and **CRITICAL**, once an en
 on a broken stance; the sword's thrust, iai or stabs in his back; a Chain Chomp bite on one up in
 the air; a boomerang striking him both on its way out and back.
 
+### Attack on Titan hook
+
+RT on a big enemy (a boss, a strong one, a giant) no longer zips Mario to it: the cap **anchors to
+one of its bones**, the one nearest the middle of the screen (its neck, head, an arm, a leg, its
+tail: the canonical bones the colossus climb uses), a ring on it, and the camera turns round behind
+Mario to keep him and the bone on screen (`src/odm.rs`).
+
+| On the line | What happens |
+|---|---|
+| Left stick held | He swings round the anchor (at most a quarter turn a second, 3 s a line), the line's length kept |
+| Left stick let go | The line **reels him in**, faster and faster: 12 → 30 m/s |
+| B | A **burst of gas**: +40%, fading over 0.8 s. Two charges (the pips by him), both back on any hit or on landing |
+| Right stick flicked | The anchor moves to the next bone that way on screen |
+| **X in the last quarter second** before he gets there | **The strike**: with the Star Sword, the hammer, the Chomp or the boomerang a spin slash, with the fists a flying kick. Harder the faster he comes: ×(speed / 20 m/s), from ×0.3 to ×1.8. On the **nape or the head from behind**: ×1.5 more, a stance crack and **NAPE!** (bosses: ×1.5 at most, all together) |
+| No X | A glancing hit, worth half |
+| A as he gets there, on a colossus | He grabs on (the climb) |
+| RT | Let go: off the line, falling on with its speed |
+
+The line's colour tells his speed: blue (under 12 m/s, a "tink" on the hit), gold (under 20), orange
+(under 28), red (above, a heavy crash); the ring turns white in the strike's window. After any hit
+the blow holds a moment, he backflips up and away (about 7 m), and **A** (or RT) throws the next
+anchor. The line drops if it runs through the scenery, he hits a wall on the way, a blow knocks him
+off, or after 6 s.
+
+Logs: `odm: anchored on its Neck (12.3 m)`, `odm: STRIKE at 27.4 m/s on its Neck (tier 2, x2.05,
+from behind)`, `odm: glancing hit at ...`, `odm: gas (1 left)`, `odm: flick to its Hand`,
+`odm: re-anchor`, `odm: line dropped (caught on the scenery)`, `hook: zip-kick`,
+`odm: vault over it (...)`, `combat: from behind x1.3`, `hook: the rope's cone found a spot ...`.
+
 ### Damage balance
 
 Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
@@ -504,11 +535,12 @@ close and risky hits.
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
+| Attack on Titan hook | — | Strike **8%** at 20 m/s, **2.4-14.4%** by speed, **21.5%** at most on the nape from behind; glancing hit half (**1.2-7.2%**); bosses about **1.5%** at 20 m/s, **2.2%** at most (capped); zip-kick **5.7%**; blows on an enemy he vaulted **×1.3** for 1 s |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
 | Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
 | Capture: its attacks **5% / 8.5%**, charge **6%** each, wall slam | — | **11%** and the stance broken |
 
-(The shares above were worked out with a 0.75 damage factor; the current one is 0.57, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 24% off each (44% with Reforged; the hammer's row is at 0.6 already, see its own table; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 11% of them (13% with Reforged; ini `boss_damage_factor`), more for the
+(The shares above were worked out with a 0.75 damage factor; the current one is 0.57, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 24% off each (44% with Reforged; the hammer's row is at 0.6 already, see its own table; throws, Yoshi's trample and the bat keep theirs); bosses take about 11% of them (13% with Reforged; ini `boss_damage_factor`), more for the
 risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever does it.
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
@@ -612,7 +644,7 @@ replaces this fork's DLL with the original one.
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer an ice block, the Chain Chomp a dark orb, the boomerang a poison glob (up to the 4 s charge); with the Star Sword its lightning (the skyward strike, the Zeus throw in the air, held 10 s the storm cloud) |
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
 | R3 | | Parry; with LT held, the grab |
-| RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing. Held as it catches a spot high up or a colossus: the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
+| RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether. On a medium one: tapped the zip-kick, held the vault. On a big one: the [Attack on Titan hook](#attack-on-titan-hook) (stick orbits, B gas, X strikes, right stick changes the bone, A after a hit re-anchors). Held as it catches a spot high up (or one ahead and above): the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
 | LT held (crouched or sliding) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch. Thrown out of a slide or a run they carry his speed |
 | LB | | Next weapon (fists, Star Sword, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab). With the Star Sword in the air: the pogo (three a jump) |

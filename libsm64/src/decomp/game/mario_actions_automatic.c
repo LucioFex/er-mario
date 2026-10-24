@@ -937,7 +937,9 @@ s32 act_er_boss_ride(struct MarioState *m) {
 
 // er-mario: on a colossus (colossus.rs moves him with it every tick and picks the pose, the action's
 // arg): hanging on to a limb, standing on top of it, leaping to the next, a blow, the charge of the
-// star strike (trembling), flying up the hook's line, hanging from the hook's rope, sliding down a limb
+// star strike (trembling), flying up the hook's line, hanging from the hook's rope, sliding down a limb;
+// on the AoT hook's line (odm.rs) the spin slash (8, spinning round), the flying kick (9) and the
+// backflip off a hit (10)
 s32 er_cling_mode = 0;
 
 s32 act_er_cling(struct MarioState *m) {
@@ -968,6 +970,26 @@ s32 act_er_cling(struct MarioState *m) {
         case 5: set_mario_animation(m, MARIO_ANIM_DIVE); break;
         case 6: set_mario_animation(m, MARIO_ANIM_HANG_ON_CEILING); break;
         case 7: set_mario_animation(m, MARIO_ANIM_SLIDE); break;
+        case 8:
+            set_mario_animation(m, MARIO_ANIM_TWIRL);
+            if (m->actionTimer == 0) {
+                play_sound(SOUND_ACTION_SPIN, m->marioObj->header.gfx.cameraToObject);
+                play_sound(SOUND_MARIO_HOOHOO, m->marioObj->header.gfx.cameraToObject);
+            }
+            break;
+        case 9:
+            set_mario_animation(m, MARIO_ANIM_AIR_KICK);
+            if (m->actionTimer == 0) {
+                set_anim_to_frame(m, 0);
+                play_sound(SOUND_MARIO_PUNCH_HOO, m->marioObj->header.gfx.cameraToObject);
+            }
+            break;
+        case 10:
+            set_mario_animation(m, MARIO_ANIM_BACKFLIP);
+            if (m->actionTimer == 0) {
+                set_anim_to_frame(m, 0);
+            }
+            break;
         default: set_mario_animation(m, MARIO_ANIM_IDLE_ON_LEDGE); break;
     }
     m->actionTimer++;
@@ -978,6 +1000,10 @@ s32 act_er_cling(struct MarioState *m) {
         m->marioObj->header.gfx.pos[2] += (f32) ((m->actionTimer * 11) % 5 - 2) * 9.0f;
     }
     vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    // (the spin slash: round and round as he comes in, a turn every seven ticks or so)
+    if (m->actionArg == 8) {
+        m->marioObj->header.gfx.angle[1] += (s16)(m->actionTimer * 0x2400);
+    }
     return FALSE;
 }
 

@@ -68,9 +68,8 @@ pub const ACT_ER_ZIP: u32 = 0x0080_0892;
 /// timing (timing.rs): the Mikiri stomp, the dash strike
 pub const ACT_ER_MIKIRI: u32 = 0x0082_0893;
 pub const ACT_ER_BONK: u32 = 0x0080_039A;
-/// the hook's (hook.rs): the home run, the pole swing round a big enemy, the kick off it
+/// the hook's (hook.rs): the home run, the kick off the rope (colossus.rs) or the line (odm.rs)
 pub const ACT_ER_HOME_RUN: u32 = 0x0080_039B;
-pub const ACT_ER_POLE_SWING: u32 = 0x0080_0895;
 pub const ACT_ER_SWING_KICK: u32 = 0x0080_0896;
 /// forward + Y: the leap at an enemy into the weapon's dive (er_moves.c act_er_leap)
 const ACT_ER_LEAP: u32 = 0x0080_0897;
@@ -78,10 +77,10 @@ const ACT_ER_LEAP: u32 = 0x0080_0897;
 /// act_er_rise)
 pub const ACT_ER_RISE: u32 = 0x0080_089D;
 /// the combos' moves
-const COMBO_ACTIONS: [u32; 26] = [
+const COMBO_ACTIONS: [u32; 25] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
-    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN, ACT_ER_POLE_SWING,
+    ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN,
     ACT_ER_SWING_KICK, ACT_ER_LEAP, ACT_ER_RISE,
 ];
 /// L1 held this long (ticks): back to the fists

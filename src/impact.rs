@@ -175,6 +175,11 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::Steam | Attack::Shatter | Attack::BloodBolt | Attack::CorrosiveArc => Some((0, 1.3, false)),
         Attack::Plasma | Attack::Ignition | Attack::Boiling | Attack::CrimsonSpikes => Some((0, 1.6, true)),
         Attack::Hail | Attack::Rot => Some((0, 0.8, false)),
+        // the AoT hook's: the strike a heavy hold before the rebound, a glancing hit a light one, the
+        // zip-kick a solid one
+        Attack::OdmStrike => Some((6, 1.6, true)),
+        Attack::OdmGlance => Some((2, 1.0, false)),
+        Attack::ZipKick => Some((3, 1.2, false)),
     }
 }
 

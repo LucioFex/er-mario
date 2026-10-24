@@ -312,8 +312,7 @@
 #define ACT_ER_CHOMP_AIR               0x00800891 // (0x091 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
 #define ACT_ER_ZIP                     0x00800892 // (0x092 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING)
 #define ACT_ER_MIKIRI                  0x00820893 // (0x093 | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ATTACKING)
-#define ACT_ER_POLE_SWING              0x00800895 // (0x095 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) round a hooked enemy
-#define ACT_ER_SWING_KICK              0x00800896 // (0x096 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) off the pole swing
+#define ACT_ER_SWING_KICK              0x00800896 // (0x096 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) off the rope or the line
 #define ACT_ER_LEAP                    0x00800897 // (0x097 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) forward + Y, the gap closer
 #define ACT_ER_SCRIPT_AIR              0x0080089E // (0x09E | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) a scripted move in the air (script.rs)
 #define ACT_ER_RISE                    0x0080089D // (0x09D | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) X + A, the weapon's rising blow

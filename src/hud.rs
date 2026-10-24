@@ -1062,6 +1062,39 @@ fn draw_colossus(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId],
     }
 }
 
+/// The AoT hook's line (odm.rs): a ring on the bone it's anchored to (white and wider in the strike's
+/// window), the line tinted by his speed's tier (blue a "tink", gold, orange, red), the gas left.
+fn draw_odm(dl: &imgui::draw_list::DrawListMut<'_>, size: [f32; 2]) {
+    let Some(h) = crate::odm::hud() else { return };
+    const TINTS: [[f32; 3]; 4] = [[0.55, 0.75, 1.0], [1.0, 0.88, 0.35], [1.0, 0.55, 0.15], [1.0, 0.22, 0.3]];
+    let tint = TINTS[(h.tier as usize).min(3)];
+    let col = |c: [f32; 3], a: f32| imgui::ImColor32::from_rgba_f32s(c[0], c[1], c[2], a);
+    let t = crate::flame::clock();
+    // (from his hand, as the hook's line: its cap's at the anchor)
+    let hand = crate::hook::sprite().map_or(h.hand, |s| s.hand);
+    if let (Some((a, za)), Some((b, zb))) = (project(hand, size), project(h.anchor, size)) {
+        if za < 60.0 && zb < 60.0 {
+            let width = (size[1] / za.min(zb).max(1.0) * 0.03).clamp(1.5, 6.0);
+            dl.add_line(a, b, col(tint, 0.55)).thickness(width).build();
+        }
+    }
+    if let Some((c, z)) = project(h.anchor, size) {
+        if z < 80.0 {
+            let r = (size[1] / z.max(1.0) * 0.3).clamp(10.0, 44.0) * (1.0 + 0.06 * (t * 6.0).sin());
+            let (ring, r, thick) = if h.window { ([1.0, 1.0, 1.0], r * 1.3, 3.5) } else { (tint, r, 2.5) };
+            dl.add_circle(c, r, col(ring, 0.85)).thickness(thick).build();
+            dl.add_circle(c, r * 0.22, col(ring, 0.85)).filled(true).build();
+        }
+    }
+    if let Some((m, _)) = project(h.mario + Vec3::Y * 1.5, size) {
+        for k in 0..crate::odm::GAS_CHARGES {
+            let full = k < h.gas;
+            let p = [m[0] + 22.0 + k as f32 * 13.0, m[1]];
+            dl.add_circle(p, 5.0, if full { col([0.9, 0.95, 1.0], 0.85) } else { col([0.1, 0.1, 0.12], 0.4) }).filled(true).build();
+        }
+    }
+}
+
 /// The camera as the overlay draws through it: where, its axes, the view's slopes (x, y) and the
 /// pixels a metre spans 1 m off.
 struct View {
@@ -1535,6 +1568,7 @@ impl ImguiRenderLoop for Overlay {
                 draw_fx(&dl, textures, size, &partner, &[]);
             }
             draw_colossus(&dl, textures, size);
+            draw_odm(&dl, size);
         }
 
         // Mario got hurt: the screen's edges flash red, fading

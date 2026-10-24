@@ -56,6 +56,7 @@ mod kart;
 mod kartproto;
 mod moving;
 mod noise;
+mod odm;
 mod moves;
 mod collision_geometry;
 mod throw_collision;
@@ -860,6 +861,7 @@ fn warp_to(m: &mut MarioState, to: glam::Vec3, player_ref: &PlayerIns) {
     impact::warp_puff(glam::Vec3::new(from.0, from.1, from.2));
     impact::warp_puff(to);
     colossus::release();
+    odm::release();
     m.hook.drop();
     m.moving.clear(&mut m.havok);
     m.origin = [to.x, to.y, to.z];
@@ -1358,6 +1360,7 @@ fn rescale(m: &mut MarioState, k: f32, player_ref: &PlayerIns) {
     set_scale(BASE_SCALE * k);
     log(format!("mega: world scale x{k} at {:?}", (here.0, here.1, here.2)));
     colossus::release();
+    odm::release();
     m.moving.clear(&mut m.havok);
     m.origin = [here.0, here.1, here.2];
     set_mario_position(m.id, [0.0, 0.0, 0.0]);
@@ -2237,6 +2240,8 @@ fn frame(data: &FD4TaskData) {
             })
         }
     };
+    // the AoT hook's line (odm.rs): a flick of the right stick moves its anchor to the next bone
+    odm::right_stick(pad.map_or(0, |p| p.Gamepad.sThumbRX), pad.map_or(0, |p| p.Gamepad.sThumbRY));
     // On Yoshi with the keyboard: whichever of the two last steered him. The keys go by the
     // game's own camera (a stick can be turned to Lakitu's, keys can't), so that camera shows.
     let riding = RIDING.load(Ordering::Relaxed);
@@ -2270,6 +2275,7 @@ fn frame(data: &FD4TaskData) {
         // (out of the world, a load: a captured enemy is let go while its handle still names it)
         bossride::clear();
         colossus::clear();
+        odm::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2434,6 +2440,7 @@ fn frame(data: &FD4TaskData) {
             stopwatch::clear();
             bossride::clear();
             colossus::clear();
+            odm::clear();
             bat::clear();
             maxfin::clear();
             reaction::clear();
@@ -2701,7 +2708,8 @@ fn frame(data: &FD4TaskData) {
             // (a popup pausing the game freezes the camera's controls too)
             let frozen = WORLD_PAUSED.load(Ordering::Relaxed);
             let key = |vk: i32| !frozen && kbd::focused() && unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0;
-            let stick = pad.or(cam_pad).filter(|_| !frozen).map(|p| (p.Gamepad.sThumbRX as i32, p.Gamepad.sThumbRY as i32)).unwrap_or((0, 0));
+            // (on the AoT hook's line the right stick is its flick's, odm.rs)
+            let stick = pad.or(cam_pad).filter(|_| !frozen && !odm::holds_camera()).map(|p| (p.Gamepad.sThumbRX as i32, p.Gamepad.sThumbRY as i32)).unwrap_or((0, 0));
             const T: i32 = 20000;
             // C-left, C-right, C-up, C-down
             let c = [
@@ -3055,6 +3063,7 @@ fn frame(data: &FD4TaskData) {
         stopwatch::clear();
         bossride::clear();
         colossus::clear();
+        odm::clear();
         dodge::clear();
         grab::clear();
         status::clear();
@@ -3070,6 +3079,7 @@ fn frame(data: &FD4TaskData) {
         stopwatch::clear();
         bossride::clear();
         colossus::clear();
+        odm::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -3097,6 +3107,7 @@ fn frame(data: &FD4TaskData) {
             m.fire.carpets.shift(glam::Vec3::from(d));
             reaction::shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
+            odm::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
             m.havok.refresh_bodies();
@@ -3648,7 +3659,7 @@ fn frame(data: &FD4TaskData) {
                 l_hammer = false;
             }
         }
-        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
+        if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !odm::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
             sword::set_out(w == weapons::SWORD);
@@ -3683,6 +3694,8 @@ fn frame(data: &FD4TaskData) {
                 inputs.button_b = 0;
             }
         }
+        // (R2 itself, for the hook's presses: also while the line or the colossus has the buttons)
+        let hook_held = b_hook;
         // on a colossus or on the hook's rope (colossus.rs): its own buttons, nobody else's then
         {
             let (sx, sy) = (inputs.stick_x, inputs.stick_y);
@@ -3695,14 +3708,46 @@ fn frame(data: &FD4TaskData) {
             let allowed = !m.dead && !big && !rock::active() && !bossride::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
             let _perf8 = perf::span(perf::COLOSSUS);
-            let out = colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
+            let ray = |from: glam::Vec3, to: glam::Vec3| {
                 let d = to - from;
                 havok?
                     .phys_world
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
-            });
+            };
+            // the AoT hook's line first (odm.rs): on it, colossus.rs gets nothing (an A on it near a
+            // colossus would grab on)
+            let line = odm::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray);
+            let out = if line.consumed { colossus::Out { consumed: true, drop_hook: false } } else { colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray) };
             drop(_perf8);
+            // a button that went down while they had them stays theirs until it's let go (held on
+            // after the line or the climb it was a new press for SM64 and the moves: the strike's X
+            // an air move cutting the rebound short, a let-go's B a dash)
+            {
+                static EATEN: Mutex<[bool; 9]> = Mutex::new([false; 9]);
+                let mut eaten = EATEN.lock().unwrap_or_else(|e| e.into_inner());
+                let now = [inputs.button_a != 0, inputs.button_b != 0, inputs.button_z != 0, x_move, y_move, b_dash, b_fire, l_hammer, r3];
+                for k in 0..9 {
+                    eaten[k] = now[k] && (eaten[k] || out.consumed);
+                }
+                if !out.consumed {
+                    if eaten[0] {
+                        inputs.button_a = 0;
+                    }
+                    if eaten[1] {
+                        inputs.button_b = 0;
+                    }
+                    if eaten[2] {
+                        inputs.button_z = 0;
+                    }
+                    let held = [&mut x_move, &mut y_move, &mut b_dash, &mut b_fire, &mut l_hammer, &mut r3];
+                    for (k, b) in held.into_iter().enumerate() {
+                        if eaten[k + 3] {
+                            *b = false;
+                        }
+                    }
+                }
+            }
             if out.consumed {
                 inputs.button_a = 0;
                 inputs.button_b = 0;
@@ -3713,6 +3758,10 @@ fn frame(data: &FD4TaskData) {
             }
             if out.drop_hook {
                 m.hook.drop();
+            }
+            // (the rebound's A: the hook again, as if R2 went down)
+            if line.rethrow {
+                m.hook.rethrow();
             }
         }
         let kit_on = inputs.button_z != 0 && traps::crouching(m.state.action) && fire_allowed && !interacting && !big && !carry::holding() && !swing::holding() && !RIDING.load(Ordering::Relaxed);
@@ -4440,8 +4489,8 @@ fn frame(data: &FD4TaskData) {
                         // (not swimming, hanging, on a pole or a shell, zipping, on a ladder, in a
                         // cutscene action, rolling as the Rock: the palm thrust would cut those short)
                         let a = state.action;
-                        let busy = a & (0x2000 | 0x0020_0000 | 0x0010_0000 | 0x0001_0000) != 0 || a & 0x1C0 == 0x100 || a == moves::ACT_ER_ZIP || a == moves::ACT_ER_POLE_SWING || a == ACT_ER_LADDER;
-                        let free = fire_allowed && !m.dead && a & 0x0002_0000 == 0 && !busy && !mega::active() && !rock::active() && !bossride::active() && !colossus::active() && !swing::holding() && !carry::holding();
+                        let busy = a & (0x2000 | 0x0020_0000 | 0x0010_0000 | 0x0001_0000) != 0 || a & 0x1C0 == 0x100 || a == moves::ACT_ER_ZIP || a == ACT_ER_LADDER;
+                        let free = fire_allowed && !m.dead && a & 0x0002_0000 == 0 && !busy && !mega::active() && !rock::active() && !bossride::active() && !colossus::active() && !odm::active() && !swing::holding() && !carry::holding();
                         // (the grab is on his feet: SM64's pick-up actions are ground ones)
                         if r3_press && l2_held && free && a & 0x800 == 0 {
                             let face = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
@@ -4547,7 +4596,7 @@ fn frame(data: &FD4TaskData) {
                     }
                     // the hook: out of the same hand
                     let _perf16 = perf::span(perf::WEAPONS);
-                    m.hook.tick(id, b_hook, l2_held, x_move, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    m.hook.tick(id, b_hook, hook_held, l2_held, x_move, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     drop(_perf16);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
@@ -4669,8 +4718,8 @@ fn frame(data: &FD4TaskData) {
 
     // keep SM64 coordinates small: re-centre its world on Mario when he travels far
     let [mx, my, mz] = m.state.position;
-    // (not in a pole swing or a zip, whose centre and end are in the old frame, unless far out)
-    let anchored = m.state.action == moves::ACT_ER_POLE_SWING || m.state.action == moves::ACT_ER_ZIP;
+    // (not in a zip, whose end is in the old frame, unless far out)
+    let anchored = m.state.action == moves::ACT_ER_ZIP;
     let limit = if anchored { 8000.0 } else { 4000.0 };
     if mx.abs() > limit || mz.abs() > limit || my.abs() > limit {
         let here = collision::sm_to_er(m.origin, m.state.position);

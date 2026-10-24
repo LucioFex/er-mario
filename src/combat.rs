@@ -242,11 +242,16 @@ pub enum Attack {
     BloodBolt,
     CorrosiveArc,
     Rot,
+    /// the AoT hook (v4 Part 5, odm.rs): the strike at the end of the line (its worth by his speed:
+    /// Combat::deal_scaled), the glancing hit without X; the zip-kick on a medium enemy (hook.rs)
+    OdmStrike,
+    OdmGlance,
+    ZipKick,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 183] = [
+const CODES: [Attack; 186] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -271,6 +276,7 @@ const CODES: [Attack; 183] = [
     Attack::IceRocket(0), Attack::IceRocket(1), Attack::IceRocket(2), Attack::IceRocket(3), Attack::IceDive, Attack::FrostWave, Attack::Glacier, Attack::GlacierSpikes,
     Attack::DarkBeam(0), Attack::DarkBeam(1), Attack::DarkBeam(2), Attack::DarkBeam(3), Attack::AbyssBeam, Attack::Spray,
     Attack::Steam, Attack::Plasma, Attack::Boiling, Attack::Ignition, Attack::Shatter, Attack::CrimsonSpikes, Attack::Hail, Attack::BloodBolt, Attack::CorrosiveArc, Attack::Rot,
+    Attack::OdmStrike, Attack::OdmGlance, Attack::ZipKick,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -389,6 +395,11 @@ impl Attack {
             Attack::Steam | Attack::Boiling | Attack::Shatter | Attack::CrimsonSpikes | Attack::BloodBolt | Attack::CorrosiveArc => Attack::Stomp.spec(),
             Attack::Plasma | Attack::Ignition => Attack::GroundPound.spec(),
             Attack::Hail | Attack::Rot => Attack::Punch.spec(),
+            // the AoT hook's: the strike staggers like a ground pound, the glancing hit a kick, the
+            // zip-kick a stomp
+            Attack::OdmStrike => Attack::GroundPound.spec(),
+            Attack::OdmGlance => Attack::Kick.spec(),
+            Attack::ZipKick => Attack::Stomp.spec(),
         }
     }
 
@@ -645,6 +656,11 @@ impl Attack {
             Attack::BloodBolt => (8.0, "damage_blood_bolt"),
             Attack::CorrosiveArc => (10.0, "damage_corrosive_arc"),
             Attack::Rot => (2.0, "damage_rot"),
+            // the AoT hook's (Part 5): the strike a heavy blow's at 20 m/s (0.3 to 1.8 of it by his
+            // speed, Combat::deal_scaled), the glancing hit half; the zip-kick a kick and a bit
+            Attack::OdmStrike => (14.0, "damage_odm_strike"),
+            Attack::OdmGlance => (7.0, "damage_odm_glance"),
+            Attack::ZipKick => (10.0, "damage_zip_kick"),
         }
     }
 
@@ -812,6 +828,10 @@ impl Attack {
             Attack::GlacierSpikes => 1.1,
             Attack::FrostWave | Attack::Glacier | Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Spray => 1.0,
             Attack::Steam | Attack::Plasma | Attack::Boiling | Attack::Ignition | Attack::Shatter | Attack::CrimsonSpikes | Attack::Hail | Attack::BloodBolt | Attack::CorrosiveArc | Attack::Rot => 1.1,
+            // (the strike: the line's approach is the risk, and a boss's cap is on it, odm.rs)
+            Attack::OdmStrike => 1.7,
+            Attack::OdmGlance => 1.0,
+            Attack::ZipKick => 1.2,
         }
     }
 
@@ -868,6 +888,8 @@ impl Attack {
             Attack::SwordCrossBurst | Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
+            // (the AoT hook's: one a line, the next line's soon after: a re-anchor on a bone by him)
+            Attack::OdmStrike | Attack::OdmGlance => 6,
             _ => 12,
         }
     }
@@ -953,6 +975,8 @@ impl Attack {
             Attack::CometRing => 9.0,
             Attack::HammerChargeSlam => 12.0,
             Attack::Plasma | Attack::CrimsonSpikes => 6.0,
+            // (the AoT hook's strike: a heavy blow's; the nape's more, odm.rs)
+            Attack::OdmStrike => 8.0,
             _ => 0.0,
         }
     }
@@ -2093,6 +2117,12 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
     if crate::dodge::countering() && !attack.ranged() && !attack.status() {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
+    // the vault's backstab (odm.rs): his blows on one he just leapt over, from behind it
+    let behind = crate::odm::behind_bonus(handle);
+    if behind > 1.0 && !attack.status() && !attack.continuous() {
+        pct *= behind;
+        log(format!("combat: from behind x{behind}"));
+    }
     // co-op: BROS POWER, the partner just leapt off us into a Bros. Attack (brosattack.rs)
     if crate::brosattack::powered() && !attack.ranged() && !attack.status() {
         pct *= crate::brosattack::POWER;
@@ -2717,6 +2747,11 @@ impl Combat {
 
     /// Game thread: deals the damage for libsm64's hits. `tick` is the SM64 tick counter.
     pub fn deal(&mut self, player: &ChrIns, targets: &[Target], hits: &[(usize, Attack, bool)], tick: u32) {
+        self.deal_scaled(player, targets, hits, tick, 1.0);
+    }
+
+    /// As `deal`, each blow worth `by` of its share (the AoT hook's strike by his speed, odm.rs).
+    pub fn deal_scaled(&mut self, player: &ChrIns, targets: &[Target], hits: &[(usize, Attack, bool)], tick: u32, by: f32) {
         if !self.patched {
             self.patched = patch_params();
             if !self.patched {
@@ -2891,7 +2926,7 @@ impl Combat {
                 // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
                 let stopped = crate::stopwatch::frozen(handle);
                 if stopped {
-                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick);
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
                 } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd | Attack::FrenzyEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
@@ -2979,7 +3014,7 @@ impl Combat {
                 }
                 // stomps in a row on the same body (the head stomp's ground pound too): each worth
                 // less until he's back on the ground (bouncing up a big one was a lot of free damage)
-                let mut scale = if matches!(attack, Attack::Stomp | Attack::GroundPound) {
+                let mut scale = by * if matches!(attack, Attack::Stomp | Attack::GroundPound) {
                     let run = self.stomp_run.entry(target.key).or_insert(0);
                     *run += 1;
                     STOMP_FADE.powi(*run as i32 - 1).max(STOMP_FLOOR)
@@ -3140,7 +3175,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = attack.continuous() || matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || swing < 1.0 || !(heavy || due) {
                 continue;

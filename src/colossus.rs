@@ -1,6 +1,7 @@
 //! Shadow of the Colossus on Elden Ring's giants, Mario's way, and the hook's rope.
 //!
-//! The colossi: enemies taller than TALL or wider than WIDE. Their skeleton's bones (feet, knees,
+//! The colossi: enemies taller than TALL or wider than WIDE (really huge ones: the AoT hook's line,
+//! odm.rs, is for the rest of the big ones). Their skeleton's bones (feet, knees,
 //! hips, hands, arms, shoulders, back, neck, head, tail: engine_mario::pose_of) are the spots to
 //! hold on to, moving with their animation; one whose bones can't be read (or don't sit in its
 //! body) gets spots round its body instead.
@@ -14,13 +15,13 @@
 //!   Every star struck out: COLOSSAL!, its stance broken (the tail grab's moment).
 //! - The camera backs off by its size and sinks below him as he climbs, looking up at the beast.
 //! The hook's rope (hook.rs hands it over): R2 held as the cap catches a spot high above (a branch,
-//! a ledge, a ceiling) or a colossus (its highest steady spot in reach: head, neck, back,
-//! shoulders), Mario swings from it on a rope, a real pendulum, a tetherball round a colossus: run
-//! by one, hook it, and the run carries him round and round its body (never through it), the stick
-//! pumping the swing. A held climbs up the rope (shorter, faster, he leaves the ground), B lets
-//! more of it out; the ground under him he runs along, the rope taken up. All the way up to a
-//! colossus's spot, A grabs on to it. R2 let go: off along the swing, all its speed kept and a bit
-//! more, up, in a flying kick: the catapult. In the air near a colossus's spot, A grabs on again.
+//! a ledge, a ceiling), or thrown from on a colossus (its highest steady spot in reach: head, neck,
+//! back, shoulders), Mario swings from it on a rope, a real pendulum, round a colossus's body (never
+//! through it), the stick pumping the swing. A held climbs up the rope (shorter, faster, he leaves
+//! the ground), B lets more of it out; the ground under him he runs along, the rope taken up. All
+//! the way up to a colossus's spot, A grabs on to it. R2 let go: off along the swing, all its speed
+//! kept and a bit more, up, in a flying kick: the catapult. In the air near a colossus's spot, A
+//! grabs on again; the AoT hook's line reeling him in to one, A as he gets there (odm.rs).
 //! On a colossus, L2 held slides him down the limb he hangs from, spot to spot, faster and faster:
 //! A jumps off with all that speed, R2 throws the rope (to the highest spot in reach, or the map
 //! where the camera looks) and the slide's speed feeds the swing; off the limb's end he's flung.
@@ -54,9 +55,10 @@ const CHARGE: i32 = 4;
 const SWING: i32 = 6;
 const SLIDE: i32 = 7;
 
-/// a colossus: this tall, or this wide (m)
-const TALL: f32 = 3.6;
-const WIDE: f32 = 1.6;
+/// a colossus: this tall, or this wide (m) (v4 Part 5: only the really huge ones are climbed; a
+/// troll's or a knight boss's size is the AoT hook's line, odm.rs)
+const TALL: f32 = 7.5;
+const WIDE: f32 = 3.0;
 /// in the air, A grabs a spot this close to his chest (m); the next spot is leapt to up to this
 /// far (m); colossi looked for this far from him (m)
 const GRAB_REACH: f32 = 2.4;
@@ -96,6 +98,8 @@ const ROPE_LONGEST: f32 = 40.0;
 const HOOK_BASE: f32 = 20.0;
 const HOOK_OPEN: f32 = 8.0;
 const HOOK_MAX: f32 = 50.0;
+/// ...by enemies taller than this (m: a colossus's old height, the AoT hook's long lines by a troll)
+const REACH_FROM: f32 = 3.6;
 /// the slide down a limb: its pull (m/s², more the steeper), its fastest (m/s), the speed it starts
 /// at (m/s)
 const SLIDE_PULL: f32 = 16.0;
@@ -121,7 +125,7 @@ const SOUND_BUZZ: i32 = 0x700E_0081;
 const SOUND_STAR: i32 = 0x7828_9081;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Part {
+pub(crate) enum Part {
     Foot,
     Knee,
     Hip,
@@ -148,25 +152,25 @@ impl Part {
 
 /// A spot to hold on to: its bone (or a point round the body, 1000 on), its part, where it is.
 #[derive(Clone, Copy, Debug)]
-struct Spot {
-    id: u32,
-    part: Part,
-    at: Vec3,
+pub(crate) struct Spot {
+    pub(crate) id: u32,
+    pub(crate) part: Part,
+    pub(crate) at: Vec3,
 }
 
-/// A colossus as it is now.
-struct Titan {
-    mob: FieldInsHandle,
-    key: u64,
-    feet: Vec3,
-    radius: f32,
-    height: f32,
-    fwd: Vec3,
-    spots: Vec<Spot>,
+/// A colossus as it is now (or any big enemy's body and bones: odm.rs anchors to them).
+pub(crate) struct Titan {
+    pub(crate) mob: FieldInsHandle,
+    pub(crate) key: u64,
+    pub(crate) feet: Vec3,
+    pub(crate) radius: f32,
+    pub(crate) height: f32,
+    pub(crate) fwd: Vec3,
+    pub(crate) spots: Vec<Spot>,
 }
 
 impl Titan {
-    fn spot(&self, id: u32) -> Option<Spot> {
+    pub(crate) fn spot(&self, id: u32) -> Option<Spot> {
         self.spots.iter().copied().find(|s| s.id == id)
     }
     /// out from its middle at `p` (level), the way his back is to
@@ -176,7 +180,7 @@ impl Titan {
     }
     /// a spot within its body (a bone the reading puts far off it, or one flung out on a limb's end,
     /// is no place to hang the rope from: it hung in the sky beside the beast)
-    fn in_body(&self, s: &Spot) -> bool {
+    pub(crate) fn in_body(&self, s: &Spot) -> bool {
         let flat = (s.at - self.feet).with_y(0.0).length();
         flat <= self.radius * 2.0 + 1.2 && s.at.y >= self.feet.y - 0.6 && s.at.y <= self.feet.y + self.height * 1.25 + 0.8
     }
@@ -271,13 +275,18 @@ pub fn hook_reach(feet: Vec3, origin: [f32; 3]) -> f32 {
         .filter(|t| !t.friendly() && !t.is_prop())
         .map(|t| t.height * crate::scale())
         .fold(0.0f32, f32::max);
-    let big = ((tallest - TALL) * 2.0).clamp(0.0, 22.0);
+    let big = ((tallest - REACH_FROM) * 2.0).clamp(0.0, 22.0);
     (HOOK_BASE + open * (HOOK_OPEN + big)).min(HOOK_MAX)
 }
 
 /// The rope's longest from here: as the hook's reach goes.
 fn rope_max(reach: f32) -> f32 {
     (ROPE_MAX + (reach - HOOK_BASE) * 0.75).clamp(ROPE_MAX, ROPE_LONGEST)
+}
+
+/// How far the rope reaches from `feet` (hook.rs's cone looks no farther).
+pub fn rope_reach(feet: Vec3, origin: [f32; 3]) -> f32 {
+    rope_max(hook_reach(feet, origin))
 }
 
 /// The rope while he swings on it (his hand, where it hangs from), the hook's line drawn along it
@@ -447,7 +456,7 @@ fn parts_of(skeleton: usize) -> Vec<(usize, Part)> {
 }
 
 /// The colossus `h` now: its body and the spots on it.
-fn titan(h: &FieldInsHandle) -> Option<Titan> {
+pub(crate) fn titan(h: &FieldInsHandle) -> Option<Titan> {
     let wcm = unsafe { WorldChrMan::instance() }.ok()?;
     let chr: &ChrIns = wcm.chr_ins_by_handle(h)?;
     if chr.modules.data.hp <= 0 {
@@ -557,7 +566,7 @@ fn hold(t: &Titan, s: &Spot, mario: Vec3) -> (Vec3, Vec3) {
 }
 
 /// Mario put at `feet` (Elden Ring), facing `dir`, in pose `mode` (into ACT_ER_CLING with `start`).
-fn place(id: i32, origin: [f32; 3], feet: Vec3, dir: Vec3, mode: i32, start: bool) {
+pub(crate) fn place(id: i32, origin: [f32; 3], feet: Vec3, dir: Vec3, mode: i32, start: bool) {
     let sm = crate::collision::er_to_sm(origin, &HavokPosition(feet.x, feet.y, feet.z, 0.0));
     let yaw = (dir.x.abs() + dir.z.abs() > 1e-3).then(|| (-dir.x).atan2(dir.z));
     worker::call("colossus place", move |_| unsafe {
@@ -571,7 +580,7 @@ fn place(id: i32, origin: [f32; 3], feet: Vec3, dir: Vec3, mode: i32, start: boo
 }
 
 /// Off it with `vel` (Elden Ring, m/s): a flying kick along it, or a fall (`kick` false).
-fn let_go(id: i32, vel: Vec3, kick: bool) {
+pub(crate) fn let_go(id: i32, vel: Vec3, kick: bool) {
     let vel = vel.clamp_length_max(LET_GO_MAX);
     let k = crate::scale() * 30.0;
     let sm = Vec3::new(-vel.x, vel.y, vel.z) / k;
@@ -1125,6 +1134,28 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
         }
     }
     out
+}
+
+/// The AoT hook's line brought him (his chest at `chest`) against colossus `t` with A held (odm.rs):
+/// onto its nearest spot he can hold. False: none in reach.
+pub(crate) fn grab_at(t: &Titan, chest: Vec3) -> bool {
+    let dist = |sp: &Spot| (sp.at - chest).length();
+    let Some(sp) = t.spots.iter().copied().filter(|sp| holdable(t, sp) && dist(sp) <= GRAB_REACH * 1.6).min_by(|a, b| dist(a).total_cmp(&dist(b))) else {
+        return false;
+    };
+    let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if !matches!(s.phase, Phase::Idle) {
+        return false;
+    }
+    s.last_spots = (0, None, Vec::new());
+    s.phase = Phase::Cling { mob: t.mob, spot: sp.id, since: Instant::now(), charge: None, strike_until: None, last_tap: None };
+    // (its buttons weren't read on the line: the A that grabbed, a B still held, are no presses here)
+    s.prev = [true; 4];
+    drop(s);
+    crate::impact::hook_latch(sp.at);
+    sound(SOUND_GRAB, 0.5);
+    log(format!("colossus: grabbed on off the line ({:?})", sp.part));
+    true
 }
 
 /// A spot he can hold on to now: one on top, or high enough off the ground to hang from.
