@@ -15,6 +15,7 @@ mod hook;
 mod parry;
 mod ride;
 mod caps;
+mod charge;
 mod cannon;
 mod carpet;
 mod carry;
@@ -78,6 +79,7 @@ mod perf;
 mod presses;
 mod revive;
 mod script;
+mod sfx;
 mod sm64;
 mod squish;
 mod starpower;
@@ -169,7 +171,7 @@ const LAVA_MATERIALS: [i32; 6] = [7, 24, 27, 39, 47, 62];
 /// Havok collision layers Mario collides with (terrain, buildings, props, ...).
 const COLLISION_LAYERS: [u32; 11] = [0x1e, 0x2e, 0x37, 0x38, 0x39, 0x3a, 0x46, 0x47, 0x48, 0x49, 0x51];
 /// Raycast filter for the ground probes.
-const RAY_FILTER: u32 = 0x08;
+pub(crate) const RAY_FILTER: u32 = 0x08;
 /// Pushing the stick on his feet and going nowhere for a second: what's in his way, for the log
 /// (invisible walls after a fast travel, 2026-10-24): SM64's walls within 1.5 m (from the game's
 /// collision or the rays' fallback), and whether the game's own ray that way finds anything. Once
@@ -2272,7 +2274,7 @@ fn frame(data: &FD4TaskData) {
             let mut top = TOP.lock().unwrap_or_else(|e| e.into_inner());
             if top.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f32() >= 30.0 {
                 *top = Some(std::time::Instant::now());
-                log(format!("perf: most time in the last 30 s: {}", perf::top()));
+                log(format!("perf: most time in the last 30 s: {} | memory: {}", perf::top(), perf::memory()));
             }
         }
         if p.time >= 2.0 && !debug() {
@@ -3216,7 +3218,7 @@ fn frame(data: &FD4TaskData) {
         swing::reset();
         carry::reset();
     } else if m.dead && hp > 0 {
-        log("respawned: recreating Mario");
+        log(format!("respawned: recreating Mario (memory: {})", perf::memory()));
         m.moving.clear(&mut m.havok);
         let id = m.id;
         rock::clear(id);
@@ -3658,15 +3660,19 @@ fn frame(data: &FD4TaskData) {
             let from_lava = on_lava.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0) && combat::boss_handles().is_empty();
             drop(on_lava);
             let hurt = damaged.filter(|_| !m.dead && !from_held && !from_lava && !revive::downed());
-            if debug() && was_damaged {
+            // (always for a blow in the kart from nobody known: the log showed nine of those, cause
+            // unknown)
+            if was_damaged && (debug() || (karting::holds() && attacker.is_none())) {
                 log(format!(
-                    "hurt: {} by {} (last carried {:#x}), hp {} of {}, mario action {:#x}",
+                    "hurt: {} by {} (last carried {:#x}), hp {} of {}, mario action {:#x}, the Tarnished's anim {}{}",
                     if from_held { "ignored, from the enemy Mario holds or threw" } else if from_lava { "ignored, the game's lava damage" } else { "taken" },
                     attacker.map_or("nobody".to_string(), |id| format!("c{id:04}")),
                     carry::last_mob_key(),
                     data.hp,
                     data.max_hp,
-                    m.state.action
+                    m.state.action,
+                    current_anim(&player_ref.chr_ins),
+                    if karting::holds() { ", in the kart" } else { "" }
                 ));
                 let effects: Vec<i32> = player_ref.chr_ins.special_effect.entries().map(|e| e.param_id).collect();
                 log(format!("hurt: effects on him {effects:?}, floor material {}", player_ref.chr_ins.modules.physics.material_info.hit_material));
@@ -4255,6 +4261,26 @@ fn frame(data: &FD4TaskData) {
             m.ticks,
         );
         drop(_perf10);
+        // X held, charging (charge.rs): his walk slowed, X no punch of SM64's meanwhile
+        if let Some((w, held, level)) = m.moves.charging() {
+            inputs.stick_x *= charge::WALK;
+            inputs.stick_y *= charge::WALK;
+            inputs.button_b = 0;
+            // (its element gathering in his hands, more by level)
+            if held % 4 == 0 {
+                let feet = to_er(m.origin, m.state.position);
+                let fwd = glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos());
+                let up = if matches!(w, weapons::SWORD | weapons::HAMMER) { 1.6 } else { 0.9 };
+                let hand = glam::Vec3::new(feet.0, feet.1 + up, feet.2) + fwd * if w == weapons::CHOMP { 1.4 } else { 0.1 };
+                let tint = match w {
+                    weapons::HAMMER => [0.6, 0.85, 1.0],
+                    weapons::CHOMP => [0.85, 0.1, 0.2],
+                    weapons::SWORD => [1.0, 0.95, 0.5],
+                    _ => [1.0, 0.55, 0.15],
+                };
+                impact::element_spark(hand, tint, 0.3 + 0.35 * level as f32);
+            }
+        }
         // the Star Sword in hand: X is its moves' alone (swordplay.rs), never SM64's punches, kicks
         // and dives, nor er_moves.c's (its dash strike); X stays read for the moves and the NICE!
         if weapon_on == weapons::SWORD && sword::owns_b(m.state.action) {
@@ -4424,14 +4450,26 @@ fn frame(data: &FD4TaskData) {
                 let off = (want - m.state.face_angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
                 f.c.turn = off.to_degrees().clamp(-STEER_RATE, STEER_RATE);
             }
-            // (the rising cut: X still held as it launches, he goes up with the enemy)
-            if mv.held_rise.is_some_and(|(t, _)| t == f.t) && x_move {
+            // (a swing's sound that's the mod's own, sfx.rs: played here, once a tick of the move,
+            // SM64 gets none)
+            if let Some(kind) = sfx::from_script(f.c.sound) {
+                static LAST: Mutex<Option<(u32, u16, u16)>> = Mutex::new(None);
+                let key = (m.moves.script.starts(), f.id, f.t);
+                if LAST.lock().unwrap_or_else(|e| e.into_inner()).replace(key) != Some(key) {
+                    sfx::play(kind, f.c.sound_volume);
+                }
+                f.c.sound = 0;
+            }
+            // (the rising cut: its button still held as it launches, he goes up with the enemy)
+            if mv.held_rise.is_some_and(|(t, _)| t == f.t) && if mv.rise_on_y { y_move } else { x_move } {
                 f.c.set_vel_y = 1;
                 f.c.vel_y = mv.held_rise.map_or(0.0, |r| r.1);
                 log(format!("script: {}, X held: up with it", mv.name));
             }
         }
         let mesh_drawn = EZ_MARIO.load(Ordering::Relaxed) || DEBUG_DRAW.load(Ordering::Relaxed);
+        // (X held, charging: the weapon held up meanwhile, below)
+        let charging_now = m.moves.charging();
         let result = worker::call("tick", move |ctx| {
             // (the co-op leash held him back last tick, or he warped: from there)
             if let Some([x, y, z]) = leash_fix {
@@ -4575,7 +4613,21 @@ fn frame(data: &FD4TaskData) {
             const ACT_GROUP_MASK: u32 = 0x1C0;
             let busy_hands = matches!(state.action & ACT_GROUP_MASK, 0x0C0 | 0x100) || peace;
             // (the Star Sword's blade, held where its move points it)
-            let blade = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action)).and_then(|f| f.blade);
+            let scripted = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action)).and_then(|f| f.blade);
+            // (charging the Drive: the blade cocked high behind his right shoulder, as DMC's)
+            let blade = scripted.or_else(|| charging_now.filter(|c| c.0 == weapons::SWORD).map(|_| (-150.0, 110.0, 90.0)));
+            // (charging: the hand drawn back up behind his shoulder with the sword or the hammer,
+            // low by his hip with the fists, out with the Chomp's chain)
+            if let (Some((w, _, _)), None) = (charging_now, script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action))) {
+                if let Some(p) = parts.as_mut() {
+                    let (reach, pitch) = match w {
+                        weapons::SWORD | weapons::HAMMER => (0.6, 70.0),
+                        weapons::CHOMP => (0.9, 10.0),
+                        _ => (0.25, -40.0),
+                    };
+                    reach_ik(p, &state, reach, pitch, blade.map(|b| (b, 0.0)));
+                }
+            }
             // the scripted move's hand reach first (what's in his hand goes where it goes): out along
             // the blade's way when the move points one, else straight out ahead; held through a
             // hit-stop too (the arm doesn't pop back)
@@ -4609,6 +4661,26 @@ fn frame(data: &FD4TaskData) {
                         }
                         _ => {}
                     }
+                }
+            } else if let Some((w, held, level)) = charging_now {
+                // charging (charge.rs): the hammer raised behind him, growing; the Chomp straining
+                // ahead on its chain, snapping
+                let t = held as f32;
+                match w {
+                    weapons::HAMMER => {
+                        combo.hammer_scripted = 1;
+                        combo.hammer_yaw = -160.0;
+                        combo.hammer_pitch = 70.0 + 4.0 * (t * 0.9).sin();
+                        combo.hammer_scale = 1.0 + 0.2 * level as f32;
+                    }
+                    weapons::CHOMP => {
+                        combo.chomp_scripted = 1;
+                        combo.chomp_yaw = 8.0 * (t * 0.7).sin();
+                        combo.chomp_reach = 190.0 + 20.0 * level as f32 + 15.0 * (t * 1.3).sin();
+                        combo.chomp_height = 60.0;
+                        combo.chomp_bite = (0.5 + 0.5 * (t * 0.8).sin()).clamp(0.0, 1.0);
+                    }
+                    _ => {}
                 }
             }
             let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));

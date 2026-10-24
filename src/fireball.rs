@@ -172,6 +172,35 @@ pub fn shot_size(el: Element, level: u8) -> f32 {
     }
 }
 
+/// the charge in his hand by level (m across), for the elements that aren't fire (whose charge
+/// grows to the giant one and the sun: SIZE): small and growing level by level, the 10 s one big
+/// (lightning's a crackling ball in his hand: with fire's sizes its arcs ran metres round him)
+const CHARGE_SIZE: [[f32; 5]; 4] = [
+    [0.36, 0.5, 0.64, 0.8, 1.6],
+    [0.36, 0.5, 0.64, 0.8, 1.4],
+    [0.36, 0.5, 0.64, 0.8, 1.4],
+    [0.3, 0.42, 0.55, 0.7, 1.1],
+];
+
+/// The charge in his hand (m across) at `level`, RB held `held` ticks: its level's size, growing
+/// toward the next one's as it's held.
+pub fn charge_size(el: Element, level: u8, held: u32) -> f32 {
+    let size = |l: usize| match el {
+        Element::Fire => SIZE[l.min(SUN as usize)] * 0.7,
+        _ => CHARGE_SIZE[(el as usize).clamp(1, 4) - 1][l.min(GIANT as usize)],
+    };
+    let top = if el == Element::Fire { SUN } else { GIANT } as usize;
+    let l = (level as usize).min(top);
+    if l == 0 {
+        return size(0) * (held as f32 / CHARGE_TICKS[0] as f32).clamp(0.3, 1.0);
+    }
+    if l >= top {
+        return size(l);
+    }
+    let k = held.saturating_sub(CHARGE_TICKS[l - 1]) as f32 / (CHARGE_TICKS[l] - CHARGE_TICKS[l - 1]) as f32;
+    size(l) + (size(l + 1) - size(l)) * k.clamp(0.0, 1.0) * 0.85
+}
+
 /// The blow a shot of `el` at `level` lands.
 fn shot_attack(el: Element, level: u8) -> Attack {
     if el == Element::Frost { Attack::Glacier } else { Attack::Fire(level) }
@@ -632,7 +661,9 @@ impl Fire {
             let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
             let hand = er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]);
             let casting = self.playing.and_then(crate::rbmoves::beam_ticks).is_some();
-            self.beam.tick(hand, Vec3::new(-fx, 0.0, fz), casting, player, combat, origin, tick, &er_ray);
+            for (at, level) in self.beam.tick(hand, Vec3::new(-fx, 0.0, fz), casting, player, combat, origin, tick, &er_ray) {
+                self.bursts.push(Burst::of(Element::Blood, at, level, tick));
+            }
             self.carpets.tick(player, combat, origin, tick);
         }
         self.fly(origin, tick, player, combat, &ray);
@@ -1097,19 +1128,8 @@ impl Fire {
                 let m = state.position;
                 let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
                 let hand = er(origin, [m[0] + fx * 45.0, m[1] + 75.0, m[2] + fz * 45.0]);
-                let level = self.level as usize;
                 let pulse = 1.0 + 0.12 * (tick as f32 * 0.9).sin();
-                let fire = self.el == Element::Fire;
-                let grow = match level {
-                    0 => (held as f32 / CHARGE_TICKS[0] as f32).clamp(0.3, 1.0),
-                    // from 4 s on it keeps growing towards the giant one, from 10 s towards the sun
-                    3 | 4 if fire => {
-                        let k = (held - CHARGE_TICKS[level - 1]) as f32 / (CHARGE_TICKS[level] - CHARGE_TICKS[level - 1]) as f32;
-                        1.0 + k.clamp(0.0, 1.0) * (SIZE[level + 1] / SIZE[level] - 1.0) * 0.85
-                    }
-                    _ => 1.0,
-                };
-                let size = shot_size(self.el, self.level) * if fire { 0.7 } else { 0.8 } * pulse * grow;
+                let size = charge_size(self.el, self.level, held) * pulse;
                 // (a big one is held up over his head, not around him)
                 // (the sun, higher still: he holds it up, not stands in it)
                 let hand = hand + Vec3::Y * ((size * 0.5 - 0.3).max(0.0) + (size - 3.0).max(0.0) * 0.5) * k;
@@ -1154,14 +1174,16 @@ impl Fire {
             let flags = if b.launch { BLAST_LAUNCH } else { 0 };
             out.blasts.push(Blast { pos: b.pos, level: b.level, age: tick - b.born, size, ground: b.ground.flatten(), flags, vis, element: b.el as u8 });
         }
-        // the ice rocket punch's fist in its block of ice (rbmoves.rs), bigger by charge
+        // the ice rocket's block of ice on the hammer's head (rbmoves.rs), bigger by charge (at his
+        // fist if the hammer isn't drawn)
         if let Some(l) = self.playing.and_then(|id| match id {
             crate::script::ICE_ROCKET..=crate::script::ICE_DIVE => Some((id - crate::script::ICE_ROCKET).min(3) as usize),
             _ => None,
         }) {
             let m = state.position;
             let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-            let fist = er(origin, [m[0] + fx * 70.0, m[1] + 70.0, m[2] + fz * 70.0]);
+            let at = crate::hammer::head().map_or([m[0] + fx * 70.0, m[1] + 70.0, m[2] + fz * 70.0], |h| h.to_array());
+            let fist = er(origin, at);
             out.orbs.push(Orb { pos: fist, vel: er_vel(state.velocity), size: FIST_SIZE[l] * k, level: l as u8, age: tick, flags: ORB_CHARGE, ground: None, vis: 1.0, element: Element::Frost as u8 });
         }
         out.beams = crate::beam::looks();
@@ -1236,4 +1258,39 @@ fn camera() -> Option<Vec3> {
 /// In the air, in an action SM64's air throw can take over (not a ground pound, not hurt).
 fn action_air(action: u32) -> bool {
     action & ACT_FLAG_AIR != 0 && action != ACT_GROUND_POUND && action & (ACT_FLAG_INVULNERABLE | ACT_NO_THROW) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn level_at(el: Element, held: u32) -> u8 {
+        let level = CHARGE_TICKS.iter().filter(|&&t| held >= t).count() as u8;
+        if el == Element::Fire { level } else { level.min(GIANT) }
+    }
+
+    /// Every element's charge in his hand grows as RB is held (before: the Chomp's, the
+    /// boomerang's and the hammer's stayed the same size until the 10 s one).
+    #[test]
+    fn every_charge_grows_as_it_is_held() {
+        for el in [Element::Fire, Element::Frost, Element::Blood, Element::Poison, Element::Lightning] {
+            let mut last = 0.0f32;
+            for held in (SHOW_CHARGE_AFTER..=CHARGE_TICKS[3] + 10).step_by(5) {
+                let s = charge_size(el, level_at(el, held), held);
+                assert!(s >= last - 1e-4, "{el:?} shrank at {held}: {s} < {last}");
+                last = s;
+            }
+            let (small, one, three) = (charge_size(el, 0, SHOW_CHARGE_AFTER), charge_size(el, 1, CHARGE_TICKS[0]), charge_size(el, 3, CHARGE_TICKS[2]));
+            assert!(one > small * 1.2 && three > one * 1.3, "{el:?}: {small} {one} {three}");
+        }
+    }
+
+    /// Lightning's charge is a crackling ball in his hand, not fire's sun over his head.
+    #[test]
+    fn lightnings_charge_stays_in_his_hand() {
+        for held in [CHARGE_TICKS[2], CHARGE_TICKS[3], CHARGE_TICKS[4] - 1] {
+            let s = charge_size(Element::Lightning, level_at(Element::Lightning, held), held);
+            assert!(s < 1.3, "{held}: {s}");
+        }
+    }
 }

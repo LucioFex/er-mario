@@ -105,6 +105,10 @@ const WEAPON_ACTIONS: [u32; 11] = [
 /// a switch that waited for a weapon's move to end is dropped after this many ticks
 const PENDING_TICKS: u32 = 45;
 const ACT_IDLE: u32 = 0x0C40_0201;
+const ACT_WALKING: u32 = 0x0400_0440;
+/// (SM64's, soft: the charge beginning, a level of it reached)
+const SOUND_CHARGE_BEGIN: i32 = 0x305C_0081;
+const SOUND_CHARGE_UP: i32 = 0x3016_0091;
 /// SM64's first punch (a string's first blow): its wind-up and its follow-through
 const ANIM_FIRST_PUNCH: i32 = 0x67;
 const ANIM_FIRST_PUNCH_FAST: i32 = 0x69;
@@ -410,6 +414,9 @@ pub struct Moves {
     grammar: crate::combo::Grammar,
     /// the Dodge Offset: X held through a dash keeps the string's step (combo.rs)
     offset: crate::combo::Offset,
+    /// X held: the charge while he walks (charge.rs); its weapon, ticks held and level now
+    charge: crate::charge::Charge,
+    charging: Option<(u8, u32, u8)>,
     /// the scripted move playing (script.rs): lib.rs works out its frames
     pub script: crate::script::Player,
     /// X, Y or B pressed while the scripted move couldn't be cut yet: taken when it can (no press
@@ -510,6 +517,8 @@ impl Moves {
             x_at: None,
             grammar: Default::default(),
             offset: Default::default(),
+            charge: Default::default(),
+            charging: None,
             script: Default::default(),
             script_buffer: None,
             queued: None,
@@ -616,6 +625,12 @@ impl Moves {
         Some(next)
     }
 
+    /// X held, charging (charge.rs): the weapon (weapons.rs; the sword's SWORD), ticks held, level
+    /// (lib.rs slows his walk and holds the weapon up meanwhile).
+    pub fn charging(&self) -> Option<(u8, u32, u8)> {
+        self.charging
+    }
+
     /// L1 was the Star Power chord's (lib.rs, starpower.rs): its press is no weapon switch.
     pub fn cancel_lb(&mut self) {
         self.lb_since = None;
@@ -656,7 +671,6 @@ impl Moves {
         let state = crate::weaponplay::State {
             air,
             playing: playing.map(|id| (id, next)),
-            playing_for,
             landed: self.script.has_landed(),
             dashing: dodging(a),
             dashed: if dodging(a) { Some(0) } else { self.dash_seen.map(|t| tick.wrapping_sub(t)) },
@@ -681,7 +695,7 @@ impl Moves {
         self.attack_seen = Some(tick);
         self.chain_seen = Some(tick);
         // (a string's heavy end: the next X starts it over)
-        if matches!(id, crate::script::HEAVY_HOOK | crate::script::SUPER_PUNCH | crate::script::FIST_FLURRY) || id == crate::script::SUPER_PUNCH + 1 {
+        if matches!(id, crate::script::HEAVY_HOOK | crate::script::FIST_FLURRY) {
             self.x_chain = 0;
         }
         self.first_end = None;
@@ -886,6 +900,54 @@ impl Moves {
             self.script_buffer = None;
             (x_pressed, b_pressed, y_pressed)
         };
+        // X held (every weapon but the boomerang): a charge while he walks, let go a quick blow that
+        // closes in, the weapon's own (charge.rs); the blow the press began is cut short as it
+        // begins (out of a scripted move, once it can be cut)
+        {
+            use crate::charge::Step;
+            use crate::combo::X;
+            let weapon = if sword { crate::weapons::SWORD } else { self.weapon };
+            let charges = weapon != crate::weapons::RANG && !crate::mega::active();
+            // (not X held from before a dash: that's the Dodge Offset's, kept for the next X)
+            let held = self.grammar.held(X);
+            let since_dash = self.dash_seen.map(|t| tick.wrapping_sub(t));
+            let can = charges && allowed && on_foot && !air && !dodging(a) && since_dash.is_none_or(|d| held <= d) && (!script_on || open(crate::script::NEXT));
+            let cancel = a_pressed || b_pressed || y_pressed || !allowed || air || !on_foot;
+            match self.charge.step(held, self.grammar.released(X), can, cancel) {
+                Step::Begin => {
+                    self.charging = Some((weapon, crate::charge::FROM, 0));
+                    self.x_chain = 0;
+                    self.script_buffer = None;
+                    crate::log(format!("moves: {} charging (X held)", crate::weapons::NAMES.get(weapon as usize).copied().unwrap_or("?")));
+                    crate::worker::call("charge sound", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_CHARGE_BEGIN, 0.25) });
+                    let walking = stick.0 * stick.0 + stick.1 * stick.1 > 0.04;
+                    return Some(Request::Action(if walking { ACT_WALKING } else { ACT_IDLE }, 0));
+                }
+                Step::Charging { level, held, up } => {
+                    self.charging = Some((weapon, held, level));
+                    if up {
+                        let full = level >= 2;
+                        crate::worker::call("charge sound", move |_| unsafe { sm64::sm64_play_sound_volume(SOUND_CHARGE_UP, if full { 0.22 } else { 0.15 }) });
+                    }
+                    return None;
+                }
+                Step::Release { level, just } => {
+                    self.charging = None;
+                    if let Some(id) = crate::charge::release_move(weapon, level, just) {
+                        self.attack_seen = Some(tick);
+                        self.chain_seen = Some(tick);
+                        let name = crate::weapons::NAMES.get(weapon as usize).copied().unwrap_or("?");
+                        crate::log(format!("moves: {name}, {} (the charge let go at level {level}{})", crate::script::named(id), if just { ", JUST" } else { "" }));
+                        return Some(Request::Script { id, air: false, yaw: None });
+                    }
+                }
+                Step::Cancel => {
+                    self.charging = None;
+                    crate::log("moves: the charge called off");
+                }
+                Step::Idle => self.charging = None,
+            }
+        }
         if script_on {
             if a_pressed && open(crate::script::JUMP) && !air && allowed {
                 crate::log("moves: jump out of the move");
@@ -1149,8 +1211,8 @@ impl Moves {
             if !(allowed && (ground || in_air || dodging(a))) || c_move {
                 return None;
             }
-            use crate::combo::{A, X, Y};
-            // (A then X a tick or two apart: the jump A began is the spin jump's, not an aerial)
+            use crate::combo::{A, X};
+            // (A then X a tick or two apart: the jump A began is the launcher's, not an aerial)
             let jump_begun = a == ACT_JUMP && self.a_at.is_some_and(|t| tick.wrapping_sub(t) <= CHORD);
             // (the playing move's own presses: the stabs count the mashing since the thrust began)
             let playing_for = tick.wrapping_sub(self.play_since);
@@ -1160,10 +1222,6 @@ impl Moves {
                 x: x_pressed || x_raw,
                 y: y_pressed,
                 lt: z_pressed,
-                x_held: self.grammar.held(X),
-                y_held: self.grammar.held(Y),
-                x_released: self.grammar.released(X),
-                y_released: self.grammar.released(Y),
                 back_forward: closer,
                 chord_xa: self.grammar.chord(X, A, CHORD) && (x_pressed || a_pressed),
                 dir: Some(self.grammar.dir()),
@@ -1178,7 +1236,6 @@ impl Moves {
                 landed: self.script.has_landed(),
                 ended: self.sword_ended.map(|(id, at)| (id, tick.wrapping_sub(at))),
                 dashed: if dodging(a) { Some(0) } else { self.dash_seen.map(|t| tick.wrapping_sub(t)) },
-                dashing: dodging(a),
                 // (a perfect dodge's counter gives one Flurry Rush)
                 countering: crate::dodge::flurry_ready(),
                 pogos: self.pogos,

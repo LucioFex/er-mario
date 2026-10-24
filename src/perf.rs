@@ -212,3 +212,38 @@ pub fn top() -> String {
     all.sort_by(|a, b| b.0.total_cmp(&a.0));
     all.iter().take(5).map(|(ms, name)| format!("{name} {ms:.0} ms")).collect::<Vec<_>>().join(", ")
 }
+
+/// The process' memory and the machine's, for the 30 s line and each respawn: is the game slowing
+/// down over a session the mod's doing or the PC's (paging)? "working set W MB, private P MB, H
+/// handles, page faults +F since the last; the PC: L% of its memory in use, A MB free".
+pub fn memory() -> String {
+    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX};
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+    static FAULTS: AtomicU64 = AtomicU64::new(0);
+    let mut pm = PROCESS_MEMORY_COUNTERS_EX { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32, ..Default::default() };
+    let mut handles = 0u32;
+    let mut sys = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    let (ok, got_handles, got_sys) = unsafe {
+        let me = GetCurrentProcess();
+        (
+            K32GetProcessMemoryInfo(me, &mut pm as *mut _ as *mut _, pm.cb).as_bool(),
+            GetProcessHandleCount(me, &mut handles).is_ok(),
+            GlobalMemoryStatusEx(&mut sys).is_ok(),
+        )
+    };
+    let mb = |b: usize| b as f64 / 1_048_576.0;
+    let mut out = String::new();
+    if ok {
+        let faults = pm.PageFaultCount as u64;
+        let before = FAULTS.swap(faults, Ordering::Relaxed);
+        out += &format!("working set {:.0} MB, private {:.0} MB, page faults +{}", mb(pm.WorkingSetSize), mb(pm.PrivateUsage), faults.saturating_sub(before));
+    }
+    if got_handles {
+        out += &format!(", {handles} handles");
+    }
+    if got_sys {
+        out += &format!("; the PC: {}% of its memory in use, {:.0} MB free", sys.dwMemoryLoad, sys.ullAvailPhys as f64 / 1_048_576.0);
+    }
+    out
+}

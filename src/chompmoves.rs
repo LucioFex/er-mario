@@ -1,24 +1,22 @@
 //! The Chain Chomp's new moves as data (v4 Part 3): script.rs plays them (MOVES from id CHOMP_RUSH
-//! on), weaponplay.rs picks them. The Chomp stays the fast, wide, lighter weapon: it lunges ahead
-//! dragging Mario along, is whirled overhead like a lasso, and bites in a frenzy. Its place comes
+//! on), weaponplay.rs picks them (charge.rs the ram). The Chomp stays the fast, wide, lighter
+//! weapon: it lunges ahead dragging Mario along, rams through a line of them, bites in a frenzy. Its place comes
 //! from the frame's weapon pose (lib.rs): `blade_yaw` round his facing (+ left), `out` and `up` in
 //! SM64 units from his feet, `bite` its mouth (0 shut, 1 wide).
 
 use crate::combat::Attack;
-use crate::moves::{FX_CHARGE, FX_LAUNCH, FX_SPIN};
+use crate::moves::FX_LAUNCH;
 use crate::script::Ease::*;
-use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, JUMP, SWAP};
+use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, SWAP};
 
 const FIRST_PUNCH: i32 = 0x67;
 const SECOND_PUNCH: i32 = 0x68;
 const SECOND_PUNCH_FAST: i32 = 0x6A;
 const FAST_LONGJUMP: i32 = 0x13;
 const GENERAL_LAND: i32 = 0x57;
-const THROW_LIGHT_OBJECT: i32 = 0x52;
 
 /// (SM64's: the soft ones at that volume, the voice at his body; the chain's clink, not verified)
 const SWISH: u32 = 0x305C_0081;
-const SPIN: u32 = 0x0437_8081;
 const YAH: u32 = 0x241E_8081;
 const WAH: u32 = 0x2424_8081;
 const HOO: u32 = 0x241F_8081;
@@ -73,52 +71,50 @@ pub const RUSH: Move = Move {
     ..BASE
 };
 
-/// X held: the Chomp whirled round over his head on its chain, faster and faster (a lasso)
-pub const LASSO_CHARGE: Move = Move {
-    name: "Chomp lasso charge",
-    len: 300,
-    clips: &[still(0, SECOND_PUNCH)],
-    twist: &[k(0, 0.0, Linear), k(6, -10.0, Out)],
-    pitch: &[k(0, 0.0, Linear), k(6, -6.0, Out)],
-    squash: &[k(0, 1.0, Linear), k(6, 0.96, Out)],
-    reach: &[k(0, 0.6, Linear), k(6, 1.0, Out)],
-    reach_pitch: 82.0,
-    blade_yaw: &[k(0, 0.0, Linear), k(12, 240.0, In), k(300, 7440.0, Linear)],
-    // (his hand up over his head with the chain)
-    blade_pitch: &[k(0, 20.0, Linear), k(8, 75.0, Out)],
-    blade_held: (0, 300),
-    out: &[k(0, 120.0, Linear), k(8, 150.0, Out)],
-    up: &[k(0, 60.0, Linear), k(8, 235.0, Out)],
-    bite: &[k(0, 0.0, Linear), k(8, 0.5, Out)],
-    cancels: &[c(DASH | JUMP | SWAP, 4, 4)],
-    sounds: &[(0, SWISH, 0.25), (8, SPIN, 0.22), (20, SPIN, 0.2), (32, SPIN, 0.2), (44, SPIN, 0.2)],
-    pulse: Some((12, FX_CHARGE | FX_SPIN)),
+/// X held and let go (charge.rs): the ram, the Chomp flung ahead biting and Mario dragged along
+/// behind it 4 m, through everyone in the way (the lasso's pull was the hook's job already)
+pub const RAM: Move = Move {
+    name: "Chomp ram",
+    len: 26,
+    clips: &[still(0, FIRST_PUNCH), clip(3, FAST_LONGJUMP), clip(12, GENERAL_LAND)],
+    twist: &[k(0, -30.0, Linear), k(3, 10.0, Out), k(12, 0.0, InOut)],
+    pitch: &[k(0, -6.0, Linear), k(3, 20.0, Out), k(11, 12.0, Linear), k(16, 0.0, InOut)],
+    aim: &[0],
+    approach: Some(Approach { from: 3, to: 11, max: 4.0, gap: 1.2 }),
+    squash: &[k(0, 0.9, Linear), k(3, 1.12, Out), k(11, 1.0, InOut), k(13, 0.92, Out), k(18, 1.0, InOut)],
+    dip: &[k(0, 8.0, Linear), k(3, 0.0, Out), k(13, 6.0, Out), k(18, 0.0, InOut)],
+    reach: &[k(0, 0.3, Linear), k(3, 1.0, Out), k(12, 1.0, Linear), k(20, 0.4, InOut)],
+    // (flung out ahead of him biting all the way, back by him as he lands)
+    blade_yaw: &[k(0, -150.0, Linear), k(3, 0.0, Out), k(14, 0.0, Linear), k(24, -90.0, InOut)],
+    blade_pitch: &[k(0, 0.0, Linear)],
+    blade_held: (0, 26),
+    out: &[k(0, 130.0, Linear), k(4, 420.0, Out), k(11, 300.0, Linear), k(16, 160.0, InOut), k(24, 120.0, InOut)],
+    up: &[k(0, 60.0, Linear), k(4, 70.0, Out), k(11, 60.0, Linear), k(24, 30.0, InOut)],
+    bite: &[k(0, 0.6, Linear), k(4, 1.0, Out), k(5, 0.0, In), k(7, 1.0, Out), k(8, 0.0, In), k(10, 1.0, Out), k(11, 0.0, In), k(16, 0.0, Linear)],
+    windows: &[w(3, 12, Shape::Weapon, Attack::ChompRush, 0)],
+    cancels: &[c(DASH | SWAP, 12, 10), c(ALL, 18, 14)],
+    sounds: &[(0, YAH, 0.0), (1, SWISH, 0.45), (5, CHOMP_BITE, 0.3), (8, CHOMP_BITE, 0.28), (11, CHOMP_BITE, 0.3)],
+    fx: &[(3, FX_LAUNCH)],
+    locked: (0, 3),
     ..BASE
 };
 
-/// X let go: the whirled Chomp let fly straight ahead, 12 m on its chain; a small enemy it bites is
-/// dragged in to him (combat.rs: juggle::pull)
-pub const LASSO: Move = Move {
-    name: "Chomp lasso",
-    len: 28,
-    clips: &[clip(0, THROW_LIGHT_OBJECT), clip(12, SECOND_PUNCH_FAST)],
-    twist: &[k(0, -15.0, Linear), k(4, 20.0, Out), k(14, 0.0, InOut)],
-    pitch: &[k(0, -6.0, Linear), k(4, 14.0, Out), k(14, 0.0, InOut)],
-    aim: &[0],
-    squash: &[k(0, 1.0, Linear), k(4, 1.08, Out), k(10, 1.0, InOut)],
-    reach: &[k(0, 1.0, Linear), k(12, 1.0, Linear), k(20, 0.6, InOut)],
-    reach_pitch: 30.0,
-    blade_yaw: &[k(0, 0.0, Linear), k(20, 0.0, Linear), k(27, -90.0, InOut)],
-    blade_pitch: &[k(0, 0.0, Linear)],
-    blade_held: (0, 28),
-    out: &[k(0, 120.0, Linear), k(4, 160.0, Linear), k(10, 1200.0, Out), k(13, 1150.0, Linear), k(22, 160.0, InOut), k(27, 120.0, InOut)],
-    up: &[k(0, 235.0, Linear), k(4, 200.0, Linear), k(10, 90.0, Out), k(22, 50.0, InOut), k(27, 30.0, InOut)],
-    bite: &[k(0, 0.5, Linear), k(5, 1.0, Out), k(12, 0.0, In), k(20, 0.0, Linear)],
-    windows: &[w(5, 12, Shape::Weapon, Attack::Lasso, 0)],
-    cancels: &[c(DASH | SWAP, 14, 13), c(ALL, 22, 18)],
-    sounds: &[(0, WAH, 0.0), (1, SWISH, 0.45), (12, CHOMP_BITE, 0.3)],
-    locked: (0, 5),
-    ..BASE
+/// ...let go full: 8 m, and a last crunching bite where he stops (blood)
+pub const RAM_FULL: Move = Move {
+    name: "Chomp ram (full)",
+    len: 32,
+    clips: &[still(0, FIRST_PUNCH), clip(3, FAST_LONGJUMP), clip(15, SECOND_PUNCH_FAST), clip(19, GENERAL_LAND)],
+    approach: Some(Approach { from: 3, to: 14, max: 8.0, gap: 1.2 }),
+    blade_yaw: &[k(0, -150.0, Linear), k(3, 0.0, Out), k(18, 0.0, Linear), k(30, -90.0, InOut)],
+    blade_held: (0, 32),
+    out: &[k(0, 130.0, Linear), k(4, 520.0, Out), k(14, 360.0, Linear), k(16, 240.0, Out), k(22, 160.0, InOut), k(30, 120.0, InOut)],
+    up: &[k(0, 60.0, Linear), k(4, 70.0, Out), k(14, 60.0, Linear), k(16, 90.0, Out), k(22, 40.0, InOut), k(30, 30.0, InOut)],
+    bite: &[k(0, 0.6, Linear), k(4, 1.0, Out), k(5, 0.0, In), k(7, 1.0, Out), k(8, 0.0, In), k(10, 1.0, Out), k(11, 0.0, In), k(13, 1.0, Out), k(15, 1.0, Linear), k(17, 0.0, In), k(22, 0.0, Linear)],
+    windows: &[w(3, 14, Shape::Weapon, Attack::ChompRush, 0), w(16, 18, Shape::Weapon, Attack::ChompEnd, crate::moves::FX_BANG)],
+    cancels: &[c(DASH | SWAP, 19, 17), c(ALL, 24, 19)],
+    sounds: &[(0, WAH, 0.0), (1, SWISH, 0.48), (5, CHOMP_BITE, 0.3), (8, CHOMP_BITE, 0.28), (11, CHOMP_BITE, 0.3), (16, CHOMP_BITE, 0.4)],
+    locked: (0, 3),
+    ..RAM
 };
 
 /// X mashed as the bite lands: five quick bites in front of him, the last one tossing it up
@@ -173,8 +169,8 @@ mod tests {
     #[test]
     fn the_chomps_moves_sit_at_their_ids() {
         assert_eq!(chomp(CHOMP_RUSH).name, "Chomp rush");
-        assert_eq!(chomp(CHOMP_LASSO_CHARGE).name, "Chomp lasso charge");
-        assert_eq!(chomp(CHOMP_LASSO).name, "Chomp lasso");
+        assert_eq!(chomp(CHOMP_RAM).name, "Chomp ram");
+        assert_eq!(chomp(CHOMP_RAM_FULL).name, "Chomp ram (full)");
         assert_eq!(chomp(CHOMP_FRENZY).name, "Chomp frenzy");
     }
 
@@ -190,9 +186,11 @@ mod tests {
         }
     }
 
+    /// The ram drags him 4 m (8 m full), biting all the way; the full one crunches at the end.
     #[test]
-    fn the_lasso_reaches_12_m() {
-        let far = chomp(CHOMP_LASSO).out.iter().map(|k| k.v).fold(0.0f32, f32::max);
-        assert!((far / 100.0 - 12.0).abs() < 0.5, "{far}");
+    fn the_ram_drags_him_through_them() {
+        assert_eq!(chomp(CHOMP_RAM).approach.map(|a| a.max), Some(4.0));
+        assert_eq!(chomp(CHOMP_RAM_FULL).approach.map(|a| a.max), Some(8.0));
+        assert!(chomp(CHOMP_RAM_FULL).windows.iter().any(|w| w.attack == Attack::ChompEnd));
     }
 }

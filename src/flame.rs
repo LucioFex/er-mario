@@ -245,11 +245,15 @@ pub(crate) fn cone(look: &mut Look, base: Vec3, axis: Vec3, len: f32, w: f32, co
 /// A tube along `pts` (radius `radius(k)` at each), only its faces turned to the eye, coloured by
 /// how far along (`col(k)`).
 pub(crate) fn tube(look: &mut Look, pts: &[Vec3], sides: usize, eye: Vec3, radius: &dyn Fn(usize) -> f32, col: &dyn Fn(usize) -> [f32; 4]) {
-    let frame = |k: usize| {
+    // (each ring's axes carried on from the one before: picked anew at each point they flipped
+    // where its way crossed an axis, and the tube pinched there)
+    let mut frames: Vec<(Vec3, Vec3)> = Vec::with_capacity(pts.len());
+    for k in 0..pts.len() {
         let d = (pts[(k + 1).min(pts.len() - 1)] - pts[k.saturating_sub(1)]).normalize_or(Vec3::Y);
-        let u = d.any_orthonormal_vector();
-        (u, d.cross(u))
-    };
+        let u = frames.last().map_or_else(|| d.any_orthonormal_vector(), |&(u, _)| (u - d * u.dot(d)).try_normalize().unwrap_or_else(|| d.any_orthonormal_vector()));
+        frames.push((u, d.cross(u)));
+    }
+    let frame = |k: usize| frames[k];
     for k in 0..pts.len().saturating_sub(1) {
         let ((u0, v0), (u1, v1)) = (frame(k), frame(k + 1));
         let colour = col(k);

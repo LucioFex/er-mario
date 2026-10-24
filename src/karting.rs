@@ -498,14 +498,7 @@ pub fn update(inp: &In, targets: &[Target], combat: &mut Combat, player: &ChrIns
     put_floor(&mut s, &mut out, inp.origin, feet);
     // the camera, the engine, the HUD
     let k = &ride.kart;
-    crate::lakitu::set_kart(Some(crate::lakitu::KartView {
-        off: k.pos - feet,
-        fwd: k.forward(),
-        speed: k.speed(),
-        yaw_rate: k.spin.y,
-        boost: k.boost > 0.0,
-        drift: k.drifting.map_or(0.0, |(way, _)| way),
-    }));
+    crate::lakitu::set_kart(Some(crate::lakitu::KartView { off: k.pos - feet, fwd: k.forward(), vel: k.vel, boost: k.boost > 0.0 }));
     let slide = k.vel.dot(k.right()).abs();
     // (the tyres screech round a spin-out, hiss through a drift, and when it slides sideways)
     let skid = if ride.driver.spinning() { 1.0 } else if k.drifting.is_some() { 0.6 + 0.13 * k.drift_level() as f32 } else if grounded >= 2 { ((slide - 4.0) / 6.0).clamp(0.0, 1.0) } else { 0.0 };
@@ -533,7 +526,7 @@ pub fn update(inp: &In, targets: &[Target], combat: &mut Combat, player: &ChrIns
 #[allow(clippy::too_many_arguments)]
 fn drive(ride: &mut Ride, pads: &Pads, inp: &In, targets: &[Target], combat: &mut Combat, player: &ChrIns, traps: &mut Traps, fire: &mut Fire, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, tick: u32) {
     let k = &mut ride.kart;
-    let now = KartNow { grounded: k.grounded(), vy: k.vel.y, boost: k.boost, drift: k.drift_level() };
+    let now = KartNow { grounded: k.grounded(), vy: k.vel.y, boost: k.boost, drift: k.drift_level(), upset: k.upset() };
     let acts = ride.driver.tick(pads, &now, TICK);
     let mut input = acts.input;
     // the governor: no ground ahead at speed, it slows (the map may not be loaded there yet)
@@ -552,7 +545,7 @@ fn drive(ride: &mut Ride, pads: &Pads, inp: &In, targets: &[Target], combat: &mu
         input.throttle = 0.0;
         input.brake = input.brake.max(0.5);
     }
-    let (boost_was, vel_was, drift_was) = (k.boost, k.vel, k.drift_level());
+    let (boost_was, vel_was, drift_was, righting_was) = (k.boost, k.vel, k.drift_level(), k.righting());
     let drifting_was = k.drifting.is_some();
     k.step(&input, TICK, ray);
     // a wall: its bump
@@ -561,6 +554,11 @@ fn drive(ride: &mut Ride, pads: &Pads, inp: &In, targets: &[Target], combat: &mu
         sound(SOUND_BONK, 0.4);
         crate::impact::cannon_wall(k.pos + k.rot * kartplay::NOSE);
         crate::lakitu::shake(0.4);
+    }
+    // (on its roof, A: back onto its wheels with a hop)
+    if !righting_was && k.righting() {
+        sound(SOUND_BOING, 0.35);
+        log("kart: put back on its wheels (A)");
     }
     if acts.super_hop {
         k.launch(kartplay::SUPER_HOP);

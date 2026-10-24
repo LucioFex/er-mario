@@ -188,6 +188,34 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
     }
 }
 
+/// One of the Star Sword's cuts (its sound is sfx.rs's).
+pub fn sword_blow(attack: Attack) -> bool {
+    matches!(
+        attack,
+        Attack::SwordSlash(_)
+            | Attack::SwordCleave
+            | Attack::SwordThrust
+            | Attack::SwordStab
+            | Attack::SwordStabEnd
+            | Attack::SwordRise
+            | Attack::SwordWave
+            | Attack::SwordWaveJust
+            | Attack::SwordCross
+            | Attack::SwordCrossBurst
+            | Attack::SwordLauncher
+            | Attack::SwordHelm
+            | Attack::SwordHelmRing
+            | Attack::SwordIai
+            | Attack::SwordFlurry
+            | Attack::SwordFlurryEnd
+            | Attack::SwordRave(_)
+            | Attack::SwordBreaker
+            | Attack::SwordBreakerRing
+            | Attack::SwordPogo
+            | Attack::SwordDraw
+    )
+}
+
 /// A glint of light at `at` (Star Power's round him, starpower.rs): its colour, its size (m).
 pub fn glint(at: Vec3, tint: [f32; 4], size: f32) {
     spark(at, size, tint);
@@ -238,11 +266,23 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
         crate::lakitu::shake(0.45);
     }
     let chomp = matches!(attack, Attack::Chomp | Attack::ChompAir | Attack::ChompSpin | Attack::ChompLaunch | Attack::ChompEnd);
+    // the Star Sword's cuts ring of steel over a thud (sfx.rs, the mod's own), heavier on the
+    // heavier blows, a little camera jolt on each: no SM64 punch sound under them
+    let sword = sword_blow(attack);
+    if sword {
+        let weight = if stop >= 5 { 2 } else if stop >= 3 { 1 } else { 0 };
+        crate::sfx::play(crate::sfx::Sfx::Hit(weight), [0.42, 0.52, 0.62][weight as usize]);
+        if !heavy {
+            crate::lakitu::shake(0.12 + 0.06 * stop as f32);
+        }
+    }
     let light = !heavy && !matches!(attack, Attack::Hammer | Attack::HammerWide);
     let (pick, loud) = (crate::rand01(), 0.6 + 0.4 * crate::rand01());
     worker::call("impact", move |_| unsafe {
         sm64::sm64_er_hitstop(stop as i32);
-        if light {
+        if sword {
+            // (the sword's own, above)
+        } else if light {
             // (SM64's hit, now and then with a softer thump under it)
             sm64::sm64_play_sound_volume(SOUND_ACTION_HIT, loud);
             if pick < 0.45 {
@@ -1041,7 +1081,15 @@ static FLASH: Mutex<Option<(Instant, [f32; 3], f32, f32)>> = Mutex::new(None);
 
 /// A flash over the screen (a star finish's gold), fading.
 pub fn flash(tint: [f32; 3], strength: f32, life: f32) {
-    *FLASH.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), tint, strength, life));
+    let mut f = FLASH.lock().unwrap_or_else(|e| e.into_inner());
+    // (a weaker one doesn't cut a stronger one short: the storm's big bolt and its thunder's)
+    let now = f.map_or(0.0, |(t, _, s, life)| {
+        let p = t.elapsed().as_secs_f32() / life;
+        if p >= 1.0 { 0.0 } else { s * (1.0 - p) * (1.0 - p) }
+    });
+    if strength >= now {
+        *f = Some((Instant::now(), tint, strength, life));
+    }
 }
 
 /// The screen's flash now: its colour and strength (0 when there's none).

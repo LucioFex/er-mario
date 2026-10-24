@@ -3,9 +3,9 @@
 //! reach a heavier blow by a charge, a beat or a mash, and air blows by the stick's way.
 
 use crate::combat::Attack;
-use crate::moves::{FX_BANG, FX_CHARGE, FX_LAUNCH};
+use crate::moves::{FX_BANG, FX_LAUNCH};
 use crate::script::Ease::*;
-use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, FX_SPARKLE, SWAP};
+use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, SWAP};
 
 const FIRST_PUNCH: i32 = 0x67;
 const SECOND_PUNCH: i32 = 0x68;
@@ -22,7 +22,6 @@ const YAH: u32 = 0x241E_8081;
 const HOO: u32 = 0x241F_8081;
 const WAH: u32 = 0x2424_8081;
 const UH: u32 = 0x2405_8081;
-const SHORT_STAR: u32 = 0x3016_0091;
 const PUNCH_HIT: u32 = 0x0444_C081;
 
 const fn w(from: u16, to: u16, shape: Shape, attack: Attack, fx: u32) -> Window {
@@ -45,9 +44,6 @@ const fn still(from: u16, anim: i32) -> Clip {
 const fn jab(t: u16) -> Window {
     w(t, t, Shape::Front { reach: 150.0 }, Attack::FistFlurry, 0)
 }
-
-/// the Super punch's full charge: held this long (ticks, from the press), its gleam then
-pub const SUPER_FULL: u32 = 45;
 
 /// mashed X as the Bullet Bill punch lands: ten jabs from both fists in a second (Kenshiro's,
 /// Jotaro's), an uppercut off a little hop that launches small and medium enemies
@@ -138,62 +134,52 @@ pub const FLURRY: Move = Move {
     ..BASE
 };
 
-/// X held past the punch: the fist drawn back low by his hip, his weight on the back foot, light
-/// gathering; it gleams at the full charge (SUPER_FULL)
-pub const CHARGE: Move = Move {
-    name: "Super punch charge",
-    len: 300,
-    clips: &[still(0, FIRST_PUNCH)],
-    twist: &[k(0, 0.0, Linear), k(6, -40.0, Out)],
-    pitch: &[k(0, 0.0, Linear), k(6, -6.0, Out)],
-    squash: &[k(0, 1.0, Linear), k(6, 0.9, Out)],
-    dip: &[k(0, 0.0, Linear), k(6, 12.0, Out)],
-    reach: &[k(0, 0.6, Linear), k(6, 0.25, Out)],
-    reach_pitch: -40.0,
-    cancels: &[c(DASH | crate::script::JUMP | SWAP, 4, 4)],
-    sounds: &[(0, UH, 0.4), ((SUPER_FULL - crate::weaponplay::CHARGE_AFTER) as u16, SHORT_STAR, 0.22)],
-    fx: &[((SUPER_FULL - crate::weaponplay::CHARGE_AFTER) as u16, FX_SPARKLE)],
-    pulse: Some((10, FX_CHARGE)),
-    ..BASE
-};
-
-/// X let go: a step in and the charged fist straight through (sends them back)
-pub const SUPER: Move = Move {
-    name: "Super punch",
+/// X held and let go (charge.rs): the bullet straight, the charged fist driven out as he shoots in
+/// behind it, 3 m (sends them back)
+pub const STRAIGHT: Move = Move {
+    name: "bullet straight",
     len: 22,
-    clips: &[clip(0, FIRST_PUNCH)],
-    twist: &[k(0, -40.0, Linear), k(3, 25.0, Out), k(12, 0.0, InOut)],
-    pitch: &[k(0, -6.0, Linear), k(3, 12.0, Out), k(12, 0.0, InOut)],
+    clips: &[
+        Clip { from: 0, anim: FIRST_PUNCH, frames: &[k(0, 0.0, Linear), k(2, 1.0, In)] },
+        Clip { from: 3, anim: SECOND_PUNCH, frames: &[k(3, 2.0, Linear), k(8, 5.0, Out)] },
+        clip(12, GENERAL_LAND),
+    ],
+    twist: &[k(0, -40.0, Linear), k(3, 30.0, Out), k(12, 0.0, InOut)],
+    pitch: &[k(0, -6.0, Linear), k(3, 16.0, Out), k(9, 10.0, Linear), k(14, 0.0, InOut)],
     aim: &[0],
-    approach: Some(Approach { from: 0, to: 4, max: 1.5, gap: 0.8 }),
-    squash: &[k(0, 0.9, Linear), k(3, 1.14, Out), k(8, 1.0, InOut)],
+    approach: Some(Approach { from: 1, to: 7, max: 3.0, gap: 0.7 }),
+    squash: &[k(0, 0.88, Linear), k(3, 1.16, Out), k(9, 1.0, InOut)],
     dip: &[k(0, 12.0, Linear), k(3, 0.0, Out)],
-    reach: &[k(0, 0.25, Linear), k(3, 1.0, Out), k(12, 1.0, Linear), k(18, 0.0, InOut)],
-    windows: &[w(3, 6, Shape::Front { reach: 170.0 }, Attack::SuperPunch(0), 0)],
-    cancels: &[c(ALL, 14, 9)],
-    sounds: &[(0, YAH, 0.0), (2, SWISH, 0.4)],
-    fx: &[(3, FX_LAUNCH)],
-    locked: (0, 4),
+    reach: &[k(0, 0.2, Linear), k(3, 1.0, Out), k(11, 1.0, Linear), k(18, 0.0, InOut)],
+    windows: &[w(3, 8, Shape::Front { reach: 170.0 }, Attack::SuperPunch(0), 0)],
+    cancels: &[c(DASH | SWAP, 9, 7), c(ALL, 14, 9)],
+    sounds: &[(0, YAH, 0.0), (2, SWISH, 0.42)],
+    fx: &[(2, FX_LAUNCH)],
+    locked: (0, 3),
     ..BASE
 };
 
-/// X let go on the gleam: the full Super punch, a longer step, a bang (knocks them flat)
-pub const SUPER_FULL_PUNCH: Move = Move {
-    name: "Super punch (full)",
+/// ...let go full: the flaming straight, 6 m in, a bang (it flings them, splats them on a wall)
+pub const STRAIGHT_FULL: Move = Move {
+    name: "bullet straight (full)",
     len: 28,
-    clips: &[clip(0, SECOND_PUNCH)],
-    twist: &[k(0, -40.0, Linear), k(4, 30.0, Out), k(16, 0.0, InOut)],
-    pitch: &[k(0, -6.0, Linear), k(4, 16.0, Out), k(16, 0.0, InOut)],
+    clips: &[
+        Clip { from: 0, anim: FIRST_PUNCH, frames: &[k(0, 0.0, Linear), k(2, 1.0, In)] },
+        Clip { from: 3, anim: SECOND_PUNCH, frames: &[k(3, 2.0, Linear), k(10, 5.0, Out)] },
+        clip(15, GENERAL_LAND),
+    ],
+    twist: &[k(0, -45.0, Linear), k(3, 35.0, Out), k(16, 0.0, InOut)],
+    pitch: &[k(0, -8.0, Linear), k(3, 20.0, Out), k(11, 12.0, Linear), k(16, 0.0, InOut)],
     aim: &[0],
-    approach: Some(Approach { from: 0, to: 5, max: 2.5, gap: 0.8 }),
-    squash: &[k(0, 0.88, Linear), k(4, 1.18, Out), k(10, 1.0, InOut)],
-    dip: &[k(0, 12.0, Linear), k(4, 0.0, Out)],
-    reach: &[k(0, 0.25, Linear), k(4, 1.0, Out), k(16, 1.0, Linear), k(24, 0.0, InOut)],
-    windows: &[w(4, 7, Shape::Front { reach: 190.0 }, Attack::SuperPunch(1), FX_BANG)],
-    cancels: &[c(ALL, 18, 12)],
-    sounds: &[(0, WAH, 0.0), (3, SWISH, 0.45), (5, PUNCH_HIT, 0.4)],
-    fx: &[(4, FX_LAUNCH)],
-    locked: (0, 6),
+    approach: Some(Approach { from: 1, to: 9, max: 6.0, gap: 0.7 }),
+    squash: &[k(0, 0.86, Linear), k(3, 1.2, Out), k(11, 1.0, InOut)],
+    dip: &[k(0, 14.0, Linear), k(3, 0.0, Out)],
+    reach: &[k(0, 0.2, Linear), k(3, 1.0, Out), k(14, 1.0, Linear), k(22, 0.0, InOut)],
+    windows: &[w(3, 10, Shape::Front { reach: 190.0 }, Attack::SuperPunch(1), FX_BANG)],
+    cancels: &[c(DASH | SWAP, 12, 9), c(ALL, 18, 12)],
+    sounds: &[(0, WAH, 0.0), (2, SWISH, 0.48), (4, PUNCH_HIT, 0.4)],
+    fx: &[(2, FX_LAUNCH)],
+    locked: (0, 4),
     ..BASE
 };
 
@@ -275,9 +261,8 @@ mod tests {
     #[test]
     fn the_fists_moves_sit_at_their_ids() {
         assert_eq!(fist(FIST_FLURRY).name, "hundred-hand flurry");
-        assert_eq!(fist(FIST_CHARGE).name, "Super punch charge");
-        assert_eq!(fist(SUPER_PUNCH).name, "Super punch");
-        assert_eq!(fist(SUPER_PUNCH + 1).name, "Super punch (full)");
+        assert_eq!(fist(FIST_STRAIGHT).name, "bullet straight");
+        assert_eq!(fist(FIST_STRAIGHT_FULL).name, "bullet straight (full)");
         assert_eq!(fist(HEAVY_HOOK).name, "heavy hook");
         assert_eq!(fist(METEOR_PUNCH).name, "meteor punch");
         assert_eq!(fist(FIST_DROPKICK).name, "dropkick");
@@ -295,12 +280,11 @@ mod tests {
         }
     }
 
+    /// The charge let go closes in: 3 m, 6 m full.
     #[test]
-    fn the_charge_gleams_at_full() {
-        let m = fist(FIST_CHARGE);
-        let at = (SUPER_FULL - crate::weaponplay::CHARGE_AFTER) as u16;
-        assert!(m.fx.iter().any(|f| f.0 == at && f.1 & FX_SPARKLE != 0));
-        assert!(m.sounds.iter().any(|s| s.0 == at && s.1 == SHORT_STAR));
+    fn the_straights_close_in() {
+        assert_eq!(fist(FIST_STRAIGHT).approach.map(|a| a.max), Some(3.0));
+        assert_eq!(fist(FIST_STRAIGHT_FULL).approach.map(|a| a.max), Some(6.0));
     }
 
     #[test]
@@ -318,7 +302,7 @@ mod tests {
     #[test]
     fn the_air_ones_are_air_moves() {
         assert!(fist(METEOR_PUNCH).air && fist(FIST_DROPKICK).air);
-        for id in [FIST_FLURRY, FIST_CHARGE, SUPER_PUNCH, SUPER_PUNCH + 1, HEAVY_HOOK] {
+        for id in [FIST_FLURRY, FIST_STRAIGHT, FIST_STRAIGHT_FULL, HEAVY_HOOK] {
             assert!(!fist(id).air, "{}", fist(id).name);
         }
     }

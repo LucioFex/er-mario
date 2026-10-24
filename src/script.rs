@@ -196,6 +196,8 @@ pub struct Move {
     pub bounce: f32,
     /// X still held at this tick: he goes up at this vertical speed (with the enemy it launched)
     pub held_rise: Option<(u16, f32)>,
+    /// ...Y held instead of X (the sword's High Time on Y)
+    pub rise_on_y: bool,
     /// (every, fx): shown every that many ticks from the start (a charge's glow)
     pub pulse: Option<(u16, u32)>,
 }
@@ -236,6 +238,7 @@ pub const BASE: Move = Move {
     steer: false,
     bounce: 0.0,
     held_rise: None,
+    rise_on_y: false,
     pulse: None,
 };
 
@@ -269,74 +272,70 @@ const SOUND_GENERAL_SWISH_AIR: u32 = 0x305C_0081;
 pub const BULLET_PUNCH: u16 = 0;
 pub const SKY_STRIKE: u16 = 1;
 pub const ZEUS_THROW: u16 = 2;
-/// the Star Sword's moves (swordplay.rs picks them)
+/// the Star Sword's moves (swordplay.rs picks them; charge.rs the Drive)
 pub const SW_S1: u16 = 3;
 pub const SW_S2: u16 = 4;
 #[allow(dead_code)] // (reached as SW_S2 + 1: swordplay.rs walks the string by id)
 pub const SW_S3: u16 = 5;
 pub const SW_S4: u16 = 6;
-pub const SW_WHIRL: u16 = 7;
-pub const SW_CLEAVE: u16 = 8;
-pub const SW_THRUST: u16 = 9;
-pub const SW_STABS: u16 = 10;
-pub const SW_RISE: u16 = 11;
-pub const SW_SPIN_JUMP: u16 = 12;
-pub const SW_WAVE_CHARGE: u16 = 13;
-pub const SW_WAVE: u16 = 14;
-pub const SW_WAVE_JUST: u16 = 15;
-pub const SW_SPIN: u16 = 16;
-pub const SW_SPIN_CHARGE: u16 = 17;
-/// the Great Spin by charge level: this, + 1, + 2
-pub const SW_GREAT_SPIN: u16 = 18;
-pub const SW_HURRICANE: u16 = 21;
-pub const SW_CROSS: u16 = 22;
-pub const SW_LAUNCHER: u16 = 23;
-pub const SW_HELM: u16 = 24;
-pub const SW_IAI: u16 = 25;
-pub const SW_FLURRY: u16 = 26;
+pub const SW_CLEAVE: u16 = 7;
+pub const SW_THRUST: u16 = 8;
+pub const SW_STABS: u16 = 9;
+pub const SW_RISE: u16 = 10;
+pub const SW_DRIVE: u16 = 11;
+pub const SW_DRIVE_FULL: u16 = 12;
+pub const SW_DRIVE_JUST: u16 = 13;
+pub const SW_HIGH_TIME: u16 = 14;
+pub const SW_CROSS: u16 = 15;
+pub const SW_LAUNCHER: u16 = 16;
+pub const SW_HELM: u16 = 17;
+pub const SW_IAI: u16 = 18;
+pub const SW_FLURRY: u16 = 19;
 /// the Aerial Rave's four: this to + 3
-pub const SW_RAVE: u16 = 27;
-pub const SW_BREAKER: u16 = 31;
-pub const SW_POGO: u16 = 32;
-pub const SW_DRAW: u16 = 33;
-pub const SW_DRAW_AIR: u16 = 34;
+pub const SW_RAVE: u16 = 20;
+pub const SW_BREAKER: u16 = 24;
+pub const SW_POGO: u16 = 25;
+pub const SW_DRAW: u16 = 26;
+pub const SW_DRAW_AIR: u16 = 27;
 
-/// the fists' new moves (v4 Part 3, fistmoves.rs; weaponplay.rs picks them)
-pub const FIST_FLURRY: u16 = 35;
-pub const FIST_CHARGE: u16 = 36;
-/// the Super punch, + 1 the full one
-pub const SUPER_PUNCH: u16 = 37;
-pub const HEAVY_HOOK: u16 = 39;
-pub const METEOR_PUNCH: u16 = 40;
-pub const FIST_DROPKICK: u16 = 41;
+/// the fists' new moves (v4 Part 3, fistmoves.rs; weaponplay.rs picks them, charge.rs the bullet
+/// straights)
+pub const FIST_FLURRY: u16 = 28;
+pub const FIST_STRAIGHT: u16 = 29;
+pub const FIST_STRAIGHT_FULL: u16 = 30;
+pub const HEAVY_HOOK: u16 = 31;
+pub const METEOR_PUNCH: u16 = 32;
+pub const FIST_DROPKICK: u16 = 33;
 /// the hammer's, the Chain Chomp's and the boomerang's new moves (hammermoves.rs, chompmoves.rs,
-/// rangmoves.rs; weaponplay.rs picks them)
-pub const HAMMER_CHARGE: u16 = 42;
-pub const HAMMER_VOLLEY: u16 = 43;
-pub const HAMMER_COMET: u16 = 44;
-pub const CHOMP_RUSH: u16 = 45;
-pub const CHOMP_LASSO_CHARGE: u16 = 46;
-pub const CHOMP_LASSO: u16 = 47;
-pub const CHOMP_FRENZY: u16 = 48;
-pub const RANG_SKIM: u16 = 49;
-pub const RANG_PINCER: u16 = 50;
-pub const RANG_STEER: u16 = 51;
-pub const RANG_CATCH: u16 = 52;
+/// rangmoves.rs; weaponplay.rs picks them, charge.rs the leaps and the rams)
+pub const HAMMER_CHARGE: u16 = 34;
+pub const HAMMER_VOLLEY: u16 = 35;
+pub const HAMMER_COMET: u16 = 36;
+pub const HAMMER_LEAP: u16 = 37;
+pub const HAMMER_LEAP_FULL: u16 = 38;
+pub const CHOMP_RUSH: u16 = 39;
+pub const CHOMP_RAM: u16 = 40;
+pub const CHOMP_RAM_FULL: u16 = 41;
+pub const CHOMP_FRENZY: u16 = 42;
+pub const RANG_SKIM: u16 = 43;
+pub const RANG_PINCER: u16 = 44;
+pub const RANG_STEER: u16 = 45;
+pub const RANG_CATCH: u16 = 46;
 /// RB with the hammer, the Chain Chomp and the boomerang (rbmoves.rs: `cast_move` picks them):
-/// the ice rocket punch by charge (this to + 3), the ice dive, the Glacier fist (ground, air), the
-/// dark beam by charge (ground this to + 3, air from DARK_BEAM_AIR), the Abyss beam (ground, air),
-/// the poison sweep by charge, the spray in the air, the toxic swamp
-pub const ICE_ROCKET: u16 = 53;
-pub const ICE_DIVE: u16 = 57;
-pub const GLACIER: u16 = 58;
-pub const GLACIER_AIR: u16 = 59;
-pub const DARK_BEAM: u16 = 60;
-pub const DARK_BEAM_AIR: u16 = 64;
-pub const ABYSS: u16 = 68;
-pub const ABYSS_AIR: u16 = 69;
-pub const POISON_SWEEP: u16 = 70;
-pub const POISON_AIR: u16 = 74;
-pub const SWAMP: u16 = 75;
+/// the ice rocket by charge (this to + 3), the ice dive, the Glacier fist (ground, air), the dark
+/// beam by charge (ground this to + 3, air from DARK_BEAM_AIR), the Abyss beam (ground, air), the
+/// poison sweep by charge, the spray in the air, the toxic swamp
+pub const ICE_ROCKET: u16 = 47;
+pub const ICE_DIVE: u16 = 51;
+pub const GLACIER: u16 = 52;
+pub const GLACIER_AIR: u16 = 53;
+pub const DARK_BEAM: u16 = 54;
+pub const DARK_BEAM_AIR: u16 = 58;
+pub const ABYSS: u16 = 62;
+pub const ABYSS_AIR: u16 = 63;
+pub const POISON_SWEEP: u16 = 64;
+pub const POISON_AIR: u16 = 68;
+pub const SWAMP: u16 = 69;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
@@ -457,21 +456,14 @@ pub const MOVES: &[Move] = &[
     sw::S2,
     sw::S3,
     sw::S4,
-    sw::WHIRL,
     sw::CLEAVE,
     sw::THRUST,
     sw::STABS,
     sw::RISE,
-    sw::SPIN_JUMP,
-    sw::WAVE_CHARGE,
-    sw::WAVE,
-    sw::WAVE_JUST,
-    sw::SPIN_CUT,
-    sw::SPIN_CHARGE,
-    sw::GREAT_SPIN[0],
-    sw::GREAT_SPIN[1],
-    sw::GREAT_SPIN[2],
-    sw::HURRICANE,
+    sw::DRIVE,
+    sw::DRIVE_FULL,
+    sw::DRIVE_JUST,
+    sw::HIGH_TIME,
     sw::CROSS,
     sw::LAUNCHER,
     sw::HELM,
@@ -486,18 +478,19 @@ pub const MOVES: &[Move] = &[
     sw::DRAW,
     sw::DRAW_AIR,
     fist::FLURRY,
-    fist::CHARGE,
-    fist::SUPER,
-    fist::SUPER_FULL_PUNCH,
+    fist::STRAIGHT,
+    fist::STRAIGHT_FULL,
     fist::HOOK,
     fist::METEOR,
     fist::DROPKICK,
     hammer::CHARGE,
     hammer::VOLLEY,
     hammer::COMET,
+    hammer::LEAP,
+    hammer::LEAP_FULL,
     chomp::RUSH,
-    chomp::LASSO_CHARGE,
-    chomp::LASSO,
+    chomp::RAM,
+    chomp::RAM_FULL,
     chomp::FRENZY,
     rang::SKIM,
     rang::PINCER,

@@ -662,7 +662,7 @@ impl Attack {
             Attack::DarkBeam(1) => (2.5, "damage_dark_beam_charged"),
             Attack::DarkBeam(2) => (3.0, "damage_dark_beam_charged_2"),
             Attack::DarkBeam(_) => (3.5, "damage_dark_beam_max"),
-            Attack::AbyssBeam => (2.5, "damage_abyss_beam"),
+            Attack::AbyssBeam => (3.6, "damage_abyss_beam"),
             Attack::Spray => (4.0, "damage_poison_spray"),
             // the pair finishers' reactions (Part 3d): a finisher's worth again, spread over its burst
             Attack::Steam => (8.0, "damage_steam"),
@@ -1628,6 +1628,41 @@ static STAMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0
 /// A new SM64 tick or frame (lib.rs): the next `nearby` walks the characters again.
 pub fn new_tick() {
     STAMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// the sword's shove on a regular enemy (m), a heavy cut's
+const SHOVE: f32 = 0.25;
+const SHOVE_HEAVY: f32 = 0.6;
+
+/// A regular enemy `h` (not a boss, not juggled, carried or flying) moved `dist` m straight away
+/// from Mario at `me` along the ground, if nothing's in its way.
+fn shove_back(h: &FieldInsHandle, me: glam::Vec3, dist: f32) {
+    let busy = crate::juggle::is_juggled(h) || crate::carry::is_carried(h) || crate::knock::is_flying(h) || crate::bat::is_flying(h) || crate::swing::is_down(h) || crate::stopwatch::frozen(h);
+    if !liftable(h) || busy {
+        return;
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
+    let Some(p) = wcm.chr_ins_by_handle(h).map(|c| c.modules.physics.position) else { return };
+    let at = glam::Vec3::new(p.0, p.1, p.2);
+    let away = (at - me).with_y(0.0).normalize_or_zero() * dist;
+    if away == glam::Vec3::ZERO {
+        return;
+    }
+    let chest = at + glam::Vec3::Y * 0.8;
+    let Some(player) = wcm.main_player.as_ref() else { return };
+    let blocked = unsafe { eldenring::cs::CSHavokMan::instance() }
+        .ok()
+        .and_then(|hv| hv.phys_world.cast_ray(crate::RAY_FILTER, &HavokPosition(chest.x, chest.y, chest.z, 0.0), eldenring::position::PositionDelta(away.x * 2.0, 0.0, away.z * 2.0), player))
+        .is_some();
+    if blocked {
+        return;
+    }
+    if let Some(chr) = wcm.chr_ins_by_handle_mut(h) {
+        let to = at + away;
+        let ph = &mut chr.modules.physics;
+        ph.position = HavokPosition(to.x, to.y, to.z, 0.0);
+        ph.chr_proxy_pos_update_requested = true;
+    }
 }
 
 /// The mod put this character at `at` (carry.rs's hands, swing.rs's way back): the walk's place
@@ -3281,6 +3316,16 @@ impl Combat {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
+                // the Star Sword's cuts shove a regular enemy back a little (Rebellion's weight), the
+                // heavy ones more
+                // (not the many-hit ones' each blow: the stabs, the Flurry's cuts, the air string's,
+                // nor the launchers: they'd push the enemy out of the rest of it)
+                let shoves = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo);
+                if shoves && !crate::coop::guest() {
+                    if let Some(h) = target.handle.as_ref() {
+                        shove_back(h, glam::Vec3::new(me.0, me.1, me.2), if crate::impact::stop(attack) >= 5 { SHOVE_HEAVY } else { SHOVE });
+                    }
+                }
                 if attack.finisher() && swing == 1.0 && target.handle.is_some() {
                     crate::style::finisher(at);
                     crate::starpower::finisher_landed();

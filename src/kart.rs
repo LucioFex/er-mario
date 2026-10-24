@@ -92,11 +92,23 @@ const BOUNCE: f32 = 0.3;
 const BODY_SPRING: f32 = 20000.0;
 const BODY_DAMPER: f32 = 1500.0;
 const BODY_GRIP: f32 = 0.25;
-/// in the air, a soft pull upright (N m per unit tilt) and the spin damped (per s)
-const AIR_RIGHT: f32 = 60.0;
+/// in the air, a pull upright (N m per unit tilt; Mario Kart's level themselves off a jump), its
+/// tumble damped (per s) and all its spin a little
+const AIR_RIGHT: f32 = 900.0;
+const AIR_TILT_DAMP: f32 = 4.0;
 const AIR_SPIN_DAMP: f32 = 0.6;
+/// on its wheels: its roll against the ground under them held (N m per radian, an anti-roll bar's
+/// work, arcade-strong) and its roll spin damped (N m s): Mario Kart's karts lean, they don't roll
+/// over (on rough ground a drift rolled it onto its roof, one wheel's spring and grip at a time)
+const ROLL_HOLD: f32 = 4000.0;
+const ROLL_DAMP: f32 = 500.0;
+/// A on its roof or its side: a hop up (m/s) and it's turned back onto its wheels in this long (s)
+const RIGHT_HOP: f32 = 4.0;
+const RIGHT_TIME: f32 = 0.3;
 /// upside down (or on its side) this long, slow, it's put right where it lies (s)
 const TUMBLE_RESET: f32 = 2.0;
+/// its up this far from the sky's at most (its y): on its roof or its side
+const UPSET: f32 = 0.3;
 /// the steps it's worked out in (s): two a game tick
 const STEP: f32 = 1.0 / 60.0;
 
@@ -152,12 +164,14 @@ pub struct Kart {
     hop_was: bool,
     /// a hop or a launch: this long (s) it isn't held to the ground (nor pressed onto it)
     lift: f32,
+    /// A on its roof: turning back onto its wheels for this long yet (s), to this
+    righting: Option<(f32, Quat)>,
 }
 
 impl Kart {
     /// A kart at `pos`, turned `yaw` (radians round Y; 0 faces +Z).
     pub fn new(pos: Vec3, yaw: f32) -> Kart {
-        Kart { pos, rot: Quat::from_rotation_y(yaw), vel: Vec3::ZERO, spin: Vec3::ZERO, wheels: [Wheel::default(); 4], coins: 0, drifting: None, boost: 0.0, upset: 0.0, hop_was: false, lift: 0.0 }
+        Kart { pos, rot: Quat::from_rotation_y(yaw), vel: Vec3::ZERO, spin: Vec3::ZERO, wheels: [Wheel::default(); 4], coins: 0, drifting: None, boost: 0.0, upset: 0.0, hop_was: false, lift: 0.0, righting: None }
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -189,6 +203,16 @@ impl Kart {
         SUSPENSION - MASS * GRAVITY / 4.0 / SPRING + WHEEL_R
     }
 
+    /// Flipping back onto its wheels now (A on its roof).
+    pub fn righting(&self) -> bool {
+        self.righting.is_some()
+    }
+
+    /// On its roof or its side (A puts it right).
+    pub fn upset(&self) -> bool {
+        self.up().y < UPSET
+    }
+
     /// Wheels on the ground.
     pub fn grounded(&self) -> usize {
         self.wheels.iter().filter(|w| w.contact.is_some()).count()
@@ -215,6 +239,15 @@ impl Kart {
         self.hop_was = i.hop;
         if i.mushroom {
             self.boost = self.boost.max(MUSHROOM);
+        }
+        // A on its roof or its side: a hop and it flips back onto its wheels, its way kept
+        if hop && self.upset() && self.righting.is_none() {
+            let f = self.forward().with_y(0.0);
+            let f = if f.length() > 0.2 { f.normalize() } else { self.up().with_y(0.0).normalize_or(Vec3::Z) };
+            self.righting = Some((RIGHT_TIME, Quat::from_rotation_y(f.x.atan2(f.z))));
+            self.vel = self.vel.with_y(self.vel.y.max(0.0) + RIGHT_HOP);
+            self.lift = LIFT;
+            self.upset = 0.0;
         }
         for k in 0..n {
             self.substep(i, hop && k == 0, h, ray);
@@ -334,6 +367,14 @@ impl Kart {
             let now = self.spin.dot(up);
             torque += up * ((want - now) * Self::inertia().y * DRIFT_HOLD);
         }
+        // on its wheels: its roll against their ground held, its roll spin damped
+        if self.grounded() >= 2 {
+            torque -= fwd * (ROLL_DAMP * self.spin.dot(fwd));
+            // (three or four wheels down: against their ground; two, one side up, the tipping:
+            // upright, half as hard)
+            let (n, k) = ground_normal(&self.wheels, up).map_or((Vec3::Y, 0.5), |n| (n, 1.0));
+            torque += fwd * (ROLL_HOLD * k * up.cross(n).dot(fwd));
+        }
         // the air's drag
         let v2 = self.vel.length();
         force -= self.vel * (DRAG * v2);
@@ -347,9 +388,11 @@ impl Kart {
             self.lift = LIFT;
         }
         self.lift = (self.lift - h).max(0.0);
-        // in the air: a soft pull upright, the spin calmed (it doesn't flip on its own)
+        // in the air: pulled upright, its tumble calmed (it doesn't flip on its own)
         if self.grounded() == 0 && !body_contact {
             torque += up.cross(Vec3::Y) * AIR_RIGHT;
+            let tumble = self.spin - Vec3::Y * self.spin.y;
+            self.spin -= tumble * (AIR_TILT_DAMP * h).min(1.0);
             self.spin *= 1.0 - (AIR_SPIN_DAMP * h).min(1.0);
         }
         // move it
@@ -396,9 +439,15 @@ impl Kart {
         if turn.length_squared() > 1e-12 {
             self.rot = (Quat::from_scaled_axis(turn) * self.rot).normalize();
         }
+        // (flipping back onto its wheels: turned there over RIGHT_TIME, its spin let go)
+        if let Some((left, to)) = self.righting {
+            self.rot = self.rot.slerp(to, (h / left.max(h)).min(1.0)).normalize();
+            self.spin = Vec3::ZERO;
+            self.righting = (left - h > 1e-4).then_some((left - h, to));
+        }
         self.boost = (self.boost - h).max(0.0);
         // upside down or on its side on the ground, slow: put right where it lies after a moment
-        if self.up().y < 0.3 && self.vel.length() < 2.0 {
+        if self.upset() && self.vel.length() < 2.0 {
             self.upset += h;
             if self.upset >= TUMBLE_RESET {
                 let f = self.forward().with_y(0.0).normalize_or(Vec3::Z);
@@ -411,6 +460,23 @@ impl Kart {
             self.upset = 0.0;
         }
     }
+}
+
+/// The ground's up under the wheels touching it (at least three; with two, none), turned to
+/// `up`'s side.
+fn ground_normal(wheels: &[Wheel; 4], up: Vec3) -> Option<Vec3> {
+    // (round the chassis: front left, front right, rear right, rear left)
+    let ring: Vec<Vec3> = [0usize, 1, 3, 2].iter().filter_map(|&i| wheels[i].contact).collect();
+    if ring.len() < 3 {
+        return None;
+    }
+    let mut n = Vec3::ZERO;
+    for (k, a) in ring.iter().enumerate() {
+        let b = ring[(k + 1) % ring.len()];
+        n += Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+    }
+    let n = n.try_normalize()?;
+    Some(if n.dot(up) < 0.0 { -n } else { n })
 }
 
 #[cfg(test)]
@@ -653,6 +719,52 @@ mod tests {
         k.rot = Quat::from_rotation_z(std::f32::consts::PI);
         run(&mut k, Input::default(), 5.0, &ray);
         assert!(k.up().y > 0.9, "{}", k.up());
+    }
+
+    /// Elden Ring's rough ground (25 cm bumps), turning and drifting on it, a ramp under one side's
+    /// wheels: Mario Kart's karts lean and bounce but stay on their wheels (before: a drift on the
+    /// bumps rolled it onto its roof, its roll at 6 rad/s off one wheel's spring and grip).
+    #[test]
+    fn rough_ground_turns_and_drifts_dont_roll_it_over() {
+        fn ground(case: usize, x: f32, z: f32) -> f32 {
+            match case {
+                0 => 0.25 * ((x * 1.3).sin() * (z * 0.9).cos() + (z * 2.1 + x * 0.4).sin() * 0.5),
+                _ => if x > 0.2 && (15.0..20.0).contains(&z) { (z - 15.0) * 0.12 } else { 0.0 },
+            }
+        }
+        for (case, name, steer, drift) in [(0, "turning on bumps", 0.6, false), (0, "a drift on bumps", 1.0, true), (0, "a drift the other way", -1.0, true), (1, "a ramp under one side", 0.0, false)] {
+            let ray = world(move |x, z| ground(case, x, z), None);
+            let mut k = Kart::new(Vec3::new(0.0, 3.0, 0.0), 0.0);
+            run(&mut k, Input::default(), 2.0, &ray);
+            let mut lowest = 1.0f32;
+            for t in 0..(6.0 * 30.0) as usize {
+                let on = t > 30;
+                k.step(&Input { throttle: 1.0, steer: if on { steer } else { 0.0 }, drift: drift && on, ..Default::default() }, 1.0 / 30.0, &ray);
+                lowest = lowest.min(k.up().y);
+            }
+            assert!(lowest > 0.6, "{name}: tipped to {lowest:.2}");
+            assert!(k.up().y > 0.85, "{name}: ended at {:.2}", k.up().y);
+        }
+    }
+
+    /// On its roof or its side, A (the hop) puts it back on its wheels at once, with a little hop.
+    #[test]
+    fn upside_down_a_hop_puts_it_right() {
+        let ray = flat();
+        for over in [std::f32::consts::PI, std::f32::consts::FRAC_PI_2] {
+            let mut k = Kart::new(Vec3::new(0.0, 0.6, 0.0), 0.3);
+            k.rot = Quat::from_rotation_z(over) * k.rot;
+            run(&mut k, Input::default(), 0.5, &ray);
+            assert!(k.up().y < 0.3, "it should still lie there: {}", k.up());
+            assert!(k.upset(), "upset");
+            k.step(&Input { hop: true, ..Default::default() }, 1.0 / 30.0, &ray);
+            run(&mut k, Input::default(), 0.6, &ray);
+            assert!(k.up().y > 0.9, "over {over}: {}", k.up());
+            assert!(!k.upset());
+            // (its way kept: it faces where it did, round the up)
+            let f = k.forward().with_y(0.0).normalize();
+            assert!(f.x.atan2(f.z).abs() < 1.2, "{f}");
+        }
     }
 
     #[test]

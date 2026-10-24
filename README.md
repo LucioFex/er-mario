@@ -57,7 +57,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 
 | Input | Move |
 |---|---|
-| X, X, X, then X again | Punch, punch, kick, then a longer string: spinning backfist, double kick, whirlwind kick |
+| X, X, X, then X again | Punch, punch, kick, then a longer string: spinning backfist, double kick, whirlwind kick. Running flat out, X is the string's first punch (no longer SM64's dive with its hop) |
 | X, X, (beat), X | Rush: two fast jabs and a flying kick |
 | X, X, Y | Super jump punch. Small or stunned enemies go up with Mario for an air combo (X in the air) |
 | Y in the air | Meteor dive |
@@ -67,7 +67,11 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | back, forward + X (fists) | **Bullet Bill punch**: a coil back, then Mario flies fist first at the enemy, up to 7 m (the stick is read against the enemy, not against where he faces). Landed, it can be cut at once into the dash, a jump, the string (X goes on at the second punch) or a swap |
 | X held through a dash | **Dodge Offset** (Bayonetta's): keep X down while you dash out of a string, and the next X goes on with the string's next blow instead of starting over. Every weapon: the fists' punches, the hammer's three swings, the Chomp's lash / sweep / slam, the sword's four cuts, the boomerang's throws |
 | mash X as the Bullet Bill punch lands | **Hundred-hand flurry**: ten jabs in a second, then an uppercut off a little hop that launches small and medium enemies |
-| X held, let go (fists) | **Super punch**: the fist drawn back, light gathering; let go for a step-in punch that sends them back, or on the gleam (1.5 s) for the full one that knocks them flat. Into a wall right behind them: **WALL!** (more damage and stance) |
+| X held (any weapon but the boomerang) | **A charge while he walks** (`src/charge.rs`): from a quarter of a second held, the blow X began gives way and Mario keeps walking (slower) with the weapon gathering power: sparks of its element in his hands, a chime at 0.47 s (level 1) and at 0.9 s (full). A jump, the dash, Y or a blow on him calls it off. Let go: each weapon's own quick blow that closes in (below) |
+| X held, let go (fists) | **Bullet straight**: the charged fist driven out as he shoots in behind it, 3 m (6 m full: a flaming straight that flings a regular enemy, it lands alive). Into a wall right behind them: **WALL!** (more damage and stance) |
+| X held, let go (hammer) | **Hammer leap**: a real jump up and ahead, 3 m (6 m full), the hammer swung up over his head and growing to twice its size (three times full), brought down where he lands in a quake |
+| X held, let go (Chain Chomp) | **Chomp ram**: the Chomp flung ahead biting all the way, Mario dragged behind it 4 m (8 m full, and a crunching last bite) through everyone in the line |
+| X held, let go (Star Sword) | **Drive** (see [Star Sword](#star-sword)) |
 | X, (beat), X (fists) | **Heavy hook**: a beat after a lone first punch, a wide hook with his whole body turned into it |
 | forward + X in the air string (fists) | **Meteor punch**: driven down and ahead; an enemy up in the air is spiked into the ground and bounces once (hit it again to send it back up). Jumping in at an enemy, forward + X is still the air string's first kick |
 | back + X in the air (fists) | **Dropkick**: both feet into it, it flies off (into a wall: WALL!) |
@@ -75,7 +79,6 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | X, (beat), X (hammer) | **Hammer Bros. volley**: three small hammers thrown overhand in arcs, each onto the next enemy in front (one lands ahead with no one there) |
 | forward + X in the air (hammer) | **Diving comet**: a moment's hang with the hammer up, an angled dive at the enemy, a ring shaking the ground where he lands |
 | back, forward + X (Chain Chomp) | **Chomp rush**: the Chomp flung ahead, Mario dragged after it up to 9 m, its jaws on the first enemy in the way |
-| X held, let go (Chain Chomp) | **Lasso**: whirled overhead faster and faster; let go, it flies 12 m straight ahead and drags a small enemy it bites back to him |
 | mash X as the bite lands (Chain Chomp) | **Frenzy**: five quick bites and a last one tossing it up |
 | back, forward + X (boomerang) | **Skim**: thrown low and straight, Mario dashing after it up to the enemy; it comes back to his hand there |
 | X, (beat), X (boomerang) | **Pincer**: two at once curving out opposite ways and closing on the enemy from both sides (two in hand) |
@@ -377,32 +380,33 @@ Mario is tall to his shoulders) with a light-blue edge and a gold Power Star by 
 Cap wings for a guard, a long red grip for both hands with gold rings and a star for a pommel. It
 rides across Mario's back with its hilt up over his right shoulder and comes out with a
 flourish at the first blow; his arm follows the blade (arm IK) and its cuts hit along the blade
-itself, leaving a white-blue trail. Quick and precise, good on crowds: between the fists and the
-Chain Chomp. Its element is **lightning**. Every blow that lands can be cut short into the dash, a
-jump or a swap; the stick is read against the enemy in front (not against where Mario faces).
+itself, leaving a white-blue trail. Its moveset is Dante's Rebellion (Devil May Cry 3), and it
+never spins him round: every cut winds up longer than it swings (the weight is there), the cut
+itself is two ticks, and the pose is held a moment after it (longer on the finishers); a lunge
+stops dead on its enemy. Its swings and hits sound its own (synthesized by the mod, `src/sfx.rs`:
+a whoosh through the air, a ring of steel over a thud, deeper on the heavy ones), and each cut
+shoves a regular enemy back a little (the heavy ones more). Its element is **lightning**. Every
+blow that lands can be cut short into the dash, a jump or a swap; the stick is read against the
+enemy in front (not against where Mario faces).
 
 | Input | Move | Share |
 |---|---|---|
-| X, X, X, X | **Star string**: a diagonal, a backhand, a rising diagonal, a full turn that knocks them back | 7 / 7 / 8 / 12% |
-| X, X, (beat), X | **Star whirl**: two turns cutting all round him (three blows), an upward flick | 3 × 5% + 8% |
+| X, X, X, X | **Combo A**: a diagonal cleave, a rising backhand, a rising diagonal, then the **Rebellion chop**: the blade cocked behind his head in both hands, a two-handed chop with a deep lunge, frozen there; it knocks them back | 7 / 7 / 8 / 12% |
 | X, (beat), X | **Thunder cleave**: both hands overhead and down, a crack of lightning where it lands, cracks a stance | 14% |
-| back, forward + X | **Bullet Bill thrust**: flies point first at the enemy, up to 8 m (DMC's Stinger) | 12% |
-| mash X as it lands | **Thousand stabs**: nine stabs in 1.2 s, a last thrust that knocks back | 2% each + 10% |
-| back + X | **Rising cut**: launches small and medium enemies; **X still held** and Mario goes up with them (DMC's High Time) | 10% |
-| X + A | **Spin jump**: up off the ground spinning twice, ends in the air (Link's) | 4 × 3% + 6% |
-| X held, let go | **Star wave**: an iai cut that sends a crescent of light along the ground, 10 m. Let go just as the blade **gleams** (with a soft chime): **JUST!**, three cuts and three crescents | 10% / 3 × 8% |
-| Y | **Star spin**: a quick full turn | 9% |
-| Y held, let go | **Great Spin**: three charge levels (a gleam and a chime at each); one, two or three turns, a ring of lightning from the second; it reaches 30% farther at full health | 12 / 16 / 20% |
-| Y, X | **Hurricane**: two seconds of spinning, the stick steers him about; a short dizzy wobble after | 6 × 3% + 8% |
+| X, X, (beat), X | **Million Stab** (Combo B): a flash, nine stabs in 1.2 s rooted in a wide stance, a last full-length lunge that blows them back | 2% each + 10% |
+| back, forward + X | **Stinger**: a deep coil, then he shoots point first at the enemy, almost flat, up to 8 m, and stops dead on it | 12% |
+| mash X as it lands | **Million Stab** off the Stinger | 2% each + 10% |
+| back + X, or Y | **High Time**: a deep coil, then a rising cut from the ground straight up that launches small and medium enemies; **the button still held** and Mario goes up with them | 10% |
+| X, X, Y, or X + A | **Star launcher**: the same rising cut, Mario always going up with them for the air string | 10% |
+| X held, let go | **Drive**: charged while he walks (the blade cocked high behind his right shoulder, crackling), let go: a cut down and forward into a low lunge that sends a wave of lightning along the ground, 10 m. Full (0.9 s): a heavier cut and a crack of lightning with the wave. Let go right as it fills (with its chime): **JUST!**, three cuts and three waves | 10% + 10% / 12% + 10% / 8% + 3 × 8% |
 | X, Y | **Cross cut**: two crossing cuts leave a glowing X in the air that bursts 0.4 s later | 7% + 12% |
-| X, X, Y | **Star launcher**: Mario and the enemy go up for the air string | 10% |
 | forward + Y | **Helm Splitter**: a leap onto the enemy, a plunging cleave, a ring of lightning where he lands | 16% + 6% |
 | B, then X (or X in the dash) | **Lightning iai**: through the enemy and past it in one cut, its line cracks with lightning a beat later behind him | 11% |
 | X in a perfect dodge's slow time | **Flurry Rush**: in at the enemy, six cuts and a wide last one, untouchable meanwhile (Breath of the Wild); one per perfect dodge | 6 × 3% + 8% |
-| X x4 in the air | **Aerial Rave**: three cuts that hold him up, a turn that throws them off (once a jump; three times with an enemy up there) | 6 / 6 / 7 / 10% |
-| Y in the air | **Helm Breaker**: a fast plunging cut, a ring of lightning on landing | 12% + 6% |
+| X x4 in the air | **Aerial Rave**: three cuts that hold him up, then the blade raised high and down through them, Mario dropping with it (once a jump; three times with an enemy up there) | 6 / 6 / 7 / 10% |
+| Y in the air | **Helm Breaker**: a moment's hang, a fall straight down with the blade, a ring of lightning and a long crouch where he lands | 12% + 6% |
 | LT in the air | **Pogo**: the point straight down; on an enemy he bounces up again (three a jump; after that LT is the ground pound again) | 8% |
-| LB into the sword mid-fight | **Quick draw**: drawn as an iai cut in front (in the air, a spinning cut) | 10% |
+| LB into the sword mid-fight | **Quick draw**: drawn as an iai cut in front (in the air, a cut down across him) | 10% |
 | a string's finisher at full health | **Sword beam**: a small crescent flies 12 m (Zelda's) | 4% |
 | a finisher with MAX ready | **Star Cut End**: a flash, the world slowed, then cuts of lightning across every enemy within 8 m, three times (Vergil's Judgement Cut End) | 3 × 5% |
 
@@ -412,7 +416,9 @@ every weapon. Each cut strikes an enemy once, however long the blade stays in a 
 hit-stop no longer lets one cut land again).
 
 **RB with the sword** is lightning of its own, never a projectile in another colour
-(`src/bolt.rs`):
+(`src/bolt.rs`). Its bolts are 3D (a white-hot core in a bright tube with a violet haze, forks off
+it, struck twice like real lightning), with a thunderclap (the crack and the rumble, synthesized),
+a flash of the screen and a jolt of the camera; its charge is a small crackling ball in his hand:
 
 | Charge | On the ground | In the air |
 |---|---|---|
@@ -431,8 +437,8 @@ looks in `src/elemfx.rs`):
 | Weapon | Element | What it builds up | RB |
 |---|---|---|---|
 | Fists | Fire | Nothing: an enemy weak to fire takes more of every blow | The fireball (charges up to the giant one and the sun) |
-| Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | **Ice rocket punch** (Doomfist's): the fist in a block of ice that grows with the charge, and Mario rockets fist first into the enemy, 6 / 8 / 11 / 14 m; it knocks the enemy back, and slams it into a wall right behind it (WALL!). In the air: the **ice dive**, a diving punch with a wave of frost where he lands. **10 s: the Glacier fist**: a huge fist of ice flies 25 m through everyone in its way, a ring of ice spikes bursting from the ground where it stops |
-| Chain Chomp | Blood | **Blood loss**: a burst of 12% | **Dark beam** (a small, evil kamehameha): black at its heart, crimson round it, pouring from his hands 0.4 / 0.67 / 0.93 / 1.2 s by charge, 18 m to the first wall, through everyone in it; in the air it holds him up while it lasts. **10 s: the Abyss beam**: two and a half seconds of a huge one, swept round with the stick, drawing regular enemies in toward its core |
+| Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | **Ice rocket** (Doomfist's, with the hammer): the hammer hauled back over his shoulder while a block of ice grows on its head with the charge, then Mario rockets head first behind it into the enemy, 6 / 8 / 11 / 14 m; it knocks the enemy back, and slams it into a wall right behind it (WALL!). In the air: the **ice dive**, a diving punch with a wave of frost where he lands. **10 s: the Glacier fist**: a huge fist of ice flies 25 m through everyone in its way, a ring of ice spikes bursting from the ground where it stops |
+| Chain Chomp | Blood | **Blood loss**: a burst of 12% | **Dark beam** (a small, evil kamehameha, in 3D: a black core inside a crimson tube, strands of darkness twisting round it, rings rushing down it): pouring from his hands 0.6 / 0.93 / 1.33 / 1.8 s by charge, 18 m to the first wall, through everyone in it, pushing regular enemies back a little and swinging itself a little onto the nearest enemy ahead; from 2 s of charge the stick swings it round; each hit bursts and sizzles where it strikes; in the air it holds him up while it lasts. **10 s: the Abyss beam**: three seconds of a huge one, swept round with the stick, drawing regular enemies in toward its core, bursting where it ends as it goes out |
 | Boomerang | Poison | **Poison**: about 1% a second for 20 s | **Poison sweep**: the arm swung across spraying, a carpet of poison over the ground in front of him: 120° and 3 m for 6 s up to all round and 6 m for 10 s by charge; whoever walks in it is poisoned every half second. In the air: sprayed down, a pool where it lands. **10 s: the toxic swamp**: two turns spraying, a 10 m swamp for 12 s, bubbling, slowing the enemies in it (bosses only a little) |
 | Star Sword | Lightning | **Shock**: a bolt from the sky on him (16%) that shakes his stance hard, and jumps to the two nearest enemies within 6 m (60% and 40% of it) | Its own moves: see [RB with the sword](#star-sword) |
 
@@ -517,7 +523,7 @@ Mario to keep him and the bone on screen (`src/odm.rs`).
 |---|---|
 | Left stick held | He swings round the anchor (at most a quarter turn a second, 3 s a line), the line's length kept |
 | Left stick let go | The line **reels him in**, faster and faster: 12 → 30 m/s |
-| B | A **burst of gas**: +40%, fading over 0.8 s. Two charges (the pips by him), both back on any hit or on landing |
+| B | A **burst of gas** (a hiss): +40%, fading over 0.8 s. **With the stick to a side: a sidestep** round the anchor that way, quick at once and dying away in 0.4 s (the 3D maneuver gear's). Three charges (the pips by him), all back on any hit or on landing |
 | Right stick flicked | The anchor moves to the next bone that way on screen |
 | **X in the last quarter second** before he gets there | **The strike**: with the Star Sword, the hammer, the Chomp or the boomerang a spin slash, with the fists a flying kick. Harder the faster he comes: ×(speed / 20 m/s), from ×0.3 to ×1.8. On the **nape or the head from behind**: ×1.5 more, a stance crack and **NAPE!** (bosses: ×1.5 at most, all together) |
 | No X | A glancing hit, worth half |
@@ -572,8 +578,11 @@ Logs: `cannon: planted at ...`, `cannon: not here (no open sky)`, `cannon: fired
 `src/kartplay.rs`): Mario Kart's red kart with the M on its nose, fat tyres with gold hubs that
 spin and steer, a steering wheel he holds, two chrome exhausts. It drives like a small car with
 weight, not a cursor: a chassis of 180 kg on four sprung wheels, so it pitches as it brakes and
-accelerates, leans into turns, rides over bumps and off ramps, lands on its springs and can tumble
-(on its roof for two seconds it's put back on its wheels). And it's fast, Mario Kart's way: 32 m/s
+accelerates, leans into turns, rides over bumps and off ramps and lands on its springs. Its roll
+is held against the ground under its wheels (Mario Kart's lean, not a rollover: turning and
+drifting over rough ground no longer tips it onto its roof) and in the air it levels itself off; a
+hard enough knock can still tumble it, and then **A hops it back onto its wheels** at once (or, on
+its roof for two seconds, it's put right). And it's fast, Mario Kart's way: 32 m/s
 flat out, 20 m/s in two seconds, its tyres hugging Elden Ring's uneven ground (they keep their grip
 over the crests, and it's pressed down onto the ground with its speed). On top of that: drifts,
 mini-turbos, mushrooms, shells and bananas, coins for speed. It's for the open world (like
@@ -585,15 +594,18 @@ A tap of L3 again and he hops out.
 | RT | Throttle (32 m/s flat out, a little more with coins) |
 | LT | Brake; held at a standstill, reverse |
 | Left stick | Steer (the front wheels turn less the faster it goes) |
-| A | Hop. **Held while steering at speed: a drift** (sparks blue, orange, then purple: let go for a mini-turbo of 0.6 / 1 / 1.5 s). Off a ramp or a lip, A in the air is a **trick** (a barrel roll, "Yahoo!") and its landing a boost. A while a boost is on: a **super hop** |
+| A | Hop (on its roof or its side: back onto its wheels). **Held while steering at speed: a drift** (sparks blue, orange, then purple: let go for a mini-turbo of 0.6 / 1 / 1.5 s). Off a ramp or a lip, A in the air is a **trick** (a barrel roll, "Yahoo!") and its landing a boost. A while a boost is on: a **super hop** |
 | LB | A mushroom: a 1.2 s boost (three, one back every 10 s) |
 | X | A green shell straight ahead, faster than the kart; it bounces off walls and ricochets between enemies (the trap kit's own, with its wait) |
 | Y | A banana dropped behind; held, thrown ahead as you let go (the kit's, two at most) |
 | RB | A Fire Flower fireball from the nose (one every 0.6 s) |
-| Right stick | Look round (Lakitu comes back behind after a second) |
+| Right stick | Look round (Lakitu comes back behind after a second and a half) |
 
-Lakitu's camera chases low behind the kart, leading into turns, swinging out in a drift and
-pulling back in a boost (streaks of wind at the screen's edges). The engine is synthesised by the
+Lakitu's camera chases behind the kart at Mario's own camera distance (C-down / C-up on foot pick
+near, middle or far; the kart's view keeps it, a little farther at speed and in a boost, with
+streaks of wind at the screen's edges). It follows the way the kart goes (in a drift, between its
+nose and its slide) on a smooth spring, rides out the springs' bounce and the shiver of rough
+ground, and stays behind when backing up. The engine is synthesised by the
 mod (no recordings): a buzzing two-stroke that climbs with the speed, the tyres hissing in a drift
 (`kart_engine = 0.5` in `er_mario.ini` makes it quieter, `0` silent). **Coins** picked up while
 driving also count for the kart: up to ten, each a little more top speed (bottom right, with the
@@ -632,7 +644,7 @@ close and risky hits.
 | Stomp | 50% of enemy HP | **12%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **21%**, boss bonus **×1.3**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **60%** within 9 m and its lava pools **4%** every half second (on bosses about 9% and 0.4%, as measured) |
-| The elements' RB moves | — | Ice rocket punch **8-20.5%** by charge (+ WALL!; charged 2 s and up it sends a regular enemy flying, bowling over others; it lands alive), ice dive **9%** + frost wave **4.5%**, Glacier fist **34%** on each it passes (regular enemies are blown away) + spikes **11%**; dark beam **1-2%** every tenth of a second by charge (**3.4-22%** in all), Abyss beam **1.4%** every tenth (about **34%** in all); poison sweep **2.3%** and its carpet **1%** every half second (+ poison) |
+| The elements' RB moves | — | Ice rocket punch **8-20.5%** by charge (+ WALL!; charged 2 s and up it sends a regular enemy flying, bowling over others; it lands alive), ice dive **9%** + frost wave **4.5%**, Glacier fist **34%** on each it passes (regular enemies are blown away) + spikes **11%**; dark beam **1-2%** every tenth of a second by charge (**7-36%** in all), Abyss beam **2%** every tenth (about **60%** in all) and its burst **12%** within 4 m; poison sweep **2.3%** and its carpet **1%** every half second (+ poison) |
 | Pair finishers | — | Steam **4.5%** round him, plasma **8%** within 4 m, boiling **7%**, ignition **8%** once on each in the carpets, shatter **5.5%** (+ stance), crimson spikes **9%**, toxic hail **2.3%** ×5, blood bolts **4.5%** each, corrosive arc **5.5%** each, rot **1.1%** ×8; criticals **×1.6** |
 | Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |
@@ -640,8 +652,8 @@ close and risky hits.
 | Action command | — | **+30%** of the blow (every third **+50%**) |
 | Dash strike | — | **12%** |
 | Bullet Bill punch | — | **9%** (a kick's weight: it sends them back a little), on bosses ×1.3 |
-| Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; Super punch **11%** / full **15%** (it sends a regular enemy flying, it lands alive); heavy hook **12.5%**; meteor punch **7%**; dropkick **8%** (flies off too); WALL! **+30%** of the blow |
-| Hammer, Chomp, boomerang new moves | — | Hammer charge **7%** + slam **16%**; a volley hammer **5%** (three); comet **10%** + ring **5.5%**; Chomp rush **5.5%**, lasso **3.5%**, frenzy **1.7%** a bite ×5 + **4.5%**; skim **2.3%** a pass |
+| Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; bullet straight (X held) **11%** / full **15%** (it sends a regular enemy flying, it lands alive); heavy hook **12.5%**; meteor punch **7%**; dropkick **8%** (flies off too); WALL! **+30%** of the blow |
+| Hammer, Chomp, boomerang new moves | — | Hammer charge **7%** + slam **16%**; hammer leap (X held) **21%** / full **30%** in its quake; a volley hammer **5%** (three); comet **10%** + ring **5.5%**; Chomp rush **5.5%**, ram (X held) **5.5%** on each in the line, full + **8%** for its last bite; frenzy **1.7%** a bite ×5 + **4.5%**; skim **2.3%** a pass |
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
@@ -650,7 +662,7 @@ close and risky hits.
 | Kart | — | Running over a small enemy **8%** at 20 m/s (**2.4-12%** by the speed into it, it flies off and lands alive), bumping a medium one **5.7%** (**1.7-8.6%**, a stagger); a big one or a boss half that (bosses about 0.4%) and the kart spins out |
 | Attack on Titan hook | — | Strike **8%** at 20 m/s, **2.4-14.4%** by speed, **21.5%** at most on the nape from behind; glancing hit half (**1.2-7.2%**); bosses about **1.5%** at 20 m/s, **2.2%** at most (capped); zip-kick **5.7%**; blows on an enemy he vaulted **×1.3** for 1 s |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
-| Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
+| Star Sword | — | **1-9%** per blow (its table's shares ×0.57: Combo A 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Stinger 7%, a stab 1%, the Drive 5.7% + its wave 5.7%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
 | Capture: its attacks **5% / 8.5%**, charge **6%** each, wall slam | — | **11%** and the stance broken |
 
 (The shares above were worked out with a 0.75 damage factor; the current one is 0.57, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 24% off each (44% with Reforged; the hammer's row is at 0.6 already, see its own table; throws, Yoshi's trample and the bat keep theirs); bosses take about 11% of them (13% with Reforged; ini `boss_damage_factor`), more for the
@@ -710,6 +722,11 @@ The ground pound is slow and leaves Mario open, so it's worth the risk.
   the debug draws; the coins' line-of-sight rays and the colossus / hook HUDs no longer hold locks
   the overlay waits on; the overlay works out the camera once a frame. The `perf:` lines in the log
   (with `debug = 1`) show the mod's time per part, a new `character roster` among them.
+- **The memory in the log.** Every 30 s the `perf: most time in the last 30 s` line ends with the
+  game's memory (working set, private, page faults since the last line, handles) and the PC's (how
+  much of its memory is in use, how much is free), and so does each respawn's line
+  (`respawned: recreating Mario (memory: ...)`): if the game slows down over a long session, it
+  tells whether it's the game's memory growing or the PC running short.
 
 All gameplay changes live in `src/combat.rs`, `src/lib.rs` and a few small, commented
 `er-mario:` patches inside `libsm64/src/decomp/game/` and `libsm64/src/fake_interaction.c`.

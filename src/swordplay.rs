@@ -1,10 +1,12 @@
-//! Which of the Star Sword's moves (script.rs) the buttons ask for (v4 Part 2): its string (X x4),
-//! the pause strings (X, beat, X: the thunder cleave; X, X, beat, X: the whirl), the closers (back,
-//! forward + X: the Bullet Bill thrust; dash + X: the lightning iai; a perfect dodge + X: the Flurry
-//! Rush), the launchers (back + X; X, X, Y; X + A), Y's spins (Y; held: the Great Spin; Y, X: the
-//! Hurricane; X, Y: the cross cut; forward + Y: the Helm Splitter), X held for the star wave, and
-//! up in the air the Aerial Rave (X x4), the Helm Breaker (Y) and the pogo (LT). Pure: moves.rs
-//! gathers what it reads and starts what comes out.
+//! Which of the Star Sword's moves (script.rs) the buttons ask for (v4 Part 2; Part 10: Dante's
+//! Rebellion, no spins): its string (X x4, Combo A, a two-handed chop to end), the pause strings
+//! (X, beat, X: the thunder cleave; X, X, beat, X: the Million Stab, Combo B), the closers (back,
+//! forward + X: the Stinger, X mashed as it lands the Million Stab; dash + X: the lightning iai; a
+//! perfect dodge + X: the Flurry Rush), the launchers (back + X and Y: High Time, held he goes up
+//! with them; X, X, Y and X + A: the launcher, up with them always), X, Y: the cross cut,
+//! forward + Y: the Helm Splitter, and up in the air the Aerial Rave (X x4), the Helm Breaker (Y)
+//! and the pogo (LT). X held is charge.rs's (the Drive). Pure: moves.rs gathers what it reads and
+//! starts what comes out.
 
 use crate::combo::Dir;
 use crate::script::*;
@@ -15,11 +17,6 @@ pub struct Input {
     pub x: bool,
     pub y: bool,
     pub lt: bool,
-    /// ticks X / Y have been held (0: up), and when they came up this tick, how long they were
-    pub x_held: u32,
-    pub y_held: u32,
-    pub x_released: Option<u32>,
-    pub y_released: Option<u32>,
     pub back_forward: bool,
     pub chord_xa: bool,
     pub dir: Option<Dir>,
@@ -38,30 +35,22 @@ pub struct State {
     pub landed: bool,
     /// the last sword move that ended, and how many ticks ago
     pub ended: Option<(u16, u32)>,
-    /// ticks since a dash (on the ground) ended or is ending, and in it now
+    /// ticks since a dash (on the ground) ended or is ending (0: in it now)
     pub dashed: Option<u32>,
-    pub dashing: bool,
     /// a perfect dodge's counter time (dodge.rs)
     pub countering: bool,
     /// pogo bounces left in this jump
     pub pogos: u8,
 }
 
-/// X or Y held this long: their charge (the star wave, the Great Spin)
-pub const CHARGE_AFTER: u32 = 18;
-/// the star wave let go between these (ticks held): JUST
-pub const JUST_FROM: u32 = 30;
-pub const JUST_TO: u32 = 37;
-/// the Great Spin's levels (ticks held)
-pub const SPIN_LEVELS: [u32; 2] = [36, 75];
 /// a beat after a string's blow ended: the pause strings' X (ticks)
 pub const BEAT: (u32, u32) = (8, 30);
-/// the thrust's stabs: this many X presses in MASH_WINDOW ticks
+/// the Million Stab off the Stinger: this many X presses in MASH_WINDOW ticks
 pub const MASH: u32 = 3;
 pub const MASH_WINDOW: u32 = 14;
 /// X this soon after the dash: the iai (ticks)
 pub const DASH_X: u32 = 5;
-/// X + A with X this many ticks first at most: the slash X began is the spin jump's
+/// X + A with X this many ticks first at most: the slash X began is the launcher's
 pub const CHORD_LATE: u32 = 3;
 
 /// The move to start now, if any.
@@ -70,16 +59,6 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
     let next = s.playing.is_some_and(|p| p.1);
     let free = s.playing.is_none() || next;
     let is = |ids: &[u16]| playing.is_some_and(|p| ids.contains(&p));
-    // (charging: only the release counts)
-    if is(&[SW_WAVE_CHARGE]) {
-        return i.x_released.map(|held| if (JUST_FROM..=JUST_TO).contains(&held) { SW_WAVE_JUST } else { SW_WAVE });
-    }
-    if is(&[SW_SPIN_CHARGE]) {
-        return i.y_released.map(|held| {
-            let level = SPIN_LEVELS.iter().filter(|&&t| held >= t).count() as u16;
-            SW_GREAT_SPIN + level
-        });
-    }
     if s.air {
         if !free {
             return None;
@@ -98,29 +77,20 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
         }
         return None;
     }
-    // the thrust's stabs: mashing X as it lands (its lunge first: mashed from the start it would
-    // stab the air where it began)
+    // the Million Stab: mashing X as the Stinger lands (its lunge first: mashed from the start it
+    // would stab the air where it began)
     if is(&[SW_THRUST]) && s.landed && i.x && i.mash >= MASH {
         return Some(SW_STABS);
     }
-    // held past a blow: the charges (not in the dash: its dodge would end; nor held from before
-    // it: X held through a dash is the Dodge Offset's)
-    let after_dash = |held: u32| !s.dashing && s.dashed.is_none_or(|d| held <= d);
-    if i.x_held >= CHARGE_AFTER && i.x_released.is_none() && (free || is(&[SW_S1])) && !is(&[SW_WAVE_CHARGE]) && after_dash(i.x_held) {
-        return Some(SW_WAVE_CHARGE);
-    }
-    if i.y_held >= CHARGE_AFTER && i.y_released.is_none() && (free || is(&[SW_SPIN])) && after_dash(i.y_held) {
-        return Some(SW_SPIN_CHARGE);
-    }
-    // X a tick or two before A: the first slash it began gives way to the spin jump
+    // X a tick or two before A: the first slash it began gives way to the launcher
     if i.chord_xa && is(&[SW_S1]) && s.playing_for <= CHORD_LATE {
-        return Some(SW_SPIN_JUMP);
+        return Some(SW_LAUNCHER);
     }
     if !free {
         return None;
     }
     if i.chord_xa {
-        return Some(SW_SPIN_JUMP);
+        return Some(SW_LAUNCHER);
     }
     if i.x {
         if s.countering {
@@ -135,19 +105,14 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
         if i.dir == Some(Dir::Back) {
             return Some(SW_RISE);
         }
-        // Y, X: the Hurricane
-        if is(&[SW_SPIN]) || s.ended.is_some_and(|(m, ago)| m == SW_SPIN && ago <= BEAT.1) {
-            return Some(SW_HURRICANE);
-        }
         // the string, and its pause strings after a beat
         if let Some(p) = playing.filter(|p| (SW_S1..SW_S4).contains(p)) {
             return Some(p + 1);
         }
-        if let Some((m, ago)) = s.ended.filter(|(_, ago)| (BEAT.0..=BEAT.1).contains(ago)) {
-            let _ = ago;
+        if let Some((m, _)) = s.ended.filter(|(_, ago)| (BEAT.0..=BEAT.1).contains(ago)) {
             match m {
                 SW_S1 => return Some(SW_CLEAVE),
-                SW_S2 => return Some(SW_WHIRL),
+                SW_S2 => return Some(SW_STABS),
                 _ => {}
             }
         }
@@ -160,7 +125,7 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
         return Some(match playing {
             Some(SW_S1) => SW_CROSS,
             Some(SW_S2) => SW_LAUNCHER,
-            _ => SW_SPIN,
+            _ => SW_HIGH_TIME,
         });
     }
     None
@@ -171,11 +136,11 @@ mod tests {
     use super::*;
 
     fn x() -> Input {
-        Input { x: true, x_held: 1, ..Default::default() }
+        Input { x: true, ..Default::default() }
     }
 
     fn y() -> Input {
-        Input { y: true, y_held: 1, ..Default::default() }
+        Input { y: true, ..Default::default() }
     }
 
     fn in_move(id: u16, next: bool) -> State {
@@ -187,12 +152,14 @@ mod tests {
         assert_eq!(choose(&x(), &State::default()), Some(SW_S1));
         assert_eq!(choose(&x(), &in_move(SW_S1, true)), Some(SW_S2));
         assert_eq!(choose(&x(), &in_move(SW_S3, true)), Some(SW_S4));
+        // (the chop ends Combo A: X after it starts it over)
+        assert_eq!(choose(&x(), &in_move(SW_S4, true)), Some(SW_S1));
         // (too early in a blow: nothing, the buffer waits)
         assert_eq!(choose(&x(), &in_move(SW_S1, false)), None);
-        // a beat after the first blow: the thunder cleave; after the second: the whirl
+        // a beat after the first blow: the thunder cleave; after the second: the Million Stab
         let after = |m: u16, ago: u32| State { ended: Some((m, ago)), ..Default::default() };
         assert_eq!(choose(&x(), &after(SW_S1, 12)), Some(SW_CLEAVE));
-        assert_eq!(choose(&x(), &after(SW_S2, 20)), Some(SW_WHIRL));
+        assert_eq!(choose(&x(), &after(SW_S2, 20)), Some(SW_STABS));
         // (too soon or too late: the string again)
         assert_eq!(choose(&x(), &after(SW_S2, 2)), Some(SW_S1));
         assert_eq!(choose(&x(), &after(SW_S2, 60)), Some(SW_S1));
@@ -204,38 +171,22 @@ mod tests {
         assert_eq!(choose(&Input { dir: Some(Dir::Back), ..x() }, &State::default()), Some(SW_RISE));
         assert_eq!(choose(&x(), &State { dashed: Some(3), ..Default::default() }), Some(SW_IAI));
         assert_eq!(choose(&x(), &State { countering: true, ..Default::default() }), Some(SW_FLURRY));
-        assert_eq!(choose(&Input { chord_xa: true, ..x() }, &State::default()), Some(SW_SPIN_JUMP));
-        // mashing in the thrust: the stabs
+        assert_eq!(choose(&Input { chord_xa: true, ..x() }, &State::default()), Some(SW_LAUNCHER));
+        // mashing as the Stinger lands: the Million Stab
         let landed = State { landed: true, ..in_move(SW_THRUST, false) };
         assert_eq!(choose(&Input { mash: 3, ..x() }, &landed), Some(SW_STABS));
         assert_eq!(choose(&Input { mash: 1, ..x() }, &landed), None);
     }
 
+    /// Y: High Time, never a spin (the user's call); its strings.
     #[test]
     fn y_and_its_strings() {
-        assert_eq!(choose(&y(), &State::default()), Some(SW_SPIN));
+        assert_eq!(choose(&y(), &State::default()), Some(SW_HIGH_TIME));
         assert_eq!(choose(&y(), &in_move(SW_S1, true)), Some(SW_CROSS));
         assert_eq!(choose(&y(), &in_move(SW_S2, true)), Some(SW_LAUNCHER));
         assert_eq!(choose(&Input { dir: Some(Dir::Forward), ..y() }, &State::default()), Some(SW_HELM));
-        // Y, X: the Hurricane
-        assert_eq!(choose(&x(), &in_move(SW_SPIN, true)), Some(SW_HURRICANE));
-        assert_eq!(choose(&x(), &State { ended: Some((SW_SPIN, 10)), ..Default::default() }), Some(SW_HURRICANE));
-    }
-
-    #[test]
-    fn holds_charge_and_releases_let_go() {
-        let held_x = Input { x_held: CHARGE_AFTER, ..Default::default() };
-        assert_eq!(choose(&held_x, &in_move(SW_S1, false)), Some(SW_WAVE_CHARGE));
-        let charging = in_move(SW_WAVE_CHARGE, false);
-        assert_eq!(choose(&Input { x_released: Some(25), ..Default::default() }, &charging), Some(SW_WAVE));
-        assert_eq!(choose(&Input { x_released: Some(33), ..Default::default() }, &charging), Some(SW_WAVE_JUST));
-        assert_eq!(choose(&Input { x_held: 40, ..Default::default() }, &charging), None);
-        let held_y = Input { y_held: CHARGE_AFTER, ..Default::default() };
-        assert_eq!(choose(&held_y, &in_move(SW_SPIN, false)), Some(SW_SPIN_CHARGE));
-        let spin = in_move(SW_SPIN_CHARGE, false);
-        assert_eq!(choose(&Input { y_released: Some(20), ..Default::default() }, &spin), Some(SW_GREAT_SPIN));
-        assert_eq!(choose(&Input { y_released: Some(40), ..Default::default() }, &spin), Some(SW_GREAT_SPIN + 1));
-        assert_eq!(choose(&Input { y_released: Some(90), ..Default::default() }, &spin), Some(SW_GREAT_SPIN + 2));
+        // (Y, then X: just the string, no Hurricane)
+        assert_eq!(choose(&x(), &in_move(SW_HIGH_TIME, true)), Some(SW_S1));
     }
 
     #[test]
@@ -248,30 +199,18 @@ mod tests {
     }
 
     #[test]
-    fn the_stabs_come_once_the_thrust_lands() {
+    fn the_stabs_come_once_the_stinger_lands() {
         let mash = Input { mash: 3, ..x() };
         assert_eq!(choose(&mash, &in_move(SW_THRUST, false)), None);
         assert_eq!(choose(&mash, &State { landed: true, ..in_move(SW_THRUST, false) }), Some(SW_STABS));
     }
 
     #[test]
-    fn x_then_a_is_the_spin_jump_too() {
+    fn x_then_a_is_the_launcher_too() {
         // (X a tick before A: the first slash it began gives way)
         let chord = Input { chord_xa: true, ..Default::default() };
-        assert_eq!(choose(&chord, &State { playing_for: 1, ..in_move(SW_S1, false) }), Some(SW_SPIN_JUMP));
+        assert_eq!(choose(&chord, &State { playing_for: 1, ..in_move(SW_S1, false) }), Some(SW_LAUNCHER));
         assert_eq!(choose(&chord, &State { playing_for: 8, ..in_move(SW_S1, false) }), None);
-    }
-
-    #[test]
-    fn no_charge_in_the_dash() {
-        let held_x = Input { x_held: CHARGE_AFTER, ..Default::default() };
-        assert_eq!(choose(&held_x, &State { dashing: true, dashed: Some(0), ..Default::default() }), None);
-        let held_y = Input { y_held: CHARGE_AFTER, ..Default::default() };
-        assert_eq!(choose(&held_y, &State { dashing: true, dashed: Some(0), ..Default::default() }), None);
-        // (X held through the dash is the Dodge Offset's, not a charge as it ends)
-        let held_x = Input { x_held: CHARGE_AFTER + 10, ..Default::default() };
-        assert_eq!(choose(&held_x, &State { dashed: Some(3), ..Default::default() }), None);
-        assert_eq!(choose(&held_x, &State { dashed: Some(40), ..Default::default() }), Some(SW_WAVE_CHARGE));
     }
 
     #[test]

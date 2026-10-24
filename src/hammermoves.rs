@@ -5,7 +5,7 @@
 //! to his left; pitch up from level; its size), through the frame's weapon pose (lib.rs).
 
 use crate::combat::Attack;
-use crate::moves::{FX_GROUND, FX_LAUNCH, FX_QUAKE, FX_SLAM};
+use crate::moves::{FX_GIANT, FX_GROUND, FX_LAUNCH, FX_QUAKE, FX_SLAM};
 use crate::script::Ease::*;
 use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, FX_VOLLEY, SWAP};
 
@@ -15,6 +15,7 @@ const GENERAL_LAND: i32 = 0x57;
 const FAST_LONGJUMP: i32 = 0x13;
 const GROUND_POUND: i32 = 0x3D;
 const THROW_LIGHT_OBJECT: i32 = 0x52;
+const SINGLE_JUMP: i32 = 0x4D;
 
 /// (SM64's: the soft ones at that volume, the voice at his body)
 const SWISH: u32 = 0x305C_0081;
@@ -126,6 +127,55 @@ pub const COMET: Move = Move {
     locked: (0, 12),
     air: true,
     ..BASE
+};
+
+/// X held and let go (charge.rs): the leap, a jump up and ahead (3 m) with the hammer swung up over
+/// his head and growing, brought down where he lands: a heavy slam
+pub const LEAP: Move = Move {
+    name: "hammer leap",
+    len: 40,
+    clips: &[still(0, FIRST_PUNCH), clip(3, SINGLE_JUMP), still(14, SECOND_PUNCH), clip(26, GENERAL_LAND)],
+    twist: &[k(0, 0.0, Linear), k(3, -15.0, Out), k(14, -10.0, Linear), k(17, 10.0, In), k(28, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(2, -8.0, Out), k(5, -12.0, Out), k(14, -10.0, Linear), k(18, 26.0, In), k(30, 0.0, InOut)],
+    aim: &[0, 3],
+    approach: Some(Approach { from: 3, to: 20, max: 3.0, gap: 1.2 }),
+    vel_y: &[(3, 40.0)],
+    squash: &[k(0, 0.82, Linear), k(3, 1.14, Out), k(10, 1.0, InOut), k(19, 0.8, In), k(26, 1.0, InOut)],
+    dip: &[k(0, 14.0, Linear), k(3, 0.0, Out), k(19, 18.0, In), k(30, 0.0, InOut)],
+    reach: &[k(0, 0.5, Linear), k(3, 1.0, Out), k(30, 1.0, Linear), k(38, 0.5, InOut)],
+    reach_pitch: 50.0,
+    // (behind him as he crouches, up over his head in the jump, down in front as he lands)
+    blade_yaw: &[k(0, -150.0, Linear), k(4, -10.0, Out), k(34, -10.0, Linear)],
+    blade_pitch: &[k(0, 30.0, Linear), k(4, 120.0, Out), k(14, 150.0, Linear), k(19, -45.0, In), k(30, -40.0, Linear), k(38, 20.0, InOut)],
+    blade_held: (0, 40),
+    weapon_scale: &[k(0, 1.1, Linear), k(12, 1.9, Out), k(28, 1.9, Linear), k(36, 1.0, InOut)],
+    windows: &[wg(14, 34, Shape::Around { radius: 260.0, ahead: 140.0 }, Attack::QuakeBig, FX_QUAKE | FX_GROUND)],
+    cancels: &[c(ALL, 34, 30)],
+    sounds: &[(0, UH, 0.5), (3, HOOHOO, 0.0), (4, SWISH, 0.42), (18, SWISH, 0.5)],
+    fx: &[(3, FX_LAUNCH)],
+    locked: (0, 30),
+    ..BASE
+};
+
+/// ...let go full: higher (6 m ahead), the hammer three times its size, a slam that shakes the
+/// ground (the Titan's, frost's crater)
+pub const LEAP_FULL: Move = Move {
+    name: "hammer leap (full)",
+    len: 46,
+    clips: &[still(0, FIRST_PUNCH), clip(3, SINGLE_JUMP), still(16, SECOND_PUNCH), clip(30, GENERAL_LAND)],
+    approach: Some(Approach { from: 3, to: 24, max: 6.0, gap: 1.2 }),
+    vel_y: &[(3, 52.0)],
+    pitch: &[k(0, 0.0, Linear), k(2, -8.0, Out), k(5, -12.0, Out), k(16, -10.0, Linear), k(21, 28.0, In), k(34, 0.0, InOut)],
+    squash: &[k(0, 0.8, Linear), k(3, 1.16, Out), k(10, 1.0, InOut), k(22, 0.78, In), k(30, 1.0, InOut)],
+    dip: &[k(0, 16.0, Linear), k(3, 0.0, Out), k(22, 20.0, In), k(34, 0.0, InOut)],
+    blade_pitch: &[k(0, 30.0, Linear), k(4, 120.0, Out), k(16, 155.0, Linear), k(22, -45.0, In), k(34, -40.0, Linear), k(44, 20.0, InOut)],
+    blade_held: (0, 46),
+    weapon_scale: &[k(0, 1.1, Linear), k(14, 2.8, Out), k(32, 2.8, Linear), k(42, 1.0, InOut)],
+    windows: &[wg(16, 40, Shape::Around { radius: 330.0, ahead: 160.0 }, Attack::Titan, FX_QUAKE | FX_GROUND | FX_GIANT)],
+    cancels: &[c(ALL, 40, 36)],
+    sounds: &[(0, UH, 0.5), (3, YAH, 0.0), (4, SWISH, 0.45), (20, SWISH, 0.55), (23, HEAVY_LANDING, 0.45)],
+    locked: (0, 34),
+    ..LEAP
 };
 
 #[cfg(test)]

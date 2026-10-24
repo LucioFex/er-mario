@@ -652,7 +652,7 @@ static BAG_START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instan
 /// tongue and eggs are hidden behind.
 fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fx: &crate::fx::WorldFx, bodies: &[(Vec3, f32)]) {
     // Mario's fireball: the charge at his hand, the shots, their bursts, the lava pools
-    draw_fire(dl, textures, size, &fx.fire, &fx.rubble);
+    draw_fire(dl, textures, size, &fx.fire, &fx.rubble, &fx.bolts);
 
     // the hammer's thrown small ones (volley.rs): a wooden handle and an iron head across it,
     // turning end over end along their flight
@@ -671,8 +671,7 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
     }
 
     // the Star Sword's lightning (bolt.rs): the storm cloud, a lumpy dark mesh lit from inside
-    // when it strikes; the bolts, zigzags with two branches, a glow round a white-hot core,
-    // flickering out
+    // when it strikes (the bolts themselves are 3D: draw_fire)
     for st in &fx.storms {
         let fade_in = (st.t * 8.0).min(1.0);
         let r = st.radius * 0.55 * (0.6 + 0.4 * fade_in);
@@ -696,35 +695,7 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
             }
         }
     }
-    for b in &fx.bolts {
-        let flick = (1.0 - b.t) * if (b.t * 20.0) as u32 % 2 == 0 { 1.0 } else { 0.65 };
-        if flick <= 0.02 {
-            continue;
-        }
-        let main = crate::bolt::jag(b.from, b.to, b.seed as u32, 10, 0.07);
-        let len = b.from.distance(b.to);
-        let mut paths = vec![(main.clone(), b.width)];
-        // (two branches off its upper half)
-        for (k, at) in [3usize, 6].into_iter().enumerate() {
-            let start = main[at];
-            let dir = (b.to - b.from).normalize_or(Vec3::NEG_Y);
-            let out = dir.any_orthonormal_vector() * if (b.seed as u32 + k as u32) % 2 == 0 { 1.0 } else { -1.0 };
-            let end = start + (dir * 0.6 + out * 0.45) * len * 0.22;
-            paths.push((crate::bolt::jag(start, end, b.seed as u32 * 3 + k as u32, 4, 0.12), b.width * 0.5));
-        }
-        for (path, w) in paths {
-            let pts: Vec<Option<([f32; 2], f32)>> = path.iter().map(|p| project(*p, size)).collect();
-            for pair in pts.windows(2) {
-                let (Some((a, za)), Some((c, _))) = (pair[0], pair[1]) else { continue };
-                if za > 150.0 {
-                    continue;
-                }
-                let px = (size[1] / za.max(0.5) * w).clamp(1.0, 40.0);
-                dl.add_line(a, c, imgui::ImColor32::from_rgba_f32s(1.0, 0.92, 0.45, 0.35 * flick)).thickness(px * 3.0).build();
-                dl.add_line(a, c, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.92, 0.95 * flick)).thickness(px).build();
-            }
-        }
-    }
+    // (the bolts are 3D, drawn with the fireballs: draw_fire)
 
     // the sword's crescents (wave.rs): a curved band of light bulging the way it goes, slanted
     // round that way, a thin strip across its edge (a body still, seen side-on), a soft glow and a
@@ -1421,8 +1392,8 @@ thread_local! {
 /// The fireballs (flame.rs's looks): 3D faces cut at the camera's near plane (a sun at arm's
 /// length isn't lost, nor flattened) and SM64's sprites, all drawn far to near together; the
 /// screen warming as a big one fills it, all fire inside one.
-fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fire: &crate::fx::FireFx, rubble: &[crate::fx::Rock]) {
-    if fire.is_empty() && rubble.is_empty() {
+fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size: [f32; 2], fire: &crate::fx::FireFx, rubble: &[crate::fx::Rock], bolts: &[crate::fx::Bolt]) {
+    if fire.is_empty() && rubble.is_empty() && bolts.is_empty() {
         return;
     }
     let Some(view) = View::now(size) else { return };
@@ -1433,6 +1404,11 @@ fn draw_fire(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], siz
         items.clear();
         crate::flame::build(look, fire, &crate::flame::Eye { pos: view.eye, px: view.px, screen: size[1] }, crate::flame::clock());
         crate::flame::rubble(look, rubble, view.eye);
+        // (the Star Sword's bolts: 3D, sorted in with the rest)
+        let eye = crate::flame::Eye { pos: view.eye, px: view.px, screen: size[1] };
+        for b in bolts {
+            crate::elemfx::bolt(look, b, &eye);
+        }
         // (the light on the ground first, under all the rest)
         let under = look.under.len();
         for (i, t) in look.under.iter().chain(look.tris.iter()).enumerate() {

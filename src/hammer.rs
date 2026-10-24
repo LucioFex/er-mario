@@ -85,6 +85,12 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
 }
 
 /// L1: the hammer comes out or goes away.
+/// Where the hammer's head was drawn last (SM64's coordinates), if it's out: the ice rocket's
+/// block of ice goes on it (fireball.rs).
+pub fn head() -> Option<Vec3> {
+    with(|s| s.head)
+}
+
 pub fn set_out(out: bool) {
     with(|s| {
         if s.out != out {

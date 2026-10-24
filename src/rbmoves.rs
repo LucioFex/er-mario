@@ -31,10 +31,12 @@ const HOO: u32 = 0x241F_8081;
 const HOOHOO: u32 = 0x2403_8081;
 const SHORT_STAR: u32 = 0x3016_0091;
 
-/// the dark beam's length by charge (ticks: 0.4 to 1.2 s), the Abyss beam's (2.5 s); its moves
-/// let it go at BEAM_FROM
-pub const BEAM_TICKS: [u16; 4] = [12, 20, 28, 36];
-pub const ABYSS_TICKS: u16 = 75;
+/// the dark beam's length by charge (ticks: 0.6 to 1.8 s), the Abyss beam's (3 s); its moves let
+/// it go at BEAM_FROM; from this level on the stick swings it round
+pub const BEAM_TICKS: [u16; 4] = [18, 28, 40, 54];
+pub const ABYSS_TICKS: u16 = 90;
+#[cfg(test)]
+pub const BEAM_STEERED: usize = 2;
 pub const BEAM_FROM: u16 = 6;
 /// the arm sweep's arc by charge (degrees)
 pub const SWEEP_SPAN: [f32; 4] = [120.0, 180.0, 270.0, 360.0];
@@ -64,8 +66,9 @@ const ROCKET_REACH: Shape = Shape::Front { reach: 190.0 };
 
 // ---- frost (the hammer) ---------------------------------------------------------------------
 
-/// The ice rocket punch (Overwatch's Doomfist): the fist drawn back while the ice grows on it, then
-/// he rockets fist first into the enemy (6 / 8 / 11 / 14 m by charge) and lands out of it.
+/// The ice rocket (Overwatch's Doomfist, with the hammer): the hammer hauled back over his shoulder
+/// while the ice grows on its head, then he rockets head first behind it into the enemy (6 / 8 /
+/// 11 / 14 m by charge) and lands out of it.
 const ROCKET: Move = Move {
     name: "ice rocket punch",
     len: 30,
@@ -83,6 +86,10 @@ const ROCKET: Move = Move {
     squash: &[k(0, 1.0, Linear), k(5, 0.84, Out), k(7, 1.14, Out), k(12, 1.0, InOut), k(15, 0.9, Out), k(19, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(5, 10.0, Out), k(7, 0.0, Out), k(15, 6.0, Out), k(20, 0.0, InOut)],
     reach: &[k(0, 0.4, Linear), k(5, 0.2, Out), k(8, 1.0, Out), k(15, 1.0, Linear), k(21, 0.0, InOut)],
+    // (the hammer back over his right shoulder, then thrust out ahead of him, its head leading)
+    blade_yaw: &[k(0, -60.0, Linear), k(5, -150.0, Out), k(8, 0.0, Out), k(15, 0.0, Linear), k(24, -20.0, InOut)],
+    blade_pitch: &[k(0, 30.0, Linear), k(5, 45.0, Out), k(8, -4.0, Out), k(15, -4.0, Linear), k(24, 25.0, InOut)],
+    blade_held: (0, 28),
     windows: &[w(8, 15, ROCKET_REACH, Attack::IceRocket(0), 0)],
     cancels: &[c(ALL, 22, 16)],
     sounds: &[(0, UH, 0.45), (6, WAH, 0.0), (7, SWISH, 0.45)],
@@ -98,8 +105,8 @@ pub const ICE_ROCKETS: [Move; 4] = [
     Move { name: "ice rocket punch (full)", approach: Some(Approach { from: 6, to: 14, max: 14.0, gap: 0.8 }), windows: &[w(8, 15, ROCKET_REACH, Attack::IceRocket(3), FX_BANG)], ..ROCKET },
 ];
 
-/// RB in the air with the hammer: a moment's hang, a diving punch down at the enemy in its ice
-/// block, a wave of frost where he lands
+/// RB in the air with the hammer: a moment's hang, a dive down at the enemy behind the hammer in
+/// its ice block, a wave of frost where he lands
 pub const ICE_DIVE_MOVE: Move = Move {
     name: "ice dive",
     len: 34,
@@ -114,6 +121,10 @@ pub const ICE_DIVE_MOVE: Move = Move {
     dip: &[k(0, 0.0, Linear), k(12, 14.0, Out), k(24, 0.0, InOut)],
     reach: &[k(0, 0.4, Linear), k(4, 0.3, Out), k(7, 1.0, Out), k(14, 1.0, Linear), k(22, 0.2, InOut)],
     reach_pitch: -35.0,
+    // (raised over his head, then down ahead of him for the dive, its head leading)
+    blade_yaw: &[k(0, -40.0, Linear), k(4, 0.0, Out)],
+    blade_pitch: &[k(0, 40.0, Linear), k(4, 120.0, Out), k(7, -40.0, In), k(14, -40.0, Linear), k(24, 20.0, InOut)],
+    blade_held: (0, 30),
     windows: &[
         w(5, 9, ROCKET_REACH, Attack::IceDive, 0),
         wg(10, 33, Shape::Around { radius: 230.0, ahead: 60.0 }, Attack::FrostWave, FX_SLAM | FX_GROUND),
@@ -155,7 +166,7 @@ pub const GLACIER_AIR_MOVE: Move = Move { name: "Glacier fist (air)", vel_y: &[(
 /// beam pouring from them (beam.rs) for as long as its charge allows; he stands (or hangs) braced.
 const BEAM: Move = Move {
     name: "dark beam",
-    len: 6 + 12 + 10,
+    len: BEAM_FROM + BEAM_TICKS[0] + 10,
     clips: &[still(0, FIRST_PUNCH), still(BEAM_FROM, SECOND_PUNCH)],
     twist: &[k(0, 0.0, Linear), k(5, -35.0, Out), k(7, 5.0, Out)],
     pitch: &[k(0, 0.0, Linear), k(5, -6.0, Out), k(7, 8.0, Out)],
@@ -163,32 +174,39 @@ const BEAM: Move = Move {
     squash: &[k(0, 1.0, Linear), k(5, 0.9, Out), k(7, 1.06, Out), k(12, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(5, 10.0, Out), k(8, 6.0, Out)],
     reach: &[k(0, 0.4, Linear), k(5, 0.2, Out), k(7, 1.0, Out)],
-    cancels: &[c(DASH, 10, 10), c(ALL, 6 + 12 + 4, 6 + 12 + 4)],
+    cancels: BEAM_CANCELS[0],
     sounds: &[(0, SWISH, 0.25), (5, HOO, 0.0)],
     fx: &[(BEAM_FROM, FX_RELEASE)],
     locked: (0, BEAM_FROM),
     ..BASE
 };
 
+const BEAM_CANCELS: [&[Cancel]; 4] = [
+    &[c(DASH, 10, 10), c(ALL, BEAM_FROM + BEAM_TICKS[0] + 4, BEAM_FROM + BEAM_TICKS[0] + 4)],
+    &[c(DASH, 10, 10), c(ALL, BEAM_FROM + BEAM_TICKS[1] + 4, BEAM_FROM + BEAM_TICKS[1] + 4)],
+    &[c(DASH, 10, 10), c(ALL, BEAM_FROM + BEAM_TICKS[2] + 4, BEAM_FROM + BEAM_TICKS[2] + 4)],
+    &[c(DASH, 10, 10), c(ALL, BEAM_FROM + BEAM_TICKS[3] + 4, BEAM_FROM + BEAM_TICKS[3] + 4)],
+];
+
 pub const DARK_BEAMS: [Move; 4] = [
     BEAM,
-    Move { name: "dark beam (charged)", len: 6 + 20 + 10, cancels: &[c(DASH, 10, 10), c(ALL, 6 + 20 + 4, 6 + 20 + 4)], ..BEAM },
-    Move { name: "dark beam (charged 2)", len: 6 + 28 + 10, cancels: &[c(DASH, 10, 10), c(ALL, 6 + 28 + 4, 6 + 28 + 4)], ..BEAM },
-    Move { name: "dark beam (full)", len: 6 + 36 + 10, cancels: &[c(DASH, 10, 10), c(ALL, 6 + 36 + 4, 6 + 36 + 4)], ..BEAM },
+    Move { name: "dark beam (charged)", len: BEAM_FROM + BEAM_TICKS[1] + 10, cancels: BEAM_CANCELS[1], ..BEAM },
+    Move { name: "dark beam (charged 2)", len: BEAM_FROM + BEAM_TICKS[2] + 10, cancels: BEAM_CANCELS[2], steer: true, ..BEAM },
+    Move { name: "dark beam (full)", len: BEAM_FROM + BEAM_TICKS[3] + 10, cancels: BEAM_CANCELS[3], steer: true, ..BEAM },
 ];
 
 pub const DARK_BEAMS_AIR: [Move; 4] = [
-    Move { name: "dark beam (air)", vel_y: &[(0, 0.0)], hold: (0, 6 + 12), air: true, ..DARK_BEAMS[0] },
-    Move { name: "dark beam (air, charged)", vel_y: &[(0, 0.0)], hold: (0, 6 + 20), air: true, ..DARK_BEAMS[1] },
-    Move { name: "dark beam (air, charged 2)", vel_y: &[(0, 0.0)], hold: (0, 6 + 28), air: true, ..DARK_BEAMS[2] },
-    Move { name: "dark beam (air, full)", vel_y: &[(0, 0.0)], hold: (0, 6 + 36), air: true, ..DARK_BEAMS[3] },
+    Move { name: "dark beam (air)", vel_y: &[(0, 0.0)], hold: (0, BEAM_FROM + BEAM_TICKS[0]), air: true, ..DARK_BEAMS[0] },
+    Move { name: "dark beam (air, charged)", vel_y: &[(0, 0.0)], hold: (0, BEAM_FROM + BEAM_TICKS[1]), air: true, ..DARK_BEAMS[1] },
+    Move { name: "dark beam (air, charged 2)", vel_y: &[(0, 0.0)], hold: (0, BEAM_FROM + BEAM_TICKS[2]), air: true, ..DARK_BEAMS[2] },
+    Move { name: "dark beam (air, full)", vel_y: &[(0, 0.0)], hold: (0, BEAM_FROM + BEAM_TICKS[3]), air: true, ..DARK_BEAMS[3] },
 ];
 
 /// The Abyss beam (10 s): a huge beam for two and a half seconds, swept round by the stick
 pub const ABYSS_MOVE: Move = Move {
     name: "Abyss beam",
-    len: 6 + ABYSS_TICKS + 12,
-    cancels: &[c(DASH, 20, 20), c(ALL, 6 + ABYSS_TICKS + 4, 6 + ABYSS_TICKS + 4)],
+    len: BEAM_FROM + ABYSS_TICKS + 12,
+    cancels: &[c(DASH, 20, 20), c(ALL, BEAM_FROM + ABYSS_TICKS + 4, BEAM_FROM + ABYSS_TICKS + 4)],
     sounds: &[(0, SWISH, 0.25), (5, HOOHOO, 0.0)],
     squash: &[k(0, 1.0, Linear), k(5, 0.86, Out), k(7, 1.08, Out), k(14, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(5, 14.0, Out), k(8, 10.0, Out)],
@@ -196,7 +214,7 @@ pub const ABYSS_MOVE: Move = Move {
     ..BEAM
 };
 
-pub const ABYSS_AIR_MOVE: Move = Move { name: "Abyss beam (air)", vel_y: &[(0, 0.0)], hold: (0, 6 + ABYSS_TICKS), air: true, ..ABYSS_MOVE };
+pub const ABYSS_AIR_MOVE: Move = Move { name: "Abyss beam (air)", vel_y: &[(0, 0.0)], hold: (0, BEAM_FROM + ABYSS_TICKS), air: true, ..ABYSS_MOVE };
 
 // ---- poison (the boomerang) -----------------------------------------------------------------
 
@@ -403,6 +421,11 @@ mod tests {
         }
         assert_eq!(beam_ticks(ABYSS), Some(ABYSS_TICKS));
         assert!(rb(ABYSS).steer && rb(ABYSS).len > BEAM_FROM + ABYSS_TICKS);
+        // (from its second level on the stick swings it round)
+        for l in 0..4u16 {
+            assert_eq!(rb(DARK_BEAM + l).steer, l as usize >= BEAM_STEERED, "level {l}");
+            assert_eq!(rb(DARK_BEAM_AIR + l).steer, l as usize >= BEAM_STEERED, "air level {l}");
+        }
         assert_eq!(beam_ticks(ICE_ROCKET), None);
     }
 

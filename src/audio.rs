@@ -112,6 +112,7 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
     let mut cur = [0i16; 2];
     let mut next = [0i16; 2];
     let mut engine = crate::kartengine::Engine::new();
+    let mut sfx = crate::sfx::Mixer::new();
     let stream = device
         .build_output_stream(
             &config.into(),
@@ -120,6 +121,7 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
                 let gl = f32::from_bits(GAIN_L.load(std::sync::atomic::Ordering::Relaxed));
                 let gr = f32::from_bits(GAIN_R.load(std::sync::atomic::Ordering::Relaxed));
                 let tone = ENGINE.lock().unwrap_or_else(|e| e.into_inner()).filter(|(_, at)| at.elapsed().as_secs_f32() < ENGINE_STALE).map(|(t, _)| t);
+                sfx.take();
                 for frame in out.chunks_mut(channels) {
                     pos += step;
                     while pos >= 1.0 {
@@ -133,6 +135,8 @@ fn open(device: &cpal::Device) -> Result<cpal::Stream, String> {
                     let mono = (l + r) * 0.5 / 32768.0 * std::f32::consts::SQRT_2;
                     // (the kart's engine, where Mario is: he's in it)
                     let mono = mono + engine.sample(tone.as_ref(), rate);
+                    // (the mod's own sounds, sfx.rs: the sword's, thunder, the hook's gas...)
+                    let mono = mono + sfx.sample(rate);
                     for (c, s) in frame.iter_mut().enumerate() {
                         // (hard to one side and close by it could go over: no clipping wrap)
                         *s = (mono * if c % 2 == 0 { gl } else { gr }).clamp(-1.0, 1.0);

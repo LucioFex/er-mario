@@ -180,7 +180,18 @@ pub fn clear() {
 }
 
 fn sound(id: i32, volume: f32) {
+    if id == SOUND_THUNDER {
+        return thunder(volume);
+    }
     worker::call("bolt sound", move |_| unsafe { sm64::sm64_play_sound_volume(id, volume) });
+}
+
+/// A thunderclap (sfx.rs: synthesized, a crack and its rumble; louder ones roll on longer), a
+/// flash of the screen, the camera jolted.
+fn thunder(volume: f32) {
+    crate::sfx::play(crate::sfx::Sfx::Thunder(volume >= 0.35), (volume * 1.3).min(0.75));
+    crate::impact::flash([0.85, 0.9, 1.0], 0.08 + 0.25 * volume, 0.16);
+    crate::lakitu::shake(0.15 + 0.5 * volume);
 }
 
 /// Where a character's chest is now (Elden Ring world), if it's still there and alive.

@@ -1,8 +1,9 @@
 //! Which of the other weapons' new moves (v4 Part 3, script.rs) the buttons ask for, as
 //! swordplay.rs does for the Star Sword. The fists: mashing X as the Bullet Bill punch lands (the
-//! hundred-hand flurry), X held (the Super punch), X, a beat, X (the heavy hook), and up in the air
-//! the stick's way with X (forward: the meteor punch; back: the dropkick). Pure: moves.rs gathers
-//! what it reads and starts what comes out; er_moves.c's own moves take the rest.
+//! hundred-hand flurry), X, a beat, X (the heavy hook), and up in the air the stick's way with X
+//! (forward: the meteor punch; back: the dropkick). X held is charge.rs's (every weapon's charge
+//! while he walks) but the boomerang's (steered). Pure: moves.rs gathers what it reads and starts
+//! what comes out; er_moves.c's own moves take the rest.
 
 use crate::combo::Dir;
 use crate::script::*;
@@ -24,10 +25,8 @@ pub struct Input {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct State {
     pub air: bool,
-    /// the scripted move playing and whether its NEXT window is open, how long it has played
-    /// (ticks), whether a blow of it landed
+    /// the scripted move playing and whether its NEXT window is open, whether a blow of it landed
     pub playing: Option<(u16, bool)>,
-    pub playing_for: u32,
     pub landed: bool,
     /// in the dash now; ticks since a dash ended
     pub dashing: bool,
@@ -44,7 +43,7 @@ pub struct State {
     pub rangs: u32,
 }
 
-/// X held this long: its charge
+/// X held this long: the boomerang steered
 pub const CHARGE_AFTER: u32 = 18;
 /// X this long after the first blow ended: the beat's (ticks)
 pub const BEAT: (u32, u32) = (8, 30);
@@ -104,19 +103,12 @@ fn hammer(i: &Input, s: &State) -> Option<u16> {
 }
 
 fn chomp(i: &Input, s: &State) -> Option<u16> {
-    let playing = s.playing.map(|p| p.0);
-    if playing == Some(CHOMP_LASSO_CHARGE) {
-        return let_go(i).map(|_| CHOMP_LASSO);
-    }
     if s.air {
         return None;
     }
     // mashing X as the bite lands (out of the bite itself: not again in the frenzy)
     if s.playing.is_none() && i.x && i.mash >= MASH && s.bite_ago.is_some_and(|ago| (FRENZY_FROM..=FRENZY_TO).contains(&ago)) {
         return Some(CHOMP_FRENZY);
-    }
-    if held_x(i, s) {
-        return Some(CHOMP_LASSO_CHARGE);
     }
     (free(s) && i.x && i.back_forward).then_some(CHOMP_RUSH)
 }
@@ -149,11 +141,6 @@ const FRENZY_TO: u32 = 40;
 fn fists(i: &Input, s: &State) -> Option<u16> {
     let playing = s.playing.map(|p| p.0);
     let free = free(s);
-    // (charging: only the release counts; full by the charge's own time, as its gleam)
-    if playing == Some(FIST_CHARGE) {
-        let full = s.playing_for + 1 + CHARGE_AFTER >= crate::fistmoves::SUPER_FULL;
-        return let_go(i).map(|_| if full { SUPER_PUNCH + 1 } else { SUPER_PUNCH });
-    }
     // mashing X as the Bullet Bill punch lands
     if playing == Some(BULLET_PUNCH) && s.landed && i.x && i.mash >= MASH {
         return Some(FIST_FLURRY);
@@ -169,10 +156,6 @@ fn fists(i: &Input, s: &State) -> Option<u16> {
             Some(Dir::Back) => Some(FIST_DROPKICK),
             _ => None,
         };
-    }
-    // X held: the charge (not in the dash, nor held from before it: the Dodge Offset's)
-    if held_x(i, s) {
-        return Some(FIST_CHARGE);
     }
     if !free || !i.x {
         return None;
@@ -199,21 +182,14 @@ mod tests {
         assert_eq!(choose(FISTS, &Input { mash: 1, ..x() }, &punch(true)), None);
     }
 
+    /// X held is charge.rs's now: nothing here for the fists, the hammer or the Chomp.
     #[test]
-    fn x_held_charges_the_super_punch() {
-        let held = Input { x_held: CHARGE_AFTER, ..Default::default() };
-        assert_eq!(choose(FISTS, &held, &State::default()), Some(FIST_CHARGE));
-        let charging = |t: u32| State { playing: Some((FIST_CHARGE, false)), playing_for: t, ..Default::default() };
-        assert_eq!(choose(FISTS, &Input { x_released: Some(30), ..Default::default() }, &charging(11)), Some(SUPER_PUNCH));
-        // (full once the charge has gone as far as its gleam)
-        let gleam = crate::fistmoves::SUPER_FULL - CHARGE_AFTER;
-        assert_eq!(choose(FISTS, &Input { x_released: Some(50), ..Default::default() }, &charging(gleam)), Some(SUPER_PUNCH + 1));
-        assert_eq!(choose(FISTS, &Input { x_held: 40, ..Default::default() }, &charging(20)), None);
-        // (let go while moves weren't read: up now all the same)
-        assert_eq!(choose(FISTS, &Input::default(), &charging(5)), Some(SUPER_PUNCH));
-        // (not in the dash, nor held through it)
-        assert_eq!(choose(FISTS, &held, &State { dashing: true, dashed: Some(0), ..Default::default() }), None);
-        assert_eq!(choose(FISTS, &Input { x_held: 30, ..Default::default() }, &State { dashed: Some(5), ..Default::default() }), None);
+    fn x_held_is_the_charges() {
+        use crate::weapons::CHOMP;
+        let held = Input { x_held: CHARGE_AFTER + 10, ..Default::default() };
+        for w in [FISTS, HAMMER, CHOMP] {
+            assert_eq!(choose(w, &held, &State::default()), None, "weapon {w}");
+        }
     }
 
     #[test]
@@ -264,13 +240,9 @@ mod tests {
     }
 
     #[test]
-    fn the_chomps_closer_lasso_and_frenzy() {
+    fn the_chomps_closer_and_frenzy() {
         use crate::weapons::CHOMP;
         assert_eq!(choose(CHOMP, &closer(), &State::default()), Some(CHOMP_RUSH));
-        assert_eq!(choose(CHOMP, &Input { x_held: CHARGE_AFTER, ..Default::default() }, &State::default()), Some(CHOMP_LASSO_CHARGE));
-        let whirling = State { playing: Some((CHOMP_LASSO_CHARGE, false)), ..Default::default() };
-        assert_eq!(choose(CHOMP, &Input { x_released: Some(30), ..Default::default() }, &whirling), Some(CHOMP_LASSO));
-        assert_eq!(choose(CHOMP, &Input { x_held: 30, ..Default::default() }, &whirling), None);
         // (mashing as the bite lands; not before it bites)
         let mash = Input { mash: 3, ..x() };
         assert_eq!(choose(CHOMP, &mash, &State { bite_ago: Some(8), ..Default::default() }), Some(CHOMP_FRENZY));

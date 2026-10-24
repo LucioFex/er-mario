@@ -2683,6 +2683,14 @@ u32 er_hammer_redirect(struct MarioState *m, u32 action, u32 *actionArg) {
         *actionArg = 0;
         return ACT_ER_AIR_COMBO;
     }
+    // SM64's speed kick (B running flat out: a dive with a hop) is the string's first punch: the
+    // fists' combo goes on from a run (the dive left him lying there, the string lost)
+    if (!er_hammer_mode && er_weapon == 0 && action == ACT_DIVE && !(m->action & ACT_FLAG_AIR)) {
+        // (the dive's hop SM64 set before asking for it: none on a punch)
+        m->vel[1] = 0.0f;
+        *actionArg = 0;
+        return ACT_MOVE_PUNCHING;
+    }
     if (!er_hammer_mode) {
         return action;
     }

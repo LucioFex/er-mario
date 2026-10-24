@@ -2,8 +2,9 @@
 //! anchors the cap to the bone nearest the screen's centre (its neck, head, an arm, a leg, its tail:
 //! colossus.rs's canonical bones), a ring on it, the camera framing Mario and the bone. On the line:
 //! - the left stick held swings him round the anchor a moment (at most 90°/s, 3 s a line)
-//! - let go, the line reels him in, faster and faster (12 → 30 m/s); B is a burst of gas (+40%, two
-//!   charges, both back on a hit or on landing)
+//! - let go, the line reels him in, faster and faster (12 → 30 m/s); B is a burst of gas (+40%; with
+//!   the stick to a side, a sidestep round the anchor that way with a hiss; three charges, all back
+//!   on a hit or on landing)
 //! - X in the last quarter second before he gets there is the strike: harder the faster he comes
 //!   (× speed / 20 m/s, 0.3 to 1.8), half again on the nape or the head from behind (NAPE!); no X,
 //!   a glancing hit at half. The right stick flicked moves the anchor to the next bone that way.
@@ -30,7 +31,12 @@ const REEL_RAMP: f32 = 30.0;
 /// a burst of gas: its push, how long it fades over (s), charges
 const GAS_BOOST: f32 = 1.4;
 const GAS_FADE: f32 = 0.8;
-pub const GAS_CHARGES: u8 = 2;
+pub const GAS_CHARGES: u8 = 3;
+/// B with the stick across the line: a sidestep round the anchor, this fast on the whole (m/s,
+/// quickest at once and dying away) for this long (s); the stick that far across the line at least
+const DASH_SPEED: f32 = 26.0;
+const DASH_TIME: f32 = 0.4;
+const DASH_ACROSS: f32 = 0.35;
 /// the orbit: its fastest turn (rad/s, full stick), how long a line may orbit (s)
 const ORBIT_RATE: f32 = std::f32::consts::FRAC_PI_2;
 const ORBIT_MAX: f32 = 3.0;
@@ -148,6 +154,8 @@ pub struct Line {
     pub orbit_used: f32,
     pub gas: f32,
     pub orbiting: bool,
+    /// a sidestep's turning sense (the axis it goes round the anchor) and how long it has left (s)
+    dash: Option<(Vec3, f32)>,
 }
 
 /// A step's outcome: whether he orbited, how long until contact at this speed (s).
@@ -159,7 +167,7 @@ pub struct Step {
 
 impl Line {
     pub fn new(pos: Vec3, vel: Vec3) -> Line {
-        Line { pos, vel, reel: REEL_FROM, orbit_used: 0.0, gas: 0.0, orbiting: false }
+        Line { pos, vel, reel: REEL_FROM, orbit_used: 0.0, gas: 0.0, orbiting: false, dash: None }
     }
 
     pub fn speed(&self) -> f32 {
@@ -171,12 +179,46 @@ impl Line {
         self.gas = GAS_FADE;
     }
 
+    /// B with the stick held `way` (level), the line to `anchor`: across the line, a sidestep round
+    /// the anchor that way; along it (or no stick), the burst. Whether it was a sidestep.
+    pub fn dash(&mut self, way: Vec3, anchor: Vec3) -> bool {
+        let r = (self.pos - anchor).normalize_or(Vec3::Z);
+        let across = way - r * way.dot(r);
+        if across.length() < DASH_ACROSS {
+            self.burst();
+            return false;
+        }
+        self.dash = Some((r.cross(across.normalize()).normalize_or(Vec3::Y), DASH_TIME));
+        true
+    }
+
+    /// In a sidestep now.
+    #[cfg(test)]
+    pub fn dashing(&self) -> bool {
+        self.dash.is_some()
+    }
+
     /// One step (`dt` s) towards `anchor` (contact `contact` m off it), the stick (level, 0-1) held
     /// for the orbit.
     pub fn step(&mut self, anchor: Vec3, stick: Vec3, contact: f32, dt: f32) -> Step {
         let rel = self.pos - anchor;
         let dist = rel.length().max(1e-3);
         let r = rel / dist;
+        // a sidestep: round the anchor its way, quickest at once, the line's length kept
+        if let Some((axis, left)) = self.dash {
+            // (round its axis: on and on the same way, past a quarter turn too)
+            let across = axis.cross(r);
+            let speed = DASH_SPEED * 2.0 * (left / DASH_TIME);
+            let a = (speed * dt / dist).min(0.5);
+            let next = anchor + (r * a.cos() + across.normalize_or_zero() * a.sin()) * dist;
+            self.vel = (next - self.pos) / dt;
+            self.pos = next;
+            let left = left - dt;
+            self.dash = (left > 1e-4).then_some((axis, left));
+            self.orbiting = false;
+            // (going round, not in: no strike window)
+            return Step { orbiting: false, to_contact: f32::MAX };
+        }
         // the stick across the line: round the anchor that way, the line's length kept (along the
         // line it's no orbit: the reel)
         let across = stick - r * stick.dot(r);
@@ -741,14 +783,14 @@ pub fn update(inp: &Input, m: &Mario, allowed: bool, id: i32, origin: [f32; 3], 
                     None => sound(SOUND_BUZZ, 0.3),
                 }
             }
-            // B: a burst of gas
+            // B: a burst of gas (the stick to a side: a sidestep round it that way, hissing)
             if pressed[1] {
                 if s.gas > 0 {
                     s.gas -= 1;
-                    line.burst();
-                    sound(SOUND_GAS, 0.5);
+                    let side = line.dash(inp.steer, at);
+                    crate::sfx::play(crate::sfx::Sfx::Gas, if side { 0.55 } else { 0.45 });
                     crate::impact::dash_point(line.pos - Vec3::Y * CHEST, true);
-                    log(format!("odm: gas ({} left)", s.gas));
+                    log(format!("odm: gas{} ({} left)", if side { ", a sidestep" } else { "" }, s.gas));
                 } else {
                     sound(SOUND_BUZZ, 0.3);
                 }
@@ -929,6 +971,57 @@ mod tests {
             l.step(anchor, Vec3::ZERO, 1.2, DT);
         }
         assert!((l.speed() - REEL_TO).abs() < 0.01, "{}", l.speed());
+    }
+
+    /// B with the stick across the line: a burst of gas that way, round the anchor (the 3D
+    /// maneuver gear's sidestep), its length kept; even with the orbit spent.
+    #[test]
+    fn a_sideways_burst_swings_him_round() {
+        let anchor = Vec3::new(0.0, 5.0, 0.0);
+        for spent in [false, true] {
+            let mut l = Line::new(Vec3::new(0.0, 5.0, -10.0), Vec3::ZERO);
+            if spent {
+                l.orbit_used = ORBIT_MAX;
+            }
+            let start = l.pos - anchor;
+            assert!(l.dash(Vec3::X, anchor));
+            let mut ticks = 0;
+            while l.dashing() && ticks < 60 {
+                l.step(anchor, Vec3::ZERO, 1.2, DT);
+                ticks += 1;
+            }
+            let now = l.pos - anchor;
+            let turned = start.angle_between(now).to_degrees();
+            assert!(turned > 50.0 && turned < 120.0, "spent {spent}: turned {turned}");
+            assert!((now.length() - start.length()).abs() < 0.6, "spent {spent}: {} m", now.length());
+            // (the way it was pushed: toward +x)
+            assert!(now.x > 0.0, "{now}");
+            assert!(ticks as f32 * DT <= DASH_TIME + 0.05);
+        }
+        // (on a short line the sidestep goes on round past a quarter turn, no shaking at its side)
+        let mut l = Line::new(Vec3::new(0.0, 5.0, -4.0), Vec3::ZERO);
+        assert!(l.dash(Vec3::X, anchor));
+        let mut last = l.pos;
+        let mut turned = 0.0;
+        while l.dashing() {
+            l.step(anchor, Vec3::ZERO, 1.2, DT);
+            let s = (last - anchor).normalize().cross((l.pos - anchor).normalize()).y;
+            assert!(s <= 1e-4, "it turned back: {s}");
+            turned += (last - anchor).angle_between(l.pos - anchor);
+            last = l.pos;
+        }
+        assert!(turned.to_degrees() > 100.0, "{}", turned.to_degrees());
+        // (no strike window in a sidestep)
+        let mut l = Line::new(Vec3::new(0.0, 5.0, -4.0), Vec3::ZERO);
+        l.dash(Vec3::X, anchor);
+        assert!(l.step(anchor, Vec3::ZERO, 1.2, DT).to_contact > STRIKE_WINDOW);
+        // (with the stick along the line it's the old burst: the reel's)
+        let mut l = Line::new(Vec3::new(0.0, 5.0, -10.0), Vec3::ZERO);
+        let toward = (anchor - l.pos).normalize();
+        assert!(!l.dash(toward, anchor));
+        assert!(!l.dashing());
+        l.step(anchor, Vec3::ZERO, 1.2, DT);
+        assert!(l.speed() > REEL_FROM * 1.3, "{}", l.speed());
     }
 
     #[test]

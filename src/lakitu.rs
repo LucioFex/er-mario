@@ -213,11 +213,9 @@ struct Cam {
     /// in the kart: the view's yaw following the kart's (eased; None: not yet), its height over
     /// Mario's feet (eased),
     /// the stick's look round and how long the stick's been let go (s), the boost's pull back (m)
-    kart_yaw: Option<f32>,
-    kart_y: f32,
+    kart_cam: Option<crate::kartplay::ChaseCam>,
     kart_look: f32,
     kart_idle: f32,
-    kart_back: f32,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -321,16 +319,14 @@ pub fn set_cannon(v: Option<CannonView>) {
 }
 
 /// In the kart (karting.rs): where it is from Mario's feet (the world's origin may shift between
-/// the tick that said so and the frame), its way (flat), its speed (m/s), its turn (rad/s round +y),
-/// a boost on, the drift's way (−1, 0, 1): Lakitu's racing chase behind it.
+/// the tick that said so and the frame), its nose, its speed (m/s, the world's), a boost on:
+/// Lakitu's racing chase behind it.
 #[derive(Clone, Copy)]
 pub struct KartView {
     pub off: Vec3,
     pub fwd: Vec3,
-    pub speed: f32,
-    pub yaw_rate: f32,
+    pub vel: Vec3,
     pub boost: bool,
-    pub drift: f32,
 }
 
 static KART: Mutex<Option<KartView>> = Mutex::new(None);
@@ -339,15 +335,11 @@ pub fn set_kart(v: Option<KartView>) {
     *KART.lock().unwrap_or_else(|e| e.into_inner()) = v;
 }
 
-/// the racing view: its yaw follows the kart's at this rate, its height at this one; a drift swings
-/// it this far out (radians); the stick looks round this fast (rad/s) and is let go after this long
-/// (s); a boost pulls it back this much (m)
-const KART_FOLLOW: f32 = 4.0;
-const KART_HEIGHT: f32 = 3.0;
-const KART_SWING: f32 = 0.25;
+/// the racing view (kartplay::ChaseCam): the stick looks round this fast (rad/s) and is let go
+/// after this long (s), coming back behind at this rate (per s)
 const KART_LOOK_RATE: f32 = 2.2;
-const KART_LOOK_BACK: f32 = 1.0;
-const KART_BOOST_BACK: f32 = 1.2;
+const KART_LOOK_BACK: f32 = 1.5;
+const KART_LOOK_HOME: f32 = 2.0;
 
 /// the barrel's view: this far behind the pivot and up (m), looking this far along the barrel (m),
 /// easing there at this rate; the flight's: turning round behind his way at this rate, this much
@@ -465,11 +457,9 @@ pub fn update(
             mate_frame: Vec3::ZERO,
             coloss: 0.0,
             coloss_sink: 0.0,
-            kart_yaw: None,
-            kart_y: 2.0,
+            kart_cam: None,
             kart_look: 0.0,
             kart_idle: 0.0,
-            kart_back: 0.0,
         }
     });
 
@@ -504,7 +494,7 @@ pub fn update(
         if cam.zoom > 0 {
             cam.zoom -= 1;
             sound(SOUND_ZOOM_IN);
-        } else if idle && !airborne && !crate::mega::active() && !crate::mega::changing() {
+        } else if idle && !airborne && !crate::mega::active() && !crate::mega::changing() && !crate::karting::holds() {
             // looking where Mario faces, like SM64 (not as a giant: the eye would be in his legs)
             cam.fp = Some(FirstPerson { yaw: body_fwd.z.atan2(body_fwd.x), pitch: 0.0 });
             sound(SOUND_ZOOM_IN);
@@ -572,31 +562,25 @@ pub fn update(
         Some(CannonView::Flight { vel }) => Some(vel),
         _ => None,
     };
-    // in the kart: the racing chase (kartplay::chase), its yaw lagging the kart's so turns show,
-    // swung out in a drift, back a little in a boost; the right stick looks round a moment
+    // in the kart: the racing chase (kartplay::ChaseCam) at Mario's own zoom's distance, behind
+    // the way it goes, smooth over rough ground; the right stick looks round a moment
     let kart = *KART.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(k) = kart {
         let rate = |r: f32| 1.0 - (-r * dt).exp();
-        let want = k.fwd.x.atan2(k.fwd.z);
-        let yaw = cam.kart_yaw.map_or(want, |y| y + angle_diff(want, y) * rate(KART_FOLLOW));
-        cam.kart_yaw = Some(yaw);
         if orbit.abs() > ORBIT_DEAD {
             cam.kart_look = (cam.kart_look - orbit * KART_LOOK_RATE * dt).clamp(-std::f32::consts::PI, std::f32::consts::PI);
             cam.kart_idle = 0.0;
         } else {
             cam.kart_idle += dt;
             if cam.kart_idle > KART_LOOK_BACK {
-                cam.kart_look -= cam.kart_look * rate(3.0);
+                cam.kart_look -= cam.kart_look * rate(KART_LOOK_HOME);
             }
         }
-        cam.kart_back += (if k.boost { KART_BOOST_BACK } else { 0.0 } - cam.kart_back) * rate(3.0);
-        let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
         let kpos = mario + k.off;
-        let (eye, look) = crate::kartplay::chase(kpos, fwd, k.speed, k.yaw_rate, -k.drift * KART_SWING + cam.kart_look);
-        let eye = eye + (eye - kpos).with_y(0.0).normalize_or_zero() * cam.kart_back;
-        // (bumps: the height over him eased; walls pull it in; never under the ground)
-        cam.kart_y += (eye.y - mario.y - cam.kart_y) * rate(KART_HEIGHT);
-        let eye = eye.with_y((mario.y + cam.kart_y).max(kpos.y + 0.6));
+        let chase = cam.kart_cam.get_or_insert_with(crate::kartplay::ChaseCam::default);
+        let (eye, look) = chase.step(kpos, k.fwd, k.vel, ZOOM[cam.zoom], cam.kart_look, k.boost, dt);
+        // (walls pull it in; never under the ground)
+        let eye = eye.with_y(eye.y.max(kpos.y + 0.6));
         let from = kpos + Vec3::Y * 1.0;
         let mut pos = hit(from, eye).map_or(eye, |h| h + (from - h).normalize_or_zero() * WALL_GAP);
         if let Some(g) = hit(pos + Vec3::Y * 1.0, pos - Vec3::Y * 1.0) {
@@ -610,10 +594,10 @@ pub fn update(
         let d = cam.pos - cam.focus;
         cam.yaw = d.z.atan2(d.x);
         cam.target_yaw = None;
-        write(render, (look - cam.pos).normalize_or(fwd), cam.pos);
+        write(render, (look - cam.pos).normalize_or(k.fwd), cam.pos);
         return;
     }
-    cam.kart_yaw = None;
+    cam.kart_cam = None;
 
     // the focus: Mario's head; in the air the height follows slowly (no bobbing on jumps), unless
     // he falls below it

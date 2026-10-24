@@ -640,9 +640,43 @@ fn strip(look: &mut Look, a: Vec3, b: Vec3, side: Vec3, wa: f32, wb: f32, col: [
     look.tris.push(Tri { p: [a0, b1, b0], col });
 }
 
-/// The dark beam (beam.rs): a black core in a crimson shell and a haze round both, flickering and
-/// rippling along it, a glow at his hands and where it ends; the Abyss beam wider, with dark
-/// motes pulled in along it.
+/// A straight tube from `from` along `dir` (`len` long) in `segs` pieces of `sides` faces, its
+/// radius `radius(t)` along it (0-1) and its faces turned `twist` round it, only the ones turned
+/// to the eye; each face coloured by `col(t, lit, rim)`: how much it faces the light (0-1) and how
+/// edge-on it is to the eye (0-1, its rim).
+#[allow(clippy::too_many_arguments)]
+fn lit_tube(look: &mut Look, from: Vec3, dir: Vec3, len: f32, segs: usize, sides: usize, twist: f32, eye: Vec3, radius: &dyn Fn(f32) -> f32, col: &dyn Fn(f32, f32, f32) -> [f32; 4]) {
+    let u = dir.any_orthonormal_vector();
+    let v = dir.cross(u);
+    let light = LIGHT.normalize();
+    for k in 0..segs {
+        let (t0, t1) = (k as f32 / segs as f32, (k + 1) as f32 / segs as f32);
+        let (c0, c1) = (from + dir * (len * t0), from + dir * (len * t1));
+        let (r0, r1) = (radius(t0), radius(t1));
+        for j in 0..sides {
+            let (a0, a1) = (twist + TAU * j as f32 / sides as f32, twist + TAU * (j + 1) as f32 / sides as f32);
+            let n0 = u * a0.cos() + v * a0.sin();
+            let n1 = u * a1.cos() + v * a1.sin();
+            let n = (n0 + n1).normalize_or(n0);
+            let mid = (c0 + c1) * 0.5 + n * (r0 + r1) * 0.5;
+            let to_eye = (eye - mid).normalize_or(Vec3::Y);
+            let facing = n.dot(to_eye);
+            if facing <= 0.0 {
+                continue;
+            }
+            let lit = (n.dot(light) * 0.5 + 0.5).clamp(0.0, 1.0);
+            let c = col((t0 + t1) * 0.5, lit, 1.0 - facing);
+            let (p00, p01, p10, p11) = (c0 + n0 * r0, c0 + n1 * r0, c1 + n0 * r1, c1 + n1 * r1);
+            look.tris.push(Tri { p: [p00, p10, p11], col: c });
+            look.tris.push(Tri { p: [p00, p11, p01], col: c });
+        }
+    }
+}
+
+/// The dark beam (beam.rs), in 3D: a black core inside a crimson tube shaded by the light, a
+/// haze round both brightest at its rim, three strands of darkness twisting round it, rings of
+/// red rushing down it, a churning ball where it strikes and one at his hands; the Abyss beam
+/// wider, its haze purple, dark motes drawn in along it.
 pub fn beam(look: &mut Look, b: &Beam, eye: &Eye, clock: f32) {
     let axis = b.to - b.from;
     let len = axis.length();
@@ -650,38 +684,117 @@ pub fn beam(look: &mut Look, b: &Beam, eye: &Eye, clock: f32) {
         return;
     }
     let dir = axis / len;
-    // (across it, seen from the eye: a strip turned to the camera from any side but along it)
-    let mid = (b.from + b.to) * 0.5;
-    let side = dir.cross(eye.pos - mid).normalize_or(dir.any_orthonormal_vector());
+    let abyss = b.kind == 1;
     // (it swells in, holds, thins out at the end)
     let fade = (b.t / 0.08).min(1.0) * ((1.0 - b.t) / 0.12).clamp(0.0, 1.0).max(0.25);
     let r = b.radius * (0.6 + 0.4 * fade);
-    let n = ((len / 1.5).ceil() as usize).clamp(4, 16);
-    let abyss = b.kind == 1;
-    for i in 0..n {
-        let (t0, t1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
-        let (p0, p1) = (b.from + axis * t0, b.from + axis * t1);
-        // (rippling: each piece a little wider or narrower, moving down it)
-        let wob = |t: f32| 1.0 + 0.12 * ((t * len * 2.2 - clock * 14.0).sin()) + 0.06 * ((t * len * 5.3 + clock * 9.0).sin());
-        // (a tip at his hands, full past a metre)
-        let open = |t: f32| (t * len / 0.9).clamp(0.25, 1.0);
-        let (w0, w1) = (r * wob(t0) * open(t0), r * wob(t1) * open(t1));
-        strip(look, p0, p1, side, w0 * 1.7, w1 * 1.7, rgba(if abyss { HAZE_PURPLE } else { CRIMSON }, 0.16 * fade));
-        strip(look, p0, p1, side, w0, w1, rgba(mix(CRIMSON, BLOOD, 0.5), 0.5 * fade));
-        strip(look, p0, p1, side, w0 * 0.45, w1 * 0.45, rgba(DARK, 0.92 * fade));
+    let segs = ((len / 1.2).ceil() as usize).clamp(4, 18);
+    // (rippling down it; a tip at his hands, full past a metre)
+    let wob = |t: f32| 1.0 + 0.12 * (t * len * 2.2 - clock * 14.0).sin() + 0.06 * (t * len * 5.3 + clock * 9.0).sin();
+    let open = |t: f32| (t * len / 0.9).clamp(0.25, 1.0);
+    let haze = if abyss { HAZE_PURPLE } else { CRIMSON };
+    lit_tube(look, b.from, dir, len, segs, 8, clock * 2.0, eye.pos, &|t| r * 1.9 * wob(t) * open(t), &|_, _, rim| rgba(haze, (0.06 + 0.22 * rim) * fade));
+    lit_tube(look, b.from, dir, len, segs, 10, -clock * 3.0, eye.pos, &|t| r * wob(t) * open(t), &|_, lit, rim| rgba(mix(BLOOD, CRACK, lit * 0.8 + rim * 0.3), (0.5 + 0.3 * rim) * fade));
+    lit_tube(look, b.from, dir, len, segs, 6, clock * 5.0, eye.pos, &|t| r * 0.45 * wob(t) * open(t), &|_, lit, _| rgba(scaled(DARK, 0.6 + 0.8 * lit), 0.95 * fade));
+    // the strands: darkness twisting round it (each a thin tube along a helix)
+    let u = dir.any_orthonormal_vector();
+    let v = dir.cross(u);
+    let steps = ((len / 0.35).ceil() as usize).clamp(8, 60);
+    for strand in 0..3 {
+        let phase = strand as f32 * TAU / 3.0 + clock * if abyss { 7.0 } else { 5.0 };
+        let pts: Vec<Vec3> = (0..=steps)
+            .map(|k| {
+                let t = k as f32 / steps as f32;
+                let a = phase + t * len * 1.6;
+                b.from + dir * (len * t) + (u * a.cos() + v * a.sin()) * r * 1.3 * open(t)
+            })
+            .collect();
+        crate::flame::tube(look, &pts, 4, eye.pos, &|_| r * 0.11, &|_| rgba(if strand == 0 { CRACK } else { CRIMSON }, 0.75 * fade));
     }
-    glow(look, b.from, r * 4.5, CRIMSON, 0.55 * fade);
-    glow(look, b.from, r * 2.0, DARK, 0.7 * fade);
-    glow(look, b.to, r * 5.0, CRIMSON, 0.45 * fade);
-    // (sparks of it streaming down, the Abyss beam's dark motes drawn in toward it)
-    let motes = if abyss { 10 } else { 5 };
-    for k in 0..motes {
-        let h = hash(k, 3, 7);
-        let ph = (clock * (0.9 + 0.5 * h) + h).fract();
-        let around = Quat::from_axis_angle(dir, h * TAU) * side;
-        let off = if abyss { around * r * (2.6 - 2.2 * ph) } else { around * r * 0.6 };
-        glow(look, b.from + axis * ph + off, r * 0.5, if k % 2 == 0 { CRIMSON } else { DARK }, 0.6 * fade);
+    // the rings rushing down it
+    for k in 0..3 {
+        let ph = (clock * 2.6 + k as f32 / 3.0).fract();
+        let at = b.from + dir * (len * ph);
+        let rr = r * (1.4 + 0.4 * (1.0 - ph)) * open(ph);
+        crate::flame::band(&mut look.tris, at, u, v, rr * 0.75, rr, 14, &|_| 1.0, rgba(mix(CRACK, CRIMSON, ph), 0.5 * (1.0 - ph) * fade));
     }
+    // where it strikes: a ball of it churning, shaded; at his hands a smaller one
+    for (c, size, spin) in [(b.to, r * 2.1, clock * 4.0), (b.from, r * 1.3, -clock * 3.0)] {
+        sphere(look, c, size * (1.0 + 0.1 * (clock * 17.0).sin()), 5, 9, false, eye.pos, Quat::from_axis_angle(dir, spin), &|n, f, _| {
+            let lit = (n.dot(LIGHT.normalize()) * 0.5 + 0.5).clamp(0.0, 1.0);
+            rgba(mix(DARK, CRACK, lit * 0.7 * f), (0.55 + 0.35 * f) * fade)
+        });
+    }
+    glow(look, b.from, r * 4.5, CRIMSON, 0.45 * fade);
+    glow(look, b.to, r * 5.0, CRIMSON, 0.4 * fade);
+    // (the Abyss beam's dark motes drawn in toward it)
+    if abyss {
+        for k in 0..10 {
+            let h = hash(k, 3, 7);
+            let ph = (clock * (0.9 + 0.5 * h) + h).fract();
+            let around = Quat::from_axis_angle(dir, h * TAU) * u;
+            glow(look, b.from + axis * ph + around * r * (2.6 - 2.2 * ph), r * 0.5, if k % 2 == 0 { CRIMSON } else { DARK }, 0.6 * fade);
+        }
+    }
+}
+
+/// A bolt of the Star Sword's lightning (bolt.rs), in 3D: a white-hot core inside a bright tube
+/// of blue-white light, a violet haze round it brightest at its rim, zigzagging from the sky down
+/// to where it strikes, with forks off it (and forks off those); it strikes twice (a new shape the
+/// second time, as real lightning re-strikes) and flickers out; a ball of light where it lands and
+/// a glow up in the sky where it came from.
+pub fn bolt(look: &mut Look, b: &crate::fx::Bolt, eye: &Eye) {
+    let t = b.t.clamp(0.0, 1.0);
+    if t >= 1.0 || !b.from.is_finite() || !b.to.is_finite() {
+        return;
+    }
+    // (struck, dimmed, struck again, then flickering out)
+    let (bright, second) = match t {
+        t if t < 0.22 => (1.0, false),
+        t if t < 0.34 => (0.35, false),
+        t if t < 0.55 => (0.95, true),
+        t => ((1.0 - t) / 0.45 * if ((t * 40.0) as u32) % 2 == 0 { 1.0 } else { 0.55 }, true),
+    };
+    if bright <= 0.02 {
+        return;
+    }
+    let seed = b.seed as u32 + if second { 7919 } else { 0 };
+    let len = b.from.distance(b.to);
+    let w = b.width.max(0.05);
+    let main = crate::bolt::jag(b.from, b.to, seed, 12, 0.07);
+    let mut paths: Vec<(Vec<Vec3>, f32)> = vec![(main.clone(), 1.0)];
+    // (forks off its upper two thirds, and a smaller fork off each)
+    let dir = (b.to - b.from).normalize_or(Vec3::NEG_Y);
+    for (k, at) in [2usize, 4, 7].into_iter().enumerate() {
+        let start = main[at.min(main.len() - 1)];
+        let out = Quat::from_axis_angle(dir, (seed as f32 * 0.37 + k as f32 * 2.1) % TAU) * dir.any_orthonormal_vector();
+        let end = start + (dir * 0.55 + out * 0.5).normalize() * len * (0.24 - 0.04 * k as f32);
+        let fork = crate::bolt::jag(start, end, seed * 3 + k as u32, 5, 0.12);
+        let mid = fork[fork.len() / 2];
+        let out2 = Quat::from_axis_angle(dir, 1.3) * out;
+        let twig = crate::bolt::jag(mid, mid + (dir * 0.6 + out2 * 0.5).normalize() * len * 0.08, seed * 7 + k as u32, 3, 0.15);
+        paths.push((fork, 0.5));
+        paths.push((twig, 0.28));
+    }
+    for (path, share) in &paths {
+        let ww = w * share;
+        // the haze, the bright tube, the white-hot core
+        for (r, sides, col) in [
+            (ww * 2.4, 6, rgba([0.62, 0.55, 1.0], 0.13 * bright)),
+            (ww * 1.0, 6, rgba([0.75, 0.88, 1.0], 0.5 * bright)),
+            (ww * 0.38, 5, rgba([1.0, 1.0, 1.0], (0.98 * bright).min(1.0))),
+        ] {
+            crate::flame::tube(look, path, sides, eye.pos, &|_| r, &|_| col);
+        }
+        // (a bloom along it)
+        for p in path.iter().step_by(3) {
+            glow(look, *p, ww * 4.0, [0.7, 0.8, 1.0], 0.22 * bright);
+        }
+    }
+    // where it lands: a ball of light; up in the sky, where it came from, a glow
+    sphere(look, b.to, w * 2.2 * (1.0 + 0.3 * (1.0 - t)), 4, 8, false, eye.pos, Quat::IDENTITY, &|_, f, _| rgba(mix(THUNDER, SPARK, f), (0.4 + 0.5 * f) * bright));
+    glow(look, b.to, w * 9.0, SPARK, 0.5 * bright);
+    glow(look, b.from, w * 14.0, [0.75, 0.8, 1.0], 0.25 * bright);
 }
 
 /// A carpet of poison (carpet.rs): a fan of see-through green and purple over the ground, darker
@@ -751,6 +864,49 @@ mod tests {
             assert!(!look.under.is_empty());
             assert!(look.under.iter().all(|f| f.p.iter().all(|p| p.is_finite()) && f.col[3] < 0.9));
         }
+    }
+
+    /// How far round its axis (from `from` along `dir`) the faces' corners spread (degrees): a
+    /// strip turned to the camera keeps them in one plane (0 or 180 apart), a tube all round.
+    fn spread_round(look: &Look, from: Vec3, dir: Vec3) -> f32 {
+        let u = dir.any_orthonormal_vector();
+        let v = dir.cross(u);
+        let mut angles: Vec<f32> = look
+            .tris
+            .iter()
+            .flat_map(|t| t.p)
+            .filter_map(|p| {
+                let off = (p - from) - dir * (p - from).dot(dir);
+                (off.length() > 0.05).then(|| off.dot(v).atan2(off.dot(u)).to_degrees().rem_euclid(180.0))
+            })
+            .collect();
+        // (the tenths of a half turn its corners lie in: a strip one or two, a tube most)
+        angles.sort_by(f32::total_cmp);
+        let mut bins: Vec<usize> = angles.iter().map(|a| (a / 10.0) as usize).collect();
+        bins.dedup();
+        bins.len() as f32 * 10.0
+    }
+
+    /// The dark beam and the bolts are 3D: their faces go all round them, not one strip facing the
+    /// camera (the user: "no soy muy pro 2D").
+    #[test]
+    fn the_beam_and_the_bolts_are_round() {
+        let mut look = Look::default();
+        let (from, to) = (Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 15.0));
+        beam(&mut look, &Beam { from, to, radius: 0.5, t: 0.5, kind: 0 }, &eye(), 2.0);
+        assert!(spread_round(&look, from, Vec3::Z) >= 30.0, "beam: {}", spread_round(&look, from, Vec3::Z));
+        let mut look = Look::default();
+        let (from, to) = (Vec3::new(0.0, 22.0, 6.0), Vec3::new(0.0, 0.0, 6.0));
+        bolt(&mut look, &crate::fx::Bolt { from, to, seed: 5, t: 0.1, width: 0.3 }, &eye());
+        assert!(!look.tris.is_empty() && look.tris.iter().all(|f| f.p.iter().all(|p| p.is_finite())));
+        assert!(spread_round(&look, from, Vec3::NEG_Y) >= 30.0, "bolt: {}", spread_round(&look, from, Vec3::NEG_Y));
+        // (struck twice, then gone)
+        let drawn = |t: f32| {
+            let mut l = Look::default();
+            bolt(&mut l, &crate::fx::Bolt { from, to, seed: 5, t, width: 0.3 }, &eye());
+            l.tris.len()
+        };
+        assert!(drawn(0.45) > 0 && drawn(0.999) == 0 || drawn(0.999) < drawn(0.1));
     }
 
     fn eye() -> Eye {

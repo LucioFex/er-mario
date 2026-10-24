@@ -90,6 +90,8 @@ pub struct KartNow {
     pub vy: f32,
     pub boost: f32,
     pub drift: u8,
+    /// on its roof or its side (A puts it right: kart.rs)
+    pub upset: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -197,7 +199,11 @@ impl Driver {
             }
         }
         let a_pressed = pressed(p.a, self.prev.a);
-        if spinning {
+        if k.upset {
+            // (on its roof or its side: A is only the hop that puts it right)
+            acts.input = kart::Input { hop: p.a, ..Default::default() };
+            self.y_ticks = None;
+        } else if spinning {
             // (the wheel's not his while it spins: no items either)
             acts.input = kart::Input { throttle: 0.0, brake: SPIN_BRAKE, steer: 0.0, hop: false, drift: false, mushroom: false };
             self.y_ticks = None;
@@ -454,23 +460,76 @@ pub fn lethal(peak: f32, at: f32) -> bool {
     peak - at > LETHAL_FALL
 }
 
-/// the racing camera: this far behind (m), plus this much at the top speed, this high; it looks
-/// this far ahead and this high, leading turns by this long (s)
-const CHASE_BACK: f32 = 5.2;
-const CHASE_BACK_FAST: f32 = 1.6;
-const CHASE_UP: f32 = 1.7;
-const LOOK_AHEAD: f32 = 4.0;
-const LOOK_UP: f32 = 1.0;
-const LOOK_LEAD: f32 = 0.3;
+/// the racing camera: Mario's own camera's distance (a share of it, lakitu.rs's zoom) and height
+/// (and this much higher), this much farther at the top speed and in a boost (m); behind the way
+/// the kart goes, its yaw on a damped spring this quick (rad/s: a turn shows, the shiver of rough
+/// ground doesn't), its height eased at this rate (per s: the springs' bounce ridden out); the
+/// way it moves counts from this fast to this fast (m/s) for this share against its nose (a
+/// drift's slide); it looks this far ahead and this high (m); the stick's look eased at this rate
+const CHASE_ZOOM: f32 = 0.95;
+const CHASE_LIFT: f32 = 0.3;
+const CHASE_FAST: f32 = 1.4;
+const CHASE_BOOST: f32 = 1.0;
+const CHASE_TURN: f32 = 5.0;
+const CHASE_HEIGHT: f32 = 2.5;
+const TRAVEL: (f32, f32) = (3.0, 10.0);
+const TRAVEL_SHARE: f32 = 0.6;
+const LOOK_AHEAD: f32 = 3.0;
+const LOOK_UP: f32 = 0.9;
+const CHASE_LOOK: f32 = 6.0;
 
-/// Where the racing camera wants to be and where it looks: behind the kart at `pos` going `fwd`
-/// (flat) at `speed`, turning at `yaw_rate` (rad/s round +y), swung `swing` round it (a drift's).
-pub fn chase(pos: Vec3, fwd: Vec3, speed: f32, yaw_rate: f32, swing: f32) -> (Vec3, Vec3) {
-    let fwd = fwd.with_y(0.0).normalize_or(Vec3::Z);
-    let back = CHASE_BACK + CHASE_BACK_FAST * (speed.abs() / kart::TOP).clamp(0.0, 1.3);
-    let eye = pos + Quat::from_rotation_y(swing) * -fwd * back + Vec3::Y * CHASE_UP;
-    let look = pos + Quat::from_rotation_y(yaw_rate * LOOK_LEAD) * fwd * LOOK_AHEAD + Vec3::Y * LOOK_UP;
-    (eye, look)
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// Lakitu's racing chase (lakitu.rs keeps one while Mario drives).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ChaseCam {
+    started: bool,
+    yaw: f32,
+    yaw_vel: f32,
+    y: f32,
+    back: f32,
+    look: f32,
+}
+
+impl ChaseCam {
+    /// A frame of `dt` s: the kart at `pos` with its nose `fwd`, going `vel`; Mario's zoom's
+    /// (distance, height) in m; the stick's look round it (radians); a boost on. Where the eye
+    /// wants to be and where it looks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn step(&mut self, pos: Vec3, fwd: Vec3, vel: Vec3, zoom: (f32, f32), look: f32, boost: bool, dt: f32) -> (Vec3, Vec3) {
+        let dt = dt.clamp(0.0, 0.1);
+        let f = fwd.with_y(0.0).normalize_or(Vec3::Z);
+        let nose = f.x.atan2(f.z);
+        let flat = vel.with_y(0.0);
+        let along = flat.dot(f);
+        // (backing up: behind its nose; going forward: toward the way it goes, a drift's slide)
+        let travel = if along > 0.0 { flat.x.atan2(flat.z) } else { nose };
+        let w = ((along - TRAVEL.0) / (TRAVEL.1 - TRAVEL.0)).clamp(0.0, 1.0) * TRAVEL_SHARE;
+        let want = nose + wrap(travel - nose) * w;
+        if !self.started {
+            *self = ChaseCam { started: true, yaw: want, yaw_vel: 0.0, y: pos.y, back: 0.0, look };
+        }
+        // (the yaw's spring in steps of a 60th of a second at most)
+        let n = (dt * 60.0).ceil().max(1.0) as usize;
+        let h = dt / n as f32;
+        for _ in 0..n {
+            let acc = CHASE_TURN * CHASE_TURN * wrap(want - self.yaw) - 2.0 * CHASE_TURN * self.yaw_vel;
+            self.yaw_vel += acc * h;
+            self.yaw = wrap(self.yaw + self.yaw_vel * h);
+        }
+        let rate = |r: f32| 1.0 - (-r * dt).exp();
+        self.y += (pos.y - self.y) * rate(CHASE_HEIGHT);
+        let fast = (along.abs() / kart::TOP).clamp(0.0, 1.2);
+        self.back += (CHASE_FAST * fast + if boost { CHASE_BOOST } else { 0.0 } - self.back) * rate(2.0);
+        self.look += wrap(look - self.look) * rate(CHASE_LOOK);
+        let yaw = self.yaw + self.look;
+        let dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let base = pos.with_y(self.y);
+        let eye = base - dir * (zoom.0 * CHASE_ZOOM + self.back) + Vec3::Y * (zoom.1 + CHASE_LIFT);
+        (eye, base + dir * LOOK_AHEAD + Vec3::Y * LOOK_UP)
+    }
 }
 
 /// The drift's sparks and the exhausts' flames: their colour by the drift's level (blue, orange,
@@ -496,7 +555,7 @@ mod tests {
     const DT: f32 = 1.0 / 30.0;
 
     fn ground() -> KartNow {
-        KartNow { grounded: 4, vy: 0.0, boost: 0.0, drift: 0 }
+        KartNow { grounded: 4, vy: 0.0, boost: 0.0, drift: 0, upset: false }
     }
 
     /// One tick with `p` held after a tick of nothing (a fresh press).
@@ -634,6 +693,21 @@ mod tests {
         d.tick(&Pads::default(), &KartNow { vy: 2.6, ..ground() }, DT);
         d.tick(&Pads::default(), &KartNow { vy: 1.4, ..up }, DT);
         assert!(d.tick(&a_press, &KartNow { vy: 1.1, ..up }, DT).trick);
+    }
+
+    /// On its roof, A is the hop that puts it right (kart.rs): no trick, even in a spin-out.
+    #[test]
+    fn on_its_roof_a_is_the_hop() {
+        let mut d = Driver::new();
+        let a = Pads { a: true, ..Default::default() };
+        let roof = KartNow { grounded: 0, vy: 3.0, upset: true, ..ground() };
+        d.tick(&Pads::default(), &roof, DT);
+        let acts = d.tick(&a, &roof, DT);
+        assert!(acts.input.hop && !acts.trick && !acts.super_hop, "{acts:?}");
+        let mut d = Driver::new();
+        d.spin_out();
+        d.tick(&Pads::default(), &roof, DT);
+        assert!(d.tick(&a, &roof, DT).input.hop);
     }
 
     #[test]
@@ -812,21 +886,105 @@ mod tests {
         assert!(lethal(30.0, 5.0));
     }
 
+    const ZOOMS: [(f32, f32); 3] = [(5.0, 1.6), (7.0, 2.2), (9.5, 3.0)];
+
+    /// Frames of 60 fps of a kart going `vel` from `pos`, its heading `heading(t)` (radians round
+    /// +y, 0 along +z), its height `height(t)`; the camera's yaw (its eye to the kart, flat) and
+    /// height over the frames after the first second.
+    fn drive_cam(zoom: (f32, f32), secs: f32, speed: f32, heading: impl Fn(f32) -> f32, height: impl Fn(f32) -> f32) -> (Vec<f32>, Vec<f32>, ChaseCam, Vec3) {
+        let mut cam = ChaseCam::default();
+        let (mut pos, dt) = (Vec3::ZERO, 1.0 / 60.0);
+        let (mut yaws, mut ys) = (Vec::new(), Vec::new());
+        for f in 0..(secs * 60.0) as usize {
+            let t = f as f32 * dt;
+            let h = heading(t);
+            let fwd = Vec3::new(h.sin(), 0.0, h.cos());
+            pos += fwd * speed * dt;
+            pos.y = height(t);
+            let (eye, _) = cam.step(pos, fwd, fwd * speed, zoom, 0.0, false, dt);
+            if t > 1.0 {
+                let back = (pos - eye).with_y(0.0);
+                yaws.push(back.x.atan2(back.z));
+                ys.push(eye.y);
+            }
+        }
+        (yaws, ys, cam, pos)
+    }
+
+    fn spread(v: &[f32]) -> f32 {
+        v.iter().cloned().fold(f32::MIN, f32::max) - v.iter().cloned().fold(f32::MAX, f32::min)
+    }
+
+    /// Mario's own camera's distance: near, middle, far (lakitu.rs's zoom), the kart's view too.
     #[test]
-    fn the_chase_camera_sits_behind_and_looks_ahead() {
-        let pos = Vec3::new(5.0, 1.0, 5.0);
-        let (eye, look) = chase(pos, Vec3::Z, 0.0, 0.0, 0.0);
-        assert!((eye - pos).dot(Vec3::Z) < -4.0 && eye.y > pos.y + 1.0);
-        assert!((look - pos).dot(Vec3::Z) > 2.0);
-        let (fast, _) = chase(pos, Vec3::Z, 25.0, 0.0, 0.0);
-        assert!(fast.distance(pos) > eye.distance(pos) + 1.0);
-        // turning round +y: the look leads into the turn
-        let (_, lead) = chase(pos, Vec3::Z, 15.0, 2.0, 0.0);
-        let turned = Quat::from_rotation_y(2.0 * LOOK_LEAD) * Vec3::Z;
-        assert!((lead - pos).with_y(0.0).normalize().dot(turned) > 0.999);
-        // swung: off to a side, as far
-        let (swung, _) = chase(pos, Vec3::Z, 0.0, 0.0, 0.5);
-        assert!((swung - pos).length() - (eye - pos).length() < 1e-3 && (swung.x - eye.x).abs() > 1.0);
+    fn the_kart_camera_keeps_marios_zoom() {
+        let mut gaps = Vec::new();
+        for zoom in ZOOMS {
+            let mut cam = ChaseCam::default();
+            let pos = Vec3::new(3.0, 1.0, 3.0);
+            let mut eye = Vec3::ZERO;
+            for _ in 0..120 {
+                eye = cam.step(pos, Vec3::Z, Vec3::ZERO, zoom, 0.0, false, 1.0 / 60.0).0;
+            }
+            let flat = (pos - eye).with_y(0.0);
+            assert!(flat.normalize().dot(Vec3::Z) > 0.99, "behind it: {eye}");
+            assert!((flat.length() - zoom.0).abs() < zoom.0 * 0.2, "zoom {zoom:?}: {} m back", flat.length());
+            assert!(eye.y - pos.y > zoom.1 * 0.8, "zoom {zoom:?}: {} m up", eye.y - pos.y);
+            gaps.push(flat.length());
+        }
+        assert!(gaps[0] < gaps[1] && gaps[1] < gaps[2], "{gaps:?}");
+    }
+
+    /// Its springs bouncing it 10 cm at 6 Hz and its heading shivering 6 degrees at 8 Hz (rough
+    /// ground): the camera barely moves (before: it shook with the chassis).
+    #[test]
+    fn the_kart_camera_rides_out_the_bumps() {
+        let (yaws, ys, _, _) = drive_cam(ZOOMS[0], 4.0, 20.0, |t| (6.0f32.to_radians()) * (t * 8.0 * std::f32::consts::TAU).sin(), |t| 0.1 * (t * 6.0 * std::f32::consts::TAU).sin());
+        assert!(spread(&ys) < 0.06, "height shakes {:.3} m", spread(&ys));
+        assert!(spread(&yaws).to_degrees() < 3.0, "yaw shakes {:.1} deg", spread(&yaws).to_degrees());
+    }
+
+    /// A steady turn: it swings round behind, a little late (the turn shows), never left far off.
+    #[test]
+    fn the_kart_camera_follows_a_turn() {
+        let (yaws, _, _, _) = drive_cam(ZOOMS[1], 4.0, 18.0, |t| t * 1.0, |_| 0.0);
+        let (last, heading) = (*yaws.last().unwrap(), 4.0 - 1.0 / 60.0);
+        let lag = (heading - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!(lag > 0.02 && lag < 0.6, "lag {:.1} deg", lag.to_degrees());
+    }
+
+    /// Backing up: it stays behind the kart's nose' way, it doesn't swing round to face it.
+    #[test]
+    fn the_kart_camera_stays_behind_when_backing_up() {
+        let (yaws, _, _, _) = drive_cam(ZOOMS[0], 3.0, -6.0, |_| 0.0, |_| 0.0);
+        assert!(yaws.iter().all(|y| y.abs() < 0.2), "{:?}", yaws.last());
+    }
+
+    /// In a drift (its nose 35 degrees in, sliding along its way): between the two, nearer its way.
+    #[test]
+    fn the_kart_camera_looks_down_a_drift() {
+        let mut cam = ChaseCam::default();
+        let nose = Quat::from_rotation_y(35f32.to_radians()) * Vec3::Z;
+        let mut eye = Vec3::ZERO;
+        for _ in 0..240 {
+            eye = cam.step(Vec3::ZERO, nose, Vec3::Z * 20.0, ZOOMS[0], 0.0, false, 1.0 / 60.0).0;
+        }
+        let back = (-eye).with_y(0.0);
+        let yaw = back.x.atan2(back.z).to_degrees();
+        assert!(yaw > 2.0 && yaw < 17.5, "{yaw:.1}");
+    }
+
+    /// The right stick looks round it, and the view comes back behind once let go.
+    #[test]
+    fn the_kart_camera_looks_round_with_the_stick() {
+        let mut cam = ChaseCam::default();
+        let dt = 1.0 / 60.0;
+        for _ in 0..60 {
+            cam.step(Vec3::ZERO, Vec3::Z, Vec3::ZERO, ZOOMS[0], 1.2, false, dt);
+        }
+        let (eye, _) = cam.step(Vec3::ZERO, Vec3::Z, Vec3::ZERO, ZOOMS[0], 1.2, false, dt);
+        let b = (-eye).with_y(0.0);
+        assert!(b.x.atan2(b.z).abs() > 0.8, "{eye}");
     }
 
     #[test]
