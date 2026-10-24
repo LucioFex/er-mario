@@ -1993,12 +1993,43 @@ impl ImguiRenderLoop for Overlay {
                     image(IMG_STAR, size[0] * 0.5 - half - g * 1.1, size[1] * 0.27 - g * 0.5, g, g);
                     image(IMG_STAR, size[0] * 0.5 + half + g * 0.1, size[1] * 0.27 - g * 0.5, g, g);
                 }
-            } else if let Some((a, _)) = crate::style::lost() {
-                // shaken loose, then falling off and fading
+            }
+            // Star Power (starpower.rs): a Star banked (a star and its buttons), or on (its time
+            // draining in a rainbow bar)
+            {
+                let (banked, on) = crate::starpower::hud();
+                let y = size[1] * 0.30 - 34.0 * px;
+                if let Some(left) = on {
+                    let (w, h) = (90.0 * px, 4.0 * px);
+                    let x0 = right - w;
+                    dl.add_rect([x0, y], [right, y + h], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.5)).filled(true).build();
+                    let n = 24;
+                    for k in 0..n {
+                        let f = k as f32 / n as f32;
+                        if f >= left {
+                            break;
+                        }
+                        let hue = (f + clock * 0.4).rem_euclid(1.0);
+                        let c = |o: f32| (((hue * 6.0 + o) % 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+                        let a = x0 + w * (1.0 - left) + w * f;
+                        let b = (a + w / n as f32).min(right);
+                        dl.add_rect([a, y], [b, y + h], imgui::ImColor32::from_rgba_f32s(c(0.0), c(4.0), c(2.0), 0.9)).filled(true).build();
+                    }
+                    let shine = (clock * 8.0).sin() * 0.5 + 0.5;
+                    line("STAR POWER", right, y - 12.0 * px, 9.0 * px, 0.8, [1.0, 0.85 + 0.15 * shine, 0.4 + 0.5 * shine, 1.0]);
+                } else if banked {
+                    let g = 14.0 * px * (1.0 + 0.08 * (clock * 4.0).sin());
+                    image(IMG_STAR, right - g, y - g * 0.6, g, g);
+                    line("LB+RB", right - g - 4.0 * px, y - 2.0 * px, 8.0 * px, 0.8, [1.0, 0.9, 0.5, 0.85]);
+                }
+            }
+            // a hurt: shaken loose, then falling off and fading (under the string it left, if any)
+            if let Some((a, _)) = crate::style::lost() {
                 let p = a / crate::style::LOST_TIME;
                 let shake = (a * 60.0).sin() * 3.0 * px * (1.0 - p);
                 let fall = (p * p) * 40.0 * px;
-                line("MAMMA MIA", right + shake, top + 10.0 * px + fall, 14.0 * px, 0.78, [1.0, 0.3, 0.25, 1.0 - p * p]);
+                let below = if crate::style::show().is_some() { 66.0 * px } else { 10.0 * px };
+                line("MAMMA MIA", right + shake, top + below + fall, 14.0 * px, 0.78, [1.0, 0.3, 0.25, 1.0 - p * p]);
             }
         }
 

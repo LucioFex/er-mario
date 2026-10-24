@@ -1555,8 +1555,9 @@ s32 act_er_shell(struct MarioState *m) {
 #define ER_BIG_THROW_FRAME 9
 static f32 sRangWhirl = 0.0f;
 
-/* the Chomp's chain is this much longer than the moves' numbers say, past its place by him */
-#define ER_CHOMP_LONGER 1.25f
+/* the Chomp's chain is this much longer than the moves' numbers say, past its place by him (more
+ * under Star Power: sm64_er_set_chomp_longer, starpower.rs) */
+f32 er_chomp_longer = 1.25f;
 
 /** the ticks Mario's moves have run (not the hit-stop's) */
 static u32 sErTick = 0;
@@ -1572,7 +1573,7 @@ static u32 sErChompTick = 0;
 static void er_chomp(f32 yaw, f32 reach, f32 height, f32 bite) {
     er_chomp_scripted = 1;
     er_chomp_yaw = yaw;
-    er_chomp_reach = reach > 110.0f ? 110.0f + (reach - 110.0f) * ER_CHOMP_LONGER : reach;
+    er_chomp_reach = reach > 110.0f ? 110.0f + (reach - 110.0f) * er_chomp_longer : reach;
     er_chomp_height = height;
     er_chomp_bite = bite;
     sErChompRawReach = reach;

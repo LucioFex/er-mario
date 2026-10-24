@@ -180,7 +180,13 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::OdmStrike => Some((6, 1.6, true)),
         Attack::OdmGlance => Some((2, 1.0, false)),
         Attack::ZipKick => Some((3, 1.2, false)),
+        Attack::StarBlast => Some((8, 1.9, true)),
     }
+}
+
+/// A glint of light at `at` (Star Power's round him, starpower.rs): its colour, its size (m).
+pub fn glint(at: Vec3, tint: [f32; 4], size: f32) {
+    spark(at, size, tint);
 }
 
 /// A blow's hit-stop as it lands now (Mega Mario's held longer), SM64 ticks.

@@ -424,7 +424,8 @@ impl Boomerang {
                 }
                 (Kind::Big, if max { 3 } else { 1 }, reach.map_or(BIG_RANGE * 0.75, |r| r.min(BIG_RANGE)), BIG_OUT_TIME)
             }
-            _ => (Kind::Normal, 1, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
+            // (Star Power: two, curving out either side, starpower.rs)
+            _ => (Kind::Normal, if crate::starpower::double_rang() { 2 } else { 1 }, reach.map_or(RANGE, |r| (r + PAST).min(RANGE + PAST)), OUT_TIME),
         };
         // (off it goes: a whoosh)
         sound(SOUND_WHIR[(crate::rand01() * 2.0) as usize % 2], if kind == Kind::Big { 0.45 } else { 0.3 });

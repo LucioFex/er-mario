@@ -104,6 +104,8 @@ const EMBERS: u32 = 14;
 const EMBER_RADIUS: f32 = 1.3;
 const EMBER_TICKS: u32 = 75;
 const EMBER_BURN_EVERY: u32 = 15;
+/// Star Power's fire trail: an ember lasts this long (ticks)
+const TRAIL_EMBER_TICKS: u32 = 60;
 
 // SM64 sounds
 const SOUND_FLAME_BLOWN: i32 = 0x5055_8081;
@@ -477,6 +479,26 @@ impl Fire {
         let level = 3u8;
         self.shots.push(Shot { pos: a, vel: (dir * SPEED[level as usize]).to_array(), level, el: Element::Fire, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: target, reflected: true, vis: -1.0, ground: None });
         self.bursts.push(Burst::new(from, 0, tick));
+    }
+
+    /// RB was the Star Power chord's (lib.rs, starpower.rs): the charge it started is no charge,
+    /// nothing shows, nothing's thrown as it comes up.
+    pub fn cancel_charge(&mut self) {
+        if self.held_since.take().is_some() {
+            self.level = 0;
+            self.doused = true;
+        }
+    }
+
+    /// The world's origin shifted by `d` (lib.rs): the embers on the ground with it.
+    pub fn shift_embers(&mut self, d: Vec3) {
+        self.embers.iter_mut().for_each(|e| e.pos += d);
+    }
+
+    /// Star Power's fists (starpower.rs): an ember of fire on the ground where he runs, that burns
+    /// whoever steps in it as the sun's do.
+    pub fn trail_ember(&mut self, at: Vec3, tick: u32) {
+        self.embers.push(Ember { pos: at, born: tick, life: TRAIL_EMBER_TICKS, vis: -1.0, vis_at: 0 });
     }
 
     /// Another attack pressed while RB charges (lib.rs): the charge goes out, a shot already let go

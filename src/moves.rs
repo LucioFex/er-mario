@@ -616,6 +616,11 @@ impl Moves {
         Some(next)
     }
 
+    /// L1 was the Star Power chord's (lib.rs, starpower.rs): its press is no weapon switch.
+    pub fn cancel_lb(&mut self) {
+        self.lb_since = None;
+    }
+
     /// Blows of the string so far (the Dodge Offset's step): the Star Sword's by its string's move
     /// playing or just ended, the others' by the X presses counted.
     fn string_done(&self, tick: u32) -> u32 {

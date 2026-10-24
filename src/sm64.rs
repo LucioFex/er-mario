@@ -228,6 +228,9 @@ unsafe extern "C" {
     pub fn sm64_er_mikiri(id: i32, x: f32, y: f32, z: f32, start: i32);
     pub fn sm64_er_rock(id: i32, on: i32);
     pub fn sm64_er_star_music(on: i32);
+    /// er-mario patch: how much longer the Chomp's chain is than its moves say, past its place by
+    /// him (Star Power's, starpower.rs; 1.25 otherwise)
+    pub fn sm64_er_set_chomp_longer(k: f32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
     /// er-mario patch: the next tick of a scripted move (script.rs), right before the tick

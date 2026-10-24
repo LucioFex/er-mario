@@ -1221,7 +1221,14 @@ SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float z, int 
         set_mario_action(gMarioState, ACT_ER_MIKIRI, 0);
 }
 
-/** er-mario: Star Rush (starrush.rs): SM64's power-up music on or off */
+/** er-mario: Star Power (starpower.rs): the Chomp's chain this much longer than its moves say */
+SM64_LIB_FN void sm64_er_set_chomp_longer(float k)
+{
+    extern f32 er_chomp_longer;
+    er_chomp_longer = k;
+}
+
+/** er-mario: Star Power (starpower.rs): SM64's power-up music on or off */
 SM64_LIB_FN void sm64_er_star_music(int on)
 {
     if (on)

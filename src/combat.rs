@@ -247,11 +247,14 @@ pub enum Attack {
     OdmStrike,
     OdmGlance,
     ZipKick,
+    /// Star Power's STAR BLAST (v4 Part 6, starpower.rs): on everyone round him, its worth by the
+    /// time left (Combat::deal_scaled)
+    StarBlast,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 186] = [
+const CODES: [Attack; 187] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -277,6 +280,7 @@ const CODES: [Attack; 186] = [
     Attack::DarkBeam(0), Attack::DarkBeam(1), Attack::DarkBeam(2), Attack::DarkBeam(3), Attack::AbyssBeam, Attack::Spray,
     Attack::Steam, Attack::Plasma, Attack::Boiling, Attack::Ignition, Attack::Shatter, Attack::CrimsonSpikes, Attack::Hail, Attack::BloodBolt, Attack::CorrosiveArc, Attack::Rot,
     Attack::OdmStrike, Attack::OdmGlance, Attack::ZipKick,
+    Attack::StarBlast,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -400,6 +404,7 @@ impl Attack {
             Attack::OdmStrike => Attack::GroundPound.spec(),
             Attack::OdmGlance => Attack::Kick.spec(),
             Attack::ZipKick => Attack::Stomp.spec(),
+            Attack::StarBlast => Attack::GroundPound.spec(),
         }
     }
 
@@ -661,6 +666,9 @@ impl Attack {
             Attack::OdmStrike => (14.0, "damage_odm_strike"),
             Attack::OdmGlance => (7.0, "damage_odm_glance"),
             Attack::ZipKick => (10.0, "damage_zip_kick"),
+            // Star Power's blast: a giant fireball's worth and a half with all its time left (0.35
+            // of that with none): the reward for an S and the time spent
+            Attack::StarBlast => (45.0, "damage_star_blast"),
         }
     }
 
@@ -832,6 +840,8 @@ impl Attack {
             Attack::OdmStrike => 1.7,
             Attack::OdmGlance => 1.0,
             Attack::ZipKick => 1.2,
+            // (no more for a boss: they take 13% of the shares as it is, starpower.rs's numbers)
+            Attack::StarBlast => 1.0,
         }
     }
 
@@ -977,6 +987,7 @@ impl Attack {
             Attack::Plasma | Attack::CrimsonSpikes => 6.0,
             // (the AoT hook's strike: a heavy blow's; the nape's more, odm.rs)
             Attack::OdmStrike => 8.0,
+            Attack::StarBlast => 30.0,
             _ => 0.0,
         }
     }
@@ -2109,12 +2120,14 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
     let reforged = reforged();
     let factor = DAMAGE_FACTOR * if reforged { REFORGED_DAMAGE } else { VANILLA_DAMAGE };
     let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", factor);
+    // (what it is on a regular enemy: Star Power drains by it, starpower.rs)
+    let regular = pct;
     if boss {
         let boss_factor = BOSS_FACTOR * if reforged { 1.0 } else { VANILLA_BOSS };
         pct *= config_f32("boss_damage_factor", boss_factor) * attack.boss_bonus();
     }
     // a counter, out of a perfect dodge (dodge.rs): blows up close, not shots from afar
-    if crate::dodge::countering() && !attack.ranged() && !attack.status() {
+    if crate::dodge::countering() && !attack.ranged() && !attack.status() && attack != Attack::StarBlast {
         pct *= crate::dodge::COUNTER_DAMAGE;
     }
     // the vault's backstab (odm.rs): his blows on one he just leapt over, from behind it
@@ -2124,7 +2137,7 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
         log(format!("combat: from behind x{behind}"));
     }
     // co-op: BROS POWER, the partner just leapt off us into a Bros. Attack (brosattack.rs)
-    if crate::brosattack::powered() && !attack.ranged() && !attack.status() {
+    if crate::brosattack::powered() && !attack.ranged() && !attack.status() && attack != Attack::StarBlast {
         pct *= crate::brosattack::POWER;
     }
     // Mega Mario's blows are a giant's
@@ -2153,6 +2166,11 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
     }
     // the weapon's element against him (element.rs): weak to it, or resisting it; frostbitten
     pct *= crate::element::damage_factor(handle, chr, attack);
+    // Star Power (starpower.rs): more, a boss less so; it drains by what's dealt
+    if attack != Attack::StarBlast {
+        pct *= crate::starpower::damage_now(boss);
+        crate::starpower::dealt(regular);
+    }
     // co-op guest: the host takes it off (here only a preview of it, see take_pct)
     crate::coop::send_hit(handle, attack.code(), pct);
     Some(take_pct(handle, pct, &format!("{attack:?}")))
@@ -2549,9 +2567,10 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::Hammer => (Attack::Hammer, Reach::Sweep),
         Hit::HammerSmash => (Attack::HammerSmash, Reach::Sweep),
         Hit::SmashWave => (Attack::HammerSmash, Reach::Around(head, SMASH_RADIUS)),
-        Hit::Quake => (Attack::Quake, Reach::Around(head, QUAKE_RADIUS)),
-        Hit::QuakeBig => (Attack::QuakeBig, Reach::Around(head, QUAKE_BIG_RADIUS)),
-        Hit::Titan => (Attack::Titan, Reach::Around(head, TITAN_RADIUS)),
+        // (Star Power's hammer: wider, starpower.rs)
+        Hit::Quake => (Attack::Quake, Reach::Around(head, QUAKE_RADIUS * crate::starpower::quake())),
+        Hit::QuakeBig => (Attack::QuakeBig, Reach::Around(head, QUAKE_BIG_RADIUS * crate::starpower::quake())),
+        Hit::Titan => (Attack::Titan, Reach::Around(head, TITAN_RADIUS * crate::starpower::quake())),
         Hit::HammerWide => (Attack::HammerWide, Reach::Sweep),
         Hit::HammerRise => (Attack::HammerRise, Reach::Sweep),
         Hit::Pound => (Attack::Pound, Reach::Around(head, POUND_RADIUS * size)),
@@ -2576,7 +2595,7 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         // shockwave where it crashes
         Hit::Chomp | Hit::ChompAir => (if hit == Hit::Chomp { Attack::Chomp } else { Attack::ChompAir }, Reach::Sweep),
         Hit::ChompLaunch => (Attack::ChompLaunch, Reach::Sweep),
-        Hit::ChompSpin => (Attack::ChompSpin, Reach::Ring(me, CHOMP_SPIN_RADIUS)),
+        Hit::ChompSpin => (Attack::ChompSpin, Reach::Ring(me, CHOMP_SPIN_RADIUS * crate::starpower::cyclone())),
         Hit::ChompEnd => (Attack::ChompEnd, Reach::Around(head, CHOMP_CRASH_RADIUS)),
         // the Mikiri lands on whoever is under him; the dash strike in front, a bit past a punch
         Hit::Mikiri => (Attack::Mikiri, Reach::Around(me, MIKIRI_RADIUS)),
@@ -2926,7 +2945,7 @@ impl Combat {
                 // stopped in time (stopwatch.rs): the blow's momentum builds up, nothing moves it
                 let stopped = crate::stopwatch::frozen(handle);
                 if stopped {
-                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike);
+                    let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick | Attack::OdmStrike | Attack::StarBlast);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
                 } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd | Attack::FrenzyEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
@@ -3055,14 +3074,15 @@ impl Combat {
                 }
                 // (the giant fireball's burn and Mega's steps aren't blows of a string)
                 let before = run.0;
-                if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
+                if !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud | Attack::StarBlast) {
                     run.0 += (attack.percent().0 / STRING_UNIT).clamp(STRING_WEIGHT.0, STRING_WEIGHT.1) * swing;
                     run.1 = tick;
                 }
                 let fade = STRING_FADE.powf((run.0 - STRING_FULL).max(0.0)).max(STRING_FLOOR);
                 let fade = if attack.finisher() { fade.max(STRING_FINISHER_FLOOR) } else { fade };
                 // (the Bros. Attack comes out of a string on it, BROS! by BROS!: it lands whole)
-                let fade = if matches!(attack, Attack::BrosAttack) { 1.0 } else { fade };
+                // (and Star Power's blast, the cash-out of the whole of it)
+                let fade = if matches!(attack, Attack::BrosAttack | Attack::StarBlast) { 1.0 } else { fade };
                 if fade < 1.0 && (before / 5.0).floor() != (run.0 / 5.0).floor() {
                     log(format!("combat: string of {:.0} punches' worth on the same enemy, blows at {:.0}%", run.0, fade * 100.0));
                 }
@@ -3162,6 +3182,7 @@ impl Combat {
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
                 if attack.finisher() && swing == 1.0 && target.handle.is_some() {
                     crate::style::finisher(at);
+                    crate::starpower::finisher_landed();
                 }
             }
             // (a critical's camera punch: after the blow's own, which would take its place)
@@ -3175,7 +3196,7 @@ impl Combat {
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
             let light = attack.continuous() || matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
-            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike);
+            let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil | Attack::OdmStrike | Attack::StarBlast);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || swing < 1.0 || !(heavy || due) {
                 continue;

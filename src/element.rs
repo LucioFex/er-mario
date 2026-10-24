@@ -118,7 +118,8 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         | Attack::Hemorrhage
         | Attack::PoisonTick
         | Attack::Shock
-        | Attack::ShockArc(_) => None,
+        | Attack::ShockArc(_)
+        | Attack::StarBlast => None,
         _ => Some(current()),
     }
 }

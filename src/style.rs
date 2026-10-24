@@ -2,9 +2,10 @@
 //! the string's style points, shown by hud.rs with a word for each rank (DANDY ... WAHOO). Every
 //! blow is a point, a finisher more, and a blow of a kind not used in the last few a bonus. The
 //! same kind again and again is worth less each time (and so is hammering one enemy), the points
-//! drain away faster the higher the rank, and being hurt costs the string and shakes the next
-//! seconds: S and up are earned with variety, finishers, timing and keeping at it. It's gone after
-//! a while without a blow, or when he's hurt ("MAMMA MIA" from the C rank up).
+//! drain away faster the higher the rank, and being hurt costs two ranks (from B; under it the
+//! string) and shakes the next seconds: S and up are earned with variety, finishers, timing and
+//! keeping at it. It's gone after a while without a blow ("MAMMA MIA" on a hurt from the C rank up).
+//! Reaching S earns the encounter's Star (starpower.rs).
 //! A new rank chimes softly (SM64's red coins, a note higher each time) and from S up Mario cheers.
 //! From the S rank a combo's finisher is a star finish: stars and coins burst out, a golden flash,
 //! the world slows down. A finisher that takes an enemy out, or any blow that does from the B rank
@@ -26,14 +27,15 @@ use crate::{sm64, worker};
 pub const KEEP: f32 = 2.5;
 const FADE: f32 = 0.6;
 /// style points for each rank, its letters and its word
+/// (v4 Part 6: a little harder, 12% over v2's 3 / 9 / 17 / 30 / 56 / 88 / 130)
 pub const RANKS: [(f32, &str, &str); 7] = [
-    (3.0, "D", "DANDY"),
-    (9.0, "C", "COOL"),
-    (17.0, "B", "BONKERS"),
-    (30.0, "A", "AWESOME"),
-    (56.0, "S", "SUPER"),
-    (88.0, "SS", "SUPER STAR"),
-    (130.0, "SSS", "WAHOO"),
+    (3.4, "D", "DANDY"),
+    (10.0, "C", "COOL"),
+    (19.0, "B", "BONKERS"),
+    (33.5, "A", "AWESOME"),
+    (63.0, "S", "SUPER"),
+    (99.0, "SS", "SUPER STAR"),
+    (146.0, "SSS", "WAHOO"),
 ];
 /// a blow's points: one, a finisher's more, and a bonus for a blow of a kind not among the last few
 const POINTS: f32 = 1.0;
@@ -52,8 +54,11 @@ const TARGET_WINDOW: f32 = 8.0;
 const TARGET_FREE: u32 = 6;
 const TARGET_FADE: f32 = 0.92;
 const TARGET_FLOOR: f32 = 0.5;
-/// style points lost a second at each rank (D .. SSS) while the string goes on
-const DRAIN: [f32; 7] = [0.0, 0.0, 0.4, 1.0, 2.2, 3.6, 5.5];
+/// style points lost a second at each rank (D .. SSS) while the string goes on (from S faster than
+/// v2's 2.2 / 3.6 / 5.5)
+const DRAIN: [f32; 7] = [0.0, 0.0, 0.4, 1.0, 3.0, 4.8, 7.0];
+/// a hurt costs this many ranks (a string under it is lost)
+const KNOCK_RANKS: usize = 2;
 /// a rank is only lost with the points this far under its mark (so it doesn't flicker)
 const RANK_HOLD: f32 = 0.94;
 /// every point is worth this much for SHAKEN_TIME (s) after being hurt; the knock-on blows of the
@@ -176,6 +181,25 @@ impl Meter {
         on.push(now);
         let n = on.len() as u32;
         points * TARGET_FADE.powi(n.saturating_sub(TARGET_FREE) as i32).max(TARGET_FLOOR)
+    }
+
+    /// The string at rank `r`, its points at its mark, as of now (`slam`: the HUD's rank-up slam;
+    /// not for a drop).
+    fn put(&mut self, r: usize, now: f32, slam: bool) {
+        self.points = RANKS[r].0;
+        self.rank = Some(r);
+        if slam {
+            self.ranked = now;
+        }
+        self.last = now;
+        self.drained = now;
+    }
+
+    /// A hurt: two ranks down from B and up (the rank it's left at); under it, None: lost.
+    fn knock(&mut self, now: f32) -> Option<usize> {
+        let r = self.rank.filter(|&r| r >= KNOCK_RANKS)? - KNOCK_RANKS;
+        self.put(r, now, false);
+        Some(r)
     }
 
     /// Points in (already scaled): the rank it takes to, if that's a new best.
@@ -329,16 +353,21 @@ fn add(m: &mut Meter, now: f32, points: f32) {
         }
         crate::log(format!("style: {} {} ({} hits, {:.1} points)", RANKS[r].1, RANKS[r].2, m.count, m.points));
         sounds(list);
+        // (S: the encounter's Star, starpower.rs)
+        if r >= STAR_RANK {
+            crate::starpower::earn();
+        }
     }
 }
 
 /// Blows that are the knock-on of a MAX show or the like: a fraction of a point each.
 fn weak(attack: Attack) -> bool {
-    matches!(attack, Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut | Attack::RideCrash | Attack::RideBlow | Attack::RideSmash | Attack::Bowled)
+    matches!(attack, Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut | Attack::RideCrash | Attack::RideBlow | Attack::RideSmash | Attack::Bowled | Attack::StarBlast)
 }
 
 /// Game thread: one of Mario's blows landed on the enemy `target`.
 pub fn hit(attack: Attack, target: u64) {
+    crate::starpower::touch();
     let mut g = METER.lock().unwrap_or_else(|e| e.into_inner());
     let now = now();
     if live(&mut g).is_none() {
@@ -475,9 +504,28 @@ pub fn hurt() {
         *m = Max { streak: 0, ready: None };
     }
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = now();
-    let lost = METER.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|m| m.alive(now())).and_then(|m| m.rank);
-    if let Some(r) = lost.filter(|&r| r >= 1) {
+    // two ranks down (from B), the string going on; under it, lost
+    let mut g = METER.lock().unwrap_or_else(|e| e.into_inner());
+    let before = live(&mut g).and_then(|m| m.rank);
+    let kept = g.as_mut().filter(|m| m.alive(now())).and_then(|m| m.knock(now()));
+    if kept.is_none() {
+        *g = None;
+    }
+    drop(g);
+    if let Some(r) = before.filter(|&r| r >= 1) {
         *LOST.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), r));
+        crate::log(match kept {
+            Some(k) => format!("style: hurt, two ranks down ({} -> {})", RANKS[r].1, RANKS[k].1),
+            None => format!("style: hurt, the string lost at {}", RANKS[r].1),
+        });
+    }
+}
+
+/// The string down to rank `r` (Star Power over, starpower.rs: back to B), if one's going above it.
+pub fn set_rank(r: usize) {
+    let mut g = METER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(m) = live(&mut g).filter(|m| m.rank.is_some_and(|c| c > r)) {
+        m.put(r, now(), false);
     }
 }
 
@@ -641,17 +689,18 @@ mod tests {
             let (after, best, rn) = run(seq, gap, every, bonus);
             println!("style test: {name:7} {} blows: before {before:5.1} pts ({}), after {after:5.1} pts (best {best:5.1}, rank {})", seq.len(), letter(rb), letter(rn));
         }
-        // the mash must stay low, the varied fight must reach S or more
-        assert!(run(&mash, 0.2, 0, 0.0).2 < Some(3));
+        // (v4 Part 6, a little harder) the mash stays under B, a plain fight under A, the varied
+        // fight reaches S, the expert SS
+        assert!(run(&mash, 0.2, 0, 0.0).2 < Some(2));
+        assert!(run(&plain, 0.5, 0, 0.0).2 < Some(3));
         assert!(run(&varied, 0.45, 8, 3.0).2 >= Some(4));
-        assert!(run(&plain, 0.5, 0, 0.0).2 < Some(4));
         assert!(run(&expert, 0.33, 4, 3.0).2 >= Some(5));
     }
 
     #[test]
     fn rank_drains_and_holds() {
         let mut m = Meter::new(0.0);
-        m.points = 60.0;
+        m.points = 67.0;
         m.rank = Some(4);
         m.peak = Some(4);
         m.last = 0.0;
@@ -659,14 +708,56 @@ mod tests {
         assert_eq!(m.rank, Some(4));
         m.last = 2.0;
         m.settle(2.4);
-        // 60 - 2.2 * 2.4 s, still S ... and a new peak is the only chime
-        assert!(m.points < 56.0);
+        // 67 - 3 * 2.4 s, still S ... and a new peak is the only chime
+        assert!(m.points < 63.0);
         // (held at S down to 0.94 of its mark)
         assert_eq!(m.rank, Some(4));
         assert!(m.gain(2.4, 0.5).is_none());
-        m.points = 52.0;
+        m.points = 58.0;
         m.settle(2.4);
         assert_eq!(m.rank, Some(3));
+    }
+
+    #[test]
+    fn s_and_up_drain_faster() {
+        let mut m = Meter::new(0.0);
+        m.points = 70.0;
+        m.rank = Some(4);
+        m.last = 1.0;
+        m.settle(1.0);
+        assert!((m.points - 67.0).abs() < 1e-3, "{}", m.points);
+        // (the marks a little higher: 60 points are A now)
+        assert_eq!(rank_of(60.0), Some(3));
+        assert_eq!(rank_of(64.0), Some(4));
+    }
+
+    #[test]
+    fn a_hurt_costs_two_ranks() {
+        let mut m = Meter::new(0.0);
+        m.points = 100.0;
+        m.rank = Some(5);
+        m.peak = Some(5);
+        // SS: down to A, the string kept at A's mark (and A's chime again is no new best)
+        assert_eq!(m.knock(1.0), Some(3));
+        assert_eq!(m.rank, Some(3));
+        assert!((m.points - RANKS[3].0).abs() < 1e-3);
+        // B: down to D; C: the string is lost
+        m.points = RANKS[2].0 + 1.0;
+        m.rank = Some(2);
+        assert_eq!(m.knock(2.0), Some(0));
+        m.points = RANKS[1].0 + 1.0;
+        m.rank = Some(1);
+        assert_eq!(m.knock(3.0), None);
+    }
+
+    #[test]
+    fn set_to_a_rank() {
+        let mut m = Meter::new(0.0);
+        m.points = 120.0;
+        m.rank = Some(5);
+        m.put(2, 4.0, false);
+        assert_eq!(m.rank, Some(2));
+        assert!((m.points - RANKS[2].0).abs() < 1e-3 && m.last == 4.0);
     }
 
     #[test]

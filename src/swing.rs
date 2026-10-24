@@ -242,6 +242,8 @@ pub fn take_cue() -> bool {
 /// Mario hit a boss: his stagger meter fills; full, the boss is open for the grab (and his poise
 /// is broken, so the game staggers him too).
 pub fn add_stance(h: &FieldInsHandle, poise: f32) {
+    // (Star Power: more, on a boss less so: starpower.rs)
+    let poise = poise * crate::starpower::stance_now(!crate::combat::liftable(h));
     // bosses without a poise value count as 100
     let max = toughness_of(h).map(|(_, max)| max).filter(|m| *m > 1.0).unwrap_or(100.0);
     let amount = poise / max.clamp(STANCE_POISE.0, STANCE_POISE.1) * 100.0;

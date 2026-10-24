@@ -75,6 +75,7 @@ mod revive;
 mod script;
 mod sm64;
 mod squish;
+mod starpower;
 mod status;
 mod swing;
 mod swordplay;
@@ -2276,6 +2277,7 @@ fn frame(data: &FD4TaskData) {
         bossride::clear();
         colossus::clear();
         odm::clear();
+        starpower::clear();
         return;
     };
     IN_WORLD.store(true, Ordering::Relaxed);
@@ -2441,6 +2443,7 @@ fn frame(data: &FD4TaskData) {
             bossride::clear();
             colossus::clear();
             odm::clear();
+            starpower::clear();
             bat::clear();
             maxfin::clear();
             reaction::clear();
@@ -3052,6 +3055,7 @@ fn frame(data: &FD4TaskData) {
         knock::clear();
         juggle::clear();
         style::clear();
+        starpower::clear();
         timing::clear();
         m.traps.clear();
         rock::clear(m.id);
@@ -3080,6 +3084,7 @@ fn frame(data: &FD4TaskData) {
         bossride::clear();
         colossus::clear();
         odm::clear();
+        starpower::clear();
         worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
         *guard = None;
         return;
@@ -3105,6 +3110,7 @@ fn frame(data: &FD4TaskData) {
             m.fire.volley.shift(glam::Vec3::from(d));
             m.fire.beam.shift(glam::Vec3::from(d));
             m.fire.carpets.shift(glam::Vec3::from(d));
+            m.fire.shift_embers(glam::Vec3::from(d));
             reaction::shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             odm::shift(glam::Vec3::from(d));
@@ -3499,13 +3505,25 @@ fn frame(data: &FD4TaskData) {
             Some(_) if bossride::active() => None,
             h => h,
         };
+        // Star Power (starpower.rs): a small hit is shrugged off, its health still taken (no
+        // knockback, no style lost, the charge kept)
+        let shrug = matches!(hurt, Some(combat::Hurt::Hit(1))) && starpower::active();
+        // (its health as SM64's own blow would take it, and none a moment after, as SM64's
+        // knockback leaves him guarded)
+        let shrug_costs = shrug && starpower::shrug_costs(m.ticks);
+        let cap_on = m.state.flags & 0x10 != 0;
         if matches!(hurt, Some(combat::Hurt::Hit(_))) {
+            starpower::touch();
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
-            style::hurt();
-            timing::hurt();
-            // (a blow puts out the fireball he was charging)
-            m.fire.douse(&m.state, m.origin, m.ticks);
+            if shrug {
+                log(if shrug_costs { "starpower: shrugged off a small hit" } else { "starpower: shrugged off a small hit (still guarded)" });
+            } else {
+                style::hurt();
+                timing::hurt();
+                // (a blow puts out the fireball he was charging)
+                m.fire.douse(&m.state, m.origin, m.ticks);
+            }
         }
         // a blow that cost him nothing (a push, a bash): the Tarnished's damage animation says so
         let shoved = {
@@ -3659,6 +3677,39 @@ fn frame(data: &FD4TaskData) {
                 l_hammer = false;
             }
         }
+        // LB + RB together: Star Power, or with it on the STAR BLAST (starpower.rs); the two are the
+        // chord's then (no weapon switch on L1's release, no fireball off RB's)
+        {
+            let free = fire_allowed && !kit_held && !m.dead && !big;
+            let (pressed, eat) = starpower::chord(l_hammer, b_fire, free, m.ticks);
+            if eat {
+                m.moves.cancel_lb();
+                m.fire.cancel_charge();
+                l_hammer = false;
+                b_fire = false;
+            }
+            if let starpower::Pressed::Blast(worth) = pressed {
+                let feet = to_er(m.origin, m.state.position);
+                let me = glam::Vec3::new(feet.0, feet.1, feet.2);
+                // (every enemy whose body is within its reach, about his height or under him: a
+                // giant's centre far off when its leg is right there, not one on a floor above)
+                const BODY_MOST: f32 = 15.0;
+                let near = combat::nearby(&HavokPosition(me.x, me.y, me.z, 0.0), starpower::BLAST_RADIUS + BODY_MOST, m.origin);
+                let hits: Vec<(usize, combat::Attack, bool)> = near
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.shootable().is_some() && !t.friendly() && !t.is_prop())
+                    .filter(|(_, t)| {
+                        let f = t.feet();
+                        let gap = ((f - me).with_y(0.0).length() - t.radius * scale()).max(0.0);
+                        gap <= starpower::BLAST_RADIUS && (-6.0..=3.0).contains(&(f.y - me.y))
+                    })
+                    .map(|(i, _)| (i, combat::Attack::StarBlast, false))
+                    .collect();
+                m.combat.deal_scaled(&player_ref.chr_ins, &near, &hits, m.ticks, worth);
+                starpower::blasted(me + glam::Vec3::Y * 0.9, worth, hits.len());
+            }
+        }
         if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !odm::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
@@ -3717,6 +3768,7 @@ fn frame(data: &FD4TaskData) {
             };
             // the AoT hook's line first (odm.rs): on it, colossus.rs gets nothing (an A on it near a
             // colossus would grab on)
+            starpower::tick(1.0 / 30.0, me.feet + glam::Vec3::Y * 0.9, m.ticks);
             let line = odm::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray);
             let out = if line.consumed { colossus::Out { consumed: true, drop_hook: false } } else { colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, &ray) };
             drop(_perf8);
@@ -3999,7 +4051,7 @@ fn frame(data: &FD4TaskData) {
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
         let still_flying = blown::flying();
         let blown_away = match hurt {
-            Some(combat::Hurt::Hit(w)) if !still_flying && !grab::just_released() && !status::just_set_in() => {
+            Some(combat::Hurt::Hit(w)) if !still_flying && !shrug && !grab::just_released() && !status::just_set_in() => {
                 const ACT_FLAG_SWIMMING: u32 = 0x2000;
                 const ACT_FLAG_ON_POLE: u32 = 0x0010_0000;
                 const ACT_FLAG_HANGING: u32 = 0x0020_0000;
@@ -4054,6 +4106,9 @@ fn frame(data: &FD4TaskData) {
         let direct = match hurt {
             Some(combat::Hurt::Hit(w)) if still_flying || released || bled => Some(w as i32 * 0x100),
             Some(combat::Hurt::Hit(w)) if rocking => Some(w as i32 * 0x80),
+            // (Star Power's small hit: SM64's three quarters of a wedge a point, half again with no
+            // cap on, fake_interaction.c; none while guarded)
+            Some(combat::Hurt::Hit(w)) if shrug => Some(if shrug_costs { (if cap_on { w } else { w + (w + 1) / 2 }) as i32 * 3 * 0x40 } else { 0 }),
             Some(combat::Hurt::Drain) => Some(0x100),
             _ => None,
         }
@@ -4123,7 +4178,8 @@ fn frame(data: &FD4TaskData) {
                 // (flying off already: the blow costs health, SM64's knockback would end the flight)
                 // (let go by an enemy: thrown off it already, the same)
                 // (the boulder: half of it, and it rolls on)
-                Some(combat::Hurt::Hit(_)) if still_flying || released || bled || rocking => unsafe {
+                // (Star Power's small hit: the health, no knockback)
+                Some(combat::Hurt::Hit(_)) if still_flying || released || bled || rocking || shrug => unsafe {
                     sm64::sm64_set_mario_health(id, direct.unwrap_or(health_before) as u16)
                 },
                 Some(combat::Hurt::Hit(wedges)) => unsafe {
@@ -4527,7 +4583,7 @@ fn frame(data: &FD4TaskData) {
                         Some(wave::Kind::Just)
                     } else if combo.fx & script::FX_WAVE != 0 {
                         Some(wave::Kind::Wave)
-                    } else if combo.fx & script::FX_BEAM != 0 && state.health >> 8 >= 8 {
+                    } else if combo.fx & script::FX_BEAM != 0 && state.health >> 8 >= 8 && starpower::native_beam_ok(m.ticks) {
                         Some(wave::Kind::Beam)
                     } else {
                         None
@@ -4535,6 +4591,14 @@ fn frame(data: &FD4TaskData) {
                     let facing = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
                     if let Some(kind) = wave {
                         m.fire.waves.cast(kind, feet, facing, m.ticks);
+                    }
+                    // Star Power's (starpower.rs): the sword's landed finisher throws its beam at any
+                    // health; the fists leave a trail of fire where he runs
+                    if starpower::take_beam(m.ticks, wave == Some(wave::Kind::Beam)) {
+                        m.fire.waves.cast(wave::Kind::Beam, feet, facing, m.ticks);
+                    }
+                    if starpower::fire_trail(m.ticks, state.action & 0x800 == 0 && state.forward_velocity.abs() > 8.0) {
+                        m.fire.trail_ember(feet, m.ticks);
                     }
                     // ...the cross cut's X left hanging, a gleam on the blade, a crack of lightning
                     // where its tip comes down (on the ground under it)

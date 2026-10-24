@@ -224,12 +224,15 @@ own moves (his mouth opens for the tongue, he nods with each egg and on a stomp)
 hit of a kind not used in the last four a bonus), and the string earns a rank: D DANDY, C COOL,
 B BONKERS, A AWESOME, S SUPER, SS SUPER STAR, SSS WAHOO. It's meant to be earned: the same kind of
 blow again within 6 s is worth 20% less each time (down to 30%), a long string on one enemy fades,
-the points drain away faster the higher the rank (A 1 point a second, S 2.2, SS 3.6, SSS 5.5) so a
-rank is only held by keeping up variety, finishers, skillshots and timing, and being hurt costs the
-string and halves the next seconds' points. The MAX shows' knock-on blows score less per blow. Marks: A 30, S 56, SS 88, SSS 130 points; mashing one button tops out
-around C, a varied fight reaches A or S, SS and SSS want a fast, varied, skilful one. A new rank
-slams in with its word, a soft red coin chime a note higher each time and Mario cheering from S up;
-a bar shows the time left before the string drops. Getting hurt ends it ("MAMMA MIA"). From rank
+the points drain away faster the higher the rank (A 1 point a second, S 3, SS 4.8, SSS 7) so a
+rank is only held by keeping up variety, finishers, skillshots and timing, and being hurt costs
+**two ranks** (from B; below it the string is lost) and cuts the next seconds' points. The MAX
+shows' knock-on blows score less per blow. Marks: B 19, A 33.5, S 63, SS 99, SSS 146 points;
+mashing one button tops out around C, a plain fight around B, a varied one reaches S, SS and SSS
+want a fast, varied, skilful one. A new rank slams in with its word, a soft red coin chime a note
+higher each time and Mario cheering from S up; a bar shows the time left before the string drops.
+A hurt shows "MAMMA MIA" (under the string, if it's kept). Reaching S earns the fight's **Star**
+(see [Star Power](#star-power)). From rank
 S, a combo's finisher is a **Star Finish**: a golden flash, stars and coins flying out, a banner
 and a longer slow motion. A finisher that takes an enemy out, or any kill from rank B up, slows the
 world down for a moment (`src/style.rs`).
@@ -476,6 +479,32 @@ with a moment of slow motion, the camera punched in and **CRITICAL**, once an en
 on a broken stance; the sword's thrust, iai or stabs in his back; a Chain Chomp bite on one up in
 the air; a boomerang striking him both on its way out and back.
 
+### Star Power
+
+Reaching rank **S** earns the fight's **Star** (one a fight, one kept at most: a star by the style
+meter with "LB+RB"; a fight ends after 20 s with no blow dealt or taken). **LB + RB together**
+lets it out for **12 s** (`src/starpower.rs`): rainbow glints round Mario and SM64's power-up music
+(soft), his blows worth **×1.2** (bosses ×1.1) and **×1.5** on a stance (bosses ×1.25), and small
+hits shrugged off: their health is still taken as SM64's own blow would take it (and none for a
+second after one), but no knockback, no rank lost, the charge kept. Without a Star, LB and RB
+pressed together are just themselves.
+The weapon in hand gets a trait:
+
+| Weapon | Under Star Power |
+|---|---|
+| Star Sword | every finisher that lands throws the sword beam, at any health |
+| Hammer | its quakes reach half again as far |
+| Chain Chomp | its chain reaches farther, its cyclone 30% wider |
+| Boomerang | a plain throw is two, curving out either side |
+| Fists | a trail of fire where he runs: embers that burn whoever steps in them |
+
+It drains with time and with the damage he deals (a rainbow bar). **LB + RB again** (after its
+first 3 s) is the **STAR BLAST**: one big blow on every enemy whose body is within 7 m, the stronger
+the more time was left. When it's over (either way) the style rank comes down to B.
+
+Logs: `starpower: a Star (S rank)`, `starpower: on (12 s)`, `starpower: STAR BLAST x0.83 on 3`,
+`starpower: over (time)`, `starpower: shrugged off a small hit`, `style: hurt, two ranks down (SS -> A)`.
+
 ### Attack on Titan hook
 
 RT on a big enemy (a boss, a strong one, a giant) no longer zips Mario to it: the cap **anchors to
@@ -535,6 +564,7 @@ close and risky hits.
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
+| Star Power | — | Blows **×1.2** (bosses ×1.1), stance **×1.5** (bosses ×1.25); STAR BLAST **9-21.5%** on everyone within 7 m by the time left (bosses about 1-2.4%) |
 | Attack on Titan hook | — | Strike **8%** at 20 m/s, **2.4-14.4%** by speed, **21.5%** at most on the nape from behind; glancing hit half (**1.2-7.2%**); bosses about **1.5%** at 20 m/s, **2.2%** at most (capped); zip-kick **5.7%**; blows on an enemy he vaulted **×1.3** for 1 s |
 | MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
 | Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
@@ -647,6 +677,7 @@ replaces this fork's DLL with the original one.
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether. On a medium one: tapped the zip-kick, held the vault. On a big one: the [Attack on Titan hook](#attack-on-titan-hook) (stick orbits, B gas, X strikes, right stick changes the bone, A after a hit re-anchors). Held as it catches a spot high up (or one ahead and above): the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
 | LT held (crouched or sliding) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch. Thrown out of a slide or a run they carry his speed |
 | LB | | Next weapon (fists, Star Sword, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
+| LB + RB together | | [Star Power](#star-power) (with a Star earned at rank S); on, again: the STAR BLAST |
 | LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab). With the Star Sword in the air: the pogo (three a jump) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom). It presses the game's own interact button, Y; if you moved it in the game's controls, set `pad_interact = A` (B, Y, LB, RB, BACK, START) in `er_mario.ini` |
