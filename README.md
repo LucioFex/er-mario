@@ -286,6 +286,12 @@ flickers by his left hand. It isn't doubled if you have the real Lantern lit, an
 you leave. `light = on / off` in `er_mario.ini` forces it; `light_areas = 30, 31, 32` sets which
 kinds of map count as dark (the log names each area as you enter it: `light: area m31 ...`).
 
+**The kart (in progress).** Yoshi is to become a Mario Kart kart with weighty physics
+(`src/kart.rs`: a chassis on four sprung wheels, Mario Kart's drift and boosts). First a test of
+whether the mod can drive Torrent itself: `kart_test = on` in `er_mario.ini`, then ride him; the
+stick (from the camera) moves him, and `logs/er_mario.log` says every 2 s how much the game moved
+him on top (`kart test: ...`) and then `kart test: Torrent can be driven` or `... fights back`.
+
 **Enemy grabs.** Elden Ring's grabs work on Mario: a troll's fist, a beast's jaws, a boss lifting
 him up. The game holds him and carries him through its throw while Mario dangles in its grip,
 kicking and groaning (SM64's Chuckya grab); one that holds him inside its body swallows him whole,

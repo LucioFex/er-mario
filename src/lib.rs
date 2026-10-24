@@ -52,6 +52,8 @@ mod hud;
 mod ik;
 mod impact;
 mod juggle;
+mod kart;
+mod kartproto;
 mod moving;
 mod noise;
 mod moves;
@@ -267,7 +269,8 @@ pub(crate) fn hidden_sticks() -> (bool, bool) {
     // input_task); the left stick is Mario's alone outside menus (on a ladder the game climbs,
     // on Torrent the game rides); with the SM64 camera the right stick is Lakitu's C-buttons,
     // not Elden Ring's camera
-    (!ON_LADDER.load(Ordering::Relaxed) && !RIDING.load(Ordering::Relaxed), lakitu::ON.load(Ordering::Relaxed))
+    // (the kart prototype drives Torrent itself: the horse gets no stick, kartproto.rs)
+    (!ON_LADDER.load(Ordering::Relaxed) && (!RIDING.load(Ordering::Relaxed) || kartproto::holds_stick()), lakitu::ON.load(Ordering::Relaxed))
 }
 
 /// The pad button Elden Ring interacts with (doors, items, graces): `pad_interact = Y` in
@@ -4799,6 +4802,29 @@ fn frame(data: &FD4TaskData) {
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             };
             ride::tick(data.delta_time.time, saddle, buttons, yoshi::ridden(), facing, m.origin, &mut m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+        }
+        // v4 Part 4's prototype (kartproto.rs): with `kart_test = on`, riding, the mod drives Torrent
+        // itself along the stick (from the game's camera) and logs how much the game moves him
+        {
+            let mounted = player_ref.chr_ins.modules.ride.is_mounted && !mount_anim(cur) && !m.dead && !MENU_OPEN.load(Ordering::Relaxed);
+            let steer = cam_pad.map(|p| p.Gamepad).zip(unsafe { eldenring::cs::CSCamera::instance() }.ok()).map_or(glam::Vec3::ZERO, |(g, cam)| {
+                let (sx, sy) = (g.sThumbLX as f32 / 32767.0, g.sThumbLY as f32 / 32767.0);
+                if sx * sx + sy * sy < 0.06 {
+                    return glam::Vec3::ZERO;
+                }
+                let (f, r) = (cam.pers_cam_1.forward(), cam.pers_cam_1.right());
+                let fwd = glam::Vec3::new(f.0, 0.0, f.2).normalize_or_zero();
+                let right = glam::Vec3::new(r.0, 0.0, r.2).normalize_or_zero();
+                (fwd * sy + right * sx).clamp_length_max(1.0)
+            });
+            let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+            kartproto::frame(mounted, steer, data.delta_time.time, |from: glam::Vec3, to: glam::Vec3| {
+                let d = to - from;
+                havok?
+                    .phys_world
+                    .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                    .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+            });
         }
         // the whistle itself isn't heard: Yoshi answers in its place (yoshi::call)
         if matches!(cur, 50190 | 50191) && yoshi::active() {
