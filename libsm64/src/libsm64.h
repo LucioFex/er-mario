@@ -89,6 +89,32 @@ struct SM64ErMove
     int32_t locked;
 };
 
+/* er-mario: one tick of a scripted move (script.rs works it out from the move's data and sets it
+ * right before the tick, sm64_er_script; ACT_ER_SCRIPT / ACT_ER_SCRIPT_AIR play it) */
+struct SM64ErScript
+{
+    int32_t active;        /* set for this tick (used up by it) */
+    int32_t end;           /* the move is over: standing, walking or falling on */
+    int32_t animId;        /* SM64 animation, -1 keeps the one playing */
+    float animFrame;       /* the frame of it to show (the move's own time), < 0 lets it play */
+    float twist;           /* his drawn body: turned (+ left), leaning forward (+), rolled; degrees */
+    float pitch;
+    float roll;
+    float turn;            /* degrees his facing turns this tick (+ left) */
+    int32_t aim;           /* 1: he turns to the aimed enemy now */
+    float forwardVel;      /* units per tick along his facing */
+    int32_t setVelY;       /* 1: his vertical speed is velY this tick */
+    float velY;
+    int32_t hold;          /* in the air: no gravity (vertical speed 0 unless setVelY) */
+    int32_t landEnds;      /* in the air: landing ends the move (else it goes on on the ground) */
+    float squash;          /* his body squashed (under 1) or stretched (over 1), and drawn this low */
+    float dip;
+    int32_t invulnerable;  /* no blow lands on him this tick */
+    int32_t locked;        /* the move can't be left (no dash): er_move_locked */
+    uint32_t sound;        /* a sound this tick (0 none), soft at soundVolume (<= 0: at his body) */
+    float soundVolume;
+};
+
 struct SM64MarioGeometryBuffers
 {
     float *position;
@@ -242,6 +268,8 @@ extern SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float 
 extern SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on);
 extern SM64_LIB_FN void sm64_er_pole(int32_t marioId, float x, float y, float z, float radius, int mode);
 extern SM64_LIB_FN void sm64_er_star_music(int on);
+extern SM64_LIB_FN void sm64_er_script(const struct SM64ErScript *frame);
+extern SM64_LIB_FN int32_t sm64_er_script_size(void);
 extern SM64_LIB_FN void sm64_set_sound_volume(float vol);
 
 #ifdef __cplusplus

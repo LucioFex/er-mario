@@ -240,6 +240,7 @@ static const f32 sRushStep[3] = { 22.0f, 22.0f, 30.0f };
 
 /* er-mario: the combos' moves (er_moves.c) */
 s32 act_er_hammer(struct MarioState *m);
+s32 act_er_script(struct MarioState *m);
 s32 act_er_hammer_slam(struct MarioState *m);
 s32 act_er_hammer_flurry(struct MarioState *m);
 s32 act_er_hammer_giro(struct MarioState *m);
@@ -612,6 +613,7 @@ s32 mario_execute_object_action(struct MarioState *m) {
         case ACT_PUNCHING:           cancel = act_punching(m);           break;
         case ACT_ER_RUSH:            cancel = act_er_rush(m);            break;
         case ACT_ER_HAMMER:          cancel = act_er_hammer(m);          break;
+        case ACT_ER_SCRIPT:          cancel = act_er_script(m);          break;
         case ACT_ER_HAMMER_SLAM:     cancel = act_er_hammer_slam(m);     break;
         case ACT_ER_HAMMER_FLURRY:   cancel = act_er_hammer_flurry(m);   break;
         case ACT_ER_HAMMER_GIRO:     cancel = act_er_hammer_giro(m);     break;

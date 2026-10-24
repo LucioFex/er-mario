@@ -90,6 +90,8 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::Punch | Attack::Kick => Some((2, 0.8, false)),
         Attack::Rush => Some((2, 0.9, false)),
         Attack::RushKick => Some((5, 1.4, true)),
+        // (the closer: a short hold, its flight a moment still)
+        Attack::BulletPunch => Some((3, 1.2, false)),
         // the boomerang from afar: no hold for Mario, a short tick of it for the launcher
         Attack::Rang | Attack::RangBig => Some((0, 0.7, false)),
         Attack::Hook => Some((1, 0.6, false)),

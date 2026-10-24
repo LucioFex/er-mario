@@ -19,6 +19,7 @@ mod collision;
 mod coins;
 mod colossus;
 mod combat;
+mod combo;
 mod coop;
 mod dodge;
 mod element;
@@ -41,6 +42,7 @@ mod explore;
 mod gameover;
 mod hammer;
 mod hud;
+mod ik;
 mod impact;
 mod juggle;
 mod moving;
@@ -60,6 +62,7 @@ mod shove;
 mod paths;
 mod perf;
 mod revive;
+mod script;
 mod sm64;
 mod squish;
 mod status;
@@ -496,6 +499,9 @@ struct MarioState {
     /// ticks the player pushed the stick while Mario didn't move (stuck inside geometry)
     stuck_ticks: u32,
     prev_parts: Option<[engine_mario::PartPose; engine_mario::PARTS]>,
+    /// the enemy the moves' inputs read the stick against (its key), and the tick it was last
+    /// taken: kept a moment so it doesn't switch in the middle of a motion
+    focus: Option<(u64, u32)>,
 }
 
 static MARIO: Mutex<Option<MarioState>> = Mutex::new(None);
@@ -756,6 +762,23 @@ static FOLLOW_STARTED: AtomicBool = AtomicBool::new(false);
 /// were then (SM64 units): a safety floor stays there for a moment while the area streams in. It
 /// stays at that height: put at his current position on every reload, it caught him mid-jump.
 static FOLLOW_ENDED: Mutex<Option<(std::time::Instant, [f32; 3])>> = Mutex::new(None);
+
+/// The moves' fighting-game inputs read the stick against the nearest enemy within this (m), kept
+/// this many ticks once taken.
+const GRAMMAR_FOE: f32 = 12.0;
+const FOCUS_KEEP: u32 = 30;
+
+/// A scripted move's fist reach (script.rs `reach`): the right arm straight out ahead at shoulder
+/// height, the elbow down and out, by `weight` (arm IK, ik.rs).
+fn reach_ik(parts: &mut [engine_mario::PartPose; engine_mario::PARTS], state: &sm64::SM64MarioState, weight: f32) {
+    let face = state.face_angle;
+    // (the parts' axes: SM64's mirrored)
+    let fwd = glam::Vec3::new(-face.sin(), 0.0, face.cos());
+    let (shoulder, elbow, hand) = (parts[7].pos, parts[8].pos, parts[9].pos);
+    let arm = (elbow - shoulder).length() + (hand - elbow).length();
+    let out = (parts[7].pos - parts[4].pos).with_y(0.0).normalize_or(fwd.cross(glam::Vec3::Y));
+    ik::arm(parts, true, shoulder + fwd * arm * 0.97, -glam::Vec3::Y + out * 0.6, weight);
+}
 
 /// No ground anywhere near this long (s): Mario goes back to the last ground he stood on.
 const NO_GROUND_WAIT: f32 = 15.0;
@@ -2567,6 +2590,7 @@ fn frame(data: &FD4TaskData) {
             moving,
             stuck_ticks: 0,
             prev_parts: None,
+            focus: None,
         }
     });
     if m.id < 0 {
@@ -3693,6 +3717,49 @@ fn frame(data: &FD4TaskData) {
                 ((-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z) - m.state.face_angle).cos()
             }
         };
+        // the enemy the moves' fighting-game inputs (combo.rs) read the stick against: the one in
+        // front of the camera, nearest within GRAMMAR_FOE m (kept a moment: no switching in the
+        // middle of a motion); its direction (SM64's yaw) and how far its body is (m)
+        let focus = {
+            let me = m.state.position;
+            let cam = inputs.cam_look_x.atan2(inputs.cam_look_z);
+            let near: Vec<(&combat::Target, f32, f32)> = targets
+                .iter()
+                .filter(|t| !t.friendly() && t.shootable().is_some())
+                .map(|t| {
+                    let (dx, dz) = (t.sm[0] - me[0], t.sm[2] - me[2]);
+                    // (behind the camera counts as farther: the fight is in front of it)
+                    let off = (dx.atan2(dz) - cam).cos();
+                    (t, ((dx.hypot(dz) - t.radius).max(0.0)) * scale(), off)
+                })
+                .filter(|(_, d, _)| *d < GRAMMAR_FOE)
+                .collect();
+            let score = |&(_, d, off): &(&combat::Target, f32, f32)| d * if off < 0.0 { 2.5 } else { 1.0 };
+            let best = near.iter().min_by(|a, b| score(a).total_cmp(&score(b))).copied();
+            let kept = m.focus.filter(|(_, at)| m.ticks.wrapping_sub(*at) <= FOCUS_KEEP).and_then(|(key, _)| near.iter().find(|n| n.0.key() == key)).copied();
+            // (the one taken stays while it's the best, and a moment after it no longer is)
+            let pick = match (kept, best) {
+                (Some(k), Some(b)) if k.0.key() != b.0.key() => Some(k),
+                (_, b) => {
+                    m.focus = b.map(|b| (b.0.key(), m.ticks));
+                    b
+                }
+            };
+            pick.map(|(t, d, _)| ((t.sm[0] - me[0]).atan2(t.sm[2] - me[2]), d))
+        };
+        // the stick for them: against that enemy, else against the camera (forward, to his right).
+        // Not against his facing: SM64 turns him to the stick at once, and a pull back read as
+        // forward a tick later
+        let stick = {
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            if sx * sx + sy * sy < 0.36 {
+                (0.0, 0.0)
+            } else {
+                let cam = inputs.cam_look_x.atan2(inputs.cam_look_z);
+                let rel = (-sx).atan2(-sy) + cam - focus.map_or(cam, |f| f.0);
+                (rel.cos(), -rel.sin())
+            }
+        };
         // up on a big one's back: the stick steers it, R2 let go or A jumps off (bossride.rs)
         if bossride::active() {
             let (sx, sy) = (inputs.stick_x, inputs.stick_y);
@@ -3745,7 +3812,7 @@ fn frame(data: &FD4TaskData) {
                 .flatten()
         };
         let _perf10 = perf::span(perf::MOVES);
-        let moved = m.moves.tick(b_dash, y_move, x_move, a_pressed, fire_allowed, interacting, &m.state, m.combo.action_timer, m.combo.locked != 0, lean, flow, m.ticks);
+        let moved = m.moves.tick(b_dash, y_move, x_move, a_pressed, inputs.button_a != 0, fire_allowed, interacting, &m.state, m.combo.action_timer, m.combo.locked != 0, lean, stick, flow, m.ticks);
         drop(_perf10);
         let request = kit_request.or(moved);
         // the boulder off something big
@@ -3876,6 +3943,23 @@ fn frame(data: &FD4TaskData) {
             _ => None,
         }
         .map(|lost| m.tough.cut(health_before, lost));
+        // a scripted move (script.rs): its frame for this tick, the one it starts with or the next of
+        // the one playing (by SM64's own tick count of it: a hit-stop holds it)
+        // (it starts turned to the enemy the stick was read against, its lunge as far as that one's
+        // body)
+        let request = match request {
+            Some(moves::Request::Script { id: move_id, air, .. }) => {
+                let to = focus.map(|f| f.1);
+                log(format!("script: {} starts ({})", script::MOVES[move_id as usize].name, to.map_or("no enemy near".to_string(), |d| format!("an enemy {d:.1} m off"))));
+                m.moves.script.start(move_id, to);
+                Some(moves::Request::Script { id: move_id, air, yaw: focus.map(|f| f.0) })
+            }
+            r => r,
+        };
+        let script_frame = m.moves.script.frame(m.state.action, m.combo.action_arg, m.combo.action_timer, 1.0 / scale());
+        if let Some(f) = script_frame.filter(|f| f.c.end != 0) {
+            log(format!("script: {} ended", script::MOVES[f.id as usize].name));
+        }
         let result = worker::call("tick", move |ctx| {
             // (the co-op leash held him back last tick, or he warped: from there)
             if let Some([x, y, z]) = leash_fix {
@@ -3982,6 +4066,9 @@ fn frame(data: &FD4TaskData) {
             if let Some(r) = request {
                 r.apply(id);
             }
+            if let Some(f) = script_frame {
+                unsafe { sm64::sm64_er_script(&f.c) };
+            }
             let mut state = sm64::SM64MarioState::default();
             let job_start = std::time::Instant::now();
             {
@@ -4017,7 +4104,20 @@ fn frame(data: &FD4TaskData) {
             // (the Chain Chomp's body hits like the hammer's head)
             let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
             let swing = chomp_swing.or(hammer_swing);
-            let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing) } else { Vec::new() };
+            // the scripted move's tick ran (not held by a hit-stop): what it shows, its fist's reach,
+            // its hit window
+            let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);
+            if let Some(f) = script_ran {
+                combo.fx |= f.fx;
+            }
+            // (the fist's reach held through a hit-stop too: the arm doesn't pop back)
+            if let Some(f) = script_frame.filter(|f| f.c.end == 0 && f.reach > 0.0 && script::is_script(state.action)) {
+                if let Some(p) = parts.as_mut() {
+                    reach_ik(p, &state, f.reach);
+                }
+            }
+            let window = script_ran.and_then(|f| f.window.map(|w| w.1));
+            let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing, window) } else { Vec::new() };
             // (a long one: which part of it, for the log below)
             *LONG_TICK.lock().unwrap_or_else(|e| e.into_inner()) = (job_start.elapsed().as_secs_f32() * 1000.0, mario_ms, sound_ms, state.action);
             (state, ctx.geo.position[..n].to_vec(), ctx.geo.color[..n].to_vec(), ctx.geo.normal[..n].to_vec(), parts, hits, combo, swing)
@@ -4052,6 +4152,10 @@ fn frame(data: &FD4TaskData) {
                     timing::mikiri_done();
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                // (a blow of the scripted move playing landed: its cancels open sooner)
+                if script::is_script(state.action) && hits.iter().any(|h| targets.get(h.0).is_some_and(|t| !t.is_prop())) {
+                    m.moves.script.landed();
+                }
                 // a MAX finisher: its show (maxfin.rs), and the one going on
                 if let Some((attack, at)) = m.combat.take_max() {
                     let p = to_er(m.origin, state.position);

@@ -141,11 +141,13 @@ pub enum Attack {
     Frostbite,
     Hemorrhage,
     PoisonTick,
+    /// the scripted moves (script.rs): the fists' Bullet Bill punch
+    BulletPunch,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 88] = [
+const CODES: [Attack; 89] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -160,7 +162,7 @@ const CODES: [Attack; 88] = [
     Attack::RideBlow, Attack::RideSmash, Attack::HammerWide, Attack::QuakeBig, Attack::Titan, Attack::Pound, Attack::Rise,
     Attack::HammerRise, Attack::Ice(0), Attack::Ice(1), Attack::Ice(2), Attack::Ice(3), Attack::Dark(0), Attack::Dark(1),
     Attack::Dark(2), Attack::Dark(3), Attack::Venom(0), Attack::Venom(1), Attack::Venom(2), Attack::Venom(3), Attack::VenomCloud,
-    Attack::Frostbite, Attack::Hemorrhage, Attack::PoisonTick,
+    Attack::Frostbite, Attack::Hemorrhage, Attack::PoisonTick, Attack::BulletPunch,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -202,6 +204,8 @@ impl Attack {
             Attack::Shockwave => Attack::Stomp.spec(),
             Attack::Rush => Attack::Punch.spec(),
             Attack::RushKick => Attack::GroundPound.spec(),
+            // (a kick's weight: it sends them back a little)
+            Attack::BulletPunch => Attack::Kick.spec(),
             Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::AirHit => Attack::Punch.spec(),
             Attack::Chain | Attack::Shell => Attack::Kick.spec(),
             Attack::ChainEnd | Attack::Launch => Attack::Stomp.spec(),
@@ -384,6 +388,8 @@ impl Attack {
             // the statuses (element.rs): a burst worth a heavy blow, poison a little a second for
             // its 20 s (a fifth of a regular enemy's health in all)
             Attack::Frostbite => (15.0, "damage_frostbite"),
+            // the closer: a punch and a bit, the way in is the point
+            Attack::BulletPunch => (15.0, "damage_bullet_punch"),
             Attack::Hemorrhage => (20.0, "damage_blood_loss"),
             Attack::PoisonTick => (1.6, "damage_poison"),
         }
@@ -435,6 +441,8 @@ impl Attack {
         match self {
             Attack::GroundPound => 1.3,
             Attack::Punch | Attack::Kick | Attack::Sweep => 1.5,
+            // (the closer: from afar, a little less than a punch on the spot)
+            Attack::BulletPunch => 1.3,
             Attack::Stomp => 1.2,
             Attack::Dash => 1.1,
             // from afar and safe: on bosses only the charged ones count for more
@@ -1966,6 +1974,74 @@ fn head_reach() -> f32 {
     if crate::weapons::current() == crate::weapons::CHOMP { CHOMP_REACH } else { HAMMER_HEAD_REACH }
 }
 
+/// Where a blow reaches: along the hammer's head's sweep (or the Chain Chomp's body), all around a
+/// point, round him out to the swept weapon's reach, in front of him within a cone, or a slice of a
+/// circle in front (a cosine each side of his facing).
+#[derive(Clone, Copy)]
+enum Reach {
+    Sweep,
+    Around(glam::Vec3, f32),
+    /// around a point, out to the radius and the swept body's reach beyond it
+    Ring(glam::Vec3, f32),
+    Front(f32),
+    Arc(glam::Vec3, f32, f32),
+}
+
+/// The targets (feet, radius, height, index) the reach takes in this tick, each with `attack`.
+fn reached(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], reach: Reach, attack: Attack, swing: Option<crate::hammer::Swing>) -> Vec<(usize, Attack, bool)> {
+    use glam::Vec3;
+    let me = Vec3::from(state.position);
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+    let mut out = Vec::new();
+    for &(t, radius, height, index) in targets {
+        let foot = Vec3::from(t);
+        let top = foot.y + height;
+        let hit = match reach {
+            Reach::Arc(c, r, cos) => {
+                let d = flat(foot - c);
+                let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+                let ahead = d.length() < 1.0 || (d.x * fx + d.z * fz) / d.length() >= cos;
+                ahead && d.length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
+            }
+            Reach::Around(c, r) => {
+                // (the super jump punch rises above them: anyone up to 1.5 m under his feet)
+                flat(foot - c).length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
+            }
+            Reach::Ring(c, r) => {
+                let reach = swing.map_or(0.0, |s| head_reach() * s.scale);
+                flat(foot - c).length() <= r + reach + radius && c.y - 150.0 <= top && c.y + 250.0 >= foot.y
+            }
+            Reach::Front(r) => {
+                let d = flat(foot - me);
+                let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+                let ahead = d.length() < 1.0 || (d.x * fx + d.z * fz) / d.length() >= PUNCH_CONE_COS;
+                ahead && d.length() <= r + radius && me.y - 150.0 <= top && me.y + 200.0 >= foot.y
+            }
+            Reach::Sweep => {
+                let Some(s) = swing else { continue };
+                // the head's path this tick (flat), against the body's axis
+                let (a, b) = (flat(s.prev), flat(s.head));
+                let ab = b - a;
+                let k = if ab.length_squared() > 1.0 { ((flat(foot) - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
+                let at = s.prev.lerp(s.head, k);
+                let near = flat(foot - at).length() <= head_reach() * s.scale + radius;
+                let level = at.y >= foot.y - 80.0 * s.scale && at.y <= top + 80.0 * s.scale;
+                // ...and someone hugging Mario, in front of him, inside the head's arc
+                let close = {
+                    let d = flat(foot - me);
+                    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+                    d.length() <= MARIO_RADIUS + radius + 40.0 && (d.x * fx + d.z * fz) >= 0.0 && me.y <= top && me.y + 150.0 >= foot.y
+                };
+                (near && level) || close
+            }
+        };
+        if hit {
+            out.push((index, attack, false));
+        }
+    }
+    out
+}
+
 /// Who a combo's move hits this tick (moves::Hit): along the hammer's head's sweep (`swing`), or
 /// all around a point.
 fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], hit: crate::moves::Hit, swing: Option<crate::hammer::Swing>) -> Vec<(usize, Attack, bool)> {
@@ -1974,14 +2050,6 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
     let me = Vec3::from(state.position);
     let head = swing.map_or(me, |s| s.head);
     let size = swing.map_or(1.0, |s| s.scale);
-    // along the hammer head's sweep, or all around a point within a radius
-    enum Reach {
-        Sweep,
-        Around(Vec3, f32),
-        /// around a point, out to the radius and the swept body's reach beyond it
-        Ring(Vec3, f32),
-        Front(f32),
-    }
     let (attack, reach) = match hit {
         Hit::Hammer => (Attack::Hammer, Reach::Sweep),
         Hit::HammerSmash => (Attack::HammerSmash, Reach::Sweep),
@@ -2023,53 +2091,29 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::HomeRun => (Attack::HomeRun, Reach::Front(HOME_RUN_REACH)),
         Hit::SwingKick => (Attack::SwingKick, Reach::Around(me, SWING_KICK_RADIUS)),
     };
-    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
-    let mut out = Vec::new();
-    for &(t, radius, height, index) in targets {
-        let foot = Vec3::from(t);
-        let top = foot.y + height;
-        let hit = match reach {
-            Reach::Around(c, r) => {
-                // (the super jump punch rises above them: anyone up to 1.5 m under his feet)
-                flat(foot - c).length() <= r + radius && c.y - 150.0 <= top && c.y + 200.0 >= foot.y
-            }
-            Reach::Ring(c, r) => {
-                let reach = swing.map_or(0.0, |s| head_reach() * s.scale);
-                flat(foot - c).length() <= r + reach + radius && c.y - 150.0 <= top && c.y + 250.0 >= foot.y
-            }
-            Reach::Front(r) => {
-                let d = flat(foot - me);
-                let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-                let ahead = d.length() < 1.0 || (d.x * fx + d.z * fz) / d.length() >= PUNCH_CONE_COS;
-                ahead && d.length() <= r + radius && me.y - 150.0 <= top && me.y + 200.0 >= foot.y
-            }
-            Reach::Sweep => {
-                let Some(s) = swing else { continue };
-                // the head's path this tick (flat), against the body's axis
-                let (a, b) = (flat(s.prev), flat(s.head));
-                let ab = b - a;
-                let k = if ab.length_squared() > 1.0 { ((flat(foot) - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
-                let at = s.prev.lerp(s.head, k);
-                let near = flat(foot - at).length() <= head_reach() * s.scale + radius;
-                let level = at.y >= foot.y - 80.0 * s.scale && at.y <= top + 80.0 * s.scale;
-                // ...and someone hugging Mario, in front of him, inside the head's arc
-                let close = {
-                    let d = flat(foot - me);
-                    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
-                    d.length() <= MARIO_RADIUS + radius + 40.0 && (d.x * fx + d.z * fz) >= 0.0 && me.y <= top && me.y + 150.0 >= foot.y
-                };
-                (near && level) || close
-            }
-        };
-        if hit {
-            out.push((index, attack, false));
-        }
-    }
-    out
+    reached(state, targets, reach, attack, swing)
+}
+
+/// Who a scripted move's hit window (script.rs) takes this tick. Repeats on the same enemy follow
+/// the attack's own cooldown (`Attack::cooldown`).
+pub fn script_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)], w: &crate::script::Window, swing: Option<crate::hammer::Swing>) -> Vec<(usize, Attack, bool)> {
+    use crate::script::Shape;
+    use glam::Vec3;
+    let me = Vec3::from(state.position);
+    let ahead = |m: f32| me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * m;
+    let reach = match w.shape {
+        Shape::Front { reach } => Reach::Front(reach),
+        Shape::Arc { radius, half_deg, ahead: a } => Reach::Arc(ahead(a), radius, half_deg.to_radians().cos()),
+        Shape::Around { radius, ahead: a } => Reach::Around(ahead(a), radius),
+        Shape::Ring { radius } => Reach::Ring(me, radius),
+        Shape::Weapon => Reach::Sweep,
+    };
+    reached(state, targets, reach, w.attack, swing)
 }
 
 /// `no_punch`: Mario's punch is only the fireball's throw (fireball.rs), it hits no one.
 /// `combo`, `swing`: what a combo's move did this tick (moves.rs), and the hammer's head.
+/// `script`: a scripted move's hit window open this tick (script.rs).
 pub fn hits(
     id: i32,
     state: &sm64::SM64MarioState,
@@ -2078,7 +2122,12 @@ pub fn hits(
     no_punch: bool,
     combo: &sm64::SM64ErMove,
     swing: Option<crate::hammer::Swing>,
+    script: Option<&crate::script::Window>,
 ) -> Vec<(usize, Attack, bool)> {
+    // a scripted move hits only in its windows
+    if crate::script::is_script(state.action) {
+        return script.map_or_else(Vec::new, |w| script_hits(state, targets, w, swing));
+    }
     // the combos' moves hit only as they say (SM64's own checks took the dive for a dash, the
     // super jump punch for a stomp)
     // (the hook's pull hits no one on the way: hook.rs)

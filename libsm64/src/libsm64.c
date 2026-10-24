@@ -1153,6 +1153,19 @@ SM64_LIB_FN void sm64_er_cling(int32_t marioId, int mode, int start)
     }
 }
 
+/** er-mario: the next tick of a scripted move (script.rs), right before the tick */
+SM64_LIB_FN void sm64_er_script(const struct SM64ErScript *frame)
+{
+    extern void er_set_script(const struct SM64ErScript *frame);
+    er_set_script(frame);
+}
+
+/** er-mario: the frame's size, for the mod to check it agrees */
+SM64_LIB_FN int32_t sm64_er_script_size(void)
+{
+    return (int32_t) sizeof(struct SM64ErScript);
+}
+
 /** er-mario: the share of each loss of health Mario takes (tough.rs) */
 SM64_LIB_FN void sm64_er_set_loss_share(float share)
 {

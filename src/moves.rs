@@ -136,6 +136,8 @@ const ACT_SIDE_FLIP: u32 = 0x0100_0887;
 const BREAKDANCE: u32 = 9;
 /// SM64's animation: the combo's kick
 const ANIM_GROUND_KICK: i32 = 0x66;
+/// A press too soon in a scripted move is kept this long (ticks) for when it can cut it.
+const SCRIPT_BUFFER: u32 = 8;
 /// the pause combo: the third X this long (ticks) after the second, a beat instead of a quick
 /// press (it used to count from the second punch's end, a timing hard to find)
 const PAUSE_MIN: u32 = 10;
@@ -242,6 +244,17 @@ pub const FX_CHARGE: u32 = 0x100;
 /// a heavy hammer blow into the ground: a ring, dust, rubble
 pub const FX_SLAM: u32 = 0x400;
 
+/// The fists' string at step `step` (1 the first punch): SM64's punches and kick (its punch
+/// sequence's actionArg: 0 the first punch, 3 the second, 6 the kick), then the long string.
+fn fists_step(step: u32) -> Option<Request> {
+    Some(match step {
+        0 | 1 => Request::Action(ACT_PUNCHING, 0),
+        2 => Request::Action(ACT_PUNCHING, 3),
+        3 => Request::Action(ACT_PUNCHING, 6),
+        _ => Request::Action(ACT_ER_CHAIN, 0),
+    })
+}
+
 /// One of the combos' moves (combat.rs leaves their hits to `Hit`).
 pub fn combo(action: u32) -> bool {
     COMBO_ACTIONS.contains(&action)
@@ -274,6 +287,9 @@ pub enum Request {
     /// the freeflow: a leap to (x, y, z) (SM64 units), just off another enemy's body, popping up in
     /// front of it (er_moves.c's zip, as the hook's)
     Flow([f32; 3]),
+    /// a scripted move (script.rs MOVES), on the ground or in the air, turned to `yaw` (SM64's
+    /// radians: the enemy the stick was read against) as it starts
+    Script { id: u16, air: bool, yaw: Option<f32> },
 }
 
 impl Request {
@@ -293,6 +309,12 @@ impl Request {
                 }
                 Request::Velocity(v) => sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]),
                 Request::Flow([x, y, z]) => sm64::sm64_er_zip(id, x, y, z, 0, 1),
+                Request::Script { id: move_id, air, yaw } => {
+                    sm64::sm64_set_mario_action_arg(id, if air { crate::script::ACT_ER_SCRIPT_AIR } else { crate::script::ACT_ER_SCRIPT }, move_id as u32);
+                    if let Some(yaw) = yaw {
+                        sm64::sm64_set_mario_faceangle(id, yaw);
+                    }
+                }
                 Request::Spring(v) => {
                     sm64::sm64_set_mario_action(id, ACT_TRIPLE_JUMP);
                     sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]);
@@ -359,6 +381,15 @@ pub struct Moves {
     /// when A and X last went down (X + A: the rising blow)
     a_at: Option<u32>,
     x_at: Option<u32>,
+    /// the stick and buttons of the last moments, read as fighting-game inputs (combo.rs)
+    grammar: crate::combo::Grammar,
+    /// the Dodge Offset: X held through a dash keeps the string's step (combo.rs)
+    offset: crate::combo::Offset,
+    /// the scripted move playing (script.rs): lib.rs works out its frames
+    pub script: crate::script::Player,
+    /// X or B pressed while the scripted move couldn't be cut yet: taken when it can (no press lost
+    /// to the last ticks of a move)
+    script_buffer: Option<(u8, u32)>,
 }
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
@@ -416,6 +447,10 @@ impl Moves {
             y_buffer: None,
             a_at: None,
             x_at: None,
+            grammar: Default::default(),
+            offset: Default::default(),
+            script: Default::default(),
+            script_buffer: None,
         }
     }
 
@@ -450,7 +485,9 @@ impl Moves {
             }
             _ => None,
         };
-        let busy = WEAPON_ACTIONS.contains(&action);
+        // (a scripted move: only in its swap window)
+        let script_busy = crate::script::is_script(action) && self.script.cancel() & crate::script::SWAP == 0;
+        let busy = WEAPON_ACTIONS.contains(&action) || script_busy;
         // (one that waited: now that the move is over)
         let next = match next {
             Some(w) => Some(w),
@@ -469,8 +506,8 @@ impl Moves {
         let next = next.filter(|_| allowed)?;
         // in the middle of a fight: the new weapon comes in swinging; in the middle of one of the
         // weapons' moves, only that way, or it waits for the move to end
-        let fighting = combo(action) || self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER);
-        let swap = fighting && self.can_swap(next, action, tick);
+        let fighting = combo(action) || crate::script::is_script(action) || self.attack_seen.is_some_and(|t| tick.wrapping_sub(t) <= SWAP_AFTER);
+        let swap = fighting && !script_busy && self.can_swap(next, action, tick);
         if busy && !swap {
             self.pending = Some((next, tick));
             return None;
@@ -482,6 +519,24 @@ impl Moves {
             self.swap = Some((next, tick));
         }
         Some(next)
+    }
+
+    /// The weapon's string, from its first blow (out of a scripted move's NEXT window).
+    fn string_opener(&self, air: bool) -> Option<Request> {
+        use crate::weapons::{CHOMP, FISTS, HAMMER, RANG};
+        let rangs = crate::boomerang::ready() > 0;
+        let (action, arg) = match (self.weapon, air) {
+            (FISTS, false) => return fists_step(self.x_chain.max(1) + 1),
+            (FISTS, true) => (ACT_ER_AIR_COMBO, 0),
+            (HAMMER, false) => (ACT_ER_HAMMER, 0),
+            (HAMMER, true) => (ACT_ER_HAMMER_AIR, 0),
+            (CHOMP, false) => (ACT_ER_CHOMP, 0),
+            (CHOMP, true) => (ACT_ER_CHOMP_AIR, 0),
+            (RANG, false) if rangs => (ACT_ER_THROW, 0),
+            (RANG, true) if rangs => (ACT_ER_AIR_THROW, 0),
+            _ => return None,
+        };
+        Some(Request::Action(action, arg))
     }
 
     /// A swap strike with weapon `w` can start now, out of `action`.
@@ -509,16 +564,23 @@ impl Moves {
         y: bool,
         x: bool,
         a_pressed: bool,
+        a_held: bool,
         allowed: bool,
         interacting: bool,
         state: &sm64::SM64MarioState,
         move_timer: i32,
         locked: bool,
         lean: f32,
+        stick: (f32, f32),
         flow: Option<[f32; 3]>,
         tick: u32,
     ) -> Option<Request> {
         let a = state.action;
+        {
+            use crate::combo::{A, B, X, Y};
+            let buttons = if x { X } else { 0 } | if y { Y } else { 0 } | if b { B } else { 0 } | if a_held || a_pressed { A } else { 0 };
+            self.grammar.push(tick, stick.0, stick.1, buttons);
+        }
         // (the held state is kept on every tick: behind `b &&` it was only on presses, so it stayed
         // "held" for good after the first one)
         let b_pressed = !std::mem::replace(&mut self.b_held, b) && b;
@@ -545,6 +607,96 @@ impl Moves {
             self.x_buffer = Some(tick);
         }
         let punching = a == ACT_PUNCHING || a == ACT_MOVE_PUNCHING;
+        let air = a & ACT_FLAG_AIR != 0;
+        // on his feet and free to move (not knocked down or back, in a cutscene, in water, on a
+        // ledge), or in the dash
+        let on_foot = allowed
+            && a & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE
+            && ((a & (ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0 && a & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0) || dodging(a));
+        let closer = x_pressed && self.grammar.back_forward(crate::combo::X);
+        // the Dodge Offset (Bayonetta's): X held through a dash, the string's step is kept for the
+        // next X (not for a press that's another move's: the closer, X + A)
+        self.offset.tick(x, dodging(a), tick);
+        let offset_x = x_pressed && !closer && !a_pressed && on_foot && !dodging(a) && !air;
+        if let Some(step) = self.offset.take(offset_x, tick).filter(|_| self.weapon == crate::weapons::FISTS && !crate::mega::active()) {
+            if let Some(r) = fists_step(step + 1) {
+                self.x_chain = step + 1;
+                self.chain_seen = Some(tick);
+                self.attack_seen = Some(tick);
+                crate::log(format!("moves: Dodge Offset, the string goes on at step {}", step + 1));
+                return Some(r);
+            }
+        }
+        // a scripted move (script.rs) playing: only what its cancel windows open now cuts it short
+        // (sooner once one of its blows landed: no dead time after a hit)
+        let script_on = crate::script::is_script(a);
+        let cancel = if script_on { self.script.cancel() } else { crate::script::ALL };
+        let open = |bit: u8| cancel & bit != 0;
+        // (X or B too soon in a move: kept a moment for when it can be cut)
+        let (x_pressed, b_pressed) = if script_on {
+            use crate::script::{DASH, NEXT};
+            if x_pressed && !open(NEXT) {
+                self.script_buffer = Some((crate::combo::X, tick));
+            } else if b_pressed && !open(DASH) {
+                self.script_buffer = Some((crate::combo::B, tick));
+            }
+            let held = self.script_buffer.filter(|(_, at)| tick.wrapping_sub(*at) <= SCRIPT_BUFFER);
+            let take = |bit: u8, need: u8| held.is_some_and(|(b, _)| b == bit) && open(need);
+            let (bx, bb) = (take(crate::combo::X, NEXT), take(crate::combo::B, DASH));
+            if bx || bb {
+                self.script_buffer = None;
+            }
+            (x_pressed && open(NEXT) || bx, b_pressed && open(DASH) || bb)
+        } else {
+            self.script_buffer = None;
+            (x_pressed, b_pressed)
+        };
+        if script_on {
+            if a_pressed && open(crate::script::JUMP) && !air && allowed {
+                crate::log("moves: jump out of the move");
+                return Some(Request::Action(ACT_JUMP, 0));
+            }
+            // the dash out of it (its own: the rest of the moves wait for NEXT)
+            if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() && allowed {
+                self.dash_ready = tick + DASH_COOLDOWN;
+                if air {
+                    if self.air_dashed {
+                        return None;
+                    }
+                    self.air_dashed = true;
+                    self.air_dashes += 1;
+                    crate::log("moves: air dash out of the move");
+                    return Some(Request::Action(ACT_ER_AIR_DASH, 0));
+                }
+                self.offset.dash_started(x, self.x_chain, tick);
+                crate::log("moves: dash out of the move");
+                return Some(Request::Action(ACT_ER_DASH, 0));
+            }
+            if x_pressed && open(crate::script::NEXT) && allowed && !closer {
+                if let Some(r) = self.string_opener(air) {
+                    self.x_chain = self.x_chain.max(1) + 1;
+                    self.chain_seen = Some(tick);
+                    self.attack_seen = Some(tick);
+                    crate::log("moves: the string goes on out of the move");
+                    return Some(r);
+                }
+            }
+            // (a swap in its window: the swap strike below)
+            if !open(crate::script::NEXT) && !(self.swap.is_some() && open(crate::script::SWAP)) {
+                return None;
+            }
+        }
+        // back, forward + X with the fists: the Bullet Bill punch (Devil May Cry's Stinger), the
+        // gap closer (a string's first blow: X then goes on with it); out of the dash too
+        let closer_from = !combo(a) || punching || matches!(a, ACT_ER_CHAIN | ACT_ER_RUSH) || script_on;
+        if closer && on_foot && !air && !locked && closer_from && self.weapon == crate::weapons::FISTS && !crate::mega::active() {
+            self.x_chain = 1;
+            self.chain_seen = Some(tick);
+            self.attack_seen = Some(tick);
+            crate::log("moves: Bullet Bill punch (back, forward + X)");
+            let id = crate::script::BULLET_PUNCH;
+            return Some(Request::Script { id, air: crate::script::MOVES[id as usize].air, yaw: None });
+        }
         // the sweep and the hammer's slam: when they end, the beat for the next button of a combo
         // starts
         let ended = |now: bool, was: &mut bool, end: &mut Option<u32>| {
@@ -590,7 +742,6 @@ impl Moves {
         }
         let x_twice = self.x_chain >= 2 && (in_chain || chain_window(self.chain_seen));
         let x_late = self.x_buffer.is_some_and(|t| tick.wrapping_sub(t) <= X_BUFFER);
-        let air = a & ACT_FLAG_AIR != 0;
         if !air {
             self.air_dashed = false;
             self.air_dashes = 0;
@@ -642,7 +793,7 @@ impl Moves {
             self.string_swaps = 0;
         }
         // a blow going on (the combos' moves, SM64's punches and kicks, the air string)
-        if combo(a) || punching || a == ACT_ER_RUSH || a == ACT_GROUND_POUND || a == ACT_SLIDE_KICK || a == ACT_TWIRLING || a == 0x0180_08A9 || a == 0x0180_08AE {
+        if combo(a) || script_on || punching || a == ACT_ER_RUSH || a == ACT_GROUND_POUND || a == ACT_SLIDE_KICK || a == ACT_TWIRLING || a == 0x0180_08A9 || a == 0x0180_08AE {
             self.attack_seen = Some(tick);
         }
         // the swap strike: the weapon just taken opens with its own blow, the string going on
@@ -704,8 +855,10 @@ impl Moves {
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
         // (not in a hammer blow's wind-up and impact: it's committed)
         if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() {
+            let step = if in_string { self.x_chain } else { 0 };
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
+                self.offset.dash_started(x, step, tick);
                 crate::log("moves: dash");
                 return Some(Request::Action(ACT_ER_DASH, 0));
             }

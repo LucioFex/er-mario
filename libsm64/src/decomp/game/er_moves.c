@@ -3431,3 +3431,154 @@ s32 act_er_rise(struct MarioState *m) {
     }
     return FALSE;
 }
+
+/* ---- the scripted moves (script.rs) --------------------------------------------------------- */
+
+/* A move as data: script.rs works out every tick of it (the animation and the frame of it to
+ * show, the body's turn and lean, his speed, squash and sound) and sets it right before the tick;
+ * these two actions only play it, with SM64's own steps (walls, ledges, falling off a ledge), on
+ * the ground and in the air, its tick count going on from one to the other. Its blows are measured
+ * by the mod from the same data (combat.rs). A tick with no frame set ends the move, as a blow on
+ * him does (any other action). */
+static struct SM64ErScript sErScript;
+
+void er_set_script(const struct SM64ErScript *frame) {
+    sErScript = *frame;
+}
+
+/** Shows `frame` of the animation playing (a fraction of a frame too, with an accelerated one). */
+static void er_script_anim_frame(struct MarioState *m, f32 frame) {
+    struct AnimInfo *a = &m->marioObj->header.gfx.animInfo;
+    if (a->curAnim == NULL) {
+        return;
+    }
+    if (a->animAccel) {
+        // (as set_anim_to_frame: the update about to come moves it on by one step)
+        s32 at = (s32)(frame * 65536.0f);
+        a->animFrameAccelAssist = (a->curAnim->flags & ANIM_FLAG_FORWARD) ? at + a->animAccel : at - a->animAccel;
+        // (an animation the update doesn't move on shows animFrame as it is)
+        a->animFrame = (s16) frame;
+    } else {
+        set_anim_to_frame(m, (s16) frame);
+    }
+}
+
+/** What a frame does before the step: the animation, his facing, the lock, the sound. */
+static void er_script_begin(struct MarioState *m, const struct SM64ErScript *f) {
+    if (f->animId >= 0) {
+        set_mario_anim_with_accel(m, f->animId, 0x10000);
+        if (f->animFrame >= 0.0f) {
+            er_script_anim_frame(m, f->animFrame);
+        }
+    }
+    if (f->aim) {
+        er_aim_turn(m);
+    }
+    if (f->turn != 0.0f) {
+        m->faceAngle[1] += er_angle(f->turn);
+    }
+    er_move_locked = f->locked;
+    if (f->invulnerable && m->invincTimer < 2) {
+        m->invincTimer = 2;
+    }
+    if (f->sound != 0) {
+        if (f->soundVolume > 0.0f) {
+            er_sound_soft(f->sound, f->soundVolume);
+        } else {
+            er_sound(m, f->sound);
+        }
+    }
+    mario_set_forward_vel(m, f->forwardVel);
+}
+
+/** What a frame does after the step (which draws him straight): the lean, roll, twist, squash. */
+static void er_script_draw(struct MarioState *m, const struct SM64ErScript *f) {
+    // (SM64's drawn pitch tips the nose down, as the script's leans forward: the dive's, the bonk's)
+    vec3s_set(m->marioObj->header.gfx.angle, er_angle(f->pitch), m->faceAngle[1], er_angle(f->roll));
+    if (f->twist != 0.0f) {
+        er_twist(m, f->twist);
+    }
+    er_squash(m, f->squash > 0.0f ? f->squash : 1.0f, f->dip);
+}
+
+/** Into the move's other action (ground or air) with its tick count going on; the new one plays
+ * from the next tick. */
+static s32 er_script_to(struct MarioState *m, u32 action) {
+    s32 t = m->actionTimer;
+    set_mario_action(m, action, m->actionArg);
+    m->actionTimer = t;
+    return FALSE;
+}
+
+s32 act_er_script(struct MarioState *m) {
+    struct SM64ErScript *f = &sErScript;
+    if (!f->active || f->end) {
+        f->active = 0;
+        return set_mario_action(m, (m->input & INPUT_NONZERO_ANALOG) ? ACT_WALKING : ACT_IDLE, 0);
+    }
+    f->active = 0;
+    er_script_begin(m, f);
+    // up off the ground (a hop, a launcher): this tick's step already in the air (its share of
+    // the lunge with it), the air action from the next tick
+    if (f->setVelY && f->velY > 0.0f) {
+        m->vel[1] = f->velY;
+        switch (perform_air_step(m, 0)) {
+            case AIR_STEP_HIT_WALL:
+                mario_set_forward_vel(m, 0.0f);
+                break;
+            case AIR_STEP_HIT_LAVA_WALL:
+                lava_boost_on_wall(m);
+                return TRUE;
+        }
+        er_script_draw(m, f);
+        m->actionTimer++;
+        return er_script_to(m, ACT_ER_SCRIPT_AIR);
+    }
+    m->vel[1] = 0.0f;
+    if (perform_ground_step(m) == GROUND_STEP_LEFT_GROUND) {
+        // (off a ledge: the move goes on in the air)
+        er_script_draw(m, f);
+        m->actionTimer++;
+        return er_script_to(m, ACT_ER_SCRIPT_AIR);
+    }
+    er_script_draw(m, f);
+    m->actionTimer++;
+    return FALSE;
+}
+
+s32 act_er_script_air(struct MarioState *m) {
+    struct SM64ErScript *f = &sErScript;
+    if (!f->active || f->end) {
+        f->active = 0;
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    f->active = 0;
+    er_script_begin(m, f);
+    if (f->setVelY) {
+        m->vel[1] = f->velY;
+    } else if (f->hold) {
+        m->vel[1] = 0.0f;
+    }
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            m->actionTimer++;
+            if (f->landEnds) {
+                return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+            }
+            er_script_draw(m, f);
+            return er_script_to(m, ACT_ER_SCRIPT);
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    // (held up: the step's gravity undone)
+    if (f->hold && !f->setVelY) {
+        m->vel[1] = 0.0f;
+    }
+    er_script_draw(m, f);
+    m->actionTimer++;
+    return FALSE;
+}

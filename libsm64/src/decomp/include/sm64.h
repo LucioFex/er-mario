@@ -315,6 +315,7 @@
 #define ACT_ER_POLE_SWING              0x00800895 // (0x095 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) round a hooked enemy
 #define ACT_ER_SWING_KICK              0x00800896 // (0x096 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) off the pole swing
 #define ACT_ER_LEAP                    0x00800897 // (0x097 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) forward + Y, the gap closer
+#define ACT_ER_SCRIPT_AIR              0x0080089E // (0x09E | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) a scripted move in the air (script.rs)
 #define ACT_ER_RISE                    0x0080089D // (0x09D | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) X + A, the weapon's rising blow
 #define ACT_THROWN_FORWARD             0x010208BD // (0x0BD | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_THROWN_BACKWARD            0x010208BE // (0x0BE | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
@@ -450,6 +451,7 @@
 #define ACT_ER_CHOMP                   0x00800398 // (0x198 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_CHOMP_SPIN              0x00800399 // (0x199 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_BONK                    0x0080039A // (0x19A | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_SCRIPT                  0x0080039C // (0x19C | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING) a scripted move on the ground (script.rs)
 #define ACT_ER_HOME_RUN                0x0080039B // (0x19B | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_PICKING_UP                 0x00000383 // (0x183 | ACT_FLAG_STATIONARY)
 #define ACT_DIVE_PICKING_UP            0x00000385 // (0x185 | ACT_FLAG_STATIONARY)

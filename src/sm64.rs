@@ -231,6 +231,45 @@ unsafe extern "C" {
     pub fn sm64_er_star_music(on: i32);
     /// er-mario patch: what the combos' moves did on the last tick
     pub fn sm64_er_get_move(id: i32, out: *mut SM64ErMove);
+    /// er-mario patch: the next tick of a scripted move (script.rs), right before the tick
+    pub fn sm64_er_script(frame: *const SM64ErScript);
+    pub fn sm64_er_script_size() -> i32;
+}
+
+/// One tick of a scripted move (script.rs) as libsm64's ACT_ER_SCRIPT / ACT_ER_SCRIPT_AIR play it
+/// (libsm64.h SM64ErScript: same fields, same order).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SM64ErScript {
+    /// set for this tick; the move is over
+    pub active: i32,
+    pub end: i32,
+    /// SM64 animation (-1 keeps the one playing) and the frame of it to show (< 0 lets it play)
+    pub anim_id: i32,
+    pub anim_frame: f32,
+    /// his drawn body: turned (+ left), leaning forward, rolled (degrees)
+    pub twist: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    /// degrees his facing turns this tick (+ left), and 1 to turn to the aimed enemy now
+    pub turn: f32,
+    pub aim: i32,
+    /// units per tick along his facing; his vertical speed this tick (if set_vel_y)
+    pub forward_vel: f32,
+    pub set_vel_y: i32,
+    pub vel_y: f32,
+    /// in the air: no gravity; landing ends the move (else it goes on on the ground)
+    pub hold: i32,
+    pub land_ends: i32,
+    /// squashed (under 1) or stretched (over 1), drawn this many units low
+    pub squash: f32,
+    pub dip: f32,
+    pub invulnerable: i32,
+    /// can't be left (no dash)
+    pub locked: i32,
+    /// a sound this tick (0 none), soft at this volume (<= 0: at his body)
+    pub sound: u32,
+    pub sound_volume: f32,
 }
 
 /// What the combos' moves (libsm64's er_moves.c) did on a tick: what they hit (moves::Hit), what
@@ -259,4 +298,14 @@ pub struct SM64ErMove {
     pub chomp_bite: f32,
     /// a hammer blow that can't be left yet (no dash: er_moves.c er_move_locked)
     pub locked: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_script_frame_agrees_with_libsm64() {
+        assert_eq!(unsafe { sm64_er_script_size() } as usize, std::mem::size_of::<SM64ErScript>());
+    }
 }
