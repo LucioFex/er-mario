@@ -150,7 +150,7 @@ pub const CHARGE: Move = Move {
     dip: &[k(0, 0.0, Linear), k(6, 12.0, Out)],
     reach: &[k(0, 0.6, Linear), k(6, 0.25, Out)],
     reach_pitch: -40.0,
-    cancels: &[c(DASH | crate::script::JUMP, 4, 4)],
+    cancels: &[c(DASH | crate::script::JUMP | SWAP, 4, 4)],
     sounds: &[(0, UH, 0.4), ((SUPER_FULL - crate::weaponplay::CHARGE_AFTER) as u16, SHORT_STAR, 0.22)],
     fx: &[((SUPER_FULL - crate::weaponplay::CHARGE_AFTER) as u16, FX_SPARKLE)],
     pulse: Some((10, FX_CHARGE)),

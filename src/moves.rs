@@ -106,8 +106,9 @@ const WEAPON_ACTIONS: [u32; 11] = [
 /// a switch that waited for a weapon's move to end is dropped after this many ticks
 const PENDING_TICKS: u32 = 45;
 const ACT_IDLE: u32 = 0x0C40_0201;
-/// SM64's first punch (a string's first blow)
+/// SM64's first punch (a string's first blow): its wind-up and its follow-through
 const ANIM_FIRST_PUNCH: i32 = 0x67;
+const ANIM_FIRST_PUNCH_FAST: i32 = 0x69;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
 /// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
@@ -434,10 +435,17 @@ pub struct Moves {
     /// beat counts from there)
     first_was: bool,
     first_end: Option<u32>,
+    /// the Chain Chomp's bite (X, Y; back + X) began at this tick (the frenzy comes out of it)
+    bite_at: Option<u32>,
+    /// the fists' air blows (meteor punch, dropkick) begun in this jump: each holds him up a moment
+    fist_air: u8,
 }
 
 /// the sword's pogo bounces a jump (Link's down-thrust)
 const POGOS: u8 = 3;
+/// the fists' air blows a jump (more with an enemy juggled up there)
+const FIST_AIR: u8 = 2;
+const FIST_AIR_JUGGLE: u8 = 3;
 /// Aerial Raves a jump: one, a few with an enemy up there with him (they hold him up: no flying
 /// about the field on X alone)
 const RAVES: u8 = 1;
@@ -513,6 +521,8 @@ impl Moves {
             play_since: 0,
             first_was: false,
             first_end: None,
+            bite_at: None,
+            fist_air: 0,
         }
     }
 
@@ -581,6 +591,8 @@ impl Moves {
         }
         self.pending = None;
         self.weapon = next;
+        // (a beat after the old weapon's blow isn't the new one's)
+        self.first_end = None;
         crate::weapons::set(next);
         if swap {
             self.swap = Some((next, tick));
@@ -607,7 +619,11 @@ impl Moves {
         use crate::combo::X;
         let playing = self.script.active().filter(|_| script_on);
         let playing_for = tick.wrapping_sub(self.play_since);
-        let mash_window = if playing.is_some() { crate::weaponplay::MASH_WINDOW.min(playing_for) } else { crate::weaponplay::MASH_WINDOW };
+        // (the presses since the move playing began, or the bite: the press that began it isn't a
+        // mash)
+        let bite_ago = self.bite_at.map(|t| tick.wrapping_sub(t));
+        let since = if playing.is_some() { Some(playing_for) } else { bite_ago };
+        let mash_window = since.map_or(crate::weaponplay::MASH_WINDOW, |s| crate::weaponplay::MASH_WINDOW.min(s));
         let input = crate::weaponplay::Input {
             x,
             x_held: self.grammar.held(X),
@@ -619,15 +635,27 @@ impl Moves {
         let state = crate::weaponplay::State {
             air,
             playing: playing.map(|id| (id, next)),
+            playing_for,
             landed: self.script.has_landed(),
             dashing: dodging(a),
             dashed: if dodging(a) { Some(0) } else { self.dash_seen.map(|t| tick.wrapping_sub(t)) },
             first_blow_ended: first_ago,
             mega: crate::mega::active(),
             air_string: a == ACT_ER_AIR_COMBO || a == ACT_ER_UPPERCUT || crate::juggle::active(),
+            bite_ago,
+            rangs: crate::boomerang::ready(),
         };
         let id = crate::weaponplay::choose(self.weapon, &input, &state)?;
         let m = crate::script::MOVES.get(id as usize)?;
+        // (the fists' air blows hold him up a moment each: a couple a jump, a few more with an enemy
+        // up there; not hovering on X alone)
+        if matches!(id, crate::script::METEOR_PUNCH | crate::script::FIST_DROPKICK) {
+            let most = if crate::juggle::active() { FIST_AIR_JUGGLE } else { FIST_AIR };
+            if self.fist_air >= most {
+                return None;
+            }
+            self.fist_air += 1;
+        }
         self.script_buffer = None;
         self.attack_seen = Some(tick);
         self.chain_seen = Some(tick);
@@ -636,6 +664,9 @@ impl Moves {
             self.x_chain = 0;
         }
         self.first_end = None;
+        if id == crate::script::CHOMP_FRENZY {
+            self.bite_at = None;
+        }
         let name = crate::weapons::NAMES.get(self.weapon as usize).copied().unwrap_or("?");
         crate::log(format!("moves: {name}, {}", m.name));
         Some(Request::Script { id, air: m.air, yaw: None })
@@ -721,6 +752,7 @@ impl Moves {
         if a & ACT_FLAG_AIR == 0 {
             self.pogos = POGOS;
             self.raves = 0;
+            self.fist_air = 0;
         }
         let sword = sword_in_hand && !crate::mega::active();
         // (a move asked for from elsewhere: first, a few ticks at most, waiting while moves aren't
@@ -760,14 +792,29 @@ impl Moves {
         }
         let punching = a == ACT_PUNCHING || a == ACT_MOVE_PUNCHING;
         let air = a & ACT_FLAG_AIR != 0;
-        // the string's first punch over with no second (SM64's own string takes a second X in it):
-        // a beat from now, X is the heavy hook
-        let first_now = punching && state.anim_id == ANIM_FIRST_PUNCH;
-        if std::mem::replace(&mut self.first_was, first_now) && !punching && self.x_chain == 1 {
+        // the string's first blow over with no second (a second X in it goes on with the string):
+        // a beat from now, X is the fists' heavy hook, the hammer's volley, the boomerang's pincer
+        let in_string_move = match self.weapon {
+            crate::weapons::FISTS => punching,
+            crate::weapons::HAMMER => a == ACT_ER_HAMMER,
+            crate::weapons::RANG => a == ACT_ER_THROW,
+            _ => false,
+        };
+        // (SM64's first punch: its wind-up and its follow-through, before a second X turns it into
+        // the second punch)
+        let first_now = in_string_move && (self.weapon != crate::weapons::FISTS || matches!(state.anim_id, ANIM_FIRST_PUNCH | ANIM_FIRST_PUNCH_FAST));
+        // (only into a stand or a walk: cut short into a dash, a jump, a blow on him or another
+        // move, there's no beat)
+        let settled = a & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0
+            && a & (ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0
+            && !dodging(a)
+            && !combo(a)
+            && !crate::script::is_script(a);
+        if std::mem::replace(&mut self.first_was, first_now) && !in_string_move && settled && self.x_chain == 1 {
             self.first_end = Some(tick);
         }
         let first_ago = self.first_end.map(|t| tick.wrapping_sub(t));
-        if x_pressed || punching {
+        if x_pressed || in_string_move || !settled {
             self.first_end = None;
         }
         // on his feet and free to move (not knocked down or back, in a cutscene, in water, on a
@@ -1063,8 +1110,9 @@ impl Moves {
             }
         }
         // the other weapons' scripted moves (weaponplay.rs): out of a standstill, a run, a punch, a
-        // jump or the air string
-        if !sword && !script_on && allowed && !locked && (ground || in_air) && (!combo(a) || matches!(a, ACT_ER_AIR_COMBO | ACT_ER_UPPERCUT)) {
+        // jump, the air string or a weapon's own string (the Chomp's frenzy out of its bite)
+        let from_string = matches!(a, ACT_ER_AIR_COMBO | ACT_ER_UPPERCUT | ACT_ER_HAMMER | ACT_ER_HAMMER_AIR | ACT_ER_CHOMP | ACT_ER_CHOMP_AIR | ACT_ER_THROW | ACT_ER_AIR_THROW);
+        if !sword && !script_on && allowed && !locked && (ground || in_air) && (!combo(a) || from_string) {
             if let Some(r) = self.weapon_move(x_pressed, closer, air, a, false, true, first_ago, tick) {
                 return Some(r);
             }
@@ -1153,6 +1201,9 @@ impl Moves {
                 };
                 if let Some((action, arg, name)) = launcher {
                     self.x_chain = 0;
+                    if action == ACT_ER_CHOMP {
+                        self.bite_at = Some(tick);
+                    }
                     crate::log(format!("moves: back + X, the {name}"));
                     return Some(Request::Action(action, arg));
                 }
@@ -1239,6 +1290,9 @@ impl Moves {
                 let (action, arg, name) =
                     if x_once || x_twice { (ACT_ER_CHOMP, 3, "Chomp bite (X, Y)") } else { (ACT_ER_CHOMP_SPIN, 0, "Chomp cyclone") };
                 self.x_chain = 0;
+                if arg == 3 {
+                    self.bite_at = Some(tick);
+                }
                 crate::log(format!("moves: {name}"));
                 return Some(Request::Action(action, arg));
             }
@@ -1341,6 +1395,79 @@ mod tests {
             Some(Request::Script { id, air: false, .. }) => Some(id),
             _ => None,
         }
+    }
+
+    /// One tick of `Moves::tick` with the fists, standing (X down: `x`).
+    fn step(m: &mut Moves, action: u32, anim: i32, x: bool, tick: u32) -> Option<Request> {
+        let state = sm64::SM64MarioState { action, anim_id: anim, health: 0x880, ..Default::default() };
+        m.tick(false, false, x, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, tick)
+    }
+
+    #[test]
+    fn a_lone_punch_then_a_beat_is_the_heavy_hook() {
+        const FIRST_PUNCH: i32 = 0x67;
+        const FIRST_PUNCH_FAST: i32 = 0x69;
+        let mut m = Moves::new();
+        let mut t = 100;
+        // X: SM64's first punch (its two halves), then he stands
+        step(&mut m, ACT_IDLE, 0, true, t);
+        for (action, anim) in [(ACT_PUNCHING, FIRST_PUNCH), (ACT_PUNCHING, FIRST_PUNCH), (ACT_PUNCHING, FIRST_PUNCH_FAST), (ACT_PUNCHING, FIRST_PUNCH_FAST)] {
+            t += 1;
+            step(&mut m, action, anim, false, t);
+        }
+        for _ in 0..12 {
+            t += 1;
+            step(&mut m, ACT_IDLE, 0, false, t);
+        }
+        t += 1;
+        let r = step(&mut m, ACT_IDLE, 0, true, t);
+        assert!(matches!(r, Some(Request::Script { id: crate::script::HEAVY_HOOK, .. })), "{r:?}");
+    }
+
+    #[test]
+    fn a_dash_after_the_punch_is_no_beat() {
+        let mut m = Moves::new();
+        let mut t = 100;
+        step(&mut m, ACT_IDLE, 0, true, t);
+        for anim in [0x67, 0x69] {
+            t += 1;
+            step(&mut m, ACT_PUNCHING, anim, false, t);
+        }
+        // (cut into the dash: the X after it is the dash strike's, or a new string)
+        for _ in 0..6 {
+            t += 1;
+            step(&mut m, ACT_ER_DASH, 0, false, t);
+        }
+        for _ in 0..4 {
+            t += 1;
+            step(&mut m, ACT_IDLE, 0, false, t);
+        }
+        t += 1;
+        let r = step(&mut m, ACT_IDLE, 0, true, t);
+        assert!(!matches!(r, Some(Request::Script { id: crate::script::HEAVY_HOOK, .. })), "{r:?}");
+    }
+
+    #[test]
+    fn the_fists_air_blows_hold_him_up_only_so_often_a_jump() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        let mut t = 100;
+        let back_x = |m: &mut Moves, t: &mut u32, action: u32| {
+            let state = sm64::SM64MarioState { action, health: 0x880, ..Default::default() };
+            *t += 1;
+            m.tick(false, false, false, false, false, true, false, &state, 0, false, 0.0, (-1.0, 0.0), None, false, false, *t);
+            *t += 1;
+            m.tick(false, false, true, false, false, true, false, &state, 0, false, 0.0, (-1.0, 0.0), None, false, false, *t)
+        };
+        let dropkick = |r: Option<Request>| matches!(r, Some(Request::Script { id: crate::script::FIST_DROPKICK, .. }));
+        assert!(dropkick(back_x(&mut m, &mut t, ACT_JUMP)));
+        assert!(dropkick(back_x(&mut m, &mut t, ACT_JUMP)));
+        assert!(!dropkick(back_x(&mut m, &mut t, ACT_JUMP)));
+        // (down again, a new jump)
+        let state = sm64::SM64MarioState { action: ACT_IDLE, health: 0x880, ..Default::default() };
+        t += 1;
+        m.tick(false, false, false, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, t);
+        assert!(dropkick(back_x(&mut m, &mut t, ACT_JUMP)));
     }
 
     #[test]

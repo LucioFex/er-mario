@@ -415,6 +415,8 @@ pub struct Fire {
     cast_asked: bool,
     pub bolts: crate::bolt::Bolts,
     pub waves: crate::wave::Waves,
+    /// the hammer's thrown small ones (volley.rs)
+    pub volley: crate::volley::Volley,
 }
 
 /// a sword cast whose move didn't let go within this (ticks: hurt, cut short) is lost
@@ -443,6 +445,7 @@ pub fn clear() {
     *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = (FireFx::default(), None);
     crate::bolt::clear();
     crate::wave::clear();
+    crate::volley::clear();
 }
 
 fn sound(id: i32) {
@@ -480,6 +483,7 @@ impl Fire {
             cast_asked: false,
             bolts: Default::default(),
             waves: Default::default(),
+            volley: Default::default(),
         }
     }
 
@@ -619,6 +623,7 @@ impl Fire {
             let er_ray = |a: Vec3, b: Vec3| ray(a, b);
             self.bolts.tick(player, combat, origin, tick, &er_ray);
             self.waves.tick(player, combat, origin, tick, &er_ray);
+            self.volley.tick(player, combat, origin, tick);
         }
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);

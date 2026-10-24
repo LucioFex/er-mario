@@ -150,6 +150,16 @@ pub struct Crescent {
     pub kind: u8,
 }
 
+/// A small hammer of the Hammer Bros. volley in flight (volley.rs): where, its flight's yaw
+/// (radians), its turn end over end (radians), its size (m)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Thrown {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub spin: f32,
+    pub size: f32,
+}
+
 /// A star burst where a blow landed (`t` 0-1 through its life)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spark {
@@ -220,6 +230,8 @@ pub struct WorldFx {
     pub crescents: Vec<Crescent>,
     /// the sword's cut (tip, low on the blade, how faded), as the hammer's `swing`
     pub blade: Vec<(Vec3, Vec3, f32)>,
+    /// the hammer's thrown small ones (volley.rs)
+    pub thrown: Vec<Thrown>,
 }
 
 /// at most this many of each kind go out (the newest), and points per trail; of the statuses on
@@ -263,6 +275,7 @@ impl WorldFx {
             storms: crate::bolt::storm_looks(),
             crescents: crate::wave::looks(),
             blade: crate::impact::blade_trail(),
+            thrown: crate::volley::looks(),
         }
     }
 
@@ -294,6 +307,7 @@ impl WorldFx {
             b.0 += d;
             b.1 += d;
         }
+        self.thrown.iter_mut().for_each(|t| t.pos += d);
         for s in &mut self.streaks {
             s.iter_mut().for_each(|p| p.0 += d);
         }
@@ -485,6 +499,14 @@ impl WorldFx {
             w.pos(b.1);
             w.unit(b.2);
         });
+        // (added with the weapons' new moves, Part 3, at the end again)
+        w.most = most.min(6);
+        w.records(&self.thrown, |w, t| {
+            w.pos(t.pos);
+            w.angle(t.yaw);
+            w.angle(t.spin);
+            w.unit(t.size);
+        });
     }
 
     /// The partner's from `b` (positions around their Tarnished: `shifted` puts them where we show
@@ -536,6 +558,9 @@ impl WorldFx {
         }
         if r.at < r.b.len() {
             fx.blade = r.records(|r| Some((r.pos()?, r.pos()?, r.unit()?)))?;
+        }
+        if r.at < r.b.len() {
+            fx.thrown = r.records(|r| Some(Thrown { pos: r.pos()?, yaw: r.angle()?, spin: r.angle()?, size: r.unit()? }))?;
         }
         Some(fx)
     }
@@ -742,6 +767,7 @@ mod tests {
             storms: vec![Storm { pos: at(9.0), radius: 5.0, t: 0.6, flash: 0.8 }],
             crescents: vec![Crescent { pos: at(3.5), yaw: -2.0, roll: -35.0, width: 2.8, alpha: 0.6, kind: 1 }],
             blade: vec![(at(0.6), at(0.2), 0.3), (at(0.9), at(0.3), 0.1)],
+            thrown: vec![Thrown { pos: at(2.5), yaw: 1.0, spin: 3.0, size: 0.42 }],
         };
         let mut out = Vec::new();
         fx.encode(here, &mut out);
@@ -751,6 +777,8 @@ mod tests {
         assert!(close(c.pos, at(3.5)) && yaw_off.min(std::f32::consts::TAU - yaw_off) < 0.001 && (c.roll + 35.0).abs() < 1.0, "{c:?}");
         assert!((c.width - 2.8).abs() < 0.05 && (c.alpha - 0.6).abs() < 0.01 && c.kind == 1);
         assert_eq!(got.blade.len(), 2);
+        let t = got.thrown[0];
+        assert!(close(t.pos, at(2.5)) && (t.yaw - 1.0).abs() < 0.01 && (t.spin - 3.0).abs() < 0.01 && (t.size - 0.42).abs() < 0.01, "{t:?}");
         assert!(close(got.blade[1].0, at(0.9)) && close(got.blade[1].1, at(0.3)) && (got.blade[0].2 - 0.3).abs() < 0.01);
         let bolt = got.bolts[0];
         assert!(close(bolt.from, at(20.0)) && close(bolt.to, at(1.0)) && bolt.seed == 4321 && (bolt.t - 0.4).abs() < 0.01 && (bolt.width - 0.3).abs() < 0.01);
@@ -841,13 +869,13 @@ mod tests {
         let mut older = vec![out[0], out[1] - 1];
         older.extend_from_slice(&out[2..2 + size - 1]);
         older.extend_from_slice(&out[2 + size..]);
-        // (and without the seven lists at the end: each an empty record list, two bytes)
-        older.truncate(older.len() - 14);
+        // (and without the eight lists at the end: each an empty record list, two bytes)
+        older.truncate(older.len() - 16);
         let got = WorldFx::decode(&older).expect("reads");
         assert_eq!(got.fire.orbs.len(), 1);
         assert!(got.fire.orbs[0].element == 0 && got.fire.orbs[0].level == 3);
         assert!(got.fire.clouds.is_empty() && got.fire.auras.is_empty() && got.fire.motes.is_empty());
-        assert!(got.bolts.is_empty() && got.storms.is_empty() && got.crescents.is_empty() && got.blade.is_empty());
+        assert!(got.bolts.is_empty() && got.storms.is_empty() && got.crescents.is_empty() && got.blade.is_empty() && got.thrown.is_empty());
     }
 
     #[test]

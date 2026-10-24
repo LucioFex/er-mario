@@ -202,11 +202,26 @@ pub enum Attack {
     HeavyHook,
     MeteorPunch,
     Dropkick,
+    /// the hammer's (hammermoves.rs): the charge's shoulder and its slam, a small hammer of the
+    /// Hammer Bros. volley (volley.rs), the diving comet and its ring
+    HammerCharge,
+    HammerChargeSlam,
+    HammerBro,
+    Comet,
+    CometRing,
+    /// the Chain Chomp's (chompmoves.rs): the rush's bite, the lasso's (it drags a small one in), the
+    /// frenzy's bites and its toss
+    ChompRush,
+    Lasso,
+    Frenzy,
+    FrenzyEnd,
+    /// the boomerang's skimming throw (rangmoves.rs, boomerang.rs): a pass of it
+    RangSkim,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 149] = [
+const CODES: [Attack; 159] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -227,6 +242,7 @@ const CODES: [Attack; 149] = [
     Attack::SwordSlash(0), Attack::SwordSlash(1), Attack::SwordSlash(2), Attack::SwordSlash(3), Attack::SwordWhirl, Attack::SwordWhirlEnd, Attack::SwordCleave, Attack::SwordThrust, Attack::SwordStab, Attack::SwordStabEnd, Attack::SwordRise, Attack::SwordSpinJump, Attack::SwordSpinJumpEnd, Attack::SwordWave, Attack::SwordWaveJust, Attack::SwordSpin, Attack::SwordGreatSpin(0), Attack::SwordGreatSpin(1), Attack::SwordGreatSpin(2), Attack::SwordHurricane, Attack::SwordHurricaneEnd, Attack::SwordCross, Attack::SwordCrossBurst, Attack::SwordLauncher, Attack::SwordHelm, Attack::SwordHelmRing, Attack::SwordIai, Attack::SwordFlurry, Attack::SwordFlurryEnd, Attack::SwordRave(0), Attack::SwordRave(1), Attack::SwordRave(2), Attack::SwordRave(3), Attack::SwordBreaker, Attack::SwordBreakerRing, Attack::SwordPogo, Attack::SwordDraw, Attack::SwordBeam,
     Attack::MaxStarCut,
     Attack::FistFlurry, Attack::FistFlurryEnd, Attack::SuperPunch(0), Attack::SuperPunch(1), Attack::HeavyHook, Attack::MeteorPunch, Attack::Dropkick,
+    Attack::HammerCharge, Attack::HammerChargeSlam, Attack::HammerBro, Attack::Comet, Attack::CometRing, Attack::ChompRush, Attack::Lasso, Attack::Frenzy, Attack::FrenzyEnd, Attack::RangSkim,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -326,6 +342,13 @@ impl Attack {
             Attack::FistFlurryEnd | Attack::HeavyHook | Attack::MeteorPunch => Attack::Stomp.spec(),
             Attack::SuperPunch(0) | Attack::Dropkick => Attack::Sweep.spec(),
             Attack::SuperPunch(_) => Attack::GroundPound.spec(),
+            // the hammer's: its charge and dive stagger like a stomp, its slam and ring like a ground
+            // pound; a small hammer a kick's; the Chomp's bites a kick's or a punch's, the toss a
+            // stomp's; the skim a punch's
+            Attack::HammerCharge | Attack::Comet | Attack::FrenzyEnd => Attack::Stomp.spec(),
+            Attack::HammerChargeSlam | Attack::CometRing => Attack::GroundPound.spec(),
+            Attack::HammerBro | Attack::ChompRush => Attack::Kick.spec(),
+            Attack::Lasso | Attack::Frenzy | Attack::RangSkim => Attack::Punch.spec(),
         }
     }
 
@@ -540,6 +563,19 @@ impl Attack {
             Attack::HeavyHook => (22.0, "damage_heavy_hook"),
             Attack::MeteorPunch => (12.0, "damage_meteor_punch"),
             Attack::Dropkick => (14.0, "damage_dropkick"),
+            // the hammer's (Part 3b): the charge most in its slam, a volley's three a heavy blow
+            // together, the comet a swing and its ring; the Chomp's least of all, its worth in the
+            // way in and the many bites; the skim a pass and a bit
+            Attack::HammerCharge => (12.0, "damage_hammer_charge"),
+            Attack::HammerChargeSlam => (28.0, "damage_hammer_charge_slam"),
+            Attack::HammerBro => (9.0, "damage_hammer_bro"),
+            Attack::Comet => (18.0, "damage_hammer_comet"),
+            Attack::CometRing => (10.0, "damage_hammer_comet_ring"),
+            Attack::ChompRush => (10.0, "damage_chomp_rush"),
+            Attack::Lasso => (6.0, "damage_chomp_lasso"),
+            Attack::Frenzy => (3.0, "damage_chomp_frenzy"),
+            Attack::FrenzyEnd => (8.0, "damage_chomp_frenzy_end"),
+            Attack::RangSkim => (4.0, "damage_boomerang_skim"),
         }
     }
 
@@ -593,6 +629,8 @@ impl Attack {
                 | Attack::Boing
                 | Attack::Bowled
                 | Attack::Tether
+                | Attack::HammerBro
+                | Attack::RangSkim
         )
     }
 
@@ -693,6 +731,9 @@ impl Attack {
             Attack::FistFlurry | Attack::MeteorPunch | Attack::Dropkick => 1.3,
             Attack::FistFlurryEnd | Attack::SuperPunch(_) => 1.4,
             Attack::HeavyHook => 1.6,
+            Attack::HammerCharge | Attack::Comet | Attack::FrenzyEnd => 1.3,
+            Attack::HammerChargeSlam | Attack::CometRing | Attack::ChompRush | Attack::Frenzy => 1.2,
+            Attack::HammerBro | Attack::Lasso | Attack::RangSkim => 1.0,
         }
     }
 
@@ -728,7 +769,10 @@ impl Attack {
             // stabs'); the cross cut's two crossing cuts one blow; its finishers' windows are a few
             // ticks long and the landing rings' as long as the fall: once each
             Attack::SwordSlash(_) | Attack::SwordRave(_) => 5,
-            Attack::SwordStab | Attack::SwordFlurry | Attack::FistFlurry => 2,
+            Attack::SwordStab | Attack::SwordFlurry | Attack::FistFlurry | Attack::RangSkim => 2,
+            // (each small hammer strikes once itself: volley.rs; the frenzy's bites come 4 apart)
+            Attack::HammerBro => 1,
+            Attack::Frenzy => 3,
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
@@ -777,6 +821,9 @@ impl Attack {
                 | Attack::FistFlurryEnd
                 | Attack::SuperPunch(1)
                 | Attack::HeavyHook
+                | Attack::HammerChargeSlam
+                | Attack::CometRing
+                | Attack::FrenzyEnd
         )
     }
 
@@ -800,6 +847,10 @@ impl Attack {
             Attack::SwordCleave | Attack::SwordGreatSpin(2) => 8.0,
             Attack::SwordHelm => 10.0,
             Attack::SwordBreakerRing => 6.0,
+            // (the hammer's new blows: as its swings and slams)
+            Attack::HammerCharge | Attack::Comet => 6.0,
+            Attack::CometRing => 9.0,
+            Attack::HammerChargeSlam => 12.0,
             _ => 0.0,
         }
     }
@@ -1016,7 +1067,7 @@ fn patch_params() -> bool {
 pub struct Combat {
     patched: bool,
     /// per target: SM64 tick of the last hit (one hit per swing)
-    cooldown: HashMap<u64, u32>,
+    cooldown: Cooldowns,
     last_hp: Option<i32>,
     /// characters Mario brought to 1 HP: SM64 tick, for the fallback kill if the bullet misses
     finishing: HashMap<u64, (FieldInsHandle, u32)>,
@@ -1072,6 +1123,20 @@ pub struct Target {
     pub sm: [f32; 3],
     /// an enemy Mario's punches turn to (not a friendly NPC, an ally or a prop)
     hostile: bool,
+}
+
+/// The blows that landed on each enemy lately: (enemy, the blow's code) -> the tick it landed.
+type Cooldowns = HashMap<(u64, u8), u32>;
+
+/// `attack` landed on the enemy `key` at `tick`.
+fn cooled(cooldown: &mut Cooldowns, key: u64, attack: Attack, tick: u32) {
+    cooldown.insert((key, attack.code()), tick);
+}
+
+/// The same blow on the same enemy again within its cooldown (`Attack::cooldown`): it's still the
+/// one blow, no new hit.
+fn cooling(cooldown: &Cooldowns, key: u64, attack: Attack, tick: u32) -> bool {
+    cooldown.get(&(key, attack.code())).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown())
 }
 
 /// `Target::er` lies this far under the feet (m): the game's bullets spawn 1 m above it
@@ -2662,19 +2727,32 @@ impl Combat {
             // (the trap kit and the hook's flights keep their own pace, apart from Mario's blows:
             // traps.rs, bat.rs)
             let own_pace = matches!(attack, Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether);
-            if !own_pace && self.cooldown.get(&target.key).is_some_and(|t| tick.wrapping_sub(*t) < attack.cooldown()) {
+            // (each blow its own pace: a string's jabs leave its uppercut free)
+            if !own_pace && cooling(&self.cooldown, target.key, attack, tick) {
                 continue;
             }
             // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
             // burn and Mega's steps come at their own pace and leave Mario's blows free; so do the
             // sword's bolts and crescents, each striking an enemy once a cast: a storm's bolt every
             // half second would keep his own blows off the enemy under it)
+            // (the boomerangs each strike an enemy once a pass themselves, boomerang.rs: the pincer's
+            // two cross him on the same tick)
             let paced = matches!(
                 attack,
-                Attack::Bolt(_) | Attack::BoltBlast | Attack::Javelin(_) | Attack::Storm | Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam | Attack::SwordCrossBurst
+                Attack::Bolt(_)
+                    | Attack::BoltBlast
+                    | Attack::Javelin(_)
+                    | Attack::Storm
+                    | Attack::SwordWave
+                    | Attack::SwordWaveJust
+                    | Attack::SwordBeam
+                    | Attack::SwordCrossBurst
+                    | Attack::HammerBro
+                    | Attack::Rang
+                    | Attack::RangSkim
             );
             if !own_pace && !paced && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
-                self.cooldown.insert(target.key, tick);
+                cooled(&mut self.cooldown, target.key, attack, tick);
             }
             if let Some(handle) = &target.handle {
                 // a thrown boss in the air or lying limp: no hit at all (not even the game's own,
@@ -2692,7 +2770,7 @@ impl Combat {
                 if stopped {
                     let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
-                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd) && !hands_off(handle) {
+                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher | Attack::FistFlurryEnd | Attack::FrenzyEnd) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
@@ -2703,6 +2781,13 @@ impl Combat {
                 } else if matches!(attack, Attack::MeteorPunch) {
                     // (driven down: up there it hits the ground and bounces once)
                     if !crate::juggle::spike(handle) {
+                        crate::juggle::hit(handle, me);
+                    }
+                } else if matches!(attack, Attack::Lasso) {
+                    // (the Chomp's lasso drags a small one in to him; a bigger one just takes the bite)
+                    let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
+                    let small = crate::juggle::pull_size(handle, radius_m, height_m) == crate::juggle::PullSize::Small;
+                    if !(small && crate::juggle::pull(handle, false, radius_m, false)) {
                         crate::juggle::hit(handle, me);
                     }
                 } else if matches!(attack, Attack::Hook) {
@@ -2735,6 +2820,8 @@ impl Combat {
                         | Attack::SwordWave
                         | Attack::SwordWaveJust
                         | Attack::SwordBeam
+                        | Attack::HammerBro
+                        | Attack::RangSkim
                 ) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
@@ -2931,9 +3018,6 @@ impl Combat {
         self.max.take()
     }
 
-    /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
-    /// command's bonus, timing.rs; or a status going off, element.rs), with its own kill if it's the
-    /// one that ends him.
     /// Game thread, after the blows of a tick were dealt: those that drove an enemy into a wall right
     /// behind it (`Attack::splats`) slam it there: WALL!, a share more of the blow, more stance.
     /// `me`: Mario (Elden Ring world); `ray(from, to)`: the map's first hit.
@@ -2944,8 +3028,9 @@ impl Combat {
             }
             let Some(t) = targets.get(i) else { continue };
             let Some(handle) = t.handle.filter(|_| !t.friendly()) else { continue };
-            // (only a blow that landed now: `deal` marked his cooldown this tick)
-            if self.cooldown.get(&t.key) != Some(&tick) {
+            // (only a blow that landed now: `deal` marked its cooldown on him this tick; not on one
+            // lying thrown or carried)
+            if !self.landed_now(t.key, attack, tick) || crate::swing::is_down(&handle) || crate::carry::is_carried(&handle) {
                 continue;
             }
             let chest = t.feet() + glam::Vec3::Y * (t.height * crate::scale() * 0.5).min(1.2);
@@ -2954,11 +3039,21 @@ impl Combat {
             crate::style::callout("WALL!", Some(wall + glam::Vec3::Y * 0.6), [1.0, 0.85, 0.4], true, 2.0);
             crate::impact::element_spark(wall, [1.0, 0.9, 0.6], 1.6);
             crate::lakitu::shake(0.35);
-            crate::swing::add_stance(&handle, WALL_POISE);
+            if !crate::coop::guest() {
+                crate::swing::add_stance(&handle, WALL_POISE);
+            }
             self.extra_share(&handle, attack, WALL_BONUS, tick);
         }
     }
 
+    /// `attack` landed on the enemy `key` this very tick (`deal` took it).
+    pub fn landed_now(&self, key: u64, attack: Attack, tick: u32) -> bool {
+        self.cooldown.get(&(key, attack.code())) == Some(&tick)
+    }
+
+    /// Game thread: a bit more of the blow `attack` on `handle` (`extra` of its share: the action
+    /// command's bonus, timing.rs; or a status going off, element.rs), with its own kill if it's the
+    /// one that ends him.
     pub fn extra_share(&mut self, handle: &FieldInsHandle, attack: Attack, extra: f32, tick: u32) {
         if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
             return;
@@ -3080,7 +3175,7 @@ impl Combat {
             if attack == Attack::Trample {
                 self.trampled.insert(near[i].key, tick);
             } else {
-                self.cooldown.remove(&near[i].key);
+                self.cooldown.remove(&(near[i].key, attack.code()));
             }
         }
         self.trampled.retain(|_, at| tick.wrapping_sub(*at) < TRAMPLE_EVERY);
@@ -3170,6 +3265,19 @@ mod tests {
     use super::{Attack, CODES};
 
     #[test]
+    fn each_blow_keeps_its_own_pace_on_an_enemy() {
+        let mut cd = std::collections::HashMap::new();
+        super::cooled(&mut cd, 7, Attack::FistFlurry, 100);
+        // (the uppercut right after the jabs lands: another blow)
+        assert!(!super::cooling(&cd, 7, Attack::FistFlurryEnd, 104));
+        // (the same jab again too soon doesn't, once its cooldown is over it does)
+        assert!(super::cooling(&cd, 7, Attack::FistFlurry, 101));
+        assert!(!super::cooling(&cd, 7, Attack::FistFlurry, 102));
+        // (another enemy: free)
+        assert!(!super::cooling(&cd, 8, Attack::FistFlurry, 101));
+    }
+
+    #[test]
     fn a_wall_right_behind_him_is_a_wall_splat() {
         use glam::Vec3;
         // (a wall at x = 3: the enemy at x = 1.5 driven away from Mario at x = 0)
@@ -3181,6 +3289,9 @@ mod tests {
         assert!(super::wall_behind(chest, Vec3::new(5.0, 0.0, 0.0), super::WALL_REACH, wall).is_none());
         // (right on top of him: no way to tell)
         assert!(super::wall_behind(Vec3::new(0.0, 0.9, 0.0), Vec3::ZERO, super::WALL_REACH, wall).is_none());
+        // (a wall farther behind him than the reach: none)
+        let far_wall = |a: Vec3, b: Vec3| (a.x < 6.0 && b.x >= 6.0).then(|| Vec3::new(6.0, a.y, a.z));
+        assert!(super::wall_behind(chest, Vec3::ZERO, super::WALL_REACH, far_wall).is_none());
         assert!(Attack::SuperPunch(1).splats() && Attack::Dropkick.splats() && !Attack::Punch.splats());
     }
 

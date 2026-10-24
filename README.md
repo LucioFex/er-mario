@@ -71,6 +71,15 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | X, (beat), X (fists) | **Heavy hook**: a beat after a lone first punch, a wide hook with his whole body turned into it |
 | forward + X in the air string (fists) | **Meteor punch**: driven down and ahead; an enemy up in the air is spiked into the ground and bounces once (hit it again to send it back up). Jumping in at an enemy, forward + X is still the air string's first kick |
 | back + X in the air (fists) | **Dropkick**: both feet into it, it flies off (into a wall: WALL!) |
+| back, forward + X (hammer) | **Hammer charge**: the hammer hauled back over his shoulder, a shoulder charge up to 6 m into the first enemy, then the overhead slam where he stops (committed: no way out until it lands) |
+| X, (beat), X (hammer) | **Hammer Bros. volley**: three small hammers thrown overhand in arcs, each onto the next enemy in front (one lands ahead with no one there) |
+| forward + X in the air (hammer) | **Diving comet**: a moment's hang with the hammer up, an angled dive at the enemy, a ring shaking the ground where he lands |
+| back, forward + X (Chain Chomp) | **Chomp rush**: the Chomp flung ahead, Mario dragged after it up to 9 m, its jaws on the first enemy in the way |
+| X held, let go (Chain Chomp) | **Lasso**: whirled overhead faster and faster; let go, it flies 12 m straight ahead and drags a small enemy it bites back to him |
+| mash X as the bite lands (Chain Chomp) | **Frenzy**: five quick bites and a last one tossing it up |
+| back, forward + X (boomerang) | **Skim**: thrown low and straight, Mario dashing after it up to the enemy; it comes back to his hand there |
+| X, (beat), X (boomerang) | **Pincer**: two at once curving out opposite ways and closing on the enemy from both sides (two in hand) |
+| X held (boomerang) | **Steered boomerang**: steered with the stick for up to 2 s (each enemy once); let X go and it comes back |
 | RB (hold) | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one; held 20 s, the sun (see below). With another weapon, its element's shot instead (see [Elements](#elements)). A blow on Mario puts the charge out, and so does any other attack (X, Y, B, RT, L1) pressed while it charges: RB has to come up again. Shots home in gently on the nearest enemy ahead. Thrown with a palm thrust (recoil on the charged ones), in the air it holds Mario up for a moment, X right after goes on with melee |
 | A during an air combo | Enemy step: Mario kicks off the enemy for another jump (3 per air combo) |
 | B between air blows | With an enemy in the air, the air dash comes back after each blow (3 per jump) |
@@ -458,6 +467,7 @@ close and risky hits.
 | Dash strike | — | **12%** |
 | Bullet Bill punch | — | **9%** (a kick's weight: it sends them back a little), on bosses ×1.3 |
 | Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; Super punch **11%** / full **15%**; heavy hook **12.5%**; meteor punch **7%**; dropkick **8%**; WALL! **+30%** of the blow |
+| Hammer, Chomp, boomerang new moves | — | Hammer charge **7%** + slam **16%**; a volley hammer **5%** (three); comet **10%** + ring **5.5%**; Chomp rush **5.5%**, lasso **3.5%**, frenzy **1.7%** a bite ×5 + **4.5%**; skim **2.3%** a pass |
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |

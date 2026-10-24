@@ -151,6 +151,17 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::FistFlurryEnd | Attack::SuperPunch(0) => Some((5, 1.4, true)),
         Attack::HeavyHook => Some((6, 1.5, true)),
         Attack::SuperPunch(_) => Some((8, 1.7, true)),
+        // the hammer's: heavy holds, its small thrown ones a tick; the Chomp's light ones, its toss a
+        // solid one; the skim none (from afar)
+        Attack::HammerCharge | Attack::Comet => Some((4, 1.3, false)),
+        Attack::HammerChargeSlam => Some((8, 1.7, true)),
+        Attack::CometRing => Some((6, 1.6, true)),
+        Attack::HammerBro => Some((1, 0.9, false)),
+        Attack::ChompRush => Some((3, 1.2, false)),
+        Attack::Lasso => Some((2, 1.0, false)),
+        Attack::Frenzy => Some((1, 0.8, false)),
+        Attack::FrenzyEnd => Some((4, 1.3, true)),
+        Attack::RangSkim => Some((0, 0.7, false)),
     }
 }
 

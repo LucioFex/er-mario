@@ -79,6 +79,49 @@ enum Kind {
     Normal,
     Upper,
     Big,
+    /// the scripted moves' (rangmoves.rs): low and straight, Mario running after it; two curving
+    /// round the enemy from both sides; one steered with the stick
+    Skim,
+    Pincer,
+    Steered,
+}
+
+/// The scripted moves' throws (rangmoves.rs; never er_moves.c's, moves::THROW_*): `cast` them.
+pub const CAST_SKIM: u32 = 100;
+pub const CAST_PINCER: u32 = 101;
+pub const CAST_STEER: u32 = 102;
+/// the skim: this far at most (m), this high over his feet (m); the pincer's two curve out this far
+/// (m) and meet on the enemy; the steered one flies this fast (m/s) for this long at most (s),
+/// turning at most this far a tick (radians); let go (the move over), it comes back
+const SKIM_RANGE: f32 = 10.0;
+const SKIM_HEIGHT: f32 = 0.45;
+const PINCER_CURVE: f32 = 3.0;
+const STEER_SPEED: f32 = 14.0;
+const STEER_TIME: f32 = 2.2;
+const STEER_TURN: f32 = 0.16;
+
+/// Which way the `k`th of `n` thrown together curves (-1 or 1): a fan's or the pincer's two out
+/// opposite ways, one alone to either side in turn (`flip`).
+fn side_sign(n: usize, k: usize, flip: bool) -> f32 {
+    if n >= 2 {
+        if k == 0 { -1.0 } else { 1.0 }
+    } else if flip {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+/// `heading` (level) turned toward `want` (level) by at most `max` radians, the shorter way.
+pub fn turn_toward(heading: Vec3, want: Vec3, max: f32) -> Vec3 {
+    let (h, w) = (heading.with_y(0.0).normalize_or(Vec3::Z), want.with_y(0.0).normalize_or(Vec3::Z));
+    let angle = h.angle_between(w);
+    if angle <= max {
+        return w;
+    }
+    // (+ round Y: toward its left; straight back, some way round all the same)
+    let sign = if h.cross(w).y >= 0.0 { 1.0 } else { -1.0 };
+    Quat::from_rotation_y(sign * max) * h
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -127,6 +170,9 @@ pub struct Sprite {
 
 pub struct Boomerang {
     out: Vec<Rang>,
+    /// the steered one's move is playing, and where the stick points it (Elden Ring, level)
+    steering: bool,
+    steer_dir: Option<Vec3>,
     /// the tick of the last whir
     whir: u32,
     /// 0 on his back .. 1 in his hand, the ticks since he last threw one, the ticks the big one has
@@ -184,7 +230,19 @@ fn sound(id: i32, volume: f32) {
 
 impl Boomerang {
     pub fn new() -> Self {
-        Boomerang { out: Vec::new(), whir: 0, in_hand: 0.0, idle: HOLD + 1, winding: 0 }
+        Boomerang { out: Vec::new(), steering: false, steer_dir: None, whir: 0, in_hand: 0.0, idle: HOLD + 1, winding: 0 }
+    }
+
+    /// A scripted move's throw (CAST_*) leaves his hand now (rangmoves.rs).
+    pub fn cast(&mut self, kind: u32, state: &sm64::SM64MarioState, feet: Vec3, hand: Vec3, origin: [f32; 3]) {
+        self.throw(kind, 0, state, feet, hand, origin);
+    }
+
+    /// Every tick: the steered boomerang's move is playing (`active`), the stick's way (None: let
+    /// alone, it flies straight on).
+    pub fn steer(&mut self, active: bool, dir: Option<Vec3>) {
+        self.steering = active;
+        self.steer_dir = dir.filter(|_| active);
     }
 
     /// Game thread, after every SM64 tick: what the throws did (`mv`), Mario's state, feet and hand
@@ -209,12 +267,31 @@ impl Boomerang {
         }
         let chest = feet + Vec3::Y * 0.8;
         let mut caught = 0;
+        let (steering, steer_dir) = (self.steering, self.steer_dir);
         let mut out = std::mem::take(&mut self.out);
         out.retain_mut(|r| {
             r.age += DT;
             r.spin += DT * if r.kind == Kind::Big { 18.0 } else { 26.0 };
             let prev = r.pos;
             match r.phase {
+                // the steered one: where the stick points it, until it's let go, the time's up or a
+                // wall sends it back
+                Phase::Out if r.kind == Kind::Steered => {
+                    if let Some(want) = steer_dir {
+                        r.dir = turn_toward(r.dir, want, STEER_TURN);
+                    }
+                    r.pos += r.dir * STEER_SPEED * DT;
+                    let wall = ray(prev, r.pos).is_some();
+                    if wall {
+                        r.pos = prev;
+                        sound(SOUND_WALL, 0.5);
+                    }
+                    if wall || (!steering && r.age > 0.2) || r.age >= r.out_time {
+                        r.hit.clear();
+                        r.phase = Phase::Back;
+                        r.vel = Vec3::ZERO;
+                    }
+                }
                 Phase::Out => {
                     // (the big one homes in: its way out bends to where its enemy is now)
                     // (less and less as it gets there, and its reach at most a metre a tick: late in
@@ -233,6 +310,9 @@ impl Boomerang {
                     let along = r.range * (1.0 - (1.0 - p) * (1.0 - p));
                     let (sideways, up) = match r.kind {
                         Kind::Upper => (0.0, (p * std::f32::consts::PI).sin() * UPPER_ARC),
+                        Kind::Skim => (0.0, 0.0),
+                        // (out wide, both meeting on the enemy at the end of the way out)
+                        Kind::Pincer => ((p * std::f32::consts::PI).sin() * PINCER_CURVE, 0.0),
                         _ => ((p * std::f32::consts::PI).sin() * CURVE, 0.0),
                     };
                     r.pos = r.start + r.dir * along + r.side * sideways + Vec3::Y * up;
@@ -328,6 +408,9 @@ impl Boomerang {
         let reach = aim.map(|p| (p - hand).length());
         let (kind, n, range, out_time) = match kind {
             moves::THROW_STORM => (Kind::Normal, 3, RANGE, OUT_TIME),
+            CAST_SKIM => (Kind::Skim, 1, reach.map_or(SKIM_RANGE, |r| (r + PAST).min(SKIM_RANGE + PAST)), OUT_TIME * 0.85),
+            CAST_PINCER => (Kind::Pincer, 2, reach.map_or(RANGE * 0.6, |r| (r + 0.3).min(RANGE)), OUT_TIME * 1.15),
+            CAST_STEER => (Kind::Steered, 1, BIG_RANGE, STEER_TIME),
             moves::THROW_UPPER => (Kind::Upper, 1, reach.map_or(UPPER_RANGE, |r| (r + 1.0).min(UPPER_RANGE)), OUT_TIME * 0.9),
             // (with the MAX ready, three of them, a fan: style.rs, maxfin.rs)
             moves::THROW_BIG => {
@@ -350,17 +433,19 @@ impl Boomerang {
             // the fan: one ahead, one to each side, curving outwards
             let turn = if n == 3 { (k as f32 - 1.0) * FAN } else { 0.0 };
             let dir = glam::Quat::from_rotation_y(turn) * toward;
-            let side = Vec3::Y.cross(dir).normalize_or(Vec3::X) * if n == 3 { if k == 0 { -1.0 } else { 1.0 } } else if flip { 1.0 } else { -1.0 };
+            // (the skim level, low over the ground)
+            let (start, dir) = if kind == Kind::Skim { (Vec3::new(hand.x, feet.y + SKIM_HEIGHT, hand.z), dir.with_y(0.0).normalize_or(face)) } else { (hand, dir) };
+            let side = Vec3::Y.cross(dir).normalize_or(Vec3::X) * side_sign(n, k, flip);
             self.out.push(Rang {
                 slot,
                 kind,
                 phase: Phase::Out,
-                start: hand,
+                start,
                 dir,
                 side,
                 range,
                 out_time,
-                pos: hand,
+                pos: start,
                 vel: dir * (range * 2.0 / out_time),
                 age: 0.0,
                 hit: Vec::new(),
@@ -370,7 +455,7 @@ impl Boomerang {
                 counts: Vec::new(),
             });
         }
-        log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
+        log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big", "skim", "pincer", "steered"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
     }
 
     /// Puts the boomerangs on their models: the ones out where they fly (`feet`: Mario's, Elden
@@ -492,6 +577,9 @@ fn kind_index(kind: Kind, n: usize) -> usize {
         Kind::Normal => 0,
         Kind::Upper => 2,
         Kind::Big => 3,
+        Kind::Skim => 4,
+        Kind::Pincer => 5,
+        Kind::Steered => 6,
     }
 }
 
@@ -506,6 +594,7 @@ fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, 
     let attack = match (r.kind, r.phase) {
         (Kind::Big, _) => Attack::RangBig,
         (Kind::Upper, Phase::Out) => Attack::RangUpper,
+        (Kind::Skim, _) => Attack::RangSkim,
         _ => Attack::Rang,
     };
     // the big one hangs there hitting again and again (every few ticks, combat.rs), the others
@@ -539,5 +628,33 @@ fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, 
             }
             combat.deal(player, &near, &[(i, attack, false)], tick);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_steered_one_turns_toward_the_stick_a_little_a_tick() {
+        let max = STEER_TURN;
+        // (a small turn: all of it, level)
+        let want = Vec3::new(0.1, 0.0, 1.0).normalize();
+        assert!(turn_toward(Vec3::Z, want, max).distance(want) < 1e-5);
+        // (a big one: that far toward it, the shorter way round)
+        let got = turn_toward(Vec3::Z, Vec3::X, max);
+        assert!((got.angle_between(Vec3::Z) - max).abs() < 1e-4 && got.x > 0.0 && got.y.abs() < 1e-6);
+        let got = turn_toward(Vec3::Z, Vec3::NEG_X, max);
+        assert!(got.x < 0.0);
+        // (straight back: some way round, not stuck)
+        assert!(turn_toward(Vec3::Z, Vec3::NEG_Z, max).angle_between(Vec3::Z) > max * 0.9);
+    }
+
+    #[test]
+    fn the_pincers_two_curve_out_opposite_ways() {
+        assert_eq!(side_sign(2, 0, false) * side_sign(2, 1, false), -1.0);
+        assert_eq!(side_sign(2, 0, true), side_sign(2, 0, false));
+        // (one alone: either side in turn)
+        assert_eq!(side_sign(1, 0, true), -side_sign(1, 0, false));
     }
 }

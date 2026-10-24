@@ -654,6 +654,22 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
     // Mario's fireball: the charge at his hand, the shots, their bursts, the lava pools
     draw_fire(dl, textures, size, &fx.fire, &fx.rubble);
 
+    // the hammer's thrown small ones (volley.rs): a wooden handle and an iron head across it,
+    // turning end over end along their flight
+    for t in &fx.thrown {
+        let mut mesh = Mesh::default();
+        let fwd = Vec3::new(t.yaw.sin(), 0.0, t.yaw.cos());
+        let side = Vec3::Y.cross(fwd).normalize_or(Vec3::X);
+        let rot = glam::Quat::from_axis_angle(side, t.spin);
+        let along = rot * Vec3::Y;
+        let s = t.size;
+        let (grip, top) = (t.pos - along * s * 0.5, t.pos + along * s * 0.3);
+        mesh.tube(&[grip, t.pos, top], &|_| s * 0.075, 6, &|k| if k == 0 { [0.62, 0.42, 0.22] } else { [0.55, 0.36, 0.18] });
+        let head = glam::Quat::from_rotation_arc(Vec3::Y, (rot * fwd).normalize_or(Vec3::Z));
+        mesh.ellipsoid(top + along * s * 0.08, head, Vec3::new(s * 0.17, s * 0.32, s * 0.17), 0.0, 4, 8, &|i, _| if i == 0 || i == 3 { [0.62, 0.64, 0.7] } else { [0.36, 0.38, 0.44] });
+        mesh.draw(dl, size, 60.0, bodies);
+    }
+
     // the Star Sword's lightning (bolt.rs): the storm cloud, a lumpy dark mesh lit from inside
     // when it strikes; the bolts, zigzags with two branches, a glow round a white-hot core,
     // flickering out

@@ -16,6 +16,7 @@ mod ride;
 mod caps;
 mod carry;
 mod chomp;
+mod chompmoves;
 mod collision;
 mod coins;
 mod colossus;
@@ -43,6 +44,7 @@ mod havok_col;
 mod explore;
 mod gameover;
 mod hammer;
+mod hammermoves;
 mod hud;
 mod ik;
 mod impact;
@@ -78,6 +80,8 @@ mod stats;
 mod timing;
 mod traps;
 mod rock;
+mod rangmoves;
+mod volley;
 mod bat;
 mod maxfin;
 mod skillshot;
@@ -3078,6 +3082,7 @@ fn frame(data: &FD4TaskData) {
             coins::shift(glam::Vec3::from(d));
             m.fire.bolts.shift(glam::Vec3::from(d));
             m.fire.waves.shift(glam::Vec3::from(d));
+            m.fire.volley.shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
@@ -4004,6 +4009,8 @@ fn frame(data: &FD4TaskData) {
             }
             r => r,
         };
+        // (the stick and the camera's turn this tick: the steered boomerang reads them after it)
+        let stick_now = (inputs.stick_x, inputs.stick_y, inputs.cam_look_x.atan2(inputs.cam_look_z));
         let mut script_frame = m.moves.script.frame(m.state.action, m.combo.action_arg, m.combo.action_timer, 1.0 / scale());
         if let Some(f) = script_frame.filter(|f| f.c.end != 0) {
             log(format!("script: {} ended", script::named(f.id)));
@@ -4237,9 +4244,10 @@ fn frame(data: &FD4TaskData) {
             Some((state, mesh, colors, normals, mut parts, mut hits, combo, swing)) => {
                 // (a scripted move's window strikes each enemy once: a hit-stop holds the move's
                 // tick while the real ticks and the blow's cooldown run on, and a big body stays in
-                // the window)
-                if let Some((wi, w)) = script_frame.filter(|f| f.c.end == 0).and_then(|f| f.window) {
-                    hits.retain(|h| h.1 != w.attack || targets.get(h.0).is_none_or(|t| m.moves.script.first_strike(wi, t.key())));
+                // the window; one its blow didn't land on, it can still reach)
+                let window_now = script_frame.filter(|f| f.c.end == 0).and_then(|f| f.window);
+                if let Some((wi, w)) = window_now {
+                    hits.retain(|h| h.1 != w.attack || targets.get(h.0).is_none_or(|t| !m.moves.script.struck(wi, t.key())));
                 }
                 // debug: Mario's centre crossing a loaded wall front to back in one tick
                 let step = glam::Vec3::from(state.position) - glam::Vec3::from(m.state.position);
@@ -4255,6 +4263,13 @@ fn frame(data: &FD4TaskData) {
                     timing::mikiri_done();
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                if let Some((wi, w)) = window_now {
+                    for h in hits.iter().filter(|h| h.1 == w.attack) {
+                        if let Some(t) = targets.get(h.0).filter(|t| m.combat.landed_now(t.key(), w.attack, m.ticks)) {
+                            m.moves.script.mark_struck(wi, t.key());
+                        }
+                    }
+                }
                 // (a blow of the scripted move playing landed: its cancels open sooner)
                 if script::is_script(state.action) && hits.iter().any(|h| targets.get(h.0).is_some_and(|t| !t.is_prop())) {
                     m.moves.script.landed();
@@ -4460,6 +4475,28 @@ fn frame(data: &FD4TaskData) {
                         m.fire.bolts.zap(at, m.ticks);
                         impact::zap(at);
                     }
+                    // the hammer's volley (volley.rs) off his hand; the boomerang's scripted throws
+                    // (rangmoves.rs), the steered one where the stick points it (from the camera)
+                    if combo.fx & script::FX_VOLLEY != 0 {
+                        m.fire.volley.throw(hand, facing, m.origin, m.ticks, &ray);
+                    }
+                    let playing = m.moves.script.active().filter(|_| script::is_script(state.action));
+                    if combo.fx & script::FX_RANG != 0 {
+                        let cast = match playing {
+                            Some(script::RANG_SKIM) => Some(boomerang::CAST_SKIM),
+                            Some(script::RANG_PINCER) => Some(boomerang::CAST_PINCER),
+                            Some(script::RANG_STEER) => Some(boomerang::CAST_STEER),
+                            _ => None,
+                        };
+                        if let Some(kind) = cast {
+                            m.rang.cast(kind, &state, feet, hand, m.origin);
+                        }
+                    }
+                    let steer = (stick_now.0 * stick_now.0 + stick_now.1 * stick_now.1 >= 0.04).then(|| {
+                        let yaw = (-stick_now.0).atan2(-stick_now.1) + stick_now.2;
+                        glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos())
+                    });
+                    m.rang.steer(playing == Some(script::RANG_STEER), steer);
                     let _perf14 = perf::span(perf::WEAPONS);
                     m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     drop(_perf14);

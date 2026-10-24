@@ -309,6 +309,19 @@ pub const SUPER_PUNCH: u16 = 37;
 pub const HEAVY_HOOK: u16 = 39;
 pub const METEOR_PUNCH: u16 = 40;
 pub const FIST_DROPKICK: u16 = 41;
+/// the hammer's, the Chain Chomp's and the boomerang's new moves (hammermoves.rs, chompmoves.rs,
+/// rangmoves.rs; weaponplay.rs picks them)
+pub const HAMMER_CHARGE: u16 = 42;
+pub const HAMMER_VOLLEY: u16 = 43;
+pub const HAMMER_COMET: u16 = 44;
+pub const CHOMP_RUSH: u16 = 45;
+pub const CHOMP_LASSO_CHARGE: u16 = 46;
+pub const CHOMP_LASSO: u16 = 47;
+pub const CHOMP_FRENZY: u16 = 48;
+pub const RANG_SKIM: u16 = 49;
+pub const RANG_PINCER: u16 = 50;
+pub const RANG_STEER: u16 = 51;
+pub const RANG_CATCH: u16 = 52;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
@@ -333,6 +346,10 @@ pub const FX_BEAM: u32 = 0x8000;
 pub const FX_ZAP: u32 = 0x1_0000;
 pub const FX_SPARKLE: u32 = 0x2_0000;
 pub const FX_CROSS: u32 = 0x4_0000;
+/// a small hammer thrown now (the Hammer Bros. volley, volley.rs); the move's boomerang thrown now
+/// (its kind by the move: boomerang.rs)
+pub const FX_VOLLEY: u32 = 0x8_0000;
+pub const FX_RANG: u32 = 0x10_0000;
 const SOUND_MARIO_PUNCH_YAH: u32 = 0x241E_8081;
 
 /// The fists' Bullet Bill punch (back, forward + X; DMC's Stinger): a coil back, then he flies at
@@ -408,7 +425,10 @@ const ZEUS: Move = Move {
     ..BASE
 };
 
+use crate::chompmoves as chomp;
 use crate::fistmoves as fist;
+use crate::hammermoves as hammer;
+use crate::rangmoves as rang;
 use crate::swordmoves as sw;
 
 /// Every move by its id: the fists' and the sword's RB moves, then the Star Sword's (SW_S1 on,
@@ -456,6 +476,17 @@ pub const MOVES: &[Move] = &[
     fist::HOOK,
     fist::METEOR,
     fist::DROPKICK,
+    hammer::CHARGE,
+    hammer::VOLLEY,
+    hammer::COMET,
+    chomp::RUSH,
+    chomp::LASSO_CHARGE,
+    chomp::LASSO,
+    chomp::FRENZY,
+    rang::SKIM,
+    rang::PINCER,
+    rang::STEER,
+    rang::CATCH,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -534,15 +565,18 @@ impl Player {
         self.landed
     }
 
-    /// Window `window` of the move playing reaches the enemy `key`: whether that's its first blow on
-    /// him (and it's counted). A hit-stop holds the move's tick while the real ticks, and the blow's
-    /// cooldown, run on: without this a window two ticks long hit a big body again and again.
-    pub fn first_strike(&mut self, window: usize, key: u64) -> bool {
-        if self.struck.contains(&(window, key)) {
-            return false;
+    /// Window `window` of the move playing already struck the enemy `key` (a blow of it landed on
+    /// him). A hit-stop holds the move's tick while the real ticks, and the blow's cooldown, run on:
+    /// without this a window two ticks long hit a big body again and again.
+    pub fn struck(&self, window: usize, key: u64) -> bool {
+        self.struck.contains(&(window, key))
+    }
+
+    /// Window `window`'s blow landed on the enemy `key` (combat.rs took it): no more from it on him.
+    pub fn mark_struck(&mut self, window: usize, key: u64) {
+        if !self.struck(window, key) {
+            self.struck.push((window, key));
         }
-        self.struck.push((window, key));
-        true
     }
 
     /// Before an SM64 tick: Mario's action, its arg and tick count after the last tick; the frame
@@ -798,14 +832,14 @@ mod tests {
         // window again on the same enemy is no new blow)
         let mut p = player_at(BULLET_PUNCH);
         p.frame(0, 0, 0, 100.0);
-        assert!(p.first_strike(0, 7));
-        assert!(!p.first_strike(0, 7));
-        assert!(p.first_strike(0, 8));
-        assert!(p.first_strike(1, 7));
+        assert!(!p.struck(0, 7));
+        p.mark_struck(0, 7);
+        assert!(p.struck(0, 7));
+        assert!(!p.struck(0, 8) && !p.struck(1, 7));
         // (the next move: all new)
         p.start(BULLET_PUNCH, None);
         p.frame(0, 0, 0, 100.0);
-        assert!(p.first_strike(0, 7));
+        assert!(!p.struck(0, 7));
         assert!(!p.has_landed());
         p.landed();
         assert!(p.has_landed());
@@ -846,10 +880,10 @@ mod tests {
     #[test]
     fn every_id_has_its_move() {
         // (the last id of each table: indexing MOVES by an id with no data would panic)
-        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK] {
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH] {
             assert!((id as usize) < MOVES.len(), "{id}");
         }
-        assert_eq!(MOVES.len(), FIST_DROPKICK as usize + 1);
+        assert_eq!(MOVES.len(), RANG_CATCH as usize + 1);
     }
 
     #[test]
