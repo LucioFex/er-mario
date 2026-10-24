@@ -171,6 +171,10 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::GlacierSpikes => Some((0, 1.5, true)),
         Attack::DarkBeam(_) | Attack::AbyssBeam => Some((0, 0.6, false)),
         Attack::Spray => Some((1, 0.8, false)),
+        // the pair finishers' reactions: no hold for Mario (his swap strike has its own), a burst
+        Attack::Steam | Attack::Shatter | Attack::BloodBolt | Attack::CorrosiveArc => Some((0, 1.3, false)),
+        Attack::Plasma | Attack::Ignition | Attack::Boiling | Attack::CrimsonSpikes => Some((0, 1.6, true)),
+        Attack::Hail | Attack::Rot => Some((0, 0.8, false)),
     }
 }
 

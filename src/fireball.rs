@@ -447,12 +447,16 @@ impl Fire {
                     // (a pool on the ground below him)
                     let ground = ray(feet + Vec3::Y * 0.3, feet - Vec3::Y * 12.0).unwrap_or(feet);
                     self.carpets.lay(ground, POOL_RADIUS[(level >= GIANT) as usize], f, std::f32::consts::PI, POOL_TICKS, false, tick);
-                } else if level >= GIANT {
-                    self.carpets.lay(feet, SWAMP_RADIUS, f, std::f32::consts::PI, SWAMP_TICKS, true, tick);
                 } else {
-                    let l = level.min(3) as usize;
-                    let half = (crate::rbmoves::SWEEP_SPAN[l] * 0.5).to_radians();
-                    self.carpets.lay(feet, CARPET_RADIUS[l], f, half, CARPET_TICKS[l], false, tick);
+                    // (on the ground under him)
+                    let ground = ray(feet + Vec3::Y * 0.3, feet - Vec3::Y * 6.0).unwrap_or(feet);
+                    if level >= GIANT {
+                        self.carpets.lay(ground, SWAMP_RADIUS, f, std::f32::consts::PI, SWAMP_TICKS, true, tick);
+                    } else {
+                        let l = level.min(3) as usize;
+                        let half = (crate::rbmoves::SWEEP_SPAN[l] * 0.5).to_radians();
+                        self.carpets.lay(ground, CARPET_RADIUS[l], f, half, CARPET_TICKS[l], false, tick);
+                    }
                 }
             }
         }
@@ -684,8 +688,9 @@ impl Fire {
         let hand = [m[0] + fx * 45.0, m[1] + hand_height(level), m[2] + fz * 45.0];
         let (dir, target) = self.aim(state, origin, level);
         let speed = shot_speed(el, level);
-        // (the Glacier fist flies level, its enemy's height or not)
-        let dir = if el == Element::Frost { dir.with_y(0.0).normalize_or(Vec3::new(fx, 0.0, fz)) } else { dir };
+        // (the Glacier fist flies level from the ground, its enemy's height or not; from the air,
+        // down at him)
+        let dir = if el == Element::Frost && !action_air(state.action) { dir.with_y(0.0).normalize_or(Vec3::new(fx, 0.0, fz)) } else { dir };
         let vel = dir * speed;
         self.shots.push(Shot { pos: hand, vel: vel.to_array(), level, el, age: 0, hit: Vec::new(), swept: Vec::new(), stuck: None, last_burn: tick, homing: None, reflected: false, vis: -1.0, ground: None });
         log(format!("fireball: {} level {level} shot{}", el.name(), if target.is_some() { ", aimed" } else { "" }));
@@ -988,7 +993,7 @@ impl Fire {
     /// The Glacier fist stops at `at` (Elden Ring: a wall, the end of its way): a ring of ice spikes
     /// bursting from the ground round it.
     fn glacier_end(&mut self, at: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
-        let ground = ray(at + Vec3::Y * 0.5, at - Vec3::Y * 8.0).unwrap_or(at - Vec3::Y * 1.0);
+        let ground = ray(at + Vec3::Y * 0.5, at - Vec3::Y * 30.0).unwrap_or(at - Vec3::Y * 1.0);
         let n = combat.blast(player, ground, GLACIER_SPIKES, Attack::GlacierSpikes, origin, tick);
         self.bursts.push(Burst::of(Element::Frost, at, GIANT, tick));
         for k in 0..8 {

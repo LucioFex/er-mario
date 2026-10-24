@@ -443,6 +443,31 @@ frostbite or poison is on him: its time left). Frostbite clings to him as ice cr
 sprays, poison bubbles off him; the statuses go through the same shares as the blows (bosses a few
 % at most).
 
+### Pair finishers and criticals
+
+**Pair finishers**: land a string's finisher with one weapon, and right away (L1) bring in another
+one's swap strike: their two elements react on the enemy you finished on, **MIX!**, once a string
+(`src/reaction.rs`):
+
+| Weapons (elements) | Reaction |
+|---|---|
+| fists + hammer (fire + frost) | **Steam**: a burst of steam round him, small enemies staggered |
+| fists + sword (fire + lightning) | **Plasma**: a blast of fire and lightning |
+| fists + Chain Chomp (fire + blood) | **Boiling**: his blood boils, a heavy blow on him and a burn after it |
+| fists + boomerang (fire + poison) | **Ignition**: the carpets of poison near him go up in flames (whoever stands in any takes it once; with none, a small burst on him) |
+| hammer + sword (frost + lightning) | **Shatter**: a ring of ice shards, his stance cracked hard |
+| hammer + Chain Chomp (frost + blood) | **Crimson spikes**: spikes of frozen blood rise under him |
+| hammer + boomerang (frost + poison) | **Toxic hail**: pellets of poisoned ice fall round him |
+| sword + Chain Chomp (lightning + blood) | **Blood bolts**: bolts jump from him to the three nearest |
+| sword + boomerang (lightning + poison) | **Corrosive arc**: every poisoned enemy near is shocked |
+| Chain Chomp + boomerang (blood + poison) | **Rot**: he rots, a little every half second for 4 s |
+
+**Criticals** (Mortal Kombat 11's Krushing Blows): the right blow at the right moment hits ×1.6
+with a moment of slow motion, the camera punched in and **CRITICAL**, once an enemy every 20 s
+(`src/critical.rs`): a launcher on an enemy in the middle of its attack; the hammer's heavy blows
+on a broken stance; the sword's thrust, iai or stabs in his back; a Chain Chomp bite on one up in
+the air; a boomerang striking him both on its way out and back.
+
 ### Damage balance
 
 Every hit takes a share of the enemy's max HP. Bosses take a small fraction of that, more for the
@@ -460,14 +485,15 @@ close and risky hits.
 | Stomp | 50% of enemy HP | **12%**; bouncing on the same enemy without landing halves it each time (100%, 50%, 25%... down to 10%) |
 | Ground pound | 67%, no boss bonus | **21%**, boss bonus **×1.3**, shockwave hits enemies around |
 | Fireball | — | **9-25%** by charge; the giant one burns **6%** every quarter second while it carries or clings, and its explosion does **64%** to everyone within 5 m; the sun's explosion does **60%** within 9 m and its lava pools **4%** every half second (on bosses about 9% and 0.4%, as measured) |
-| The elements' RB moves | — | Ice rocket punch **8-20.5%** by charge (+ WALL!), ice dive **9%** + frost wave **4.5%**, Glacier fist **34%** on each it passes (regular enemies are blown away) + spikes **11%**; dark beam **1-2%** every tenth of a second by charge (**4.5-24%** in all), Abyss beam **1.4%** every tenth (about **36%** in all); poison sweep **2.3%** and its carpet **1%** every half second (+ poison) |
+| The elements' RB moves | — | Ice rocket punch **8-20.5%** by charge (+ WALL!; charged 2 s and up it sends a regular enemy flying, bowling over others; it lands alive), ice dive **9%** + frost wave **4.5%**, Glacier fist **34%** on each it passes (regular enemies are blown away) + spikes **11%**; dark beam **1-2%** every tenth of a second by charge (**3.4-22%** in all), Abyss beam **1.4%** every tenth (about **34%** in all); poison sweep **2.3%** and its carpet **1%** every half second (+ poison) |
+| Pair finishers | — | Steam **4.5%** round him, plasma **8%** within 4 m, boiling **7%**, ignition **8%** once on each in the carpets, shatter **5.5%** (+ stance), crimson spikes **9%**, toxic hail **2.3%** ×5, blood bolts **4.5%** each, corrosive arc **5.5%** each, rot **1.1%** ×8; criticals **×1.6** |
 | Elements | — | x0.8 to x1.25 by the enemy's resistance; frostbite **9%** and +20% for 10 s, blood loss **12%**, poison **1%** a second for 20 s (bosses: their share, a little more for the statuses, and much tougher to each after it went off) |
 | Elden Ring hits on Mario | 1 or 2 full wedges | **a quarter of a wedge** or half of one: Mario has **40% more health** and takes **30% less damage** (`src/tough.rs`: every loss of health, from any source, is cut to half; the meter keeps its eight wedges, each worth more). A lethal fall still kills. Luigi in co-op too |
 | Mikiri stomp | — | **9%** and a heavy stagger; on bosses a stance crack |
 | Action command | — | **+30%** of the blow (every third **+50%**) |
 | Dash strike | — | **12%** |
 | Bullet Bill punch | — | **9%** (a kick's weight: it sends them back a little), on bosses ×1.3 |
-| Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; Super punch **11%** / full **15%**; heavy hook **12.5%**; meteor punch **7%**; dropkick **8%**; WALL! **+30%** of the blow |
+| Fists' new moves | — | Hundred-hand flurry **1%** a jab ×10 + **6%** uppercut; Super punch **11%** / full **15%** (it sends a regular enemy flying, it lands alive); heavy hook **12.5%**; meteor punch **7%**; dropkick **8%** (flies off too); WALL! **+30%** of the blow |
 | Hammer, Chomp, boomerang new moves | — | Hammer charge **7%** + slam **16%**; a volley hammer **5%** (three); comet **10%** + ring **5.5%**; Chomp rush **5.5%**, lasso **3.5%**, frenzy **1.7%** a bite ×5 + **4.5%**; skim **2.3%** a pass |
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |

@@ -156,7 +156,8 @@ impl Beam {
                     if let Ok(wcm) = unsafe { WorldChrMan::instance_mut() } {
                         for &i in &inside {
                             let Some(h) = near[i].shootable() else { continue };
-                            if !combat::liftable(h) || crate::juggle::is_juggled(h) || crate::carry::is_carried(h) {
+                            let busy = crate::juggle::is_juggled(h) || crate::carry::is_carried(h) || crate::knock::is_flying(h) || crate::bat::is_flying(h) || crate::swing::is_down(h) || crate::stopwatch::frozen(h);
+                            if !combat::liftable(h) || busy {
                                 continue;
                             }
                             let Some(chr) = wcm.chr_ins_by_handle_mut(h) else { continue };

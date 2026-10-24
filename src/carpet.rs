@@ -14,8 +14,9 @@ use glam::Vec3;
 use crate::combat::{self, Attack, Combat};
 use crate::{log, sm64, worker};
 
-/// a tick of poison on whoever is in one this often (ticks)
+/// a tick of poison on whoever is in one this often (ticks); the swamp's slow looked at this often
 const BURN_EVERY: u32 = 15;
+const SWAMP_EVERY: u32 = 5;
 /// it spreads out over this many ticks
 const GROW: u32 = 8;
 /// how far above or below it a body's feet still count as in it (m)
@@ -108,7 +109,12 @@ impl Carpets {
             self.last_burn = tick;
         }
         let mut done: Vec<u64> = Vec::new();
+        // (who's in a swamp, every few ticks; who's in any, on a burn: no scan in between)
+        let swamp_tick = tick % SWAMP_EVERY == 0;
         for c in &self.out {
+            if !burn && !(c.swamp && swamp_tick) {
+                continue;
+            }
             let spread = c.spread(tick);
             let near = combat::nearby(&HavokPosition(c.center.x, c.center.y, c.center.z, 0.0), spread + 3.0, origin);
             let inside_now: Vec<usize> = near
@@ -134,7 +140,7 @@ impl Carpets {
             worker::call("carpet bubble", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUBBLE, 0.15) });
         }
         // the swamp's slow: on whoever is in it now, given back to whoever left it
-        if !crate::coop::guest() {
+        if !crate::coop::guest() && swamp_tick {
             let key = combat::handle_key;
             in_swamp.dedup_by(|a, b| key(a) == key(b));
             for h in self.slowed.iter().filter(|h| !in_swamp.iter().any(|n| key(n) == key(h))) {
@@ -151,6 +157,20 @@ impl Carpets {
             .map(|c| crate::fx::Carpet { center: c.center, radius: c.spread(tick), yaw: c.dir.x.atan2(c.dir.z), half: c.half, t: tick.wrapping_sub(c.born) as f32 / c.life.max(1) as f32, swamp: c.swamp })
             .collect();
         *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = looks;
+    }
+
+    /// The fire's ignition (reaction.rs): the carpets within `near` m of `at` go up in flames, gone
+    /// (where each was, how wide).
+    pub fn ignite(&mut self, at: Vec3, near: f32) -> Vec<(Vec3, f32)> {
+        let mut lit = Vec::new();
+        self.out.retain(|c| {
+            let close = (c.center - at).with_y(0.0).length() <= near + c.radius * 0.5;
+            if close {
+                lit.push((c.center, c.radius.min(6.0)));
+            }
+            !close
+        });
+        lit
     }
 
     /// All gone (Mario off, a load): the slowed get their speed back.

@@ -25,6 +25,7 @@ mod colossus;
 mod combat;
 mod combo;
 mod coop;
+mod critical;
 mod dodge;
 mod element;
 mod elemfx;
@@ -83,6 +84,7 @@ mod timing;
 mod traps;
 mod rock;
 mod rangmoves;
+mod reaction;
 mod rbmoves;
 mod volley;
 mod bat;
@@ -2431,6 +2433,7 @@ fn frame(data: &FD4TaskData) {
             colossus::clear();
             bat::clear();
             maxfin::clear();
+            reaction::clear();
             brosattack::clear();
             element::clear();
             worker::call("delete", move |_| unsafe { sm64::sm64_mario_delete(id) });
@@ -3043,6 +3046,7 @@ fn frame(data: &FD4TaskData) {
         rock::clear(m.id);
         bat::clear();
         maxfin::clear();
+        reaction::clear();
         brosattack::clear();
         skillshot::clear();
         stopwatch::clear();
@@ -3088,6 +3092,7 @@ fn frame(data: &FD4TaskData) {
             m.fire.volley.shift(glam::Vec3::from(d));
             m.fire.beam.shift(glam::Vec3::from(d));
             m.fire.carpets.shift(glam::Vec3::from(d));
+            reaction::shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
@@ -4292,6 +4297,18 @@ fn frame(data: &FD4TaskData) {
                     maxfin::fire(attack, at, glam::Vec3::new(p.0, p.1, p.2), dir, &mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
                 }
                 maxfin::tick(&mut m.combat, &player_ref.chr_ins, m.origin, m.ticks);
+                // a string's finisher, and right after it a swap strike: the two elements react on
+                // that enemy (reaction.rs), once a string
+                if let Some(w) = m.moves.take_mix() {
+                    if let Some((h, el)) = m.combat.take_finisher(reaction::WINDOW, m.ticks) {
+                        if let Some(r) = reaction::of(el, element::Element::of_weapon(w)) {
+                            if reaction::fire(r, h, &mut m.fire.carpets, &player_ref.chr_ins, &mut m.combat, m.origin, m.ticks) {
+                                m.moves.mixed();
+                            }
+                        }
+                    }
+                }
+                reaction::tick(&player_ref.chr_ins, &mut m.combat, m.origin, m.ticks);
                 // a Bros. Attack on its way (co-op): its ground pound, its blow
                 brosattack::tick(id, &state, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks);
                 // (the MAX ready: a flourish of twinkles at his hand as it gets ready, then one now

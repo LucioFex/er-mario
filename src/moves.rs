@@ -439,6 +439,9 @@ pub struct Moves {
     bite_at: Option<u32>,
     /// the fists' air blows (meteor punch, dropkick) begun in this jump: each holds him up a moment
     fist_air: u8,
+    /// a swap strike just started (the weapon taken), and the string's pair finisher used
+    swapped: Option<u8>,
+    mixed: bool,
 }
 
 /// the sword's pogo bounces a jump (Link's down-thrust)
@@ -523,12 +526,26 @@ impl Moves {
             first_end: None,
             bite_at: None,
             fist_air: 0,
+            swapped: None,
+            mixed: false,
         }
     }
 
     /// A move asked for from elsewhere (the sword's cast): it goes in on the next tick.
     pub fn queue(&mut self, r: Request, tick: u32) {
         self.queued = Some((r, tick));
+    }
+
+    /// A swap strike started since the last call (the weapon it took), and this string's pair
+    /// finisher isn't used yet (reaction.rs): it is now.
+    pub fn take_mix(&mut self) -> Option<u8> {
+        let w = self.swapped.take()?;
+        (!self.mixed).then_some(w)
+    }
+
+    /// The pair finisher went off: none more in this string.
+    pub fn mixed(&mut self) {
+        self.mixed = true;
     }
 
     /// A swap strike is coming (the switch came in the middle of a fight).
@@ -1013,6 +1030,7 @@ impl Moves {
         }
         if self.attack_seen.is_none_or(|t| tick.wrapping_sub(t) > STRING_OVER) {
             self.string_swaps = 0;
+            self.mixed = false;
         }
         // a blow going on (the combos' moves, SM64's punches and kicks, the air string)
         if combo(a) || script_on || punching || a == ACT_ER_RUSH || a == ACT_GROUND_POUND || a == ACT_SLIDE_KICK || a == ACT_TWIRLING || a == 0x0180_08A9 || a == 0x0180_08AE {
@@ -1036,6 +1054,7 @@ impl Moves {
                     }
                     self.x_chain = 1;
                     self.chain_seen = Some(tick);
+                    self.swapped = Some(w);
                     crate::style::swap();
                     crate::log(format!("moves: swap strike, {}", m.name));
                     return Some(Request::Script { id, air: m.air, yaw: None });
@@ -1074,6 +1093,7 @@ impl Moves {
                 // (the string goes on: its next X is the new weapon's next blow)
                 self.x_chain = 1;
                 self.chain_seen = Some(tick);
+                self.swapped = Some(w);
                 crate::style::swap();
                 crate::log(format!("moves: swap strike, {name}"));
                 return Some(Request::Action(action, arg));
@@ -1468,6 +1488,24 @@ mod tests {
         t += 1;
         m.tick(false, false, false, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, t);
         assert!(dropkick(back_x(&mut m, &mut t, ACT_JUMP)));
+    }
+
+    #[test]
+    fn a_pair_finisher_once_a_string() {
+        let mut m = Moves::new();
+        assert_eq!(m.take_mix(), None);
+        m.swapped = Some(crate::weapons::HAMMER);
+        assert_eq!(m.take_mix(), Some(crate::weapons::HAMMER));
+        // (taken: once a swap)
+        assert_eq!(m.take_mix(), None);
+        m.mixed();
+        m.swapped = Some(crate::weapons::CHOMP);
+        assert_eq!(m.take_mix(), None);
+        // (the string over: the next one may mix again)
+        let state = sm64::SM64MarioState { action: ACT_IDLE, health: 0x880, ..Default::default() };
+        m.tick(false, false, false, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, 500);
+        m.swapped = Some(crate::weapons::CHOMP);
+        assert_eq!(m.take_mix(), Some(crate::weapons::CHOMP));
     }
 
     #[test]

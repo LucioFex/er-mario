@@ -154,6 +154,8 @@ struct Rang {
     target: Option<u64>,
     /// the big one's hits on each enemy this throw
     counts: Vec<(u64, u32)>,
+    /// whom it struck on its way out (a strike on one of them coming back: both ways, critical.rs)
+    out_hits: Vec<u64>,
 }
 
 /// A boomerang to draw (hud.rs): Elden Ring position, velocity (m/s), size (m), its turn (radians),
@@ -453,6 +455,7 @@ impl Boomerang {
                 trail: Default::default(),
                 target,
                 counts: Vec::new(),
+                out_hits: Vec::new(),
             });
         }
         log(format!("boomerang: {} x{}{}{}", ["one", "fan", "launcher", "big", "skim", "pincer", "steered"][kind_index(kind, n)], n.min(free), if aim.is_some() { ", aimed" } else { "" }, if charge > 0 { format!(", charged {charge}") } else { String::new() }));
@@ -620,6 +623,14 @@ fn hits(r: &mut Rang, prev: Vec3, origin: [f32; 3], tick: u32, player: &ChrIns, 
         if near_axis && level {
             r.hit.retain(|(key, _)| *key != t.key());
             r.hit.push((t.key(), age));
+            // (both ways: only the boomerang's own passes, not the big one's hovering blows)
+            if matches!(attack, Attack::Rang | Attack::RangSkim) {
+                match r.phase {
+                    Phase::Out => r.out_hits.push(t.key()),
+                    Phase::Back if r.out_hits.contains(&t.key()) => crate::critical::both_ways(t.key()),
+                    _ => {}
+                }
+            }
             if r.kind == Kind::Big {
                 match r.counts.iter_mut().find(|(k, _)| *k == t.key()) {
                     Some((_, n)) => *n += 1,

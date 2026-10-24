@@ -354,6 +354,19 @@ mod tests {
     }
 
     #[test]
+    fn every_charge_has_a_move_of_its_place() {
+        // (in the air an air move, on the ground a ground one: SM64's action follows the move)
+        for el in [Element::Lightning, Element::Frost, Element::Blood, Element::Poison] {
+            for level in 0..=4u8 {
+                for air in [false, true] {
+                    let id = cast_move(el, level, air).expect("a move");
+                    assert_eq!(MOVES[id as usize].air, air, "{el:?} level {level} air {air}: {}", MOVES[id as usize].name);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_moves_sit_at_their_ids() {
         assert_eq!(rb(ICE_ROCKET).name, "ice rocket punch");
         assert_eq!(rb(ICE_ROCKET + 3).name, "ice rocket punch (full)");

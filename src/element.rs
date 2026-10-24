@@ -92,6 +92,8 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         Attack::IceRocket(_) | Attack::IceDive | Attack::FrostWave | Attack::Glacier | Attack::GlacierSpikes => Some(Element::Frost),
         Attack::DarkBeam(_) | Attack::AbyssBeam => Some(Element::Blood),
         Attack::Spray => Some(Element::Poison),
+        // (the pair finishers' reactions: two elements at once, no status of their own)
+        a if a.reaction() => None,
         Attack::Slip
         | Attack::ShellHit
         | Attack::Bomb
@@ -508,6 +510,12 @@ pub fn tick(tick: u32) -> Vec<(FieldInsHandle, Attack)> {
     }
     *AURAS.lock().unwrap_or_else(|e| e.into_inner()) = auras;
     due
+}
+
+/// `h` is poisoned now (the corrosive arc's: reaction.rs).
+pub fn poisoned(h: &FieldInsHandle) -> bool {
+    let now = NOW.load(Ordering::Relaxed);
+    meters().as_ref().and_then(|all| all.get(&crate::combat::handle_key(h))).is_some_and(|m| now < m.poison_until)
 }
 
 /// The statuses on enemies now (fx.rs).

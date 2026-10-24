@@ -229,11 +229,24 @@ pub enum Attack {
     DarkBeam(u8),
     AbyssBeam,
     Spray,
+    /// the pair finishers' element reactions (v4 Part 3d, reaction.rs): steam, plasma, boiling
+    /// blood, the carpets' ignition, the shatter, crimson spikes, a pellet of toxic hail, a blood
+    /// bolt, the corrosive arc, a tick of rot
+    Steam,
+    Plasma,
+    Boiling,
+    Ignition,
+    Shatter,
+    CrimsonSpikes,
+    Hail,
+    BloodBolt,
+    CorrosiveArc,
+    Rot,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 173] = [
+const CODES: [Attack; 183] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -257,6 +270,7 @@ const CODES: [Attack; 173] = [
     Attack::HammerCharge, Attack::HammerChargeSlam, Attack::HammerBro, Attack::Comet, Attack::CometRing, Attack::ChompRush, Attack::Lasso, Attack::Frenzy, Attack::FrenzyEnd, Attack::RangSkim,
     Attack::IceRocket(0), Attack::IceRocket(1), Attack::IceRocket(2), Attack::IceRocket(3), Attack::IceDive, Attack::FrostWave, Attack::Glacier, Attack::GlacierSpikes,
     Attack::DarkBeam(0), Attack::DarkBeam(1), Attack::DarkBeam(2), Attack::DarkBeam(3), Attack::AbyssBeam, Attack::Spray,
+    Attack::Steam, Attack::Plasma, Attack::Boiling, Attack::Ignition, Attack::Shatter, Attack::CrimsonSpikes, Attack::Hail, Attack::BloodBolt, Attack::CorrosiveArc, Attack::Rot,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -370,6 +384,11 @@ impl Attack {
             Attack::IceDive | Attack::FrostWave => Attack::Stomp.spec(),
             Attack::Glacier | Attack::GlacierSpikes => Attack::GroundPound.spec(),
             Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Spray => Attack::Punch.spec(),
+            // the reactions: their bursts a stomp's (the plasma and the ignition a ground pound's),
+            // the hail's pellets and the rot's ticks a punch's
+            Attack::Steam | Attack::Boiling | Attack::Shatter | Attack::CrimsonSpikes | Attack::BloodBolt | Attack::CorrosiveArc => Attack::Stomp.spec(),
+            Attack::Plasma | Attack::Ignition => Attack::GroundPound.spec(),
+            Attack::Hail | Attack::Rot => Attack::Punch.spec(),
         }
     }
 
@@ -615,6 +634,17 @@ impl Attack {
             Attack::DarkBeam(_) => (3.5, "damage_dark_beam_max"),
             Attack::AbyssBeam => (2.5, "damage_abyss_beam"),
             Attack::Spray => (4.0, "damage_poison_spray"),
+            // the pair finishers' reactions (Part 3d): a finisher's worth again, spread over its burst
+            Attack::Steam => (8.0, "damage_steam"),
+            Attack::Plasma => (14.0, "damage_plasma"),
+            Attack::Boiling => (12.0, "damage_boiling"),
+            Attack::Ignition => (14.0, "damage_ignition"),
+            Attack::Shatter => (10.0, "damage_shatter"),
+            Attack::CrimsonSpikes => (16.0, "damage_crimson_spikes"),
+            Attack::Hail => (4.0, "damage_toxic_hail"),
+            Attack::BloodBolt => (8.0, "damage_blood_bolt"),
+            Attack::CorrosiveArc => (10.0, "damage_corrosive_arc"),
+            Attack::Rot => (2.0, "damage_rot"),
         }
     }
 
@@ -781,6 +811,7 @@ impl Attack {
             Attack::IceDive => 1.2,
             Attack::GlacierSpikes => 1.1,
             Attack::FrostWave | Attack::Glacier | Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Spray => 1.0,
+            Attack::Steam | Attack::Plasma | Attack::Boiling | Attack::Ignition | Attack::Shatter | Attack::CrimsonSpikes | Attack::Hail | Attack::BloodBolt | Attack::CorrosiveArc | Attack::Rot => 1.1,
         }
     }
 
@@ -824,6 +855,9 @@ impl Attack {
             // dive's wave once as he lands)
             Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Glacier | Attack::GlacierSpikes => 1,
             Attack::FrostWave => 30,
+            // (the reactions' bursts once each, the hail's pellets and the rot's ticks at their own
+            // pace: reaction.rs)
+            Attack::Hail | Attack::Rot | Attack::BloodBolt | Attack::CorrosiveArc => 1,
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
@@ -880,6 +914,20 @@ impl Attack {
         )
     }
 
+    /// A tick of something going on (a burn, a beam pouring, a carpet of poison, rot, a pellet of
+    /// hail), not a blow: no style, no MAX, no blow's sound and burst, no game bullet.
+    pub fn continuous(self) -> bool {
+        matches!(self, Attack::FireSweep | Attack::Ember | Attack::VenomCloud | Attack::DarkBeam(_) | Attack::AbyssBeam | Attack::Rot | Attack::Hail)
+    }
+
+    /// One of the pair finishers' reactions (reaction.rs): not a finisher of its own, no status.
+    pub fn reaction(self) -> bool {
+        matches!(
+            self,
+            Attack::Steam | Attack::Plasma | Attack::Boiling | Attack::Ignition | Attack::Shatter | Attack::CrimsonSpikes | Attack::Hail | Attack::BloodBolt | Attack::CorrosiveArc | Attack::Rot
+        )
+    }
+
     /// A heavy blow's weight on a strong enemy's stance (swing.rs, its stagger meter): the hammer
     /// breaks it, more the heavier the blow.
     fn posture(self) -> f32 {
@@ -904,6 +952,7 @@ impl Attack {
             Attack::HammerCharge | Attack::Comet => 6.0,
             Attack::CometRing => 9.0,
             Attack::HammerChargeSlam => 12.0,
+            Attack::Plasma | Attack::CrimsonSpikes => 6.0,
             _ => 0.0,
         }
     }
@@ -1121,6 +1170,10 @@ pub struct Combat {
     patched: bool,
     /// per target: SM64 tick of the last hit (one hit per swing)
     cooldown: Cooldowns,
+    /// the last string's finisher that landed (on whom, its element, when): a swap strike right
+    /// after it is a pair finisher (reaction.rs); each enemy's last critical (critical.rs)
+    last_finisher: Option<(FieldInsHandle, crate::element::Element, u32)>,
+    criticals: HashMap<u64, u32>,
     last_hp: Option<i32>,
     /// characters Mario brought to 1 HP: SM64 tick, for the fallback kill if the bullet misses
     finishing: HashMap<u64, (FieldInsHandle, u32)>,
@@ -1160,7 +1213,7 @@ pub enum Hurt {
 
 impl Combat {
     pub fn new() -> Self {
-        Combat { patched: false, cooldown: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), swing_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new(), knocked: HashMap::new() }
+        Combat { patched: false, cooldown: HashMap::new(), last_finisher: None, criticals: HashMap::new(), last_hp: None, finishing: HashMap::new(), victims: HashMap::new(), drain: 0.0, stomps: HashMap::new(), trampled: HashMap::new(), bullet_at: HashMap::new(), stomp_run: HashMap::new(), swing_run: HashMap::new(), string: HashMap::new(), max: None, last_blow: HashMap::new(), knocked: HashMap::new() }
     }
 }
 
@@ -1194,6 +1247,12 @@ fn cooling(cooldown: &Cooldowns, key: u64, attack: Attack, tick: u32) -> bool {
 
 /// `Target::er` lies this far under the feet (m): the game's bullets spawn 1 m above it
 const ER_UNDER_FEET: f32 = 0.6;
+
+/// a regular enemy sent flying by a blow (the full Super punch, the dropkick, the charged ice
+/// rocket): its speed and lift (m/s), what its landing takes (% of its max HP: it gets up)
+const FLING_SPEED: f32 = 11.0;
+const FLING_UP: f32 = 4.5;
+const FLING_LANDING: f32 = 2.0;
 
 /// a blow that drives an enemy into a wall this near behind it (m): WALL!, worth this much more of
 /// it, and this much more stance
@@ -2772,6 +2831,7 @@ impl Combat {
             // (a hammer swing landing on him again: what it's worth of a blow of its own, SWING_FADE;
             // 1 for a blow)
             let mut swing = 1.0;
+            let mut critical_at = false;
             // (every bounce counts, also within the cooldown: quick climbing bounces did too)
             // (a head stomp at the top of a climb comes as a ground pound: it counts too)
             if matches!(attack, Attack::Stomp | Attack::GroundPound) {
@@ -2816,6 +2876,13 @@ impl Combat {
                 if crate::swing::is_down(handle) || crate::carry::is_carried(handle) {
                     continue;
                 }
+                // (a critical? read as the blow lands, before it lifts or moves him)
+                let critical = self.critical(handle, attack, target.key, player, tick);
+                let critical_mult = critical.map_or(1.0, |_| {
+                    // (not on top of a perfect dodge's counter: one or the other)
+                    let counter = crate::dodge::countering() && !attack.ranged() && !attack.status();
+                    if counter { (crate::critical::BONUS / crate::dodge::COUNTER_DAMAGE).max(1.0) } else { crate::critical::BONUS }
+                });
                 // the super jump punch lifts small enemies, and stunned strong ones not too big, up
                 // with Mario (juggle.rs); a blow on one up there keeps it up
                 // (the hammer's launcher sends them flying high up instead, for Mario to jump after)
@@ -2897,9 +2964,16 @@ impl Combat {
                     Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash => crate::squish::start(handle, 0.8, 1.0),
                     _ => {}
                 }
-                // the Bowser spin's release flings regular enemies away, like the giant fireball (the
-                // full Super punch and the dropkick too)
-                if matches!(attack, Attack::GiroEnd | Attack::SuperPunch(1) | Attack::Dropkick | Attack::IceRocket(2..=3)) && blowable(handle) {
+                // the full Super punch, the dropkick and the charged ice rocket send a regular enemy
+                // flying, bowling over whoever it meets, landing alive (bat.rs: knock.rs's flight
+                // finishes them, the giant fireball's)
+                if matches!(attack, Attack::SuperPunch(1) | Attack::Dropkick | Attack::IceRocket(2..=3)) && blowable(handle) {
+                    let me = player.modules.physics.position;
+                    let away = glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2);
+                    crate::bat::throw(handle, away, FLING_SPEED, FLING_UP, FLING_LANDING);
+                }
+                // the Bowser spin's release flings regular enemies away, like the giant fireball
+                if matches!(attack, Attack::GiroEnd) && blowable(handle) {
                     let me = player.modules.physics.position;
                     crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
                 }
@@ -2963,7 +3037,25 @@ impl Combat {
                 if attack.posture() > 0.0 && !liftable(handle) && !crate::coop::guest() {
                     crate::swing::add_stance(handle, attack.posture() * swing);
                 }
-                let took = take_share(handle, attack, scale * fade);
+                let took = take_share(handle, attack, scale * fade * critical_mult);
+                // (a critical that took something: its show, its wait)
+                if let (Some(kind), Some(_)) = (critical, took) {
+                    self.criticals.insert(target.key, tick);
+                    if self.criticals.len() > 64 {
+                        self.criticals.retain(|_, t| tick.wrapping_sub(*t) < crate::critical::EVERY);
+                    }
+                    let at = glam::Vec3::new(target.er.0, target.er.1 + 2.6, target.er.2);
+                    log(format!("combat: CRITICAL, {kind} ({attack:?})"));
+                    crate::style::callout("CRITICAL", Some(at), [1.0, 0.85, 0.2], true, 5.0);
+                    crate::style::slow_down(0.3);
+                    critical_at = true;
+                }
+                // (a string's finisher that landed: a swap strike right after it is a pair)
+                if took.is_some() && attack.finisher() && swing == 1.0 {
+                    if let Some(el) = crate::element::of_attack(attack) {
+                        self.last_finisher = Some((*handle, el, tick));
+                    }
+                }
                 if took == Some(true) && !crate::coop::guest() {
                     if !self.finishing.contains_key(&target.key) {
                         crate::style::kill(attack.finisher());
@@ -3023,13 +3115,13 @@ impl Combat {
                 }
             }
             let (bullet, ..) = attack.spec();
-            if !target.is_prop() && swing == 1.0 && !matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
+            if !target.is_prop() && swing == 1.0 && !attack.continuous() && attack != Attack::Trample {
                 crate::style::hit(attack, target.key);
                 // (co-op: both on one enemy is a BROS!)
                 crate::coop::own_hit(target.key, glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.6, target.er.2));
             }
             // (breaking a jar or a crate is no blow to stop for)
-            if !matches!(attack, Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::FireSweep | Attack::Ember) && !target.is_prop() {
+            if !matches!(attack, Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_)) && !attack.continuous() && !target.is_prop() {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
@@ -3037,12 +3129,17 @@ impl Combat {
                     crate::style::finisher(at);
                 }
             }
+            // (a critical's camera punch: after the blow's own, which would take its place)
+            if critical_at {
+                crate::lakitu::punch(0.8);
+                crate::lakitu::shake(0.6);
+            }
             // (the game gives the player only ~256 bullets a session: their emitters are never freed,
             // and once they're gone no blow of Mario's is the game's any more, enemies neither react
             // nor wake. So a bullet only where it matters: a heavy blow or a finisher, else at most
             // one per enemy every BULLET_EVERY ticks; none for the burn, the steps, the cyclone,
             // the hook or the tongue)
-            let light = matches!(attack, Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue | Attack::VenomCloud);
+            let light = attack.continuous() || matches!(attack, Attack::Trample | Attack::ChompSpin | Attack::Hook | Attack::Tongue);
             let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::MeteorLand | Attack::Launch | Attack::UppercutTop | Attack::Fire(3..) | Attack::Ice(3..) | Attack::Dark(3..) | Attack::Venom(3..) | Attack::Mikiri | Attack::Bonk | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::RockSlam | Attack::HomeRun | Attack::Bowled | Attack::Tether | Attack::SwingKick | Attack::RideCrash | Attack::BrosAttack | Attack::Sigil);
             let due = self.bullet_at.get(&target.key).is_none_or(|&t| tick.wrapping_sub(t) >= BULLET_EVERY);
             if light || swing < 1.0 || !(heavy || due) {
@@ -3103,6 +3200,44 @@ impl Combat {
             }
             self.extra_share(&handle, attack, WALL_BONUS, tick);
         }
+    }
+
+    /// A string's finisher that landed within `within` ticks before `tick` (on whom, its element);
+    /// once (taken).
+    pub fn take_finisher(&mut self, within: u32, tick: u32) -> Option<(FieldInsHandle, crate::element::Element)> {
+        let (h, el, at) = self.last_finisher.take()?;
+        (tick.wrapping_sub(at) <= within).then_some((h, el))
+    }
+
+    /// `attack` landing on `handle` (key `key`): the critical it is (critical.rs: the right blow at
+    /// the right moment, once an enemy every 20 s), if it is one (its show comes once it took).
+    fn critical(&mut self, handle: &FieldInsHandle, attack: Attack, key: u64, player: &ChrIns, tick: u32) -> Option<&'static str> {
+        if !crate::critical::candidate(attack) || !crate::critical::ready(self.criticals.get(&key).copied(), tick) {
+            // (a boomerang's both-ways mark doesn't wait for the next one)
+            if matches!(attack, Attack::Rang | Attack::RangSkim) {
+                crate::critical::take_both_ways(key);
+            }
+            return None;
+        }
+        let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return None };
+        let chr = wcm.chr_ins_by_handle(handle)?;
+        let t = &chr.modules.time_act;
+        let a = &t.anim_queue[(t.read_idx % 10) as usize];
+        let anim = a.anim_id % 1_000_000;
+        let ph = &chr.modules.physics;
+        let (o, p) = (ph.orientation, ph.position);
+        // (its forward as dodge.rs reads it; Mario behind it)
+        let ahead = glam::Quat::from_xyzw(o.0, o.1, o.2, o.3).mul_vec3(glam::Vec3::new(0.0, 0.0, -1.0)).with_y(0.0).normalize_or_zero();
+        let me = player.modules.physics.position;
+        let to_me = glam::Vec3::new(me.0 - p.0, 0.0, me.2 - p.2).normalize_or_zero();
+        let ctx = crate::critical::Ctx {
+            attacking: (3000..4000).contains(&anim) && a.play_time <= 1.2,
+            stance_open: crate::swing::is_open(handle),
+            from_behind: ahead.dot(to_me) < -0.4,
+            juggled: crate::juggle::is_juggled(handle),
+            both_ways: matches!(attack, Attack::Rang | Attack::RangSkim) && crate::critical::take_both_ways(key),
+        };
+        crate::critical::kind(attack, &ctx)
     }
 
     /// `attack` landed on the enemy `key` this very tick (`deal` took it).
