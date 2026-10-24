@@ -197,6 +197,7 @@ impl WorldFx {
         let mut fire = crate::fireball::looks();
         fire.auras = crate::element::auras();
         fire.motes = crate::element::motes();
+        fire.motes.extend(crate::light::motes());
         WorldFx {
             fire,
             streaks: crate::impact::enemy_streaks(),

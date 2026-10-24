@@ -1341,8 +1341,34 @@ impl ImguiRenderLoop for Overlay {
             image(IMG_COIN_FRAMES + (age * 15.0) as usize % 4, foot[0] - h * 0.5, head[1], h, h);
         }
 
-        // the bag of coins lost in the last death: a big spinning coin in a golden glow
+        // the bag of coins lost in the last death: a big spinning coin in a golden glow, under a
+        // soft golden column of light seen from afar (faint up close, gone past 300 m)
         if let Some((pos, _)) = crate::coins::bag() {
+            if let (Some(fwd), Some(eye)) = (camera_forward(), camera_position()) {
+                let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
+                let dist = (pos - eye).length();
+                let fade = ((dist - 12.0) / 15.0).clamp(0.0, 1.0) * ((300.0 - dist) / 100.0).clamp(0.0, 1.0);
+                const COLUMN: f32 = 25.0;
+                const SLICES: usize = 6;
+                let clock = Instant::now().duration_since(*BAG_START).as_secs_f32();
+                let shimmer = 0.85 + 0.15 * (clock * 1.7).sin();
+                for k in 0..SLICES {
+                    let (a, b) = (k as f32 / SLICES as f32, (k + 1) as f32 / SLICES as f32);
+                    let (pa, pb) = (pos + Vec3::Y * (COLUMN * a), pos + Vec3::Y * (COLUMN * b));
+                    let (Some((sa, _)), Some((sb, _)), Some((ea, _)), Some((eb, _))) =
+                        (project(pa, size), project(pb, size), project(pa + right * 0.35, size), project(pb + right * 0.35, size))
+                    else {
+                        continue;
+                    };
+                    let (wa, wb) = ((ea[0] - sa[0]).abs().max(1.0), (eb[0] - sb[0]).abs().max(1.0));
+                    let alpha = 0.16 * (1.0 - a) * fade * shimmer;
+                    if alpha < 0.005 {
+                        continue;
+                    }
+                    let pts = vec![[sa[0] - wa, sa[1]], [sa[0] + wa, sa[1]], [sb[0] + wb, sb[1]], [sb[0] - wb, sb[1]]];
+                    dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.82, 0.3, alpha)).filled(true).build();
+                }
+            }
             let lift = pos + Vec3::Y * 0.9;
             if let (Some((c, z)), Some((top, _))) = (project(lift, size), project(lift + Vec3::Y * 0.5, size)) {
                 let h = (c[1] - top[1]) * 2.0;
@@ -1650,19 +1676,54 @@ impl ImguiRenderLoop for Overlay {
                 }
                 // (where he's looking: a little marker under the strip)
                 dl.add_triangle([cx - 4.0 * px, y0 + 20.0 * px], [cx + 4.0 * px, y0 + 20.0 * px], [cx, y0 + 15.0 * px], [1.0, 0.85, 0.3, 0.9]).filled(true).build();
-                // the bag of coins lost in the last death
-                if let Some((bag, _)) = crate::coins::bag() {
-                    let d = rel((bag.x - eye.x).atan2(bag.z - eye.z).to_degrees() + turn);
-                    if d.abs() <= span * 0.5 {
-                        let x = cx + d / span * w;
-                        let pulse = 0.75 + 0.25 * (clock * 4.0).sin();
-                        dl.add_circle([x, y0 + 13.0 * px], 5.0 * px, [1.0, 0.85, 0.25, pulse]).filled(true).build();
-                        dl.add_circle([x, y0 + 13.0 * px], 5.0 * px, [0.4, 0.25, 0.0, 0.9]).thickness(px.max(1.0)).build();
+                // the bag of coins lost in the last death: on the strip (pinned to its end with an
+                // arrow when it's behind), a chevron when it's well above or below, beating harder
+                // within 50 m; in another part of the map, a grey coin with a question mark
+                let cy = y0 + 13.0 * px;
+                match crate::coins::bag_view() {
+                    Some(crate::coins::BagView::Here(bag, _)) => {
+                        let d = rel((bag.x - eye.x).atan2(bag.z - eye.z).to_degrees() + turn);
+                        let pinned = d.abs() > span * 0.5;
+                        let x = cx + d.clamp(-span * 0.5, span * 0.5) / span * w;
                         let metres = ((bag.x - eye.x).powi(2) + (bag.z - eye.z).powi(2)).sqrt();
+                        let near = metres < 50.0;
+                        let beat = if near { (clock * 7.0).sin() } else { (clock * 4.0).sin() };
+                        let pulse = if near { 0.6 + 0.4 * beat } else { 0.75 + 0.25 * beat };
+                        let r = 5.0 * px * if near { 1.0 + 0.15 * beat } else { 1.0 };
+                        dl.add_circle([x, cy], r, [1.0, 0.85, 0.25, pulse]).filled(true).build();
+                        dl.add_circle([x, cy], r, [0.4, 0.25, 0.0, 0.9]).thickness(px.max(1.0)).build();
+                        if pinned {
+                            let side = d.signum();
+                            let (tip, base) = (x + side * 11.0 * px, x + side * 7.0 * px);
+                            dl.add_triangle([tip, cy], [base, cy - 3.5 * px], [base, cy + 3.5 * px], [1.0, 0.85, 0.3, 0.9]).filled(true).build();
+                        }
+                        // (the camera is a little over his head)
+                        let rise = bag.y - (eye.y - 1.5);
+                        if rise.abs() > 10.0 {
+                            let (k, up) = (3.5 * px, rise > 0.0);
+                            let (tip, base) = if up { (cy - r - 7.0 * px, cy - r - 2.5 * px) } else { (cy + r + 7.0 * px, cy + r + 2.5 * px) };
+                            dl.add_triangle([x, tip], [x - k, base], [x + k, base], [1.0, 0.9, 0.4, 0.9]).filled(true).build();
+                        }
                         let text = format!("{}M", metres as u32);
                         let g = 8.0 * px;
                         line(&text, x + text.chars().count() as f32 * g * 0.8 * 0.5, y0 + 27.0 * px, g, 0.8, [1.0, 0.9, 0.4, 0.9]);
                     }
+                    Some(crate::coins::BagView::Elsewhere) => {
+                        let (x, r) = (cx + w * 0.07, 5.0 * px);
+                        dl.add_circle([x, cy], r, [0.55, 0.55, 0.55, 0.8]).filled(true).build();
+                        dl.add_circle([x, cy], r, [0.25, 0.25, 0.25, 0.9]).thickness(px.max(1.0)).build();
+                        // (the HUD font has no question mark: drawn, a hook and a dot)
+                        let hook: Vec<[f32; 2]> = (0..=8)
+                            .map(|i| {
+                                let a = std::f32::consts::PI * (1.1 - 1.35 * i as f32 / 8.0);
+                                [x + a.cos() * r * 0.42, cy - r * 0.3 - a.sin() * r * 0.42]
+                            })
+                            .chain(std::iter::once([x, cy + r * 0.2]))
+                            .collect();
+                        dl.add_polyline(hook, [1.0, 1.0, 1.0, 0.9]).thickness((1.3 * px).max(1.0)).build();
+                        dl.add_circle([x, cy + r * 0.55], (0.75 * px).max(0.8), [1.0, 1.0, 1.0, 0.9]).filled(true).build();
+                    }
+                    None => {}
                 }
                 // co-op: the partners on it, faint (their head, the distance once they're far off;
                 // bright in danger), and their coin bags (a coin ringed in their colour)

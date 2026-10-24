@@ -17,7 +17,7 @@ pub struct Stats {
 
 static CURRENT: Mutex<Option<(String, Stats)>> = Mutex::new(None);
 
-fn character() -> Option<String> {
+pub(crate) fn character() -> Option<String> {
     let gdm = unsafe { GameDataMan::instance() }.ok()?;
     let name = &gdm.main_player_game_data.character_name;
     let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());

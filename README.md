@@ -249,14 +249,25 @@ a wedge. The big abilities cost coins on top of their waits: **Capture 8**, **Me
 **Rock Mushroom 5**, **wing cap 3** (a "NEED COINS" if the purse is short; `src/coins.rs`).
 Like Elden Ring's runes, **half the purse is lost when Mario dies and stays in a bag where he last stood**
 (a fall into the abyss leaves it at the edge; it keeps its place through loads and warps):
-a big spinning coin in a golden glow, marked on the compass with its distance; touching it gives
-the coins back. Dying again before that loses that bag for good (the bag isn't kept between
-sessions). In co-op every player has a purse and coins of their own: each game drops a coin
+a big spinning coin in a golden glow under a soft golden column of light (seen from far off),
+marked on the compass with its distance; touching it gives the coins back. Dying again before that
+loses that bag for good. The bag is kept per character between sessions (`er_mario_bag.txt`) and is
+found again from any tile of the overworld: the mod learns how the 256 m map tiles line up the first
+time you walk from one into the next (`er_mario_tiles.txt`, logged as `coins: tile axes calibrated`). In co-op every player has a purse and coins of their own: each game drops a coin
 where an enemy near that player dies, so Mario and Luigi each see and take theirs.
 
 **Compass.** Elden Ring's compass is hidden with the rest of its HUD, so there is one at the top
 middle: a strip with N / NE / E / SE ..., ticks every 15° and the way the camera looks (north is
-+Z; if it comes out turned, `compass_north = 180` in `er_mario.ini` turns it).
++Z; if it comes out turned, `compass_north = 180` in `er_mario.ini` turns it). The coin bag sits on
+it: pinned to the strip's end with an arrow when it's behind you, with a ▲ / ▼ when it's more than
+10 m above or below, beating faster within 50 m, and as a grey coin with a "?" when it's in another
+part of the map (a dungeon, another area).
+
+**A light in the dark.** In caves, catacombs, tunnels and the underground, Mario carries the
+Lantern's light (the game's own light, from the Lantern's effect) and a small Fire Flower flame
+flickers by his left hand. It isn't doubled if you have the real Lantern lit, and it goes out when
+you leave. `light = on / off` in `er_mario.ini` forces it; `light_areas = 30, 31, 32` sets which
+kinds of map count as dark (the log names each area as you enter it: `light: area m31 ...`).
 
 **Enemy grabs.** Elden Ring's grabs work on Mario: a troll's fist, a beast's jaws, a boss lifting
 him up. The game holds him and carries him through its throw while Mario dangles in its grip,
@@ -395,6 +406,13 @@ risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever d
 The ground pound is slow and leaves Mario open, so it's worth the risk.
 
 ### Fixes and quality of life
+
+- **Mario never switches himself off.** A slow call into SM64 used to switch Mario off for the
+  rest of the session after 3 s; now the game waits for it (logged every 5 s) and carries on. A bug
+  inside a frame rebuilds Mario on the spot (with his health) instead of turning him off. With no
+  ground anywhere near (the map still streaming in after the game moved its world origin), Mario is
+  held where he is until it's there, and after 15 s put back on the last ground he stood on; a long
+  drop or a high flight isn't mistaken for that (a long ray finds the ground far below).
 
 - Elden Ring only lets the player create about 256 bullets a session (their emitters are never
   freed), and every blow of Mario's that the game registers, and his footstep noise, is one. Once

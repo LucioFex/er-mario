@@ -33,6 +33,7 @@ mod kbd;
 mod knock;
 mod leash;
 mod lakitu;
+mod light;
 mod mega;
 mod menu_mario;
 mod havok_col;
@@ -47,6 +48,7 @@ mod noise;
 mod moves;
 mod collision_geometry;
 mod throw_collision;
+mod tiles;
 mod tough;
 mod trample;
 mod names;
@@ -452,11 +454,13 @@ struct MarioState {
     filter: u32,
     ticks: u32,
     no_ground: u32,
+    /// no ground anywhere near since then (held on a floor of his own at this height, SM64 units)
+    no_ground_since: Option<(std::time::Instant, f32)>,
+    /// the libsm64 thread he was made on (worker::generation): a new one rebuilds him
+    worker_gen: u32,
     surfaces: Vec<sm64::SM64Surface>,
     havok: havok_col::HavokCollision,
     wall_memory: std::collections::VecDeque<Vec<collision::WorldTri>>,
-    /// where Mario mode was switched on (safe spot to return to)
-    home: [f32; 3],
     /// ER position of SM64's (0, 0, 0); shifted as Mario travels so the floor never ends
     origin: [f32; 3],
     acc: f32,
@@ -752,6 +756,13 @@ static FOLLOW_STARTED: AtomicBool = AtomicBool::new(false);
 /// were then (SM64 units): a safety floor stays there for a moment while the area streams in. It
 /// stays at that height: put at his current position on every reload, it caught him mid-jump.
 static FOLLOW_ENDED: Mutex<Option<(std::time::Instant, [f32; 3])>> = Mutex::new(None);
+
+/// No ground anywhere near this long (s): Mario goes back to the last ground he stood on.
+const NO_GROUND_WAIT: f32 = 15.0;
+/// ...held from this many empty collision queries on (3 ticks apart: a second)
+const NO_GROUND_HOLD: u32 = 10;
+/// how far down a drop's ground is looked for (m): past it, the map isn't there
+const DROP_RAY: f32 = 600.0;
 
 /// A flat floor under a point (SM64 units), 20 m across.
 fn flat_floor(p: [f32; 3]) -> [sm64::SM64Surface; 2] {
@@ -1435,7 +1446,7 @@ fn pose_task_late() {
         }
         w.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f32() > 5.0
     };
-    if WANTED.load(Ordering::Relaxed) && coming && !worker::hung() && no_pose && !too_long {
+    if WANTED.load(Ordering::Relaxed) && coming && no_pose && !too_long {
         if let Some(p) = (unsafe { WorldChrMan::instance_mut() }).ok().and_then(|w| w.main_player.as_mut()) {
             p.chr_ins.opacity_keyframes_multiplier = 0.0;
             p.chr_ins.opacity_keyframes_multiplier_previous = 0.0;
@@ -1536,7 +1547,68 @@ static SAVED_LOADOUT: Mutex<Option<equip::Loadout>> = Mutex::new(None);
 static PENDING_RESTORE: Mutex<Option<(std::time::Instant, equip::Loadout)>> = Mutex::new(None);
 /// When the last Mario creation failed (no floor yet): retry after a moment.
 static CREATE_RETRY: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-static RETURN_HOME: AtomicBool = AtomicBool::new(false);
+/// A frame panicked while Mario's part ran (MARIO_PHASE): the next frame rebuilds him.
+static REBUILD: AtomicBool = AtomicBool::new(false);
+/// frame() is in Mario's part (from taking the MARIO lock on)
+static MARIO_PHASE: AtomicBool = AtomicBool::new(false);
+/// when frame() last panicked (the last 2 s)
+static PANICS: Mutex<std::collections::VecDeque<std::time::Instant>> = Mutex::new(std::collections::VecDeque::new());
+/// More panics than this in 2 s: Mario is built again only once a second (forever, until they stop).
+const PANIC_BURST: usize = 10;
+/// Mario's health when he was rebuilt (the new one starts with it).
+static REBUILT_HEALTH: Mutex<Option<i16>> = Mutex::new(None);
+
+/// Clears MARIO_PHASE when frame() leaves Mario's part normally (a panic leaves it set).
+struct MarioPhase;
+
+impl Drop for MarioPhase {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            MARIO_PHASE.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The frame task panicked (the panic hook logged where).
+fn frame_panicked() {
+    static IN_BURST: AtomicBool = AtomicBool::new(false);
+    static TOTAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let in_mario = MARIO_PHASE.swap(false, Ordering::Relaxed);
+    let total = TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    let now = std::time::Instant::now();
+    let (n, quiet) = {
+        let mut p = PANICS.lock().unwrap_or_else(|e| e.into_inner());
+        // (2 s since the last one: whatever it was is over)
+        let quiet = p.back().is_none_or(|t| now.duration_since(*t).as_secs_f32() > 2.0);
+        p.push_back(now);
+        while p.front().is_some_and(|t| now.duration_since(*t).as_secs_f32() > 2.0) {
+            p.pop_front();
+        }
+        (p.len(), quiet)
+    };
+    if quiet {
+        IN_BURST.store(false, Ordering::Relaxed);
+    }
+    let burst = n > PANIC_BURST || IN_BURST.load(Ordering::Relaxed);
+    let tell = !burst || !IN_BURST.swap(true, Ordering::Relaxed) || total % 100 == 0;
+    if !in_mario {
+        if tell {
+            log(format!("frame: panic outside Mario's part ({n} in the last 2 s, {total} in all), that frame dropped"));
+        }
+        return;
+    }
+    REBUILD.store(true, Ordering::Relaxed);
+    if burst {
+        // (a second between rebuilds until it stops)
+        *CREATE_RETRY.lock().unwrap_or_else(|e| e.into_inner()) = Some(now);
+    }
+    if tell {
+        log(format!(
+            "frame: panic ({n} in the last 2 s, {total} in all), Mario rebuilt {}",
+            if burst { "once a second until it stops" } else { "next frame" }
+        ));
+    }
+}
 static FOLLOWING: AtomicBool = AtomicBool::new(false);
 /// Mario is on Torrent (or getting on): the game rides, like it walks him through a door, and
 /// the buttons a rider needs reach it.
@@ -1565,7 +1637,9 @@ fn input_task() {
         return;
     }
     // (a captured enemy's attack goes in now: after its AI, before its behaviour)
+    let _perf20 = perf::span(perf::INPUT_BOSSRIDE);
     bossride::pre_behavior();
+    drop(_perf20);
     let Some(player) = (unsafe { WorldChrMan::instance_mut() }).ok().and_then(|w| w.main_player.as_mut()) else { return };
     let pad = PAD.lock().unwrap_or_else(|e| e.into_inner()).filter(|(_, t)| t.elapsed().as_secs_f32() < 0.25).map(|(p, _)| p);
     // getting on or off Torrent, or whistling for him (the whistle's animations)
@@ -1583,7 +1657,9 @@ fn input_task() {
     // Mario's position and swung Lakitu's camera around). Other screens (inventory...) keep the stick.
     {
         static WALK_JOB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let _perf21 = perf::span(perf::INPUT_MENU);
         let job = game_menu_job();
+        drop(_perf21);
         let walks = job != 0 && (WALK_JOB.load(Ordering::Relaxed) == job || req.movement_request_duration > 0.0);
         if walks {
             WALK_JOB.store(job, Ordering::Relaxed);
@@ -1642,7 +1718,9 @@ fn input_task() {
     }
     // the game's own "a menu is up" (pause menu, prompts): the most reliable signal, both ways
     static GAME_MENU: AtomicBool = AtomicBool::new(false);
+    let _perf22 = perf::span(perf::INPUT_MENU);
     let game_menu = game_menu_open();
+    drop(_perf22);
     if game_menu {
         opener = true;
     } else if GAME_MENU.load(Ordering::Relaxed) && menu {
@@ -2004,6 +2082,13 @@ fn frame(data: &FD4TaskData) {
             }
             havok_col::MOST_DECODED.store(0, std::sync::atomic::Ordering::Relaxed);
             havok_col::MOST_LOOKED_AT.store(0, std::sync::atomic::Ordering::Relaxed);
+            // (and every 30 s, slow or not: where the mod's time goes)
+            static TOP: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+            let mut top = TOP.lock().unwrap_or_else(|e| e.into_inner());
+            if top.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f32() >= 30.0 {
+                *top = Some(std::time::Instant::now());
+                log(format!("perf: most time in the last 30 s: {}", perf::top()));
+            }
         }
         if p.time >= 2.0 && !debug() {
             *p = Perf::new();
@@ -2152,14 +2237,13 @@ fn frame(data: &FD4TaskData) {
         if grounded && player.chr_ins.modules.data.hp > 0 {
             show_banner();
         }
-        // at launch, and again whenever it went off by itself (the no-ground safety after a fall
+        // at launch, and again whenever it went off by itself (the built files missing at first)
         // into the void, for one) while the player still wants Mario: on as soon as there's ground
         let back = AUTO_STARTED.load(Ordering::Relaxed)
             && WANTED.load(Ordering::Relaxed)
             && !ENABLED.load(Ordering::Relaxed)
             && assets::ready()
-            && SM64_READY.load(Ordering::Relaxed)
-            && !worker::hung();
+            && SM64_READY.load(Ordering::Relaxed);
         // (debug, `mario = off` in er_mario.ini: the mod loaded but idle, to compare frame pacing)
         static IDLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let idle = *IDLE.get_or_init(|| debug() && paths::config("mario").is_some_and(|v| v.eq_ignore_ascii_case("off")));
@@ -2223,6 +2307,11 @@ fn frame(data: &FD4TaskData) {
     } else if FALL_OVERRIDDEN.swap(false, Ordering::Relaxed) {
         player.chr_ins.modules.fall.disable_fall_motion = false;
     }
+    // Mario's light in the dark kinds of map (light.rs)
+    {
+        let _span = perf::span(perf::LIGHT);
+        light::tick(&mut player.chr_ins, ENABLED.load(Ordering::Relaxed));
+    }
     let physics = &mut player.chr_ins.modules.physics;
     if dump_truth {
         // ground truth for decoder testing: real surface heights on a grid around the player
@@ -2244,15 +2333,22 @@ fn frame(data: &FD4TaskData) {
     }
 
     let mut guard = MARIO.lock().unwrap_or_else(|e| e.into_inner());
-    if worker::hung() {
-        ENABLED.store(false, Ordering::Relaxed);
-    }
-    if !ENABLED.load(Ordering::Relaxed) {
+    MARIO_PHASE.store(true, Ordering::Relaxed);
+    let _phase = MarioPhase;
+    // rebuilt: after a panic in his part, or on a new libsm64 thread (worker.rs); the loadout and
+    // the look stay, the next frame creates him where the Tarnished is
+    let rebuild = ENABLED.load(Ordering::Relaxed)
+        && (REBUILD.swap(false, Ordering::Relaxed) || guard.as_ref().is_some_and(|m| m.worker_gen != worker::generation()))
+        && guard.is_some();
+    if !ENABLED.load(Ordering::Relaxed) || rebuild {
+        if rebuild {
+            log("mario: rebuilt (a panic in his frame, or a new libsm64 thread)");
+        }
         if gameover::ACTIVE.swap(false, Ordering::Relaxed) {
             gameover::reset();
         }
         hud::set_kit(None);
-        {
+        if !rebuild {
             let mut pending = PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
             // every 0.25 s: empty the armour (model reload), then put the old loadout back
             if let Some((t, saved)) = pending.as_mut() {
@@ -2267,14 +2363,16 @@ fn frame(data: &FD4TaskData) {
         }
         if let Some(mut m) = guard.take() {
             // (down for the partner: switching Mario off doesn't escape the death)
-            if revive::downed() {
+            if revive::downed() && !rebuild {
                 revive::clear();
                 set_player_hp(0);
             }
             m.moving.clear(&mut m.havok);
-            if let Some(saved) = SAVED_LOADOUT.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                equip::leave(&saved);
-                *PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), saved));
+            if !rebuild {
+                if let Some(saved) = SAVED_LOADOUT.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    equip::leave(&saved);
+                    *PENDING_RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), saved));
+                }
             }
             let id = m.id;
             rock::clear(id);
@@ -2290,13 +2388,13 @@ fn frame(data: &FD4TaskData) {
             mega::clear();
             set_scale(BASE_SCALE);
             combat::restore_faded();
-            physics.gravity_disabled = false;
-            set_opacity(1.0);
             *engine_mario::POSE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            // back to normal where Mario is (the no-ground safety net still returns home)
-            if RETURN_HOME.swap(false, Ordering::Relaxed) {
-                physics.position = HavokPosition(m.home[0], m.home[1], m.home[2], 0.0);
-                physics.chr_proxy_pos_update_requested = true;
+            physics.gravity_disabled = false;
+            if rebuild {
+                // (the new one starts with his health)
+                *REBUILT_HEALTH.lock().unwrap_or_else(|e| e.into_inner()) = Some(m.state.health);
+            } else {
+                set_opacity(1.0);
             }
         }
         return;
@@ -2387,6 +2485,9 @@ fn frame(data: &FD4TaskData) {
         })
         .unwrap_or(-1);
         log(format!("mario created id={id} at {:?}", (p.0, p.1, p.2)));
+        if let Some(health) = REBUILT_HEALTH.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|_| id >= 0) {
+            worker::call("rebuilt health", move |_| unsafe { sm64::sm64_set_mario_health(id, health.max(0x100) as u16) });
+        }
         // which collision is under his feet (a layer SM64 doesn't get would drop him through)
         for line in havok.probe(glam::Vec3::new(p.0, p.1, p.2)) {
             if line.contains("surface") {
@@ -2426,10 +2527,11 @@ fn frame(data: &FD4TaskData) {
             filter,
             ticks: 0,
             no_ground: 0,
+            no_ground_since: None,
+            worker_gen: worker::generation(),
             surfaces,
             havok,
             wall_memory: Default::default(),
-            home: feet,
             origin: feet,
             acc: 0.0,
             state: Default::default(),
@@ -2583,6 +2685,7 @@ fn frame(data: &FD4TaskData) {
             // (the way Elden Ring's own camera turns, its "reverse camera X axis" option as set in
             // its menu: off, pushing right looks right; on, the other way, as SM64's did)
             let orbit = if camera_x_reversed() { orbit } else { -orbit };
+            let _perf1 = perf::span(perf::CAMERA_UPDATE);
             lakitu::update(data.delta_time.time, glam::Vec3::new(p.0, p.1, p.2) + lifted, airborne, c, orbit, look, body_fwd, idle, exit, |from, to| {
                 let h = havok?;
                 let d = to - from;
@@ -2590,6 +2693,7 @@ fn frame(data: &FD4TaskData) {
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             });
+            drop(_perf1);
             let sounds = lakitu::take_sounds();
             if !sounds.is_empty() {
                 worker::call("camera sound", move |_| {
@@ -2648,7 +2752,9 @@ fn frame(data: &FD4TaskData) {
                 .collect();
         }
         cached.0 = (cached.0 + 1) % 8;
+        let _perf2 = perf::span(perf::STANCES);
         swing::watch_stances(&bosses, &cached.1);
+        drop(_perf2);
     }
     squish::tick();
     {
@@ -2679,7 +2785,9 @@ fn frame(data: &FD4TaskData) {
             let fa = m.state.face_angle;
             glam::Vec3::new(me.0, me.1, me.2) + glam::Vec3::new(-fa.sin(), 0.0, fa.cos()) * 0.45 + glam::Vec3::Y * 0.75
         });
+        let _perf3 = perf::span(perf::CARRY);
         carry::update(hands, m.state.face_angle, m.state.action);
+        drop(_perf3);
         // enemies up in the air with Mario (the air combos), or falling back down
         {
             let me = to_er(m.origin, m.state.position);
@@ -2703,8 +2811,11 @@ fn frame(data: &FD4TaskData) {
             combat::impact(&mut m.combat, mob, *pct, m.ticks);
         }
         // an enemy stopped in time (stopwatch.rs): its clock, and time running again
+        let _perf4 = perf::span(perf::STOPWATCH);
         stopwatch::update();
+        drop(_perf4);
         // enemies sent flying by the hook's moves (the home run, the tether)
+        let _perf5 = perf::span(perf::BAT);
         bat::update(data.delta_time.time, m.origin, &player_ref.chr_ins, &mut m.combat, m.ticks, |from, to| {
             let h = havok?;
             let d = to - from;
@@ -2712,6 +2823,7 @@ fn frame(data: &FD4TaskData) {
                 .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                 .map(|h| glam::Vec3::new(h.0, h.1, h.2))
         });
+        drop(_perf5);
     }
     let st = stats::get();
     hud::set_counters(st.deaths, st.coins, st.stars);
@@ -2927,7 +3039,6 @@ fn frame(data: &FD4TaskData) {
             m.moving.rewatch(&m.havok);
             for i in 0..3 {
                 m.origin[i] += d[i];
-                m.home[i] += d[i];
             }
             for scan in m.wall_memory.iter_mut() {
                 for w in scan.iter_mut() {
@@ -3083,6 +3194,8 @@ fn frame(data: &FD4TaskData) {
             let riding = RIDING.load(Ordering::Relaxed);
             if riding {
                 m.last_query = None;
+                m.no_ground = 0;
+                m.no_ground_since = None;
             }
             if riding || (!stale && m.last_query_havok) {
                 continue_tick = true;
@@ -3121,9 +3234,50 @@ fn frame(data: &FD4TaskData) {
             if continue_tick {
                 // nothing to do: keep the loaded surfaces
             } else if surfaces.is_empty() && !from_havok {
-                m.no_ground += 1;
+                // nothing near him: a long drop (off a cliff, a flight high up: the ground is there,
+                // only far below) or the map not there at all yet (streaming in after the world
+                // origin moved)
+                let feet = m.state.position;
+                let er = to_er(m.origin, feet);
+                let below = unsafe { eldenring::cs::CSHavokMan::instance() }.ok().and_then(|h| {
+                    h.phys_world.cast_ray(RAY_FILTER, &HavokPosition(er.0, er.1 + 1.0, er.2, 0.0), eldenring::position::PositionDelta(0.0, -DROP_RAY, 0.0), player_ref)
+                });
+                if let Some(g) = below {
+                    // a drop: a catch floor where the ground is (the real one is read once he's
+                    // near it)
+                    m.no_ground = 0;
+                    if let Some((t, _)) = m.no_ground_since.take() {
+                        log(format!("no ground: the ground is back after {:.1} s (far below)", t.elapsed().as_secs_f32()));
+                    }
+                    let y = collision::er_to_sm(m.origin, &HavokPosition(er.0, g.1, er.2, 0.0))[1];
+                    let floor: Vec<_> = flat_floor([feet[0], y, feet[2]]).into_iter().collect();
+                    load_surfaces(&floor);
+                    m.surfaces = floor;
+                } else {
+                    m.no_ground += 1;
+                }
+                // the map isn't there: Mario held where he is, on a floor of his own at the height
+                // he had, until it comes (never switched off: that sent the player back to where
+                // Mario mode started, possibly far away)
+                if m.no_ground >= NO_GROUND_HOLD {
+                    let held_y = m
+                        .no_ground_since
+                        .get_or_insert_with(|| {
+                            log(format!("no ground: holding Mario at {:?} until the map is there", to_er(m.origin, feet)));
+                            let id = m.id;
+                            worker::call("hold", move |_| unsafe { sm64::sm64_set_mario_velocity(id, 0.0, 0.0, 0.0) });
+                            (std::time::Instant::now(), feet[1])
+                        })
+                        .1;
+                    let floor: Vec<_> = flat_floor([feet[0], held_y, feet[2]]).into_iter().collect();
+                    load_surfaces(&floor);
+                    m.surfaces = floor;
+                }
             } else {
                 m.no_ground = 0;
+                if let Some((t, _)) = m.no_ground_since.take() {
+                    log(format!("no ground: the ground is back after {:.1} s", t.elapsed().as_secs_f32()));
+                }
                 // the query only reaches 3 m down around Mario (40 m in a column right under him):
                 // past a high ledge SM64 would find no floor at all and treat the drop as out of
                 // bounds (an invisible wall). A catch floor 45 m down, rebuilt with every query,
@@ -3177,7 +3331,9 @@ fn frame(data: &FD4TaskData) {
         // the enemies worn down enough to ride: a mark over their heads
         {
             let feet = to_er(m.origin, m.state.position);
+            let _perf6 = perf::span(perf::BOSSRIDE);
             bossride::watch(glam::Vec3::new(feet.0, feet.1, feet.2), m.origin);
+            drop(_perf6);
         }
         // SM64's health is Mario's: Elden Ring hits cost wedges, and the Tarnished's HP is kept full
         // (a hit bigger than his whole HP would still kill him outright, a low-level character
@@ -3197,7 +3353,9 @@ fn frame(data: &FD4TaskData) {
             let p = player_ref.chr_ins.modules.physics.position;
             let calm = !m.dead && !mega::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             let data = &player_ref.chr_ins.modules.data;
+            let _perf7 = perf::span(perf::STATUS);
             status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm, data.hp < data.max_hp);
+            drop(_perf7);
         }
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
@@ -3304,7 +3462,8 @@ fn frame(data: &FD4TaskData) {
                 }
             }
             let me = to_er(m.origin, m.state.position);
-            coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0);
+            // (held up on his own floor with no map under him isn't standing anywhere)
+            coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0 && m.no_ground_since.is_none());
             let n = coins::collect(glam::Vec3::new(me.0, me.1, me.2));
             if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2)) {
                 log(format!("coins: {amount} coins recovered"));
@@ -3469,6 +3628,7 @@ fn frame(data: &FD4TaskData) {
             let input = colossus::Input { a: inputs.button_a != 0, b: b_dash, x: x_move, rt: b_hook, lt: inputs.button_z != 0, steer };
             let allowed = !m.dead && !big && !rock::active() && !bossride::active() && !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding();
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+            let _perf8 = perf::span(perf::COLOSSUS);
             let out = colossus::update(&input, &me, allowed, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
                 let d = to - from;
                 havok?
@@ -3476,6 +3636,7 @@ fn frame(data: &FD4TaskData) {
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             });
+            drop(_perf8);
             if out.consumed {
                 inputs.button_a = 0;
                 inputs.button_b = 0;
@@ -3539,6 +3700,7 @@ fn frame(data: &FD4TaskData) {
             let yaw = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
             let steer = if mag > 0.2 { glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * mag } else { glam::Vec3::ZERO };
             let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+            let _perf9 = perf::span(perf::BOSSRIDE);
             bossride::update(1.0 / 30.0, steer, b_hook, ride_jump, ride_keys, m.state.action, m.id, m.origin, &mut m.combat, &player_ref.chr_ins, m.ticks, |from, to| {
                 let d = to - from;
                 havok?
@@ -3546,6 +3708,7 @@ fn frame(data: &FD4TaskData) {
                     .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
                     .map(|h| glam::Vec3::new(h.0, h.1, h.2))
             });
+            drop(_perf9);
         }
         // the freeflow's enemy: the one the stick points at (within 35°), 3 to 12 m away, in sight
         let flow = {
@@ -3581,7 +3744,9 @@ fn frame(data: &FD4TaskData) {
                 })
                 .flatten()
         };
+        let _perf10 = perf::span(perf::MOVES);
         let moved = m.moves.tick(b_dash, y_move, x_move, a_pressed, fire_allowed, interacting, &m.state, m.combo.action_timer, m.combo.locked != 0, lean, flow, m.ticks);
+        drop(_perf10);
         let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
@@ -3639,7 +3804,9 @@ fn frame(data: &FD4TaskData) {
         });
         {
             let p = player_ref.chr_ins.modules.physics.position;
+            let _perf11 = perf::span(perf::DODGE);
             dodge::tick(m.state.action, glam::Vec3::new(p.0, p.1, p.2), m.ticks);
+            drop(_perf11);
         }
         let no_punch = m.fire.throwing(m.ticks);
         let tt = std::time::Instant::now();
@@ -3990,7 +4157,9 @@ fn frame(data: &FD4TaskData) {
                     if b_fire && m.fire.charging() && rising {
                         m.fire.put_out(&state, m.origin, m.ticks);
                     }
+                    let _perf12 = perf::span(perf::FIREBALL);
                     m.fire.tick(id, b_fire, fire_allowed, &combo, &state, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, ray);
+                    drop(_perf12);
                     // R3: the parry (parry.rs); with L2 held, the grab (carry.rs: a small enemy, or a big one
                     // with its stance broken)
                     {
@@ -4011,13 +4180,18 @@ fn frame(data: &FD4TaskData) {
                                 worker::call("grab buzz", |_| unsafe { sm64::sm64_play_sound_volume(0x700E_0081, 0.35) });
                             }
                         }
+                        let _perf13 = perf::span(perf::WEAPONS);
                         m.parry.tick(id, r3, free && !l2_held, &state, feet, m.origin, m.ticks, &player_ref.chr_ins, &mut m.fire);
+                        drop(_perf13);
                     }
                     // the boomerangs: thrown when a throw lets go, from his right hand
                     let feet = to_er(m.origin, state.position);
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
                     let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
+                    light::hand(parts.as_ref().map(|p| feet + p[6].pos));
+                    let _perf14 = perf::span(perf::WEAPONS);
                     m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    drop(_perf14);
                     if let Some(p) = parts.as_mut() {
                         // (none in his hand while he swims or is in a cutscene)
                         let busy = matches!(state.action & 0x1C0, 0x0C0 | 0x100);
@@ -4027,13 +4201,17 @@ fn frame(data: &FD4TaskData) {
                     // (the spring's super jump only out of a jump or a fall, as the Bros. Jump)
                     const JUMPS: [u32; 8] = [0x0300_0880, 0x0300_0881, 0x0100_0882, 0x0100_0883, 0x0100_0887, 0x0300_0888, 0x0300_0886, 0x0100_088C];
                     let can_bounce = JUMPS.contains(&state.action) && !mega::active() && !RIDING.load(Ordering::Relaxed) && !carry::holding() && !swing::holding() && !m.dead;
+                    let _perf15 = perf::span(perf::WEAPONS);
                     m.traps.tick(&combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, can_bounce, &ray);
+                    drop(_perf15);
                     if let Some(p) = parts.as_mut() {
                         m.traps.pose(p, feet);
                         rock::pose(p, feet, state.face_angle);
                     }
                     // the hook: out of the same hand
+                    let _perf16 = perf::span(perf::WEAPONS);
                     m.hook.tick(id, b_hook, l2_held, x_move, fire_allowed && !swing::holding() && !bossride::active(), &combo, &state, feet, hand, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
+                    drop(_perf16);
                 }
                 let boss = unsafe { eldenring::cs::CSFeManImp::instance() }
                     .is_ok_and(|fe| fe.boss_health_displays.iter().any(|e| !e.field_ins_handle.is_empty()));
@@ -4160,6 +4338,10 @@ fn frame(data: &FD4TaskData) {
     if mx.abs() > limit || mz.abs() > limit || my.abs() > limit {
         let here = collision::sm_to_er(m.origin, m.state.position);
         log(format!("re-centring SM64 world at {:?} (mario was at {:?})", (here.0, here.1, here.2), m.state.position));
+        // (a hold's floor height moves with the frame)
+        if let Some((_, y)) = m.no_ground_since.as_mut() {
+            *y -= my;
+        }
         // moving objects live in SM64 coordinates: rebuild them in the new frame (moving them there
         // would drag Mario along ~40 m, since SM64 carries whoever stands on a platform)
         m.moving.clear(&mut m.havok);
@@ -4179,12 +4361,18 @@ fn frame(data: &FD4TaskData) {
             m.surfaces = surfaces;
         }
     }
-    // safety net: no ground anywhere near for ~3 s -> back to where Mario mode started
-    if m.no_ground > 30 {
-        log("no ground for 3 s: Mario off, player returned to where Mario mode started");
-        RETURN_HOME.store(true, Ordering::Relaxed);
-        ENABLED.store(false, Ordering::Relaxed);
-        return;
+    // still no ground after 15 s: back on the last ground he stood on (if the game knows where
+    // that is now; else he stays held)
+    if m.no_ground_since.is_some_and(|(t, _)| t.elapsed().as_secs_f32() > NO_GROUND_WAIT) {
+        m.no_ground_since = None;
+        m.no_ground = 0;
+        match coins::last_ground() {
+            Some(g) => {
+                log(format!("no ground for {NO_GROUND_WAIT:.0} s: Mario put back on the last ground at {:?}", (g.x, g.y, g.z)));
+                warp_to(m, g + glam::Vec3::Y * leash::WARP_UP, player_ref);
+            }
+            None => log(format!("no ground for {NO_GROUND_WAIT:.0} s and no last ground known here: Mario stays held")),
+        }
     }
 
     // debug Mario (F11): hide the Tarnished and draw Mario with the debug renderer instead
@@ -4206,7 +4394,9 @@ fn frame(data: &FD4TaskData) {
     let vanish = caps::VANISH_OPACITY * (1.0 + 0.3 * (SHIMMER.get_or_init(std::time::Instant::now).elapsed().as_secs_f32() * 6.0).sin());
     // an enemy's grab (grab.rs): the game holds him, Mario follows; swallowed, he's hidden
     autopad::report(&player_ref.chr_ins);
+    let _perf17 = perf::span(perf::GRAB);
     let grabbed = grab::update(&player_ref.chr_ins);
+    drop(_perf17);
     // (held, his pose follows what the grab's animation does to the Tarnished's body)
     engine_mario::ROOT_FOLLOW.store(grabbed && !m.dead && !RIDING.load(Ordering::Relaxed), Ordering::Relaxed);
     set_opacity(if cutscene || grab::swallowed() { 0.0 } else if caps::active() == Some(caps::VANISH) { vanish } else { 1.0 });
@@ -4240,8 +4430,12 @@ fn frame(data: &FD4TaskData) {
             }
         }
         torrent_cant_die();
+        let _perf18 = perf::span(perf::YOSHI);
         yoshi::tick();
+        drop(_perf18);
+        let _perf19 = perf::span(perf::YOSHI);
         trample::update(&mut m.combat, m.ticks, data.delta_time.time, yoshi::charge());
+        drop(_perf19);
         // Yoshi's own moves while Mario rides him (ride.rs): X tongue, Y / RB eggs, L2 stomp, LB burst
         {
             let saddle = player_ref.chr_ins.modules.ride.is_mounted
@@ -4947,12 +5141,10 @@ pub unsafe extern "C" fn DllMain(hmodule: usize, reason: u32) -> bool {
         std::thread::spawn(startup);
         cs_task.run_recurring(
             |d: &FD4TaskData| {
-                // a bug in the mod must never take the game down: log it and switch Mario off
+                // a bug in the mod must never take the game down, nor switch Mario off: the frame is
+                // dropped, and if it broke inside Mario's part he is rebuilt on the next one
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| frame(d))).is_err() {
-                    ENABLED.store(false, Ordering::Relaxed);
-                    if let Ok(mut g) = MARIO.try_lock() {
-                        g.take();
-                    }
+                    frame_panicked();
                 }
             },
             CSTaskGroupIndex::ChrIns_PostPhysics,

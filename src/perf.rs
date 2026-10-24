@@ -28,7 +28,27 @@ pub const TRIANGLES: usize = 16;
 pub const FLOOR_PATCHES: usize = 17;
 // inside reading Havok: the triangles of the bodies near Mario
 pub const HAVOK_PICK: usize = 18;
-const NAMES: [&str; 19] = [
+// more of the frame task's parts (v4: where its 300-600 ms every 2 s go)
+pub const LIGHT: usize = 19;
+pub const CAMERA_UPDATE: usize = 20;
+pub const STANCES: usize = 21;
+pub const CARRY: usize = 22;
+pub const STOPWATCH: usize = 23;
+pub const BAT: usize = 24;
+pub const BOSSRIDE: usize = 25;
+pub const STATUS: usize = 26;
+pub const COLOSSUS: usize = 27;
+pub const MOVES: usize = 28;
+pub const DODGE: usize = 29;
+pub const FIREBALL: usize = 30;
+pub const WEAPONS: usize = 31;
+pub const GRAB: usize = 32;
+pub const YOSHI: usize = 33;
+// inside the input task
+pub const INPUT_BOSSRIDE: usize = 34;
+pub const INPUT_MENU: usize = 35;
+const N: usize = 36;
+const NAMES: [&str; N] = [
     "frame task",
     "HUD task",
     "input task",
@@ -48,11 +68,28 @@ const NAMES: [&str; 19] = [
     "turning triangles",
     "floor patches",
     "picking triangles",
+    "light",
+    "camera update",
+    "stance watch",
+    "carrying",
+    "stopwatch",
+    "flights (bat)",
+    "boss ride",
+    "statuses",
+    "colossus",
+    "moves",
+    "dodge",
+    "fireball",
+    "weapons (parry, boomerang, kit, hook)",
+    "grabs",
+    "Yoshi and trample",
+    "input: boss ride",
+    "input: menus",
 ];
 
 /// per part: slowest run and all runs together since the last report (ns)
-static WORST: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
-static TOTAL: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
+static WORST: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+static TOTAL: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 /// A run this long is worth a line (ms): a quarter of a frame at 60 fps.
 const SLOW_MS: f32 = 4.0;
 /// So are many short runs that add up to this over the 2 s (ms): 5% of the time.
@@ -74,7 +111,7 @@ impl Drop for Span {
 }
 
 /// What each part took since the frame task last started (ns).
-static NOW: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
+static NOW: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 /// The parts that run by themselves, not inside another one: together they're all the mod does
 /// on the game's threads in a frame.
 const OWN: [usize; 8] = [FRAME, HUD, INPUT, POSE, POSE_LATE, MENU_MODEL, OVERLAY, LAKITU];
@@ -134,12 +171,38 @@ pub fn breakdown() -> String {
     parts.iter().map(|(all, worst, name)| format!("{name} {all:.0} ms (worst {worst:.1})")).collect::<Vec<_>>().join(", ")
 }
 
-/// The slow parts since the last call, if any: "HUD task 12.3 ms (41 ms in all), ...".
+/// All the time each part took since the last `top` (ns): the long view, for `top`.
+static LONG: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+
+/// The slow parts since the last call, if any: "HUD task 12.3 ms (41 ms in all), ...; most time:
+/// frame task 412 ms, moves 80 ms, ..." (the five parts that took the most in all).
 pub fn report() -> Option<String> {
-    let mut slow: Vec<(f32, f32, &str)> = (0..NAMES.len())
-        .map(|i| (WORST[i].swap(0, Ordering::Relaxed) as f32 / 1e6, TOTAL[i].swap(0, Ordering::Relaxed) as f32 / 1e6, NAMES[i]))
-        .filter(|p| p.0 >= SLOW_MS || p.1 >= BUSY_MS)
+    let parts: Vec<(f32, f32, &str)> = (0..N)
+        .map(|i| {
+            let all = TOTAL[i].swap(0, Ordering::Relaxed);
+            LONG[i].fetch_add(all, Ordering::Relaxed);
+            (WORST[i].swap(0, Ordering::Relaxed) as f32 / 1e6, all as f32 / 1e6, NAMES[i])
+        })
         .collect();
+    let mut slow: Vec<&(f32, f32, &str)> = parts.iter().filter(|p| p.0 >= SLOW_MS || p.1 >= BUSY_MS).collect();
     slow.sort_by(|a, b| b.0.total_cmp(&a.0));
-    (!slow.is_empty()).then(|| slow.iter().map(|(worst, all, name)| format!("{name} {worst:.1} ms ({all:.0} ms in all)")).collect::<Vec<_>>().join(", "))
+    if slow.is_empty() {
+        return None;
+    }
+    let mut most: Vec<&(f32, f32, &str)> = parts.iter().filter(|p| p.1 >= 1.0).collect();
+    most.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let most: Vec<String> = most.iter().take(5).map(|(_, all, name)| format!("{name} {all:.0} ms")).collect();
+    Some(format!(
+        "{}; most time: {}",
+        slow.iter().map(|(worst, all, name)| format!("{name} {worst:.1} ms ({all:.0} ms in all)")).collect::<Vec<_>>().join(", "),
+        most.join(", ")
+    ))
+}
+
+/// The five parts that took the most since the last call (after `report`s), "frame task 3100 ms,
+/// moves 640 ms, ...": logged every 30 s, slow or not.
+pub fn top() -> String {
+    let mut all: Vec<(f32, &str)> = (0..N).map(|i| (LONG[i].swap(0, Ordering::Relaxed) as f32 / 1e6, NAMES[i])).filter(|p| p.0 >= 1.0).collect();
+    all.sort_by(|a, b| b.0.total_cmp(&a.0));
+    all.iter().take(5).map(|(ms, name)| format!("{name} {ms:.0} ms")).collect::<Vec<_>>().join(", ")
 }
