@@ -387,10 +387,32 @@ pub struct Moves {
     offset: crate::combo::Offset,
     /// the scripted move playing (script.rs): lib.rs works out its frames
     pub script: crate::script::Player,
-    /// X or B pressed while the scripted move couldn't be cut yet: taken when it can (no press lost
-    /// to the last ticks of a move)
+    /// X, Y or B pressed while the scripted move couldn't be cut yet: taken when it can (no press
+    /// lost to the last ticks of a move)
     script_buffer: Option<(u8, u32)>,
+    /// a move asked for from elsewhere (the sword's cast, fireball.rs), and when
+    queued: Option<(Request, u32)>,
+    /// the Star Sword (swordplay.rs): its move playing last tick, the last one that ended and when
+    /// (the pause strings' beat counts from there), its pogo bounces left in this jump, L2 held
+    sword_was: Option<u16>,
+    sword_ended: Option<(u16, u32)>,
+    pogos: u8,
+    z_held: bool,
+    /// a sword move asked for with no data for it (said once in the log)
+    sword_missing: bool,
+    /// Aerial Raves begun in this jump (each holds him up a while)
+    raves: u8,
+    /// the scripted move playing as moves were last read (by its start's count), and since when
+    play_was: Option<u32>,
+    play_since: u32,
 }
+
+/// the sword's pogo bounces a jump (Link's down-thrust)
+const POGOS: u8 = 3;
+/// Aerial Raves a jump: one, a few with an enemy up there with him (they hold him up: no flying
+/// about the field on X alone)
+const RAVES: u8 = 1;
+const RAVES_JUGGLE: u8 = 3;
 
 /// The dash's invulnerability: enemy blows go through him (lib.rs).
 pub fn dodging(action: u32) -> bool {
@@ -451,7 +473,21 @@ impl Moves {
             offset: Default::default(),
             script: Default::default(),
             script_buffer: None,
+            queued: None,
+            sword_was: None,
+            sword_ended: None,
+            pogos: POGOS,
+            z_held: false,
+            sword_missing: false,
+            raves: 0,
+            play_was: None,
+            play_since: 0,
         }
+    }
+
+    /// A move asked for from elsewhere (the sword's cast): it goes in on the next tick.
+    pub fn queue(&mut self, r: Request, tick: u32) {
+        self.queued = Some((r, tick));
     }
 
     /// A swap strike is coming (the switch came in the middle of a fight).
@@ -556,7 +592,8 @@ impl Moves {
 
     /// Game thread, every SM64 tick: B, Y and X held now, A just pressed, whether Mario may use them (not holding
     /// an enemy, not on Yoshi, no menu), whether the game is busy with an interaction (a door, a
-    /// grace, a menu: no Y move then), his last state. The move to start, if any.
+    /// grace, a menu: no Y move then), his last state, whether the Star Sword is in his hand, L2
+    /// held (without the hook or R3 with it). The move to start, if any.
     #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
@@ -573,6 +610,8 @@ impl Moves {
         lean: f32,
         stick: (f32, f32),
         flow: Option<[f32; 3]>,
+        sword_in_hand: bool,
+        z: bool,
         tick: u32,
     ) -> Option<Request> {
         let a = state.action;
@@ -580,6 +619,35 @@ impl Moves {
             use crate::combo::{A, B, X, Y};
             let buttons = if x { X } else { 0 } | if y { Y } else { 0 } | if b { B } else { 0 } | if a_held || a_pressed { A } else { 0 };
             self.grammar.push(tick, stick.0, stick.1, buttons);
+        }
+        let z_pressed = !std::mem::replace(&mut self.z_held, z) && z;
+        // the sword's move that was playing ended: the pause strings' beat counts from there
+        let sword_now = self.script.active().filter(|&id| crate::script::is_sword(id) && crate::script::is_script(a));
+        if let Some(was) = self.sword_was.filter(|&w| Some(w) != sword_now) {
+            self.sword_ended = Some((was, tick));
+        }
+        self.sword_was = sword_now;
+        // (any scripted move playing, the sword's RB ones too: when it began)
+        let playing_now = self.script.active().filter(|_| crate::script::is_script(a));
+        let play_now = playing_now.map(|_| self.script.starts());
+        if play_now != self.play_was {
+            self.play_was = play_now;
+            self.play_since = tick;
+        }
+        if a & ACT_FLAG_AIR == 0 {
+            self.pogos = POGOS;
+            self.raves = 0;
+        }
+        let sword = sword_in_hand && !crate::mega::active();
+        // (a move asked for from elsewhere: first, a few ticks at most, waiting while moves aren't
+        // allowed)
+        if let Some((r, at)) = self.queued.take() {
+            if tick.wrapping_sub(at) <= 3 {
+                if allowed {
+                    return Some(r);
+                }
+                self.queued = Some((r, at));
+            }
         }
         // (the held state is kept on every tick: behind `b &&` it was only on presses, so it stayed
         // "held" for good after the first one)
@@ -632,24 +700,28 @@ impl Moves {
         let script_on = crate::script::is_script(a);
         let cancel = if script_on { self.script.cancel() } else { crate::script::ALL };
         let open = |bit: u8| cancel & bit != 0;
-        // (X or B too soon in a move: kept a moment for when it can be cut)
-        let (x_pressed, b_pressed) = if script_on {
+        // (X, Y or B too soon in a move: kept a moment for when it can be cut; X as pressed too, for
+        // the sword's mashing)
+        let x_raw = x_pressed;
+        let (x_pressed, b_pressed, y_pressed) = if script_on {
             use crate::script::{DASH, NEXT};
             if x_pressed && !open(NEXT) {
                 self.script_buffer = Some((crate::combo::X, tick));
+            } else if y_pressed && !open(NEXT) {
+                self.script_buffer = Some((crate::combo::Y, tick));
             } else if b_pressed && !open(DASH) {
                 self.script_buffer = Some((crate::combo::B, tick));
             }
             let held = self.script_buffer.filter(|(_, at)| tick.wrapping_sub(*at) <= SCRIPT_BUFFER);
             let take = |bit: u8, need: u8| held.is_some_and(|(b, _)| b == bit) && open(need);
-            let (bx, bb) = (take(crate::combo::X, NEXT), take(crate::combo::B, DASH));
-            if bx || bb {
+            let (bx, by, bb) = (take(crate::combo::X, NEXT), take(crate::combo::Y, NEXT), take(crate::combo::B, DASH));
+            if bx || by || bb {
                 self.script_buffer = None;
             }
-            (x_pressed && open(NEXT) || bx, b_pressed && open(DASH) || bb)
+            (x_pressed && open(NEXT) || bx, b_pressed && open(DASH) || bb, y_pressed && open(NEXT) || by)
         } else {
             self.script_buffer = None;
-            (x_pressed, b_pressed)
+            (x_pressed, b_pressed, y_pressed)
         };
         if script_on {
             if a_pressed && open(crate::script::JUMP) && !air && allowed {
@@ -672,7 +744,7 @@ impl Moves {
                 crate::log("moves: dash out of the move");
                 return Some(Request::Action(ACT_ER_DASH, 0));
             }
-            if x_pressed && open(crate::script::NEXT) && allowed && !closer {
+            if x_pressed && open(crate::script::NEXT) && allowed && !closer && !sword {
                 if let Some(r) = self.string_opener(air) {
                     self.x_chain = self.x_chain.max(1) + 1;
                     self.chain_seen = Some(tick);
@@ -681,8 +753,9 @@ impl Moves {
                     return Some(r);
                 }
             }
-            // (a swap in its window: the swap strike below)
-            if !open(crate::script::NEXT) && !(self.swap.is_some() && open(crate::script::SWAP)) {
+            // (a swap in its window: the swap strike below; the sword reads its own moves' windows:
+            // a charge let go, mashing in the thrust)
+            if !open(crate::script::NEXT) && !(self.swap.is_some() && open(crate::script::SWAP)) && !sword {
                 return None;
             }
         }
@@ -781,7 +854,7 @@ impl Moves {
             let jump_begun = in_air && a == ACT_JUMP && tick.wrapping_sub(at_a) <= CHORD;
             // (X first: the swing it began a tick or two ago gives way)
             let just_began = move_timer <= CHORD as i32 + 1 && tick.wrapping_sub(at_x) <= CHORD;
-            if together && (ground || jump_begun) && (!locked || just_began) && !crate::mega::active() {
+            if together && (ground || jump_begun) && (!locked || just_began) && !crate::mega::active() && !sword {
                 self.a_at = None;
                 self.x_at = None;
                 self.x_chain = 0;
@@ -798,10 +871,27 @@ impl Moves {
         }
         // the swap strike: the weapon just taken opens with its own blow, the string going on
         if let Some((w, at)) = self.swap.take().filter(|(_, at)| tick.wrapping_sub(*at) <= 3) {
-            use crate::weapons::{CHOMP, FISTS, HAMMER, RANG};
+            use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
             let rangs = crate::boomerang::ready() > 0;
             let mega = crate::mega::active();
             let air_left = self.air_swaps < if crate::juggle::active() { AIR_SWAPS_JUGGLE } else { AIR_SWAPS };
+            // the Star Sword's: the quick draw (Mortal Draw), an iai slash in front, a spin slash in
+            // the air
+            if w == SWORD && (ground || in_air && air_left) {
+                let id = if ground { crate::script::SW_DRAW } else { crate::script::SW_DRAW_AIR };
+                if let Some(m) = crate::script::MOVES.get(id as usize) {
+                    self.swap_ready = tick + SWAP_COOLDOWN;
+                    self.string_swaps += 1;
+                    if air {
+                        self.air_swaps += 1;
+                    }
+                    self.x_chain = 1;
+                    self.chain_seen = Some(tick);
+                    crate::style::swap();
+                    crate::log(format!("moves: swap strike, {}", m.name));
+                    return Some(Request::Script { id, air: m.air, yaw: None });
+                }
+            }
             let strike = if ground {
                 match w {
                     HAMMER => Some((ACT_ER_HAMMER, 2, "hammer smash")),
@@ -869,6 +959,74 @@ impl Moves {
                 crate::log("moves: air dash");
                 return Some(Request::Action(ACT_ER_AIR_DASH, 0));
             }
+        }
+        // the Star Sword in hand: X, Y and LT in the air are its moves alone (swordplay.rs)
+        if sword {
+            // (not out of er_moves.c's own moves: the hook's home run and pole swing, the Mikiri;
+            // the swing kick off the pole takes an air blow as it does with the other weapons)
+            let c_move = combo(a) && !(a == ACT_ER_SWING_KICK && move_timer >= 8);
+            if !(allowed && (ground || in_air || dodging(a))) || c_move {
+                return None;
+            }
+            use crate::combo::{A, X, Y};
+            // (A then X a tick or two apart: the jump A began is the spin jump's, not an aerial)
+            let jump_begun = a == ACT_JUMP && self.a_at.is_some_and(|t| tick.wrapping_sub(t) <= CHORD);
+            // (the playing move's own presses: the stabs count the mashing since the thrust began)
+            let playing_for = tick.wrapping_sub(self.play_since);
+            let mash_window = if playing_now.is_some() { crate::swordplay::MASH_WINDOW.min(playing_for) } else { crate::swordplay::MASH_WINDOW };
+            let input = crate::swordplay::Input {
+                // (as pressed too: mashing in the thrust while it can't be cut yet)
+                x: x_pressed || x_raw,
+                y: y_pressed,
+                lt: z_pressed,
+                x_held: self.grammar.held(X),
+                y_held: self.grammar.held(Y),
+                x_released: self.grammar.released(X),
+                y_released: self.grammar.released(Y),
+                back_forward: closer,
+                chord_xa: self.grammar.chord(X, A, CHORD) && (x_pressed || a_pressed),
+                dir: Some(self.grammar.dir()),
+                mash: self.grammar.mash(X, mash_window),
+            };
+            let sword_state = crate::swordplay::State {
+                // (only the chord's jump: A then Y or LT is an air move, he's up already)
+                air: air && !(jump_begun && input.chord_xa),
+                // (the sword's RB moves too: X before the bolt is let go would lose the cast)
+                playing: playing_now.map(|id| (id, open(crate::script::NEXT))),
+                playing_for,
+                landed: self.script.has_landed(),
+                ended: self.sword_ended.map(|(id, at)| (id, tick.wrapping_sub(at))),
+                dashed: if dodging(a) { Some(0) } else { self.dash_seen.map(|t| tick.wrapping_sub(t)) },
+                dashing: dodging(a),
+                // (a perfect dodge's counter gives one Flurry Rush)
+                countering: crate::dodge::flurry_ready(),
+                pogos: self.pogos,
+            };
+            let id = crate::swordplay::choose(&input, &sword_state)?;
+            let Some(m) = crate::script::MOVES.get(id as usize) else {
+                if !std::mem::replace(&mut self.sword_missing, true) {
+                    crate::log(format!("moves: the sword's move {id} has no data"));
+                }
+                return None;
+            };
+            if id == crate::script::SW_POGO {
+                self.pogos = self.pogos.saturating_sub(1);
+            }
+            if id == crate::script::SW_FLURRY {
+                crate::dodge::spend_flurry();
+            }
+            if id == crate::script::SW_RAVE {
+                let most = if crate::juggle::active() { RAVES_JUGGLE } else { RAVES };
+                if self.raves >= most {
+                    return None;
+                }
+                self.raves += 1;
+            }
+            self.script_buffer = None;
+            self.attack_seen = Some(tick);
+            self.chain_seen = Some(tick);
+            crate::log(format!("moves: sword, {}", m.name));
+            return Some(Request::Script { id, air: m.air, yaw: None });
         }
         // the directional moves (Devil May Cry's): back + X the launcher, whatever's in hand; forward
         // + Y the leap at an enemy into the weapon's dive (running, the fists keep the slide kick)

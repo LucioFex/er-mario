@@ -21,7 +21,7 @@ const PART_BONES: [&str; HAMMER] = [
 /// SM64's body parts (0..16) plus the eye variants (16..20), the peace sign (20), the hammer (21)
 /// and the gear (assets/gear.rs): three boomerangs, the Chain Chomp, its jaw, its chain's links.
 pub const SM64_PARTS: usize = 16;
-pub const PARTS: usize = 38;
+pub const PARTS: usize = 39;
 /// Mario's hammer (hammer.rs), hidden in his hand unless it's out
 pub const HAMMER: usize = 21;
 /// the boomerangs (boomerang.rs), one part each
@@ -33,15 +33,17 @@ pub const JAW: usize = 26;
 pub const CHAIN: usize = 27;
 pub const CHAIN_LINKS: usize = 4;
 /// the trap kit (assets/kit.rs, in the gauntlets; traps.rs, rock.rs): two bananas, the green and
-/// the red shell, the Bob-omb, the spring, the Rock Mushroom's boulder
+/// the red shell, the Bob-omb, the spring, the Rock Mushroom's boulder; and the Star Sword
+/// (sword.rs), the same way in the gauntlets
 pub const KIT: usize = 31;
-pub const KIT_PARTS: usize = 7;
+pub const KIT_PARTS: usize = 8;
 pub const KIT_BANANA: usize = KIT;
 pub const KIT_GREEN_SHELL: usize = KIT + 2;
 pub const KIT_RED_SHELL: usize = KIT + 3;
 pub const KIT_BOMB: usize = KIT + 4;
 pub const KIT_SPRING: usize = KIT + 5;
 pub const KIT_ROCK: usize = KIT + 6;
+pub const KIT_SWORD: usize = KIT + 7;
 const _: () = assert!(KIT + KIT_PARTS == PARTS);
 /// The bones the gear goes on, part by part from RANG: the chest piece skins them all, and none
 /// is above another bone of Mario's (map_bones checks) or carries much below it (a calf would have

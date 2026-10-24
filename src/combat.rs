@@ -143,11 +143,61 @@ pub enum Attack {
     PoisonTick,
     /// the scripted moves (script.rs): the fists' Bullet Bill punch
     BulletPunch,
+    /// the sword's shock going off (element.rs): the bolt on him, and its jumps to the two nearest
+    /// (0 the first, 1 the next)
+    Shock,
+    ShockArc(u8),
+    /// the sword's RB (bolt.rs): a bolt from the sky by charge (3: each of the three that jump),
+    /// its blast round him, the Zeus javelin by charge, the storm cloud's bolts and its giant one
+    Bolt(u8),
+    BoltBlast,
+    Javelin(u8),
+    Storm,
+    StormEnd,
+    /// the Star Sword's blows (swordplay.rs, script.rs): its string (by step), the whirl and its
+    /// flick, the thunder cleave, the Bullet Bill thrust and its stabs, the rising cut, the spin
+    /// jump, the star wave (JUST: each of three), the spin and the Great Spin (by charge), the
+    /// Hurricane, the cross cut and its burst, the launcher, the Helm Splitter and its ring, the
+    /// lightning iai, the Flurry Rush, the Aerial Rave (by step), the Helm Breaker and its ring, the
+    /// pogo, the quick draw, the sword beam
+    SwordSlash(u8),
+    SwordWhirl,
+    SwordWhirlEnd,
+    SwordCleave,
+    SwordThrust,
+    SwordStab,
+    SwordStabEnd,
+    SwordRise,
+    SwordSpinJump,
+    SwordSpinJumpEnd,
+    SwordWave,
+    SwordWaveJust,
+    SwordSpin,
+    SwordGreatSpin(u8),
+    SwordHurricane,
+    SwordHurricaneEnd,
+    SwordCross,
+    SwordCrossBurst,
+    SwordLauncher,
+    SwordHelm,
+    SwordHelmRing,
+    SwordIai,
+    SwordFlurry,
+    SwordFlurryEnd,
+    SwordRave(u8),
+    SwordBreaker,
+    SwordBreakerRing,
+    SwordPogo,
+    SwordDraw,
+    SwordBeam,
+    /// the sword's MAX (maxfin.rs): Star Cut End, a cut of lightning across everyone near, three
+    /// times
+    MaxStarCut,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 89] = [
+const CODES: [Attack; 142] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -162,7 +212,11 @@ const CODES: [Attack; 89] = [
     Attack::RideBlow, Attack::RideSmash, Attack::HammerWide, Attack::QuakeBig, Attack::Titan, Attack::Pound, Attack::Rise,
     Attack::HammerRise, Attack::Ice(0), Attack::Ice(1), Attack::Ice(2), Attack::Ice(3), Attack::Dark(0), Attack::Dark(1),
     Attack::Dark(2), Attack::Dark(3), Attack::Venom(0), Attack::Venom(1), Attack::Venom(2), Attack::Venom(3), Attack::VenomCloud,
-    Attack::Frostbite, Attack::Hemorrhage, Attack::PoisonTick, Attack::BulletPunch,
+    Attack::Frostbite, Attack::Hemorrhage, Attack::PoisonTick, Attack::BulletPunch, Attack::Shock, Attack::ShockArc(0),
+    Attack::ShockArc(1), Attack::Bolt(0), Attack::Bolt(1), Attack::Bolt(2), Attack::Bolt(3), Attack::BoltBlast, Attack::Javelin(0),
+    Attack::Javelin(1), Attack::Javelin(2), Attack::Javelin(3), Attack::Storm, Attack::StormEnd,
+    Attack::SwordSlash(0), Attack::SwordSlash(1), Attack::SwordSlash(2), Attack::SwordSlash(3), Attack::SwordWhirl, Attack::SwordWhirlEnd, Attack::SwordCleave, Attack::SwordThrust, Attack::SwordStab, Attack::SwordStabEnd, Attack::SwordRise, Attack::SwordSpinJump, Attack::SwordSpinJumpEnd, Attack::SwordWave, Attack::SwordWaveJust, Attack::SwordSpin, Attack::SwordGreatSpin(0), Attack::SwordGreatSpin(1), Attack::SwordGreatSpin(2), Attack::SwordHurricane, Attack::SwordHurricaneEnd, Attack::SwordCross, Attack::SwordCrossBurst, Attack::SwordLauncher, Attack::SwordHelm, Attack::SwordHelmRing, Attack::SwordIai, Attack::SwordFlurry, Attack::SwordFlurryEnd, Attack::SwordRave(0), Attack::SwordRave(1), Attack::SwordRave(2), Attack::SwordRave(3), Attack::SwordBreaker, Attack::SwordBreakerRing, Attack::SwordPogo, Attack::SwordDraw, Attack::SwordBeam,
+    Attack::MaxStarCut,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -243,7 +297,19 @@ impl Attack {
             Attack::SigilTap => Attack::Punch.spec(),
             Attack::Ice(level) | Attack::Dark(level) | Attack::Venom(level) => Attack::Fire(level.min(3)).spec(),
             Attack::VenomCloud | Attack::PoisonTick => Attack::Punch.spec(),
-            Attack::Frostbite | Attack::Hemorrhage => Attack::Stomp.spec(),
+            Attack::Frostbite | Attack::Hemorrhage | Attack::Shock | Attack::ShockArc(_) => Attack::Stomp.spec(),
+            Attack::Bolt(level) | Attack::Javelin(level) => Attack::Fire(level.min(3)).spec(),
+            Attack::BoltBlast => Attack::Fire(1).spec(),
+            Attack::Storm => Attack::Punch.spec(),
+            Attack::StormEnd => Attack::Fire(3).spec(),
+            // the sword: its quick cuts a punch's, its finishers sending them back, its heavy ones a
+            // stomp's or a ground pound's (the Helm Splitter knocks them down)
+            Attack::SwordSlash(0..=2) | Attack::SwordWhirl | Attack::SwordStab | Attack::SwordSpinJump | Attack::SwordSpin | Attack::SwordHurricane | Attack::SwordCross | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordDraw => Attack::Punch.spec(),
+            Attack::SwordSlash(_) | Attack::SwordWhirlEnd | Attack::SwordThrust | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordGreatSpin(_) | Attack::SwordHurricaneEnd | Attack::SwordCrossBurst | Attack::SwordFlurryEnd | Attack::SwordRave(_) | Attack::SwordIai => Attack::Sweep.spec(),
+            Attack::SwordCleave | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordBreaker | Attack::SwordBreakerRing | Attack::SwordPogo | Attack::SwordHelmRing => Attack::Stomp.spec(),
+            Attack::SwordHelm => Attack::GroundPound.spec(),
+            Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => Attack::Fire(1).spec(),
+            Attack::MaxStarCut => Attack::Stomp.spec(),
         }
     }
 
@@ -391,13 +457,70 @@ impl Attack {
             // the closer: a punch and a bit, the way in is the point
             Attack::BulletPunch => (15.0, "damage_bullet_punch"),
             Attack::Hemorrhage => (20.0, "damage_blood_loss"),
+            // the shock's bolt a little under blood loss (it jumps on: 60% and 40% of it)
+            Attack::Shock => (16.0, "damage_shock"),
+            Attack::ShockArc(0) => (9.6, "damage_shock_arc"),
+            Attack::ShockArc(_) => (6.4, "damage_shock_arc_2"),
+            // the sword's RB: the fireball's worth, a little less each (its bolts don't miss); the
+            // storm a little at a time on everyone under it, its giant bolt the finisher
+            Attack::Bolt(0) => (10.0, "damage_bolt"),
+            Attack::Bolt(1) => (14.0, "damage_bolt_charged"),
+            Attack::Bolt(2) => (20.0, "damage_bolt_charged_2"),
+            Attack::Bolt(_) => (14.0, "damage_bolt_chain"),
+            Attack::BoltBlast => (8.0, "damage_bolt_blast"),
+            Attack::Javelin(0) => (12.0, "damage_javelin"),
+            Attack::Javelin(1) => (16.0, "damage_javelin_charged"),
+            Attack::Javelin(2) => (22.0, "damage_javelin_charged_2"),
+            Attack::Javelin(_) => (24.0, "damage_javelin_max"),
+            Attack::Storm => (6.0, "damage_storm"),
+            Attack::StormEnd => (45.0, "damage_storm_end"),
+            // the Star Sword (the user's table, 2026-10-23): between the fists and the Chain Chomp,
+            // quick and precise, crowds too
+            Attack::SwordSlash(0) | Attack::SwordSlash(1) => (7.0, "damage_sword_slash"),
+            Attack::SwordSlash(2) => (8.0, "damage_sword_slash_3"),
+            Attack::SwordSlash(_) => (12.0, "damage_sword_slash_4"),
+            Attack::SwordWhirl => (5.0, "damage_sword_whirl"),
+            Attack::SwordWhirlEnd => (8.0, "damage_sword_whirl_end"),
+            Attack::SwordCleave => (14.0, "damage_sword_cleave"),
+            Attack::SwordThrust => (12.0, "damage_sword_thrust"),
+            Attack::SwordStab => (2.0, "damage_sword_stab"),
+            Attack::SwordStabEnd => (10.0, "damage_sword_stab_end"),
+            Attack::SwordRise => (10.0, "damage_sword_rise"),
+            Attack::SwordSpinJump => (3.0, "damage_sword_spin_jump"),
+            Attack::SwordSpinJumpEnd => (6.0, "damage_sword_spin_jump_end"),
+            Attack::SwordWave => (10.0, "damage_sword_wave"),
+            Attack::SwordWaveJust => (8.0, "damage_sword_wave_just"),
+            Attack::SwordSpin => (9.0, "damage_sword_spin"),
+            Attack::SwordGreatSpin(0) => (12.0, "damage_sword_great_spin"),
+            Attack::SwordGreatSpin(1) => (16.0, "damage_sword_great_spin_2"),
+            Attack::SwordGreatSpin(_) => (20.0, "damage_sword_great_spin_3"),
+            Attack::SwordHurricane => (3.0, "damage_sword_hurricane"),
+            Attack::SwordHurricaneEnd => (8.0, "damage_sword_hurricane_end"),
+            Attack::SwordCross => (7.0, "damage_sword_cross"),
+            Attack::SwordCrossBurst => (12.0, "damage_sword_cross_burst"),
+            Attack::SwordLauncher => (10.0, "damage_sword_launcher"),
+            Attack::SwordHelm => (16.0, "damage_sword_helm"),
+            Attack::SwordHelmRing => (6.0, "damage_sword_helm_ring"),
+            Attack::SwordIai => (11.0, "damage_sword_iai"),
+            Attack::SwordFlurry => (3.0, "damage_sword_flurry"),
+            Attack::SwordFlurryEnd => (8.0, "damage_sword_flurry_end"),
+            Attack::SwordRave(0) | Attack::SwordRave(1) => (6.0, "damage_sword_rave"),
+            Attack::SwordRave(2) => (7.0, "damage_sword_rave_3"),
+            Attack::SwordRave(_) => (10.0, "damage_sword_rave_4"),
+            Attack::SwordBreaker => (12.0, "damage_sword_breaker"),
+            Attack::SwordBreakerRing => (6.0, "damage_sword_breaker_ring"),
+            Attack::SwordPogo => (8.0, "damage_sword_pogo"),
+            Attack::SwordDraw => (10.0, "damage_sword_draw"),
+            Attack::SwordBeam => (4.0, "damage_sword_beam"),
+            // (three of them on everyone within 8 m: the other MAX shows' worth)
+            Attack::MaxStarCut => (5.0, "damage_max_star_cut"),
             Attack::PoisonTick => (1.6, "damage_poison"),
         }
     }
 
     /// A status going off on him (element.rs): no blow of Mario's, none of a blow's bonuses.
     pub fn status(self) -> bool {
-        matches!(self, Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick)
+        matches!(self, Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick | Attack::Shock | Attack::ShockArc(_))
     }
 
     /// One swing of the hammer, one blow (its hits on the same enemy past the first fade:
@@ -418,6 +541,14 @@ impl Attack {
                 | Attack::Dark(_)
                 | Attack::Venom(_)
                 | Attack::VenomCloud
+                | Attack::Bolt(_)
+                | Attack::BoltBlast
+                | Attack::Javelin(_)
+                | Attack::Storm
+                | Attack::StormEnd
+                | Attack::SwordWave
+                | Attack::SwordWaveJust
+                | Attack::SwordBeam
                 | Attack::FireSweep
                 | Attack::Ember
                 | Attack::Rang
@@ -482,7 +613,7 @@ impl Attack {
             Attack::RockSlam => 1.2,
             Attack::HomeRun | Attack::Bowled | Attack::Tether => 1.0,
             Attack::SwingKick => 1.3,
-            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1.3,
+            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut => 1.3,
             Attack::RideCrash => 1.5,
             Attack::RideBlow | Attack::RideSmash => 1.0,
             Attack::BrosAttack => 1.5,
@@ -494,11 +625,45 @@ impl Attack {
             Attack::Frostbite => 1.3,
             Attack::Hemorrhage => 1.4,
             Attack::PoisonTick => 1.2,
+            Attack::Shock => 1.3,
+            Attack::ShockArc(_) => 1.0,
+            Attack::Bolt(level) | Attack::Javelin(level) => 1.0 + 0.15 * level.min(3) as f32,
+            Attack::BoltBlast | Attack::Storm => 1.0,
+            Attack::StormEnd => 1.2,
+            // (the sword up close a little less than the fists, its shots none)
+            Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => 1.0,
+            Attack::SwordSlash(_)
+            | Attack::SwordWhirl
+            | Attack::SwordWhirlEnd
+            | Attack::SwordCleave
+            | Attack::SwordThrust
+            | Attack::SwordStab
+            | Attack::SwordStabEnd
+            | Attack::SwordRise
+            | Attack::SwordSpinJump
+            | Attack::SwordSpinJumpEnd
+            | Attack::SwordSpin
+            | Attack::SwordGreatSpin(_)
+            | Attack::SwordHurricane
+            | Attack::SwordHurricaneEnd
+            | Attack::SwordCross
+            | Attack::SwordCrossBurst
+            | Attack::SwordLauncher
+            | Attack::SwordHelm
+            | Attack::SwordHelmRing
+            | Attack::SwordIai
+            | Attack::SwordFlurry
+            | Attack::SwordFlurryEnd
+            | Attack::SwordRave(_)
+            | Attack::SwordBreaker
+            | Attack::SwordBreakerRing
+            | Attack::SwordPogo
+            | Attack::SwordDraw => 1.3,
         }
     }
 
     /// Ticks before the same enemy can take another of these (the rush's blows come 4 ticks apart).
-    fn cooldown(self) -> u32 {
+    pub(crate) fn cooldown(self) -> u32 {
         match self {
             Attack::Rush => 3,
             // one hit per blow: the flying kick and the string's blows land over up to 5 ticks (at
@@ -518,10 +683,26 @@ impl Attack {
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
             // (the MAX shows' blows come on their own pace: maxfin.rs)
-            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => 1,
+            Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut => 1,
             // (one bowling a second: it rolls on over them)
             Attack::Rock => 30,
-            Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => 1,
+            Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick | Attack::Shock | Attack::ShockArc(_) => 1,
+            // (the sword's bolts come on their own pace: bolt.rs)
+            Attack::Bolt(_) | Attack::BoltBlast | Attack::Javelin(_) | Attack::Storm | Attack::StormEnd => 1,
+            // the sword (swordmoves.rs): each blow once in its window (a string's next comes 6 ticks on
+            // at the soonest), its quick repeats one a window, a few ticks apart (the whirl's, the
+            // stabs'); the cross cut's two crossing cuts one blow; its finishers' windows are a few
+            // ticks long and the landing rings' as long as the fall: once each
+            Attack::SwordSlash(_) | Attack::SwordRave(_) => 5,
+            Attack::SwordStab | Attack::SwordFlurry => 2,
+            Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
+            Attack::SwordHurricane => 5,
+            Attack::SwordCross => 10,
+            Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw => 6,
+            Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordFlurryEnd => 12,
+            Attack::SwordHelmRing | Attack::SwordBreakerRing => 30,
+            // (each crescent and the cross's burst strike an enemy once themselves: wave.rs)
+            Attack::SwordCrossBurst | Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => 1,
             Attack::RangBig => 5,
             Attack::RangUpper | Attack::Chomp | Attack::ChompSpin | Attack::ChompAir | Attack::ChompLaunch => 6,
             _ => 12,
@@ -546,6 +727,19 @@ impl Attack {
                 | Attack::ChompEnd
                 | Attack::ChompLaunch
                 | Attack::RangUpper
+                | Attack::SwordSlash(3)
+                | Attack::SwordWhirlEnd
+                | Attack::SwordCleave
+                | Attack::SwordStabEnd
+                | Attack::SwordSpinJumpEnd
+                | Attack::SwordGreatSpin(_)
+                | Attack::SwordHurricaneEnd
+                | Attack::SwordCrossBurst
+                | Attack::SwordLauncher
+                | Attack::SwordHelm
+                | Attack::SwordFlurryEnd
+                | Attack::SwordRave(3)
+                | Attack::SwordBreakerRing
         )
     }
 
@@ -561,6 +755,14 @@ impl Attack {
             Attack::QuakeBig => 15.0,
             Attack::FlurryEnd => 20.0,
             Attack::Titan => 25.0,
+            // (the shock's bolt shakes him: a heavy blow's stance)
+            Attack::Shock => 12.0,
+            Attack::StormEnd => 15.0,
+            // (the sword's heavy cuts crack a stance a little)
+            Attack::SwordSlash(3) => 4.0,
+            Attack::SwordCleave | Attack::SwordGreatSpin(2) => 8.0,
+            Attack::SwordHelm => 10.0,
+            Attack::SwordBreakerRing => 6.0,
             _ => 0.0,
         }
     }
@@ -835,7 +1037,15 @@ pub struct Target {
     hostile: bool,
 }
 
+/// `Target::er` lies this far under the feet (m): the game's bullets spawn 1 m above it
+const ER_UNDER_FEET: f32 = 0.6;
+
 impl Target {
+    /// Where its feet are (Elden Ring world; `er` is under them, for the bullets).
+    pub fn feet(&self) -> glam::Vec3 {
+        glam::Vec3::new(self.er.0, self.er.1 + ER_UNDER_FEET, self.er.2)
+    }
+
     /// A breakable prop (crate, barrel, clutter), not a character.
     pub fn is_prop(&self) -> bool {
         self.handle.is_none()
@@ -1985,6 +2195,27 @@ enum Reach {
     Ring(glam::Vec3, f32),
     Front(f32),
     Arc(glam::Vec3, f32, f32),
+    /// along the held blade (grip to tip), swept from last tick's to this one's
+    Blade,
+}
+
+/// the blade's reach either side of it (SM64 units, at its size)
+const BLADE_REACH: f32 = 45.0;
+
+/// Whether a blade from `grip` to `tip`, swept from `prev_grip` / `prev_tip` over the tick, passes
+/// within `reach` of an upright body (feet `foot`, `radius`, up to `top`): points along it, each
+/// from where it was to where it is, against the body's axis.
+fn blade_reaches(grip: glam::Vec3, tip: glam::Vec3, prev_grip: glam::Vec3, prev_tip: glam::Vec3, reach: f32, foot: glam::Vec3, radius: f32, top: f32) -> bool {
+    use glam::Vec3;
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+    (1..=4).any(|k| {
+        let f = k as f32 / 4.0;
+        let (a, b) = (prev_grip.lerp(prev_tip, f), grip.lerp(tip, f));
+        let ab = flat(b - a);
+        let s = if ab.length_squared() > 1.0 { ((flat(foot) - flat(a)).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 1.0 };
+        let at = a.lerp(b, s);
+        flat(foot - at).length() <= reach + radius && at.y >= foot.y - reach && at.y <= top + reach
+    })
 }
 
 /// The targets (feet, radius, height, index) the reach takes in this tick, each with `attack`.
@@ -1997,6 +2228,10 @@ fn reached(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usize)]
         let foot = Vec3::from(t);
         let top = foot.y + height;
         let hit = match reach {
+            Reach::Blade => {
+                let Some(s) = swing else { continue };
+                blade_reaches(s.grip, s.head, s.prev_grip, s.prev, BLADE_REACH * s.scale, foot, radius, top)
+            }
             Reach::Arc(c, r, cos) => {
                 let d = flat(foot - c);
                 let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
@@ -2106,9 +2341,19 @@ pub fn script_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32,
         Shape::Arc { radius, half_deg, ahead: a } => Reach::Arc(ahead(a), radius, half_deg.to_radians().cos()),
         Shape::Around { radius, ahead: a } => Reach::Around(ahead(a), radius),
         Shape::Ring { radius } => Reach::Ring(me, radius),
+        Shape::Weapon if swing.is_some_and(|s| s.blade) => Reach::Blade,
         Shape::Weapon => Reach::Sweep,
+        Shape::Burst { radius } => Reach::Around(me, burst_radius(radius, state.health)),
     };
     reached(state, targets, reach, w.attack, swing)
+}
+
+/// at full health (8 whole wedges) a burst reaches this much farther (Zelda's spin attack)
+const BURST_FULL: f32 = 1.3;
+
+/// A burst's reach (SM64 units) by his health (SM64's: wedges in its high byte).
+fn burst_radius(radius: f32, health: i16) -> f32 {
+    if health >> 8 >= 8 { radius * BURST_FULL } else { radius }
 }
 
 /// `no_punch`: Mario's punch is only the fireball's throw (fireball.rs), it hits no one.
@@ -2368,8 +2613,14 @@ impl Combat {
                 continue;
             }
             // (the hook's tug leaves the next blow free: it's what it's for; the giant fireball's
-            // burn and Mega's steps come at their own pace and leave Mario's blows free)
-            if !own_pace && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
+            // burn and Mega's steps come at their own pace and leave Mario's blows free; so do the
+            // sword's bolts and crescents, each striking an enemy once a cast: a storm's bolt every
+            // half second would keep his own blows off the enemy under it)
+            let paced = matches!(
+                attack,
+                Attack::Bolt(_) | Attack::BoltBlast | Attack::Javelin(_) | Attack::Storm | Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam | Attack::SwordCrossBurst
+            );
+            if !own_pace && !paced && !matches!(attack, Attack::Hook | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::VenomCloud) {
                 self.cooldown.insert(target.key, tick);
             }
             if let Some(handle) = &target.handle {
@@ -2388,7 +2639,7 @@ impl Combat {
                 if stopped {
                     let heavy = attack.finisher() || matches!(attack, Attack::GroundPound | Attack::Quake | Attack::HammerSmash | Attack::Hammer | Attack::HammerWide | Attack::Bonk | Attack::SwingKick);
                     crate::stopwatch::struck(handle, me, glam::Vec3::new(target.er.0, target.er.1, target.er.2), heavy);
-                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise) && !hands_off(handle) {
+                } else if matches!(attack, Attack::Uppercut | Attack::UppercutTop | Attack::Launch | Attack::RangUpper | Attack::ChompLaunch | Attack::Rise | Attack::HammerRise | Attack::SwordRise | Attack::SwordLauncher) && !hands_off(handle) {
                     let regular = liftable(handle);
                     let stunned = !regular && (crate::swing::is_open(handle) || crate::swing::toughness_of(handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0));
                     let high = matches!(attack, Attack::Launch | Attack::RangUpper | Attack::ChompLaunch);
@@ -2398,7 +2649,35 @@ impl Combat {
                     }
                 } else if matches!(attack, Attack::Hook) {
                     // (the hook drags it in itself: hook.rs, juggle::pull)
-                } else if matches!(attack, Attack::Rang | Attack::RangBig | Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::FireSweep | Attack::Ember | Attack::Trample | Attack::Egg | Attack::Tongue | Attack::Slip | Attack::ShellHit | Attack::Bomb | Attack::Boing | Attack::Bowled | Attack::Tether) {
+                } else if matches!(
+                    attack,
+                    Attack::Rang
+                        | Attack::RangBig
+                        | Attack::Fire(_)
+                        | Attack::Ice(_)
+                        | Attack::Dark(_)
+                        | Attack::Venom(_)
+                        | Attack::VenomCloud
+                        | Attack::FireSweep
+                        | Attack::Ember
+                        | Attack::Trample
+                        | Attack::Egg
+                        | Attack::Tongue
+                        | Attack::Slip
+                        | Attack::ShellHit
+                        | Attack::Bomb
+                        | Attack::Boing
+                        | Attack::Bowled
+                        | Attack::Tether
+                        | Attack::Bolt(_)
+                        | Attack::BoltBlast
+                        | Attack::Javelin(_)
+                        | Attack::Storm
+                        | Attack::StormEnd
+                        | Attack::SwordWave
+                        | Attack::SwordWaveJust
+                        | Attack::SwordBeam
+                ) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
                 } else {
@@ -2771,6 +3050,34 @@ impl Combat {
             None => false,
         });
         out
+    }
+}
+
+#[cfg(test)]
+mod blade_tests {
+    use super::{blade_reaches, burst_radius};
+    use glam::Vec3;
+
+    #[test]
+    fn a_burst_reaches_farther_at_full_health() {
+        assert!((burst_radius(200.0, 0x880) - 260.0).abs() < 0.01);
+        assert!((burst_radius(200.0, 0x800) - 260.0).abs() < 0.01);
+        assert_eq!(burst_radius(200.0, 0x7FF), 200.0);
+        assert_eq!(burst_radius(200.0, 0x300), 200.0);
+    }
+
+    #[test]
+    fn a_blade_sweeping_through_a_body_reaches_it() {
+        // a 90-unit blade at his chest, swung from his right to his left in front of him
+        let (grip, foot) = (Vec3::new(0.0, 100.0, 30.0), Vec3::new(0.0, 0.0, 110.0));
+        let (from, to) = (grip + Vec3::new(-90.0, 0.0, 10.0), grip + Vec3::new(90.0, 0.0, 10.0));
+        assert!(blade_reaches(grip, to, grip, from, 45.0, foot, 40.0, 180.0));
+        // the same swing well short of a body farther out
+        assert!(!blade_reaches(grip, to, grip, from, 45.0, Vec3::new(0.0, 0.0, 300.0), 40.0, 180.0));
+        // over its head
+        assert!(!blade_reaches(grip + Vec3::Y * 300.0, to + Vec3::Y * 300.0, grip + Vec3::Y * 300.0, from + Vec3::Y * 300.0, 45.0, foot, 40.0, 180.0));
+        // (its middle counts: a body close in, under the tip's path)
+        assert!(blade_reaches(grip, grip + Vec3::new(0.0, 0.0, 180.0), grip, grip + Vec3::new(0.0, 0.0, 180.0), 45.0, Vec3::new(0.0, 0.0, 120.0), 30.0, 180.0));
     }
 }
 

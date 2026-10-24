@@ -115,6 +115,10 @@ pub struct Swing {
     pub head: Vec3,
     pub prev: Vec3,
     pub scale: f32,
+    /// the grip the tick before, and whether its whole length cuts (the sword's blade: combat.rs
+    /// Reach::Blade) rather than its head alone
+    pub prev_grip: Vec3,
+    pub blade: bool,
 }
 
 /// SM64 direction -> the part poses' (mirrored) axes, and back
@@ -239,5 +243,5 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
         s.stretch
     });
     parts[HAMMER] = PartPose { rot, pos: grip, scale, stretch };
-    Some(Swing { grip: to_sm64(grip), head, prev, scale })
+    Some(Swing { grip: to_sm64(grip), head, prev, scale, prev_grip: to_sm64(grip), blade: false })
 }

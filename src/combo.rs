@@ -40,6 +40,15 @@ struct Sample {
 #[derive(Default)]
 pub struct Grammar {
     hist: VecDeque<Sample>,
+    /// each button (by bit, X Y A B): held since this tick, and how long it was held when it last
+    /// came up and when (charges outlast the history kept)
+    down_since: [Option<u32>; 4],
+    let_go: [Option<(u32, u32)>; 4],
+}
+
+/// a button's bit's slot (X 0, Y 1, A 2, B 3)
+fn slot(b: u8) -> usize {
+    (b.max(1).trailing_zeros() as usize).min(3)
 }
 
 fn dir_of(forward: f32, side: f32) -> Dir {
@@ -56,6 +65,16 @@ impl Grammar {
     /// Every tick: the stick (`forward` toward the enemy, `side` to his right, each -1..1) and the
     /// buttons held now.
     pub fn push(&mut self, tick: u32, forward: f32, side: f32, buttons: u8) {
+        for (k, b) in [X, Y, A, B].into_iter().enumerate() {
+            match (buttons & b != 0, self.down_since[k]) {
+                (true, None) => self.down_since[k] = Some(tick),
+                (false, Some(since)) => {
+                    self.down_since[k] = None;
+                    self.let_go[k] = Some((tick.wrapping_sub(since), tick));
+                }
+                _ => {}
+            }
+        }
         self.hist.push_back(Sample { tick, dir: dir_of(forward, side), buttons });
         while self.hist.front().is_some_and(|s| tick.wrapping_sub(s.tick) > KEEP) {
             self.hist.pop_front();
@@ -99,18 +118,15 @@ impl Grammar {
     /// How many ticks `b` has been held (0: up).
     #[allow(dead_code)]
     pub fn held(&self, b: u8) -> u32 {
-        self.hist.iter().rev().take_while(|s| s.buttons & b != 0).count() as u32
+        let Some(now) = self.now().map(|s| s.tick) else { return 0 };
+        self.down_since[slot(b)].map_or(0, |since| now.wrapping_sub(since) + 1)
     }
 
     /// `b` came up this tick: how long it had been held.
     #[allow(dead_code)]
     pub fn released(&self, b: u8) -> Option<u32> {
-        let now = self.now()?;
-        if now.buttons & b != 0 {
-            return None;
-        }
-        let held = self.hist.iter().rev().skip(1).take_while(|s| s.buttons & b != 0).count() as u32;
-        (held > 0).then_some(held)
+        let now = self.now()?.tick;
+        self.let_go[slot(b)].filter(|&(_, at)| at == now).map(|(held, _)| held)
     }
 
     /// Presses of `b` within the last `window` ticks (this one included).
@@ -252,6 +268,16 @@ mod tests {
         assert_eq!(g.held(Y), 0);
         assert_eq!(g.released(Y), Some(3));
         assert!(play(&[N, (0.0, 0.0, Y)]).pressed(Y));
+    }
+
+    #[test]
+    fn long_holds_count_past_the_history() {
+        // (the Great Spin's top charge is 75 ticks: longer than the history kept)
+        let mut steps = vec![N];
+        steps.extend([(0.0, 0.0, Y); 90]);
+        assert_eq!(play(&steps).held(Y), 90);
+        steps.push(N);
+        assert_eq!(play(&steps).released(Y), Some(90));
     }
 
     #[test]

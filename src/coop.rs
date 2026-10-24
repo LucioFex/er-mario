@@ -66,8 +66,11 @@ const HEADER: usize = 5;
 const PART_BYTES: usize = 22;
 /// a part's position in steps of this (m)
 const POS_STEP: f32 = 0.002;
+/// the parts that come before the clock and place (all of them before the Star Sword): the rest
+/// come after those, so an older build reads what it knows, and a shorter packet hides them
+const WIRE_PARTS: usize = 38;
 /// seq u32, health u16 (SM64's: wedges in its high byte), character u8 (1 Luigi), then the parts
-const POSE_BYTES: usize = HEADER + 4 + 3 + PARTS * PART_BYTES;
+const POSE_BYTES: usize = HEADER + 4 + 3 + WIRE_PARTS * PART_BYTES;
 const PARTS_AT: usize = HEADER + 7;
 /// after the parts: the sender's clock (ms), the place's kind (u8: 0 none, 1 map chunk, 2 in its
 /// block; from version 9 only 2), its block i32, its position f32 x3 (in the block: its own
@@ -248,11 +251,11 @@ fn u16k(v: f32) -> [u8; 2] {
 pub fn encode(p: &Packet) -> Vec<u8> {
     match p {
         Packet::Pose { seq, health, luigi, parts, ms, place } => {
-            let mut out = header(KIND_POSE, POSE_BYTES + POSE_EXT_BYTES);
+            let mut out = header(KIND_POSE, POSE_BYTES + POSE_EXT_BYTES + (PARTS - WIRE_PARTS) * PART_BYTES);
             out.extend_from_slice(&seq.to_le_bytes());
             out.extend_from_slice(&health.to_le_bytes());
             out.push(*luigi as u8);
-            for part in parts.iter() {
+            let put = |out: &mut Vec<u8>, part: &PartPose| {
                 let r = part.rot.normalize();
                 for v in [r.x, r.y, r.z, r.w] {
                     out.extend_from_slice(&q16(v, 32767.0));
@@ -263,6 +266,9 @@ pub fn encode(p: &Packet) -> Vec<u8> {
                 for v in [part.scale, part.stretch.x, part.stretch.y, part.stretch.z] {
                     out.extend_from_slice(&u16k(v));
                 }
+            };
+            for part in &parts[..WIRE_PARTS] {
+                put(&mut out, part);
             }
             out.extend_from_slice(&ms.unwrap_or(0).to_le_bytes());
             let p = place.unwrap_or(Place { origin: 0, chunk: Vec3::ZERO, yaw: 0.0, local: false });
@@ -274,6 +280,10 @@ pub fn encode(p: &Packet) -> Vec<u8> {
             out.extend_from_slice(&p.origin.to_le_bytes());
             for v in [p.chunk.x, p.chunk.y, p.chunk.z, p.yaw] {
                 out.extend_from_slice(&v.to_le_bytes());
+            }
+            // (the parts after the first WIRE_PARTS: the Star Sword)
+            for part in &parts[WIRE_PARTS..] {
+                put(&mut out, part);
             }
             out
         }
@@ -377,13 +387,24 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
             let health = u16::from_le_bytes([b[9], b[10]]);
             let luigi = b[11] == 1;
             let mut parts = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
-            for (k, p) in parts.iter_mut().enumerate() {
-                let o = PARTS_AT + k * PART_BYTES;
+            let read = |p: &mut PartPose, o: usize| {
                 let q = Quat::from_xyzw(i16at(o), i16at(o + 2), i16at(o + 4), i16at(o + 6));
                 p.rot = if q.length_squared() > 0.0 { q.normalize() } else { Quat::IDENTITY };
                 p.pos = Vec3::new(i16at(o + 8), i16at(o + 10), i16at(o + 12)) * POS_STEP;
                 p.scale = u16at(o + 14);
                 p.stretch = Vec3::new(u16at(o + 16), u16at(o + 18), u16at(o + 20));
+            };
+            for (k, p) in parts.iter_mut().enumerate().take(WIRE_PARTS) {
+                read(p, PARTS_AT + k * PART_BYTES);
+            }
+            // (after the clock and place: the newer parts, hidden in the hand if they're not there)
+            for k in WIRE_PARTS..PARTS {
+                let o = POSE_BYTES + POSE_EXT_BYTES + (k - WIRE_PARTS) * PART_BYTES;
+                if b.len() >= o + PART_BYTES {
+                    read(&mut parts[k], o);
+                } else {
+                    parts[k] = PartPose { scale: 0.01, ..parts[9] };
+                }
             }
             // the clock and the place
             let (ms, place) = if b.len() >= POSE_BYTES + POSE_EXT_BYTES {
@@ -2165,12 +2186,29 @@ mod tests {
     }
 
     #[test]
+    fn a_pose_from_before_the_sword_still_reads() {
+        // (a build before the Star Sword sent 38 parts, then its clock and place: the sword's part
+        // comes after those now, and without it the sword is hidden)
+        let a = pose();
+        let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(1.0, 2.0, 3.0), yaw: 0.5, local: true };
+        let bytes = encode(&Packet::Pose { seq: 3, health: 0x880, luigi: false, parts: Box::new(a), ms: Some(77), place: Some(place) });
+        let old = &bytes[..POSE_BYTES + POSE_EXT_BYTES];
+        let Some(Packet::Pose { parts, ms, place: got, .. }) = decode(old) else { panic!("no pose") };
+        assert_eq!((ms, got), (Some(77), Some(place)));
+        assert!(parts[crate::engine_mario::KIT_SWORD].scale <= 0.011, "the sword shows: {}", parts[crate::engine_mario::KIT_SWORD].scale);
+        assert!(parts[3].pos.distance(a[3].pos) < 0.002);
+        // the whole packet: the sword's part too
+        let Some(Packet::Pose { parts, .. }) = decode(&bytes) else { panic!("no pose") };
+        assert!((parts[crate::engine_mario::KIT_SWORD].scale - a[crate::engine_mario::KIT_SWORD].scale).abs() < 0.001);
+    }
+
+    #[test]
     fn pose_round_trip() {
         let a = pose();
         let place = Place { origin: 0x3C2C_2400, chunk: Vec3::new(-1234.5, 88.25, 4096.0), yaw: -2.5, local: true };
         let bytes = encode(&Packet::Pose { seq: 7, health: 0x580, luigi: true, parts: Box::new(a), ms: Some(123_456), place: Some(place) });
         // (one network packet, with room to spare)
-        assert_eq!(bytes.len(), POSE_BYTES + POSE_EXT_BYTES);
+        assert_eq!(bytes.len(), POSE_BYTES + POSE_EXT_BYTES + (PARTS - WIRE_PARTS) * PART_BYTES);
         assert!(bytes.len() < 1000, "pose {} B", bytes.len());
         let Some(Packet::Pose { seq, health, luigi, parts, ms, place: got }) = decode(&bytes) else { panic!("no pose") };
         assert_eq!((seq, health, luigi, ms, got), (7, 0x580, true, Some(123_456), Some(place)));

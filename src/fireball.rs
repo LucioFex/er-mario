@@ -164,7 +164,7 @@ pub fn element_burst_ticks(el: Element, level: u8) -> u32 {
         Element::Frost => 26 + 3 * l,
         Element::Blood => 18 + 2 * l,
         Element::Poison => 20 + 2 * l,
-        Element::Fire => burst_ticks(level),
+        Element::Fire | Element::Lightning => burst_ticks(level),
     }
 }
 
@@ -172,7 +172,7 @@ pub fn element_burst_ticks(el: Element, level: u8) -> u32 {
 fn shot_speed(el: Element, level: u8) -> f32 {
     let l = level.min(3) as usize;
     match el {
-        Element::Fire => SPEED[level as usize],
+        Element::Fire | Element::Lightning => SPEED[level as usize],
         Element::Frost => ICE_SPEED[l],
         Element::Blood => DARK_SPEED[l],
         Element::Poison => VENOM_SPEED[l],
@@ -182,7 +182,7 @@ fn shot_speed(el: Element, level: u8) -> f32 {
 fn shot_radius(el: Element, level: u8) -> f32 {
     let l = level.min(3) as usize;
     match el {
-        Element::Fire => RADIUS[level as usize],
+        Element::Fire | Element::Lightning => RADIUS[level as usize],
         Element::Frost => ICE_RADIUS[l],
         Element::Blood => DARK_RADIUS[l],
         Element::Poison => VENOM_RADIUS[l],
@@ -192,7 +192,7 @@ fn shot_radius(el: Element, level: u8) -> f32 {
 pub fn shot_size(el: Element, level: u8) -> f32 {
     let l = level.min(3) as usize;
     match el {
-        Element::Fire => SIZE[level.min(SUN) as usize],
+        Element::Fire | Element::Lightning => SIZE[level.min(SUN) as usize],
         Element::Frost => ICE_SIZE[l],
         Element::Blood => DARK_SIZE[l],
         Element::Poison => VENOM_SIZE[l],
@@ -211,7 +211,7 @@ fn gravity(el: Element) -> f32 {
 /// The blow a shot of `el` at `level` lands.
 fn shot_attack(el: Element, level: u8) -> Attack {
     match el {
-        Element::Fire => Attack::Fire(level),
+        Element::Fire | Element::Lightning => Attack::Fire(level),
         Element::Frost => Attack::Ice(level.min(3)),
         Element::Blood => Attack::Dark(level.min(3)),
         Element::Poison => Attack::Venom(level.min(3)),
@@ -409,7 +409,16 @@ pub struct Fire {
     pushes: Vec<Push>,
     embers: Vec<Ember>,
     last_ember_burn: u32,
+    /// the Star Sword's: its cast asked for (its level, in the air, when) until its move lets go,
+    /// its bolts out there (bolt.rs) and its crescents (wave.rs)
+    cast: Option<(u8, bool, u32)>,
+    cast_asked: bool,
+    pub bolts: crate::bolt::Bolts,
+    pub waves: crate::wave::Waves,
 }
+
+/// a sword cast whose move didn't let go within this (ticks: hurt, cut short) is lost
+const CAST_WAIT: u32 = 30;
 
 static LOOKS: Mutex<(FireFx, Option<Instant>)> = Mutex::new((FireFx::EMPTY, None));
 
@@ -432,6 +441,8 @@ pub fn looks() -> FireFx {
 
 pub fn clear() {
     *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = (FireFx::default(), None);
+    crate::bolt::clear();
+    crate::wave::clear();
 }
 
 fn sound(id: i32) {
@@ -465,6 +476,24 @@ impl Fire {
             pushes: Vec::new(),
             embers: Vec::new(),
             last_ember_burn: 0,
+            cast: None,
+            cast_asked: false,
+            bolts: Default::default(),
+            waves: Default::default(),
+        }
+    }
+
+    /// The sword's cast wants its move (script.rs's skyward strike, or the Zeus throw in the air):
+    /// once, as it's asked for.
+    pub fn take_cast(&mut self) -> Option<bool> {
+        let (_, air, _) = self.cast?;
+        (!std::mem::replace(&mut self.cast_asked, true)).then_some(air)
+    }
+
+    /// The sword's move lets the cast go now, from his hand `hand` facing `facing` (Elden Ring).
+    pub fn release(&mut self, hand: Vec3, facing: Vec3, origin: [f32; 3], tick: u32) {
+        if let Some((level, air, _)) = self.cast.take() {
+            self.bolts.cast(level, air, hand, facing, origin, tick);
         }
     }
 
@@ -550,8 +579,13 @@ impl Fire {
             let since = *self.held_since.get_or_insert(tick);
             let held = tick.saturating_sub(since.max(self.ready_at));
             let level = CHARGE_TICKS.iter().filter(|&&t| held >= t).count() as u8;
-            // (the giant one and the sun are the fists' own: the others stop at the full shot)
-            let level = if self.el == Element::Fire { level } else { level.min(3) };
+            // (the giant one and the sun are the fists' own, the storm cloud the sword's: the others
+            // stop at the full shot)
+            let level = match self.el {
+                Element::Fire => level,
+                Element::Lightning => level.min(crate::bolt::STORM_LEVEL),
+                _ => level.min(3),
+            };
             if level > self.level {
                 sound(SOUND_CHARGE[level as usize - 1]);
             }
@@ -575,6 +609,17 @@ impl Fire {
             }
         }
 
+        // (a sword cast whose move never let go: lost)
+        if self.cast.is_some_and(|(_, _, at)| tick.wrapping_sub(at) > CAST_WAIT) {
+            self.cast = None;
+            log("bolt: the cast's move didn't let go: lost");
+        }
+        // the sword's bolts and crescents (in the game's physics coordinates: the map rays are those)
+        {
+            let er_ray = |a: Vec3, b: Vec3| ray(a, b);
+            self.bolts.tick(player, combat, origin, tick, &er_ray);
+            self.waves.tick(player, combat, origin, tick, &er_ray);
+        }
         self.fly(origin, tick, player, combat, &ray);
         self.push(&ray);
         self.burn_embers(origin, tick, player, combat);
@@ -600,6 +645,12 @@ impl Fire {
     /// running or dashing.
     fn shoot(&mut self, id: i32, level: u8, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) {
         self.ready_at = tick + COOLDOWN[level as usize];
+        // the Star Sword: its own moves (the cast waits for its move to let go: `release`)
+        if self.el == Element::Lightning {
+            self.cast = Some((level, action_air(state.action), tick));
+            self.cast_asked = false;
+            return;
+        }
         let (dir, _) = self.aim(state, origin, level);
         let level = if self.el == Element::Fire { level } else { level.min(3) };
         let on_ground = state.action & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0 && state.action & ACT_NO_THROW == 0;
@@ -982,6 +1033,8 @@ impl Fire {
     #[allow(clippy::too_many_arguments)]
     fn landed(&mut self, el: Element, level: u8, at: Vec3, hit: Option<(u64, Vec3)>, origin: [f32; 3], tick: u32, player: &ChrIns, combat: &mut Combat, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         match el {
+            // (the sword's RB moves come with v4 Part 2: until then it throws as the fists do)
+            Element::Fire | Element::Lightning => {}
             Element::Frost => {
                 if level >= 2 {
                     let reach = SHARDS_REACH[(level >= 3) as usize];
@@ -1028,7 +1081,6 @@ impl Fire {
                 self.clouds.push(PoisonCloud { pos: ground, born: tick, life: CLOUD_TICKS[l], radius: CLOUD_RADIUS[l], vis: -1.0, vis_at: 0 });
                 worker::call("venom splash", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_BUBBLE_2, 0.6) });
             }
-            Element::Fire => {}
         }
     }
 

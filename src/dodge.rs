@@ -35,13 +35,27 @@ struct State {
     dash_since: Option<u32>,
     last: Option<Instant>,
     counter_until: Option<Instant>,
+    /// the Star Sword's Flurry Rush of this counter was used (one a perfect dodge)
+    flurried: bool,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { dash_since: None, last: None, counter_until: None });
+static STATE: Mutex<State> = Mutex::new(State { dash_since: None, last: None, counter_until: None, flurried: false });
 
 /// Mario's blows are counters right now (a perfect dodge a moment ago).
 pub fn countering() -> bool {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).counter_until.is_some_and(|t| Instant::now() < t)
+}
+
+/// The counter time is on and its Flurry Rush not used yet (the sword's: one a perfect dodge, the
+/// counter's blows stay counters).
+pub fn flurry_ready() -> bool {
+    let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    !s.flurried && s.counter_until.is_some_and(|t| Instant::now() < t)
+}
+
+/// The Flurry Rush started: none more until the next perfect dodge.
+pub fn spend_flurry() {
+    STATE.lock().unwrap_or_else(|e| e.into_inner()).flurried = true;
 }
 
 /// Game thread, every SM64 tick: Mario's action and feet (Elden Ring). True when it was a perfect
@@ -79,6 +93,7 @@ pub fn tick(action: u32, feet: Vec3, tick: u32) -> bool {
     let now = Instant::now();
     s.last = Some(now);
     s.counter_until = Some(now + std::time::Duration::from_secs_f32(COUNTER_TIME));
+    s.flurried = false;
     // (once: the rest of this dash can't dodge again)
     s.dash_since = Some(tick.wrapping_sub(WINDOW + 1));
     drop(s);
@@ -96,4 +111,5 @@ pub fn clear() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.dash_since = None;
     s.counter_until = None;
+    s.flurried = false;
 }

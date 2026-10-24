@@ -555,9 +555,10 @@ pub fn build_kit(mut f: Flver, kit: &[Tri], parts: std::ops::Range<usize>, bones
     Ok(f.d)
 }
 
-/// The kit albedo's swatches: a 4 x 4 grid, each colour's UV at its middle.
+/// The kit albedo's swatches: a KIT_GRID x KIT_GRID grid, each colour's UV at its middle.
 pub fn kit_uv(swatch: usize) -> [f64; 2] {
-    [((swatch % 4) as f64 + 0.5) / 4.0, ((swatch / 4) as f64 + 0.5) / 4.0]
+    let g = super::kit::KIT_GRID;
+    [((swatch % g) as f64 + 0.5) / g as f64, ((swatch / g) as f64 + 0.5) / g as f64]
 }
 
 /// The finger bones the kit can go on in an armour FLVER (the gauntlets): skinned by it, with no
@@ -567,7 +568,12 @@ pub fn kit_bones(f: &Flver, n: usize) -> (Vec<String>, String) {
     let parent = |b: usize| i16::from_le_bytes([f.d[f.bone_off + b * 0x80 + 0x1C], f.d[f.bone_off + b * 0x80 + 0x1D]]);
     let leaf = |b: usize| !(0..f.bones).any(|c| parent(c) as i32 == b as i32);
     let skinned = |b: usize| i32_at(&f.d, f.bone_off + b * 0x80 + 0x3C) == 8;
-    let picked: Vec<String> = (0..f.bones).filter(|&b| names[b].contains("Finger") && skinned(b) && leaf(b)).map(|b| names[b].clone()).take(n).collect();
+    // (fingers first, in the skeleton's order: the kit's seven are where they were; then any other
+    // free leaf if the fingers run out)
+    let free = |b: usize| skinned(b) && leaf(b);
+    let fingers = (0..f.bones).filter(|&b| names[b].contains("Finger") && free(b));
+    let others = (0..f.bones).filter(|&b| !names[b].contains("Finger") && free(b));
+    let picked: Vec<String> = fingers.chain(others).map(|b| names[b].clone()).take(n).collect();
     let meshes = f.meshes();
     let room: Vec<String> = meshes.iter().map(|m| m.vbufs.first().map_or("none".to_string(), |&v| {
         let vb = f.vertex_buffers(v);

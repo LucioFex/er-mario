@@ -5,12 +5,15 @@
 //! - the Chain Chomp: the cyclone's MAX, a ring of fire that flings the small ones up and staggers
 //!   the rest
 //! - the boomerang: its big throw is three big ones at once (boomerang.rs)
+//! - the Star Sword: Star Cut End (Vergil's Judgement Cut End), a flash, the world slowed, then
+//!   cuts of lightning across every enemy within 8 m, three times
 //! Still blows, not kills: each is a share like the rest, bosses take their own small one.
 
 use std::sync::Mutex;
 
 use eldenring::cs::ChrIns;
 use eldenring::position::HavokPosition;
+use fromsoftware_shared::FromStatic;
 use glam::Vec3;
 
 use crate::combat::{self, Attack, Combat};
@@ -27,14 +30,25 @@ const CROSS_BLAST: f32 = 1.5;
 const CROSS_EVERY: u32 = 3;
 /// the Chomp's ring of fire (m)
 const CYCLONE_REACH: f32 = 6.5;
+/// the sword's Star Cut End: who it takes (m round Mario, at most this many), its cuts (how many,
+/// ticks apart), each cut's length across them (m)
+const STAR_CUT_REACH: f32 = 8.0;
+const STAR_CUT_MOST: usize = 8;
+const STAR_CUTS: u32 = 3;
+const STAR_CUT_EVERY: u32 = 5;
+const STAR_CUT_LEN: f32 = 1.4;
 
 const SOUND_PUNCH: [i32; 3] = [0x0444_C081, 0x0444_B081, 0x043F_8081];
 const SOUND_QUAKE: i32 = 0x312F_0081;
 const SOUND_STAR: i32 = 0x3016_0091;
+const SOUND_SWISH: i32 = 0x305C_0081;
+/// (bolt.rs's, not verified in game)
+const SOUND_THUNDER: i32 = 0x300C_8081;
 
 enum Show {
     Flurry { at: Vec3, dir: Vec3 },
     Cross { feet: Vec3, dir: Vec3 },
+    StarCut { dir: Vec3, who: Vec<eldenring::cs::FieldInsHandle> },
 }
 
 struct Running {
@@ -58,6 +72,21 @@ pub fn fire(attack: Attack, at: Vec3, feet: Vec3, dir: Vec3, combat: &mut Combat
     match weapon {
         weapons::HAMMER => *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(Running { show: Show::Cross { feet: at.with_y(feet.y), dir }, start: tick }),
         weapons::CHOMP => cyclone(feet, combat, player, origin, tick),
+        weapons::SWORD => {
+            // (everyone near it takes it, the nearest first)
+            let mut near: Vec<(f32, eldenring::cs::FieldInsHandle)> = combat::nearby(&HavokPosition(feet.x, feet.y, feet.z, 0.0), STAR_CUT_REACH + 2.0, origin)
+                .iter()
+                .filter(|t| !t.friendly())
+                .filter_map(|t| Some(((t.feet() - feet).length(), *t.shootable()?)))
+                .filter(|(d, _)| *d <= STAR_CUT_REACH)
+                .collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0));
+            near.truncate(STAR_CUT_MOST);
+            log(format!("max: Star Cut End on {}", near.len()));
+            crate::impact::flash([0.8, 0.9, 1.0], 0.45, 0.35);
+            crate::style::slow_down(0.7);
+            *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(Running { show: Show::StarCut { dir, who: near.into_iter().map(|n| n.1).collect() }, start: tick });
+        }
         _ => *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(Running { show: Show::Flurry { at, dir }, start: tick }),
     }
 }
@@ -99,6 +128,44 @@ pub fn tick(combat: &mut Combat, player: &ChrIns, origin: [f32; 3], tick: u32) {
                             }
                         }
                     }
+                    *running = None;
+                }
+            }
+        }
+        Show::StarCut { dir, ref who } => {
+            if t > 0 && t % STAR_CUT_EVERY == 0 {
+                let k = t / STAR_CUT_EVERY;
+                let last = k >= STAR_CUTS;
+                let side = Vec3::Y.cross(dir).normalize_or(Vec3::X);
+                // (the cuts' slants: one way, the other, level)
+                let across = match k % 3 {
+                    1 => (side + Vec3::Y * 0.8).normalize(),
+                    2 => (side - Vec3::Y * 0.8).normalize(),
+                    _ => side,
+                };
+                let wcm = unsafe { eldenring::cs::WorldChrMan::instance() }.ok();
+                let mut cut = 0;
+                for h in who {
+                    let Some(chr) = wcm.as_ref().and_then(|w| w.chr_ins_by_handle(h)) else { continue };
+                    if chr.modules.data.hp <= 0 {
+                        continue;
+                    }
+                    let p = chr.modules.physics.position;
+                    let chest = Vec3::new(p.0, p.1 + 0.9, p.2);
+                    let near = combat::nearby(&HavokPosition(chest.x, chest.y, chest.z, 0.0), 3.0, origin);
+                    if let Some(i) = near.iter().position(|t| t.shootable() == Some(h)) {
+                        combat.deal(player, &near, &[(i, Attack::MaxStarCut, false)], tick);
+                        cut += 1;
+                    }
+                    crate::bolt::slash(chest - across * STAR_CUT_LEN, chest + across * STAR_CUT_LEN, if last { 0.2 } else { 0.12 });
+                    crate::impact::max_blow(chest, last);
+                }
+                let (s, v) = if last { (SOUND_THUNDER, 0.4) } else { (SOUND_SWISH, 0.3) };
+                worker::call("max cut", move |_| unsafe { sm64::sm64_play_sound_volume(s, v) });
+                if last {
+                    log(format!("max: Star Cut End's last cut on {cut}"));
+                    crate::impact::flash([0.9, 0.95, 1.0], 0.3, 0.3);
+                    crate::lakitu::shake(0.8);
                     *running = None;
                 }
             }

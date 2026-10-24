@@ -90,6 +90,8 @@ pub enum Shape {
     Ring { radius: f32 },
     /// along the held weapon (its head's path and its length: the hammer's, the sword's blade)
     Weapon,
+    /// all round him, wider at full health (the Great Spin's, Zelda's)
+    Burst { radius: f32 },
 }
 
 /// Ticks `from..=to` hit what `shape` reaches with `attack` (the same enemy again only after the
@@ -101,6 +103,13 @@ pub struct Window {
     pub shape: Shape,
     pub attack: Attack,
     pub fx: u32,
+    /// only once he's on the ground (a plunge's landing ring)
+    pub ground: bool,
+}
+
+/// The window if it's open for Mario now (`air`: he's in the air).
+pub fn window_open(w: &Window, air: bool) -> Option<&Window> {
+    (!(w.ground && air)).then_some(w)
 }
 
 /// What may cut a move short (bits), from tick `from` (`on_hit` once a blow of it landed).
@@ -153,8 +162,16 @@ pub struct Move {
     /// his body squashed (under 1) / stretched (over 1), and drawn low (SM64 units)
     pub squash: &'static [Key],
     pub dip: &'static [Key],
-    /// the right hand's reach toward the aimed enemy (0-1, arm IK)
+    /// the right hand's reach (0-1, arm IK): straight out ahead at shoulder height, tipped up by
+    /// `reach_pitch` degrees (90: overhead)
     pub reach: &'static [Key],
+    pub reach_pitch: f32,
+    /// the held weapon (the sword's blade) in ticks `blade_held` (from, to): degrees round his
+    /// facing (+ left), up from level, rolled round itself
+    pub blade_yaw: &'static [Key],
+    pub blade_pitch: &'static [Key],
+    pub blade_roll: &'static [Key],
+    pub blade_held: (u16, u16),
     pub windows: &'static [Window],
     pub cancels: &'static [Cancel],
     /// (tick, sound, volume: 0 at his body), one a tick
@@ -167,6 +184,14 @@ pub struct Move {
     /// it starts in the air action; in the air, landing ends it
     pub air: bool,
     pub land_ends: bool,
+    /// the stick steers him (his facing toward it, a little speed): the Hurricane
+    pub steer: bool,
+    /// a blow of it landing bounces him up this fast (SM64 units a tick) out of it: the pogo
+    pub bounce: f32,
+    /// X still held at this tick: he goes up at this vertical speed (with the enemy it launched)
+    pub held_rise: Option<(u16, f32)>,
+    /// (every, fx): shown every that many ticks from the start (a charge's glow)
+    pub pulse: Option<(u16, u32)>,
 }
 
 pub const BASE: Move = Move {
@@ -185,6 +210,11 @@ pub const BASE: Move = Move {
     squash: &[],
     dip: &[],
     reach: &[],
+    reach_pitch: 0.0,
+    blade_yaw: &[],
+    blade_pitch: &[],
+    blade_roll: &[],
+    blade_held: (0, 0),
     windows: &[],
     cancels: &[],
     sounds: &[],
@@ -193,6 +223,10 @@ pub const BASE: Move = Move {
     invulnerable: (0, 0),
     air: false,
     land_ends: false,
+    steer: false,
+    bounce: 0.0,
+    held_rise: None,
+    pulse: None,
 };
 
 /// The lunge's whole way (m): to the enemy short of `gap`, at most `max`; `max` with no one aimed.
@@ -223,6 +257,63 @@ const SOUND_ACTION_THROW: u32 = 0x0435_8081;
 const SOUND_GENERAL_SWISH_AIR: u32 = 0x305C_0081;
 
 pub const BULLET_PUNCH: u16 = 0;
+pub const SKY_STRIKE: u16 = 1;
+pub const ZEUS_THROW: u16 = 2;
+/// the Star Sword's moves (swordplay.rs picks them)
+pub const SW_S1: u16 = 3;
+pub const SW_S2: u16 = 4;
+#[allow(dead_code)] // (reached as SW_S2 + 1: swordplay.rs walks the string by id)
+pub const SW_S3: u16 = 5;
+pub const SW_S4: u16 = 6;
+pub const SW_WHIRL: u16 = 7;
+pub const SW_CLEAVE: u16 = 8;
+pub const SW_THRUST: u16 = 9;
+pub const SW_STABS: u16 = 10;
+pub const SW_RISE: u16 = 11;
+pub const SW_SPIN_JUMP: u16 = 12;
+pub const SW_WAVE_CHARGE: u16 = 13;
+pub const SW_WAVE: u16 = 14;
+pub const SW_WAVE_JUST: u16 = 15;
+pub const SW_SPIN: u16 = 16;
+pub const SW_SPIN_CHARGE: u16 = 17;
+/// the Great Spin by charge level: this, + 1, + 2
+pub const SW_GREAT_SPIN: u16 = 18;
+pub const SW_HURRICANE: u16 = 21;
+pub const SW_CROSS: u16 = 22;
+pub const SW_LAUNCHER: u16 = 23;
+pub const SW_HELM: u16 = 24;
+pub const SW_IAI: u16 = 25;
+pub const SW_FLURRY: u16 = 26;
+/// the Aerial Rave's four: this to + 3
+pub const SW_RAVE: u16 = 27;
+pub const SW_BREAKER: u16 = 31;
+pub const SW_POGO: u16 = 32;
+pub const SW_DRAW: u16 = 33;
+pub const SW_DRAW_AIR: u16 = 34;
+
+/// One of the Star Sword's moves.
+pub fn is_sword(id: u16) -> bool {
+    (SW_S1..=SW_DRAW_AIR).contains(&id)
+}
+
+/// The move `id`'s data, if there is any (a name for the log).
+pub fn named(id: u16) -> &'static str {
+    MOVES.get(id as usize).map_or("(a move with no data)", |m| m.name)
+}
+
+/// A frame's fx bit (beyond moves::FX_*): what the move casts leaves now (the sword's bolt)
+pub const FX_RELEASE: u32 = 0x1000;
+/// the sword's crescents let go now (wave.rs): the star wave, the JUST three, a finisher's sword
+/// beam (only at full health: lib.rs)
+pub const FX_WAVE: u32 = 0x2000;
+pub const FX_WAVE3: u32 = 0x4000;
+pub const FX_BEAM: u32 = 0x8000;
+/// a crack of lightning where the blade's tip comes down (the thunder cleave, the rings), a gleam
+/// on the blade (a charge's JUST moment, the draw), the cross cut's X left hanging (wave.rs)
+pub const FX_ZAP: u32 = 0x1_0000;
+pub const FX_SPARKLE: u32 = 0x2_0000;
+pub const FX_CROSS: u32 = 0x4_0000;
+const SOUND_MARIO_PUNCH_YAH: u32 = 0x241E_8081;
 
 /// The fists' Bullet Bill punch (back, forward + X; DMC's Stinger): a coil back, then he flies at
 /// the enemy fist first like a Bullet Bill, up to 7 m, and lands out of it. Landed, it can be cut
@@ -244,7 +335,7 @@ const BULLET: Move = Move {
     squash: &[k(0, 1.0, Linear), k(4, 0.86, Out), k(6, 1.12, Out), k(11, 1.0, InOut), k(13, 0.9, Out), k(17, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(4, 8.0, Out), k(6, 0.0, Out), k(13, 6.0, Out), k(18, 0.0, InOut)],
     reach: &[k(5, 0.0, Linear), k(8, 1.0, Out), k(13, 1.0, Hold), k(17, 0.0, InOut)],
-    windows: &[Window { from: 8, to: 13, shape: Shape::Front { reach: 150.0 }, attack: Attack::BulletPunch, fx: 0 }],
+    windows: &[Window { from: 8, to: 13, shape: Shape::Front { reach: 150.0 }, attack: Attack::BulletPunch, fx: 0, ground: false }],
     cancels: &[Cancel { into: ALL, from: 19, on_hit: 13 }],
     sounds: &[(0, SOUND_MARIO_UH, 0.5), (5, SOUND_MARIO_PUNCH_HOO, 0.0), (6, SOUND_ACTION_THROW, 0.0), (7, SOUND_GENERAL_SWISH_AIR, 0.45)],
     fx: &[(5, crate::moves::FX_LAUNCH)],
@@ -252,7 +343,92 @@ const BULLET: Move = Move {
     ..BASE
 };
 
-pub const MOVES: &[Move] = &[BULLET];
+/// The Star Sword's RB on the ground (Zelda's Skyward Strike): the sword raised overhead, the bolt
+/// off its tip, then down again. Its charge was RB's (bolt.rs makes the bolt).
+const SKY: Move = Move {
+    name: "skyward strike",
+    len: 20,
+    clips: &[Clip { from: 0, anim: MARIO_ANIM_FIRST_PUNCH, frames: &[k(0, 0.0, Linear)] }],
+    pitch: &[k(0, 0.0, Linear), k(4, -6.0, Out), k(7, -3.0, InOut), k(14, 0.0, InOut)],
+    aim: &[0],
+    squash: &[k(0, 1.0, Linear), k(4, 0.92, Out), k(6, 1.08, Out), k(12, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(4, 5.0, Out), k(6, 0.0, Out)],
+    reach: &[k(0, 0.0, Linear), k(4, 1.0, Out), k(12, 1.0, Hold), k(18, 0.0, InOut)],
+    reach_pitch: 85.0,
+    blade_yaw: &[k(0, -20.0, Linear), k(5, 0.0, Out)],
+    blade_pitch: &[k(0, 10.0, Linear), k(5, 92.0, Out), k(12, 92.0, Hold), k(18, 20.0, InOut)],
+    blade_held: (0, 18),
+    cancels: &[Cancel { into: ALL, from: 10, on_hit: 10 }],
+    sounds: &[(0, SOUND_GENERAL_SWISH_AIR, 0.4), (6, SOUND_MARIO_PUNCH_HOO, 0.0)],
+    fx: &[(6, FX_RELEASE)],
+    locked: (0, 7),
+    ..BASE
+};
+
+/// The Star Sword's RB in the air (Zeus's throw): held up there a moment, the arm cocked back over
+/// his head, the bolt javelin hurled down at the enemy.
+const ZEUS: Move = Move {
+    name: "Zeus throw",
+    len: 16,
+    clips: &[Clip { from: 0, anim: MARIO_ANIM_FIRST_PUNCH, frames: &[k(0, 0.0, Linear), k(6, 3.0, Out)] }],
+    twist: &[k(0, 0.0, Linear), k(4, -25.0, Out), k(7, 15.0, In), k(12, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(4, -8.0, Out), k(7, 12.0, In), k(12, 0.0, InOut)],
+    aim: &[0, 5],
+    vel_y: &[(0, 0.0)],
+    hold: (0, 9),
+    reach: &[k(0, 0.5, Linear), k(4, 1.0, Out), k(9, 1.0, Hold), k(12, 0.0, InOut)],
+    reach_pitch: 60.0,
+    blade_pitch: &[k(0, 40.0, Linear), k(4, 140.0, Out), k(7, -35.0, In), k(12, -20.0, InOut)],
+    blade_held: (0, 12),
+    cancels: &[Cancel { into: ALL, from: 9, on_hit: 9 }],
+    sounds: &[(0, SOUND_GENERAL_SWISH_AIR, 0.4), (6, SOUND_MARIO_PUNCH_YAH, 0.0)],
+    fx: &[(6, FX_RELEASE)],
+    air: true,
+    land_ends: true,
+    ..BASE
+};
+
+use crate::swordmoves as sw;
+
+/// Every move by its id: the fists' and the sword's RB moves, then the Star Sword's (SW_S1 on,
+/// swordmoves.rs)
+pub const MOVES: &[Move] = &[
+    BULLET,
+    SKY,
+    ZEUS,
+    sw::S1,
+    sw::S2,
+    sw::S3,
+    sw::S4,
+    sw::WHIRL,
+    sw::CLEAVE,
+    sw::THRUST,
+    sw::STABS,
+    sw::RISE,
+    sw::SPIN_JUMP,
+    sw::WAVE_CHARGE,
+    sw::WAVE,
+    sw::WAVE_JUST,
+    sw::SPIN_CUT,
+    sw::SPIN_CHARGE,
+    sw::GREAT_SPIN[0],
+    sw::GREAT_SPIN[1],
+    sw::GREAT_SPIN[2],
+    sw::HURRICANE,
+    sw::CROSS,
+    sw::LAUNCHER,
+    sw::HELM,
+    sw::IAI,
+    sw::FLURRY,
+    sw::RAVE[0],
+    sw::RAVE[1],
+    sw::RAVE[2],
+    sw::RAVE[3],
+    sw::BREAKER,
+    sw::POGO,
+    sw::DRAW,
+    sw::DRAW_AIR,
+];
 
 // ---- playing them ---------------------------------------------------------------------------
 
@@ -265,6 +441,9 @@ pub struct Frame {
     pub c: SM64ErScript,
     pub window: Option<(usize, &'static Window)>,
     pub reach: f32,
+    pub reach_pitch: f32,
+    /// where the held weapon points (yaw, pitch, roll degrees), in its held ticks
+    pub blade: Option<(f32, f32, f32)>,
     pub fx: u32,
 }
 
@@ -277,6 +456,12 @@ pub struct Player {
     landed: bool,
     /// what may cut it short as of its last frame
     cancel: u8,
+    /// the ground windows whose look was shown (by index: once, as he lands)
+    ground_shown: u32,
+    /// (window, enemy) blows that landed: each window strikes an enemy once
+    struck: Vec<(usize, u64)>,
+    /// moves started so far (the same move twice in a row is a new one)
+    starts: u32,
 }
 
 impl Player {
@@ -295,16 +480,50 @@ impl Player {
         self.landed = true;
     }
 
+    /// The move playing (as of its last frame).
+    pub fn active(&self) -> Option<u16> {
+        self.cur
+    }
+
+    /// Moves started so far (a new one when it changes).
+    pub fn starts(&self) -> u32 {
+        self.starts
+    }
+
+    /// A blow of the move playing landed.
+    pub fn has_landed(&self) -> bool {
+        self.landed
+    }
+
+    /// Window `window` of the move playing reaches the enemy `key`: whether that's its first blow on
+    /// him (and it's counted). A hit-stop holds the move's tick while the real ticks, and the blow's
+    /// cooldown, run on: without this a window two ticks long hit a big body again and again.
+    pub fn first_strike(&mut self, window: usize, key: u64) -> bool {
+        if self.struck.contains(&(window, key)) {
+            return false;
+        }
+        self.struck.push((window, key));
+        true
+    }
+
     /// Before an SM64 tick: Mario's action, its arg and tick count after the last tick; the frame
     /// to play now (None: no move is playing). `units_per_m`: SM64 units in a metre.
     pub fn frame(&mut self, action: u32, arg: u32, timer: i32, units_per_m: f32) -> Option<Frame> {
+        self.frame_in(MOVES, action, arg, timer, units_per_m)
+    }
+
+    /// `frame`, the moves read from `moves` (by id).
+    pub fn frame_in(&mut self, moves: &'static [Move], action: u32, arg: u32, timer: i32, units_per_m: f32) -> Option<Frame> {
         let (id, t) = if let Some((id, target)) = self.starting.take() {
-            let Some(m) = MOVES.get(id as usize) else {
+            let Some(m) = moves.get(id as usize) else {
                 self.cur = None;
                 return None;
             };
             self.cur = Some(id);
             self.landed = false;
+            self.ground_shown = 0;
+            self.struck.clear();
+            self.starts = self.starts.wrapping_add(1);
             self.approach_m = m.approach.map_or(0.0, |a| approach_total(&a, target));
             (id, 0)
         } else {
@@ -316,11 +535,11 @@ impl Player {
             }
             (id, timer.clamp(0, u16::MAX as i32) as u16)
         };
-        let m = &MOVES[id as usize];
+        let m = &moves[id as usize];
         if t >= m.len {
             self.cur = None;
             let c = SM64ErScript { active: 1, end: 1, anim_id: -1, anim_frame: -1.0, squash: 1.0, ..Default::default() };
-            return Some(Frame { id, t, c, window: None, reach: 0.0, fx: 0 });
+            return Some(Frame { id, t, c, window: None, reach: 0.0, reach_pitch: 0.0, blade: None, fx: 0 });
         }
         let tf = t as f32;
         let within = |(from, to): (u16, u16)| from <= t && t < to;
@@ -330,7 +549,22 @@ impl Player {
         let vel_y = m.vel_y.iter().find(|v| v.0 == t).map(|v| v.1);
         let sound = m.sounds.iter().find(|s| s.0 == t);
         let window = m.windows.iter().enumerate().find(|(_, w)| w.from <= t && t <= w.to);
-        let fx = m.fx.iter().filter(|f| f.0 == t).fold(window.map_or(0, |w| w.1.fx), |a, f| a | f.1);
+        // (a ground window's look once, as he's on the ground: the landing's ring)
+        let window_fx = match window {
+            Some((i, w)) if w.ground => {
+                let bit = 1u32 << (i as u32).min(31);
+                if action & 0x800 == 0 && self.ground_shown & bit == 0 {
+                    self.ground_shown |= bit;
+                    w.fx
+                } else {
+                    0
+                }
+            }
+            Some((_, w)) => w.fx,
+            None => 0,
+        };
+        let pulse = m.pulse.filter(|&(every, _)| every > 0 && t % every == 0).map_or(0, |p| p.1);
+        let fx = m.fx.iter().filter(|f| f.0 == t).fold(window_fx | pulse, |a, f| a | f.1);
         let cancel = m.cancels.iter().filter(|c| t >= if self.landed { c.on_hit.min(c.from) } else { c.from }).fold(0, |a, c| a | c.into);
         let c = SM64ErScript {
             active: 1,
@@ -355,7 +589,8 @@ impl Player {
             sound_volume: sound.map_or(0.0, |s| s.2),
         };
         self.cancel = cancel;
-        Some(Frame { id, t, c, window, reach: eval(m.reach, tf, 0.0), fx })
+        let blade = within(m.blade_held).then(|| (eval(m.blade_yaw, tf, 0.0), eval(m.blade_pitch, tf, 0.0), eval(m.blade_roll, tf, 0.0)));
+        Some(Frame { id, t, c, window, reach: eval(m.reach, tf, 0.0), reach_pitch: m.reach_pitch, blade, fx })
     }
 }
 
@@ -487,10 +722,61 @@ mod tests {
     }
 
     #[test]
+    fn a_window_strikes_each_enemy_once() {
+        // (a hit-stop holds the move's tick while the real ticks and the cooldown run on: the same
+        // window again on the same enemy is no new blow)
+        let mut p = player_at(BULLET_PUNCH);
+        p.frame(0, 0, 0, 100.0);
+        assert!(p.first_strike(0, 7));
+        assert!(!p.first_strike(0, 7));
+        assert!(p.first_strike(0, 8));
+        assert!(p.first_strike(1, 7));
+        // (the next move: all new)
+        p.start(BULLET_PUNCH, None);
+        p.frame(0, 0, 0, 100.0);
+        assert!(p.first_strike(0, 7));
+        assert!(!p.has_landed());
+        p.landed();
+        assert!(p.has_landed());
+    }
+
+    #[test]
+    fn a_ground_window_waits_for_the_landing() {
+        static W: &[Window] = &[Window { from: 0, to: 9, shape: Shape::Around { radius: 100.0, ahead: 0.0 }, attack: Attack::Punch, fx: 0, ground: true }];
+        static M: Move = Move { name: "test", len: 10, windows: W, air: true, ..BASE };
+        assert!(window_open(&M.windows[0], true).is_none());
+        assert!(window_open(&M.windows[0], false).is_some());
+    }
+
+    #[test]
+    fn a_ground_windows_look_shows_once_as_he_lands() {
+        static W: &[Window] = &[Window { from: 2, to: 9, shape: Shape::Around { radius: 100.0, ahead: 0.0 }, attack: Attack::Punch, fx: 0x40, ground: true }];
+        static M: Move = Move { name: "test", len: 12, windows: W, air: true, ..BASE };
+        let mut p = Player::default();
+        p.start(0, None);
+        p.frame_in(std::slice::from_ref(&M), 0, 0, 0, 100.0);
+        // (in the air: nothing yet)
+        assert_eq!(p.frame_in(std::slice::from_ref(&M), ACT_ER_SCRIPT_AIR, 0, 3, 100.0).unwrap().fx & 0x40, 0);
+        // on the ground: once
+        assert_eq!(p.frame_in(std::slice::from_ref(&M), ACT_ER_SCRIPT, 0, 4, 100.0).unwrap().fx & 0x40, 0x40);
+        assert_eq!(p.frame_in(std::slice::from_ref(&M), ACT_ER_SCRIPT, 0, 5, 100.0).unwrap().fx & 0x40, 0);
+    }
+
+    #[test]
+    fn a_pulse_comes_back_every_so_often() {
+        static M: Move = Move { name: "test", len: 40, pulse: Some((10, 0x100)), ..BASE };
+        let mut p = Player::default();
+        p.start(0, None);
+        let fx: Vec<u32> = (0..25).map(|t| p.frame_in(std::slice::from_ref(&M), if t == 0 { 0 } else { ACT_ER_SCRIPT }, 0, t, 100.0).unwrap().fx & 0x100).collect();
+        assert!(fx[0] != 0 && fx[10] != 0 && fx[20] != 0);
+        assert_eq!(fx.iter().filter(|f| **f != 0).count(), 3);
+    }
+
+    #[test]
     fn every_move_is_well_formed() {
         for m in MOVES {
             assert!(m.len > 0, "{}", m.name);
-            for keys in [m.twist, m.pitch, m.roll, m.turn, m.speed, m.squash, m.dip, m.reach] {
+            for keys in [m.twist, m.pitch, m.roll, m.turn, m.speed, m.squash, m.dip, m.reach, m.blade_yaw, m.blade_pitch, m.blade_roll] {
                 assert!(keys.windows(2).all(|w| w[0].t <= w[1].t), "{}: keys out of order", m.name);
             }
             assert!(m.clips.windows(2).all(|w| w[0].from < w[1].from), "{}", m.name);

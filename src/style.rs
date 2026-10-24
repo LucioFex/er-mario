@@ -334,7 +334,7 @@ fn add(m: &mut Meter, now: f32, points: f32) {
 
 /// Blows that are the knock-on of a MAX show or the like: a fraction of a point each.
 fn weak(attack: Attack) -> bool {
-    matches!(attack, Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::RideCrash | Attack::RideBlow | Attack::RideSmash | Attack::Bowled)
+    matches!(attack, Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut | Attack::RideCrash | Attack::RideBlow | Attack::RideSmash | Attack::Bowled)
 }
 
 /// Game thread: one of Mario's blows landed on the enemy `target`.

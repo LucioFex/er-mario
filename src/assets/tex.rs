@@ -290,9 +290,10 @@ pub fn mario_albedo_as(model: &MarioModel, luigi: bool) -> Image {
 /// The trap kit's albedo (kit.rs): its palette as a 4 x 4 grid of flat swatches.
 pub fn kit_albedo() -> Image {
     let mut img = Image::new(SIZE, SIZE, [0.5, 0.5, 0.5, 1.0]);
-    let cell = SIZE / 4;
+    let grid = super::kit::KIT_GRID;
+    let cell = SIZE / grid;
     for (k, c) in super::kit::KIT_PALETTE.iter().enumerate() {
-        let (cx, cy) = ((k % 4) * cell, (k / 4) * cell);
+        let (cx, cy) = ((k % grid) * cell, (k / grid) * cell);
         for y in cy..cy + cell {
             for x in cx..cx + cell {
                 img.px[y * SIZE + x] = [c[0], c[1], c[2], 1.0];

@@ -9,17 +9,22 @@
 //! - the Bob-omb: its centre at y = BOMB_R, facing +Z (its eyes), the key on its back (-Z)
 //! - the spring: its base on the floor, its top at SPRING_H (squash it along Y to press it)
 //! - the boulder: its centre at the origin (it rolls about it)
+//! - the Star Sword: its grip at the origin, the blade up along +Y (its flat facing X, its edges
+//!   along Z), the pommel below
 
 use glam::Vec3;
 
 use super::model::Tri;
-use crate::engine_mario::{KIT_BANANA, KIT_BOMB, KIT_GREEN_SHELL, KIT_RED_SHELL, KIT_ROCK, KIT_SPRING};
+use crate::engine_mario::{KIT_BANANA, KIT_BOMB, KIT_GREEN_SHELL, KIT_RED_SHELL, KIT_ROCK, KIT_SPRING, KIT_SWORD};
 
 /// SM64 units per metre in the mesh (as the gear's)
 const PER_METRE: f32 = 400.0;
 
+/// The kit albedo's swatches: KIT_GRID x KIT_GRID cells (tex::kit_albedo, flver::kit_uv).
+pub const KIT_GRID: usize = 8;
+
 /// The kit's colours: one swatch each in its albedo (tex::kit_albedo), in this order.
-pub const KIT_PALETTE: [[f32; 3]; 16] = [
+pub const KIT_PALETTE: [[f32; 3]; 19] = [
     [1.0, 0.86, 0.18],   // 0 banana yellow
     [0.36, 0.23, 0.09],  // 1 banana tips, brown
     [0.12, 0.66, 0.16],  // 2 shell green
@@ -36,7 +41,11 @@ pub const KIT_PALETTE: [[f32; 3]; 16] = [
     [0.31, 0.29, 0.28],  // 13 dark rock
     [0.63, 0.6, 0.55],   // 14 light rock
     [0.82, 0.62, 0.38],  // 15 the fuse, tan
+    [0.9, 0.92, 0.97],   // 16 the sword's blade, silver-white
+    [0.62, 0.84, 1.0],   // 17 its edges, light blue
+    [0.78, 0.81, 0.88],  // 18 its ridge, a shade darker
 ];
+const _: () = assert!(KIT_PALETTE.len() <= KIT_GRID * KIT_GRID);
 
 pub const BANANA_LEN: f32 = 0.42;
 pub const SHELL_R: f32 = 0.3;
@@ -123,6 +132,7 @@ pub fn build() -> Vec<Tri> {
     bomb(&mut Builder { out: &mut out, part: KIT_BOMB as i32 });
     spring(&mut Builder { out: &mut out, part: KIT_SPRING as i32 });
     rock(&mut Builder { out: &mut out, part: KIT_ROCK as i32 });
+    sword(&mut Builder { out: &mut out, part: KIT_SWORD as i32 });
     out
 }
 
@@ -272,10 +282,146 @@ fn rock(b: &mut Builder) {
     });
 }
 
+/// the Star Sword: where the blade starts and its tip (m up its part's Y), its width at the guard
+/// and its thickness
+pub const SWORD_BASE: f32 = 0.075;
+pub const SWORD_TIP: f32 = 0.89;
+const SWORD_W: f32 = 0.07;
+const SWORD_T: f32 = 0.014;
+
+impl Builder<'_> {
+    /// A triangle whichever way its points go: turned so it faces `out` (flat shaded).
+    fn face(&mut self, p: [Vec3; 3], out: Vec3, color: usize) {
+        let n = (p[1] - p[0]).cross(p[2] - p[0]);
+        if n.length_squared() < 1e-12 {
+            return;
+        }
+        let (p, n) = if n.dot(out) < 0.0 { ([p[0], p[2], p[1]], -n.normalize()) } else { (p, n.normalize()) };
+        self.tri(p, [n; 3], color);
+    }
+
+    /// A flat convex outline (points in order) pushed `half` either way along `axis`: both faces
+    /// and its rim.
+    fn slab(&mut self, outline: &[Vec3], axis: Vec3, half: f32, color: usize) {
+        let c = outline.iter().copied().sum::<Vec3>() / outline.len() as f32;
+        let n = outline.len();
+        for side in [1.0f32, -1.0] {
+            let off = axis * half * side;
+            for k in 0..n {
+                self.face([c + off, outline[k] + off, outline[(k + 1) % n] + off], axis * side, color);
+            }
+        }
+        for k in 0..n {
+            let (a, b) = (outline[k], outline[(k + 1) % n]);
+            let out = ((a + b) * 0.5 - c).normalize_or(axis);
+            self.face([a + axis * half, b + axis * half, b - axis * half], out, color);
+            self.face([a + axis * half, b - axis * half, a - axis * half], out, color);
+        }
+    }
+
+    /// A five-point star in the plane across `axis` round `c` (radius `r`, its first point toward
+    /// `up`), `half` thick.
+    fn star(&mut self, c: Vec3, axis: Vec3, up: Vec3, r: f32, half: f32, color: usize) {
+        let side = axis.cross(up).normalize_or(Vec3::Z);
+        let pts: Vec<Vec3> = (0..10)
+            .map(|k| {
+                let a = k as f32 / 10.0 * std::f32::consts::TAU;
+                let rr = if k % 2 == 0 { r } else { r * 0.45 };
+                c + (up * a.cos() + side * a.sin()) * rr
+            })
+            .collect();
+        // (a star isn't convex: a fan from its middle on each face, and its rim)
+        for s in [1.0f32, -1.0] {
+            let off = axis * half * s;
+            for k in 0..10 {
+                self.face([c + off, pts[k] + off, pts[(k + 1) % 10] + off], axis * s, color);
+            }
+        }
+        for k in 0..10 {
+            let (a, b) = (pts[k], pts[(k + 1) % 10]);
+            let out = ((a + b) * 0.5 - c).normalize_or(up);
+            self.face([a + axis * half, b + axis * half, b - axis * half], out, color);
+            self.face([a + axis * half, b - axis * half, a - axis * half], out, color);
+        }
+    }
+}
+
+/// The Star Sword (sword.rs): a silver-white blade with faint light-blue edges and a darker ridge,
+/// a gold Power Star inlaid on both faces by the guard, two little white Wing Cap wings for its
+/// guard (the Master Sword's), a red grip ringed in gold, a yellow star for its pommel.
+fn sword(b: &mut Builder) {
+    // the blade: a flat hexagon across, tapering up to a point
+    let slices: [(f32, f32); 6] = [(SWORD_BASE, 1.0), (0.25, 0.97), (0.55, 0.89), (0.74, 0.83), (0.8, 0.78), (SWORD_TIP, 0.0)];
+    let section = |w: f32, t: f32| -> [Vec3; 6] {
+        let (w, t) = (SWORD_W * 0.5 * w, SWORD_T * 0.5 * t);
+        [Vec3::new(0.0, 0.0, w), Vec3::new(t, 0.0, w * 0.45), Vec3::new(t, 0.0, -w * 0.45), Vec3::new(0.0, 0.0, -w), Vec3::new(-t, 0.0, -w * 0.45), Vec3::new(-t, 0.0, w * 0.45)]
+    };
+    // (the faces' colours round the section: edge bevels light blue, the flats silver)
+    const FACES: [usize; 6] = [17, 16, 17, 17, 16, 17];
+    for j in 0..slices.len() - 1 {
+        let ((ya, wa), (yb, wb)) = (slices[j], slices[j + 1]);
+        let (sa, sb) = (section(wa, wa.max(0.6)), section(wb, if wb > 0.0 { wb.max(0.6) } else { 0.0 }));
+        for i in 0..6 {
+            let k = (i + 1) % 6;
+            let (a0, a1) = (sa[i] + Vec3::Y * ya, sa[k] + Vec3::Y * ya);
+            let (b0, b1) = (sb[i] + Vec3::Y * yb, sb[k] + Vec3::Y * yb);
+            let out = ((sa[i] + sa[k]) * 0.5).with_y(0.0).normalize_or(Vec3::X);
+            b.face([a0, a1, b1], out, FACES[i]);
+            b.face([a0, b1, b0], out, FACES[i]);
+        }
+    }
+    // its ridge: a thin darker strip up the middle of each flat (a hair proud of it)
+    for s in [1.0f32, -1.0] {
+        let x = SWORD_T * 0.5 * s + 0.0008 * s;
+        let pts = [Vec3::new(x, 0.13, 0.004), Vec3::new(x, 0.74, 0.003), Vec3::new(x, 0.74, -0.003), Vec3::new(x, 0.13, -0.004)];
+        b.face([pts[0], pts[1], pts[2]], Vec3::X * s, 18);
+        b.face([pts[0], pts[2], pts[3]], Vec3::X * s, 18);
+    }
+    // the Power Star inlaid on both faces, just above the guard
+    for s in [1.0f32, -1.0] {
+        b.star(Vec3::new((SWORD_T * 0.5 + 0.002) * s, 0.12, 0.0), Vec3::X, Vec3::Y, 0.022, 0.0015, 9);
+    }
+    // the guard: a gold block, and a Wing Cap wing each side swept up
+    b.slab(&[Vec3::new(0.0, 0.04, -0.035), Vec3::new(0.0, 0.04, 0.035), Vec3::new(0.0, 0.08, 0.035), Vec3::new(0.0, 0.08, -0.035)], Vec3::X, 0.02, 9);
+    for s in [1.0f32, -1.0] {
+        let wing = [(0.03, 0.035), (0.03, 0.09), (0.075, 0.125), (0.12, 0.155), (0.11, 0.11), (0.07, 0.06)];
+        let outline: Vec<Vec3> = wing.iter().map(|&(z, y)| Vec3::new(0.0, y, z * s)).collect();
+        b.slab(&outline, Vec3::X, 0.008, 5);
+    }
+    // the grip, red, ringed in gold; the pommel a yellow star
+    b.cylinder(Vec3::new(0.0, -0.105, 0.0), Vec3::new(0.0, 0.04, 0.0), 0.016, 8, 6, false);
+    for y in [-0.095, 0.022] {
+        b.cylinder(Vec3::new(0.0, y - 0.007, 0.0), Vec3::new(0.0, y + 0.007, 0.0), 0.0195, 8, 9, true);
+    }
+    b.star(Vec3::new(0.0, -0.14, 0.0), Vec3::X, Vec3::NEG_Y, 0.038, 0.01, 0);
+}
+
 #[cfg(test)]
 mod tests {
     /// The kit's own vertex count (as the FLVER writer dedups them) and triangles: the gauntlets'
     /// buffers are checked at build time, this only keeps it from growing by accident.
+    /// The Star Sword along its part's +Y (the grip at the origin, the tip ~0.9 m up), its blade's
+    /// flat facing X, its wings out along Z; every normal a unit one.
+    #[test]
+    fn the_sword() {
+        let tris: Vec<_> = super::build().into_iter().filter(|t| t.part == crate::engine_mario::KIT_SWORD as i32).collect();
+        assert!(!tris.is_empty());
+        let pts: Vec<[f32; 3]> = tris.iter().flat_map(|t| t.local).map(|p| [-p[0] / super::PER_METRE, p[1] / super::PER_METRE, p[2] / super::PER_METRE]).collect();
+        let lo_hi = |k: usize| (pts.iter().map(|p| p[k]).fold(f32::MAX, f32::min), pts.iter().map(|p| p[k]).fold(f32::MIN, f32::max));
+        let (y0, y1) = lo_hi(1);
+        assert!(y0 > -0.2 && y0 < -0.1 && y1 > 0.85 && y1 < 0.95, "from {y0} to {y1}");
+        let (z0, z1) = lo_hi(2);
+        assert!(z1 - z0 < 0.3 && z1 > 0.1 && z0 < -0.1, "wings from {z0} to {z1}");
+        let (x0, x1) = lo_hi(0);
+        assert!(x1 - x0 < 0.06, "{x0}..{x1} thick");
+        for t in &tris {
+            for n in t.normal {
+                let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                assert!((l - 1.0).abs() < 1e-3, "normal {n:?}");
+            }
+        }
+    }
+
     #[test]
     fn size() {
         let tris = super::build();
@@ -289,6 +435,6 @@ mod tests {
             }
         }
         println!("kit: {} vertices, {} triangles", keys.len(), tris.len());
-        assert!(keys.len() <= 1100 && tris.len() <= 1600);
+        assert!(keys.len() <= 1500 && tris.len() <= 2200);
     }
 }

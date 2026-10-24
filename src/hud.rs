@@ -145,6 +145,8 @@ const IMG_KIT: usize = 82; // 4
 const IMG_ROCK: usize = 86;
 /// an X in SM64's HUD font's colours (it has none: "MAX" read "MAK")
 const IMG_X: usize = 87;
+/// the Star Sword (sword.rs): a silver blade, its winged guard and star, a red grip
+const IMG_SWORD: usize = 88;
 
 /// The glyph for a character of a name in SM64's HUD font (look-alikes for the letters it lacks).
 fn glyph_for(c: char) -> Option<usize> {
@@ -283,6 +285,7 @@ pub fn load(rom: &[u8]) {
                 if inside && d < 1.6 { fill } else if inside && d < 2.6 { edge } else { [0; 4] }
             }));
         }
+        out.push(Image::new(32, 32, sword_icon_pixel));
         Some(out)
     };
     match load() {
@@ -455,6 +458,13 @@ fn element_badge(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId],
     dl.add_circle(c, r, col(t, 0.9)).thickness((r * 0.13).max(1.0)).build();
     let at = |x: f32, y: f32| [c[0] + x * r, c[1] + y * r];
     match el {
+        Element::Lightning => {
+            // a zigzag bolt, flickering
+            let flick = 0.75 + 0.25 * (clock * 23.0).sin();
+            let pts = vec![at(0.18, -0.68), at(-0.22, 0.02), at(0.06, 0.02), at(-0.16, 0.7), at(0.26, -0.12), at(-0.02, -0.12), at(0.18, -0.68)];
+            dl.add_polyline(pts.clone(), col([1.0, 0.93, 0.42], flick)).filled(true).build();
+            dl.add_polyline(pts, col([1.0, 1.0, 0.9], flick)).thickness((r * 0.08).max(1.0)).build();
+        }
         Element::Fire => {
             let k = r * 0.78;
             let frame = (clock * 12.0) as usize % 8;
@@ -644,6 +654,110 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
     // Mario's fireball: the charge at his hand, the shots, their bursts, the lava pools
     draw_fire(dl, textures, size, &fx.fire, &fx.rubble);
 
+    // the Star Sword's lightning (bolt.rs): the storm cloud, a lumpy dark mesh lit from inside
+    // when it strikes; the bolts, zigzags with two branches, a glow round a white-hot core,
+    // flickering out
+    for st in &fx.storms {
+        let fade_in = (st.t * 8.0).min(1.0);
+        let r = st.radius * 0.55 * (0.6 + 0.4 * fade_in);
+        let mut mesh = Mesh::default();
+        const LUMPS: [(f32, f32, f32, f32); 7] = [(0.0, 0.0, 0.0, 1.0), (0.7, 0.1, 0.2, 0.75), (-0.65, 0.05, 0.3, 0.7), (0.2, 0.15, -0.7, 0.72), (-0.3, 0.2, -0.55, 0.65), (0.45, 0.35, -0.2, 0.6), (-0.1, 0.4, 0.45, 0.62)];
+        for (k, &(x, y, z, sz)) in LUMPS.iter().enumerate() {
+            let c = st.pos + Vec3::new(x, y, z) * r;
+            let lit = 0.22 + 0.5 * st.flash;
+            mesh.ellipsoid(c, glam::Quat::from_rotation_y(k as f32 * 1.3), Vec3::new(r * sz, r * sz * 0.62, r * sz), 0.0, 5, 8, &|i, _| {
+                let top = if i < 2 { 0.1 } else { 0.0 };
+                [lit + top, lit + top, lit + 0.06 + top]
+            });
+        }
+        mesh.draw(dl, size, 120.0, bodies);
+        if st.flash > 0.01 {
+            if let (Some((c, z)), Some((e, _))) = (project(st.pos, size), project(st.pos + Vec3::Y * r, size)) {
+                let h = (c[1] - e[1]).abs() * 2.2;
+                if z < 120.0 {
+                    dl.add_image(textures[IMG_GLOW], [c[0] - h, c[1] - h], [c[0] + h, c[1] + h]).col([1.0, 0.95, 0.6, 0.5 * st.flash]).build();
+                }
+            }
+        }
+    }
+    for b in &fx.bolts {
+        let flick = (1.0 - b.t) * if (b.t * 20.0) as u32 % 2 == 0 { 1.0 } else { 0.65 };
+        if flick <= 0.02 {
+            continue;
+        }
+        let main = crate::bolt::jag(b.from, b.to, b.seed as u32, 10, 0.07);
+        let len = b.from.distance(b.to);
+        let mut paths = vec![(main.clone(), b.width)];
+        // (two branches off its upper half)
+        for (k, at) in [3usize, 6].into_iter().enumerate() {
+            let start = main[at];
+            let dir = (b.to - b.from).normalize_or(Vec3::NEG_Y);
+            let out = dir.any_orthonormal_vector() * if (b.seed as u32 + k as u32) % 2 == 0 { 1.0 } else { -1.0 };
+            let end = start + (dir * 0.6 + out * 0.45) * len * 0.22;
+            paths.push((crate::bolt::jag(start, end, b.seed as u32 * 3 + k as u32, 4, 0.12), b.width * 0.5));
+        }
+        for (path, w) in paths {
+            let pts: Vec<Option<([f32; 2], f32)>> = path.iter().map(|p| project(*p, size)).collect();
+            for pair in pts.windows(2) {
+                let (Some((a, za)), Some((c, _))) = (pair[0], pair[1]) else { continue };
+                if za > 150.0 {
+                    continue;
+                }
+                let px = (size[1] / za.max(0.5) * w).clamp(1.0, 40.0);
+                dl.add_line(a, c, imgui::ImColor32::from_rgba_f32s(1.0, 0.92, 0.45, 0.35 * flick)).thickness(px * 3.0).build();
+                dl.add_line(a, c, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 0.92, 0.95 * flick)).thickness(px).build();
+            }
+        }
+    }
+
+    // the sword's crescents (wave.rs): a curved band of light bulging the way it goes, slanted
+    // round that way, a thin strip across its edge (a body still, seen side-on), a soft glow and a
+    // white-hot line along its edge, thickest in the middle
+    for c in &fx.crescents {
+        if c.alpha <= 0.02 {
+            continue;
+        }
+        let dir = Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos());
+        let across = glam::Quat::from_axis_angle(dir, c.roll.to_radians()) * Vec3::Y.cross(dir).normalize_or(Vec3::X);
+        let normal = across.cross(dir);
+        let (half, bulge) = (c.width * 0.5, c.width * 0.32);
+        let tint = match c.kind {
+            1 => [1.0, 0.95, 0.72],
+            2 => [0.62, 0.95, 1.0],
+            // (the cross cut's X, waiting to burst)
+            3 => [1.0, 0.9, 0.55],
+            _ => [0.72, 0.88, 1.0],
+        };
+        const N: usize = 12;
+        let u_of = |i: usize| i as f32 / N as f32 * 2.0 - 1.0;
+        let at = |u: f32, out: f32, inward: f32| c.pos + across * (u * half * out) + dir * (bulge * (1.0 - u * u) * inward);
+        let outer: Vec<Vec3> = (0..=N).map(|i| at(u_of(i), 1.0, 1.0)).collect();
+        let inner: Vec<Vec3> = (0..=N).map(|i| at(u_of(i), 0.92, 0.35)).collect();
+        let thick = |i: usize, s: f32| outer[i] + normal * (c.width * 0.05 * (1.0 - u_of(i) * u_of(i)) * s);
+        let proj = |p: Vec3| project(p, size).filter(|(_, z)| *z < 150.0).map(|(q, _)| q);
+        let fill = imgui::ImColor32::from_rgba_f32s(tint[0], tint[1], tint[2], 0.45 * c.alpha);
+        let band = |a: Option<[f32; 2]>, b: Option<[f32; 2]>, d: Option<[f32; 2]>, e: Option<[f32; 2]>| {
+            if let (Some(a), Some(b), Some(d), Some(e)) = (a, b, d, e) {
+                dl.add_triangle(a, b, e, fill).filled(true).build();
+                dl.add_triangle(a, e, d, fill).filled(true).build();
+            }
+        };
+        for i in 0..N {
+            band(proj(outer[i]), proj(outer[i + 1]), proj(inner[i]), proj(inner[i + 1]));
+            band(proj(thick(i, 1.0)), proj(thick(i + 1, 1.0)), proj(thick(i, -1.0)), proj(thick(i + 1, -1.0)));
+        }
+        for i in 0..N {
+            let (Some((a, za)), Some((b, _))) = (project(outer[i], size), project(outer[i + 1], size)) else { continue };
+            if za > 150.0 {
+                continue;
+            }
+            let u = u_of(i) + 1.0 / N as f32;
+            let px = (size[1] / za.max(0.5) * c.width * 0.035 * (1.0 - u * u * 0.7)).clamp(1.0, 24.0);
+            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(tint[0], tint[1], tint[2], 0.35 * c.alpha)).thickness(px * 3.0).build();
+            dl.add_line(a, b, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9 * c.alpha)).thickness(px).build();
+        }
+    }
+
     // enemies flying through the air (juggle.rs): a white streak behind each, fading
     for streak in &fx.streaks {
         for pair in streak.windows(2) {
@@ -795,6 +909,22 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
         let edge = (pts[0], pts[1]);
         dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
         dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
+    }
+    // the Star Sword's cut: a white-blue ribbon from low on the blade to its tip, the tip's edge
+    // white-hot, a fainter blue band past it (its light), fading fast
+    for pair in fx.blade.windows(2) {
+        let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
+        // (two cuts: no ribbon across the gap between them)
+        if (t0 - t1).abs() > 0.45 {
+            continue;
+        }
+        let pts: Option<Vec<[f32; 2]>> = [h0, h1, m1, m0].iter().map(|p| project(*p, size).filter(|(_, z)| *z < 45.0).map(|(c, _)| c)).collect();
+        let Some(pts) = pts else { continue };
+        let fade = 1.0 - t0.max(t1);
+        let glow = [lerp2(pts[3], pts[0], 1.25), lerp2(pts[2], pts[1], 1.25), pts[1], pts[0]];
+        dl.add_polyline(glow.to_vec(), imgui::ImColor32::from_rgba_f32s(0.55, 0.8, 1.0, 0.18 * fade)).filled(true).build();
+        dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(0.8, 0.92, 1.0, 0.4 * fade)).filled(true).build();
+        dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9 * fade)).thickness(2.5).build();
     }
     // the Chain Chomp's ribbon of fire (Blades of Chaos): a hot core over a wider red glow, its
     // older end cooling and thinning, flames licking along it; and the sparks off its chain
@@ -1480,6 +1610,7 @@ impl ImguiRenderLoop for Overlay {
                 crate::weapons::HAMMER => Some(IMG_HAMMER_ICON),
                 crate::weapons::RANG => Some(IMG_RANG),
                 crate::weapons::CHOMP => Some(IMG_CHOMP),
+                crate::weapons::SWORD => Some(IMG_SWORD),
                 _ => None,
             };
             // the MAX finisher ready: MAX in gold under the weapon's spot, pulsing
@@ -1880,6 +2011,7 @@ impl ImguiRenderLoop for Overlay {
                 crate::weapons::HAMMER => IMG_HAMMER_ICON,
                 crate::weapons::RANG => IMG_RANG,
                 crate::weapons::CHOMP => IMG_CHOMP,
+                crate::weapons::SWORD => IMG_SWORD,
                 _ => IMG_HEAD,
             };
             let x0 = cx - width * 0.5;
@@ -2498,6 +2630,71 @@ fn hammer_icon_pixel(x: usize, y: usize) -> [u8; 4] {
     }
     if handle {
         return if x < 15.0 || x > 17.0 { [70, 40, 20, 255] } else { [170, 110, 55, 255] };
+    }
+    [0; 4]
+}
+
+/// The Star Sword's icon, pommel bottom left, tip top right: a silver blade with light-blue edges
+/// and a gold star by the guard, the guard two little white wings, a red grip with gold rings, a
+/// yellow star for the pommel; dark outlines.
+fn sword_icon_pixel(x: usize, y: usize) -> [u8; 4] {
+    const OUTLINE: [u8; 4] = [30, 34, 50, 255];
+    let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+    // along the sword from the pommel (4, 28) and across it
+    let (dx, dy) = (px - 4.0, py - 28.0);
+    let k = std::f32::consts::FRAC_1_SQRT_2;
+    let along = (dx - dy) * k;
+    let across = (dx + dy) * k;
+    let a = across.abs();
+    // the pommel's star: five points round (along 2.4)
+    let (sx, sy) = (along - 2.4, across);
+    let r = (sx * sx + sy * sy).sqrt();
+    let star = |r: f32, ang: f32, big: f32| r <= big * (0.62 + 0.38 * (2.5 * ang).cos().abs().powf(3.0));
+    if r < 3.6 {
+        let ang = sy.atan2(sx);
+        if star(r, ang, 3.0) {
+            return if r < 1.3 { [255, 250, 190, 255] } else { [250, 210, 40, 255] };
+        }
+        if star(r, ang, 3.6) {
+            return OUTLINE;
+        }
+    }
+    // the grip: red, gold rings
+    if (4.6..10.6).contains(&along) && a < 2.4 {
+        if a > 1.5 {
+            return OUTLINE;
+        }
+        let ring = ((along - 5.3).abs() < 0.55) || ((along - 9.9).abs() < 0.55);
+        return if ring { [240, 190, 50, 255] } else if across < -0.4 { [235, 60, 50, 255] } else { [180, 25, 25, 255] };
+    }
+    // the guard's wings: out each side, swept up toward the tip, rounded off at their ends
+    let wing_from = 10.2 + a * 0.38;
+    let wing_to = 12.6 + a * 0.42 - (a - 5.2).max(0.0) * 1.6;
+    if a <= 7.6 && along >= wing_from - 0.8 && along <= wing_to + 0.8 && wing_to > wing_from {
+        let inside = a <= 6.8 && along >= wing_from && along <= wing_to;
+        if !inside {
+            return OUTLINE;
+        }
+        // (a feather line or two)
+        let feather = a > 2.5 && ((a - 4.3).abs() < 0.45 || (a - 6.0).abs() < 0.4);
+        return if feather { [190, 200, 220, 255] } else { [255, 255, 255, 255] };
+    }
+    // the blade: tapering to the tip, its edges light blue
+    let half = if along < 29.5 { 2.3 } else { 2.3 * (33.0 - along).max(0.0) / 3.5 };
+    if (12.5..33.6).contains(&along) && a <= half + 0.8 {
+        if a > half || along > 33.0 {
+            return OUTLINE;
+        }
+        // the gold star inlaid by the guard
+        let (gx, gy) = (along - 15.3, across);
+        let gr = (gx * gx + gy * gy).sqrt();
+        if gr < 1.9 && star(gr, gy.atan2(gx), 1.9) {
+            return [255, 205, 40, 255];
+        }
+        if a > half - 0.9 {
+            return [150, 205, 255, 255];
+        }
+        return if across < 0.0 { [245, 248, 255, 255] } else { [195, 205, 222, 255] };
     }
     [0; 4]
 }

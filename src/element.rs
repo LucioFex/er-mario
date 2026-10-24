@@ -5,6 +5,9 @@
 //!   more of every blow
 //! - the Chain Chomp: blood. It builds up blood loss: a burst of damage
 //! - the boomerang: poison. It builds up poison: damage a little each second for a while
+//! - the Star Sword: lightning. Weighed by the enemy's lightning cut rate as fire by his fire one;
+//!   it builds up a shock (no status of Elden Ring's: his resistances' average is its own): a bolt
+//!   out of the sky on him, jumping on to the two nearest within CHAIN_REACH (60% and 40%)
 //! Each enemy takes them as Elden Ring has him: his resistance to each status (NpcParam) is how much
 //! it takes to set it off (immune ones never), and a blow of an element he's weak to, or resists,
 //! is worth a little more or less (WEAK or RESIST over him, the first time). A status set off makes
@@ -35,6 +38,7 @@ pub enum Element {
     Frost = 1,
     Blood = 2,
     Poison = 3,
+    Lightning = 4,
 }
 
 impl Element {
@@ -43,6 +47,7 @@ impl Element {
             1 => Element::Frost,
             2 => Element::Blood,
             3 => Element::Poison,
+            4 => Element::Lightning,
             _ => Element::Fire,
         }
     }
@@ -53,17 +58,18 @@ impl Element {
             crate::weapons::HAMMER => Element::Frost,
             crate::weapons::CHOMP => Element::Blood,
             crate::weapons::RANG => Element::Poison,
+            crate::weapons::SWORD => Element::Lightning,
             _ => Element::Fire,
         }
     }
 
     pub fn name(self) -> &'static str {
-        ["FIRE", "FROST", "BLOOD", "POISON"][self as usize]
+        ["FIRE", "FROST", "BLOOD", "POISON", "THUNDER"][self as usize]
     }
 
     /// Its colour (the HUD's, the callouts', the sparks')
     pub fn tint(self) -> [f32; 3] {
-        [[1.0, 0.55, 0.2], [0.6, 0.88, 1.0], [0.9, 0.15, 0.2], [0.6, 0.9, 0.3]][self as usize]
+        [[1.0, 0.55, 0.2], [0.6, 0.88, 1.0], [0.9, 0.15, 0.2], [0.6, 0.9, 0.3], [1.0, 0.93, 0.42]][self as usize]
     }
 }
 
@@ -81,6 +87,7 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         Attack::Ice(_) => Some(Element::Frost),
         Attack::Dark(_) => Some(Element::Blood),
         Attack::Venom(_) | Attack::VenomCloud => Some(Element::Poison),
+        Attack::Bolt(_) | Attack::BoltBlast | Attack::Javelin(_) | Attack::Storm | Attack::StormEnd => Some(Element::Lightning),
         Attack::Slip
         | Attack::ShellHit
         | Attack::Bomb
@@ -103,7 +110,9 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
         | Attack::BrosAttack
         | Attack::Frostbite
         | Attack::Hemorrhage
-        | Attack::PoisonTick => None,
+        | Attack::PoisonTick
+        | Attack::Shock
+        | Attack::ShockArc(_) => None,
         _ => Some(current()),
     }
 }
@@ -111,8 +120,14 @@ pub fn of_attack(attack: Attack) -> Option<Element> {
 /// How much a punch's worth of a blow builds up (Elden Ring's points: a regular enemy's resistance
 /// is some 70-250, a boss's 250-550), by element: a status takes a string of blows, never one or
 /// two (at 45 the hammer's frostbite came every other swing); frost the slowest, Elden Ring's
-/// quickest
-const BUILD: [f32; 4] = [0.0, 24.0, 28.0, 30.0];
+/// quickest; the sword's shock in between
+const BUILD: [f32; 5] = [0.0, 24.0, 28.0, 30.0, 26.0];
+/// a shock jumps on to enemies this near the one struck (m), this long after (ticks, one and the next)
+const CHAIN_REACH: f32 = 6.0;
+/// the shock's bolt comes down from this high over him (m), this thick (m; its jumps thinner)
+const SHOCK_FROM: f32 = 14.0;
+const SHOCK_WIDTH: f32 = 0.24;
+const CHAIN_AFTER: [u32; 2] = [4, 8];
 /// what any status takes at the least (a regular enemy with next to no resistance still takes a
 /// string: five of the hammer's heaviest, a dozen bites, a dozen boomerang throws or six or seven
 /// charged poison globs)
@@ -151,16 +166,19 @@ const SOUND_BUBBLE_2: i32 = 0x300D_0081;
 const SOUND_FLAME_BLOWN: i32 = 0x5055_8081;
 const SOUND_SNOW: i32 = 0x502A_0081;
 const SOUND_CHOMP_1: i32 = 0x3039_0081;
+/// (not verified in game: a soft boom for the thunder, Mario's own shock's zap)
+const SOUND_VOLCANO_EXPLOSION: i32 = 0x300C_8081;
+const SOUND_SHOCKED: i32 = 0x1416_0001;
 
 /// An enemy as the elements see him (NpcParam): each element's worth against him, and each status's
 /// resistance (0: none; 999 and up: immune)
 #[derive(Clone, Copy)]
 struct Npc {
-    factor: [f32; 4],
-    resist: [f32; 4],
+    factor: [f32; 5],
+    resist: [f32; 5],
 }
 
-const NO_NPC: Npc = Npc { factor: [1.0; 4], resist: [0.0; 4] };
+const NO_NPC: Npc = Npc { factor: [1.0; 5], resist: [0.0; 5] };
 
 /// A resistance's worth as a factor on the element's blows, against the enemy's own resistances
 /// to the other statuses (`mean`: theirs on average, the immune left out): the one he resists least
@@ -187,8 +205,8 @@ fn mean_resist(resist: &[f32]) -> f32 {
     }
 }
 
-/// Fire's worth against him: his damage cut rate to fire against a blow's (strike), doubled and a
-/// half, within 0.8-1.25 (1 if the row says nothing).
+/// Fire's (or lightning's) worth against him: his damage cut rate to it against a blow's (strike),
+/// times one and a half off 1, within 0.8-1.25 (1 if the row says nothing).
 fn fire_factor(fire: f32, strike: f32) -> f32 {
     if !(fire.is_finite() && strike.is_finite() && fire > 0.0 && strike > 0.05) {
         return 1.0;
@@ -205,12 +223,15 @@ fn npc(id: i32) -> Npc {
     }
     let Ok(repo) = (unsafe { SoloParamRepository::instance() }) else { return NO_NPC };
     let Some(p) = repo.get::<NpcParam>(id as u32) else { return NO_NPC };
-    let resist = [0.0, p.resist_freeze() as f32, p.resist_blood() as f32, p.resist_poison() as f32];
+    let statuses = [p.resist_freeze() as f32, p.resist_blood() as f32, p.resist_poison() as f32];
+    let mean = mean_resist(&statuses);
+    // (the shock is no status of Elden Ring's: his resistances' average is its own)
+    let resist = [0.0, statuses[0], statuses[1], statuses[2], mean];
     let fire = fire_factor(p.fire_damage_cut_rate(), p.blow_damage_cut_rate());
-    let mean = mean_resist(&resist[1..]);
-    let n = Npc { factor: [fire, of_resist(resist[1], mean), of_resist(resist[2], mean), of_resist(resist[3], mean)], resist };
+    let thunder = fire_factor(p.thunder_damage_cut_rate(), p.blow_damage_cut_rate());
+    let n = Npc { factor: [fire, of_resist(resist[1], mean), of_resist(resist[2], mean), of_resist(resist[3], mean), thunder], resist };
     log(format!(
-        "element: NpcParam {id}: fire cut {:.2} (strike {:.2}) x{:.2}; frost {} x{:.2}, blood {} x{:.2}, poison {} x{:.2}",
+        "element: NpcParam {id}: fire cut {:.2} (strike {:.2}) x{:.2}; frost {} x{:.2}, blood {} x{:.2}, poison {} x{:.2}; lightning cut {:.2} x{:.2}",
         p.fire_damage_cut_rate(),
         p.blow_damage_cut_rate(),
         n.factor[0],
@@ -219,7 +240,9 @@ fn npc(id: i32) -> Npc {
         resist[2],
         n.factor[2],
         resist[3],
-        n.factor[3]
+        n.factor[3],
+        p.thunder_damage_cut_rate(),
+        n.factor[4]
     ));
     if cache.len() > 512 {
         cache.clear();
@@ -234,11 +257,11 @@ struct Meter {
     boss: bool,
     /// by element (Fire's unused): built up, the tick it last built, how many went off and the
     /// tick of the last, what it takes now
-    build: [f32; 4],
-    last: [u32; 4],
-    procs: [u8; 4],
-    last_proc: [u32; 4],
-    needs: [f32; 4],
+    build: [f32; 5],
+    last: [u32; 5],
+    procs: [u8; 5],
+    last_proc: [u32; 5],
+    needs: [f32; 5],
     /// the element built last (the HUD's bar)
     shown: Element,
     frost_until: u32,
@@ -293,11 +316,11 @@ pub fn struck(handle: &FieldInsHandle, attack: Attack, chest: Vec3, tick: u32) -
     let m = all.entry(key).or_insert_with(|| Meter {
         handle: *handle,
         boss,
-        build: [0.0; 4],
-        last: [tick; 4],
-        procs: [0; 4],
-        last_proc: [tick; 4],
-        needs: [0.0; 4],
+        build: [0.0; 5],
+        last: [tick; 5],
+        procs: [0; 5],
+        last_proc: [tick; 5],
+        needs: [0.0; 5],
         shown: e,
         frost_until: 0,
         poison_until: 0,
@@ -376,6 +399,29 @@ pub fn struck(handle: &FieldInsHandle, attack: Attack, chest: Vec3, tick: u32) -
             });
             Some(Attack::Hemorrhage)
         }
+        Element::Lightning => {
+            crate::style::callout("SHOCK", over, e.tint(), true, 0.0);
+            crate::impact::flash([1.0, 0.95, 0.6], 0.14, 0.3);
+            crate::lakitu::shake(0.35);
+            // (a bolt from the sky on him)
+            crate::bolt::slash(chest + Vec3::Y * SHOCK_FROM, chest, SHOCK_WIDTH);
+            worker::call("shock", |_| unsafe {
+                sm64::sm64_play_sound_volume(SOUND_VOLCANO_EXPLOSION, 0.3);
+                sm64::sm64_play_sound_volume(SOUND_SHOCKED, 0.25);
+            });
+            // (on to the two nearest: a beat later each)
+            let around = crate::combat::nearby(&eldenring::position::HavokPosition(chest.x, chest.y, chest.z, 0.0), CHAIN_REACH + 2.0, [0.0; 3]);
+            let near: Vec<(u64, Vec3)> = around.iter().filter(|t| !t.friendly() && t.shootable().is_some()).map(|t| (t.key(), t.feet())).collect();
+            let mut chains = CHAINS.lock().unwrap_or_else(|e| e.into_inner());
+            for (key, k) in chain_picks(&near, key, chest) {
+                if let Some(t) = around.iter().find(|t| t.key() == key) {
+                    if let Some(h) = t.shootable() {
+                        chains.push((*h, k, tick + CHAIN_AFTER[k as usize], chest, t.feet() + Vec3::Y * 0.9));
+                    }
+                }
+            }
+            Some(Attack::Shock)
+        }
         _ => {
             m.poison_until = tick + POISON_TICKS;
             m.next_poison = tick + POISON_EVERY;
@@ -389,6 +435,10 @@ pub fn struck(handle: &FieldInsHandle, attack: Attack, chest: Vec3, tick: u32) -
     }
 }
 
+/// A shock's jumps to come: on whom, which (0 the first, 1 the next), the tick it lands, from and
+/// to where its arc goes (Elden Ring world).
+static CHAINS: Mutex<Vec<(FieldInsHandle, u8, u32, Vec3, Vec3)>> = Mutex::new(Vec::new());
+
 /// The statuses on enemies as fx.rs sends and elemfx.rs draws them (gathered each tick).
 static AURAS: Mutex<Vec<crate::fx::Aura>> = Mutex::new(Vec::new());
 
@@ -397,6 +447,15 @@ static AURAS: Mutex<Vec<crate::fx::Aura>> = Mutex::new(Vec::new());
 pub fn tick(tick: u32) -> Vec<(FieldInsHandle, Attack)> {
     NOW.store(tick, Ordering::Relaxed);
     let mut due = Vec::new();
+    // (a shock's jumps landing)
+    CHAINS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&(h, k, at, from, to)| {
+        if tick < at {
+            return true;
+        }
+        crate::bolt::slash(from, to, SHOCK_WIDTH * 0.6);
+        due.push((h, Attack::ShockArc(k)));
+        false
+    });
     let mut auras = Vec::new();
     {
         let mut guard = meters();
@@ -506,6 +565,7 @@ fn drift(el: Element) -> Vec3 {
         Element::Frost => -Vec3::Y * 0.25,
         Element::Blood => Vec3::Y * 0.15,
         Element::Poison => Vec3::Y * 0.5,
+        Element::Lightning => Vec3::ZERO,
     }
 }
 
@@ -515,6 +575,7 @@ fn mote_size(el: Element) -> f32 {
         Element::Frost => 0.07,
         Element::Blood => 0.06,
         Element::Poison => 0.05,
+        Element::Lightning => 0.06,
     }
 }
 
@@ -536,6 +597,7 @@ pub fn switched(w: u8, hand: Vec3) {
             }
             Element::Blood => sm64::sm64_play_sound_volume(SOUND_CHOMP_1, 0.3),
             Element::Poison => sm64::sm64_play_sound_volume(SOUND_BUBBLE, 0.45),
+            Element::Lightning => sm64::sm64_play_sound_volume(SOUND_SHOCKED, 0.2),
         }
     });
     log(format!("element: {} in hand", el.name()));
@@ -573,6 +635,15 @@ pub fn clear() {
     *meters() = None;
     AURAS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     MOTES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CHAINS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// The enemies a shock jumps on to from `from` (keys and where they are, `at` the one struck): the
+/// two nearest within CHAIN_REACH, the first taking ShockArc(0), the next ShockArc(1).
+fn chain_picks(near: &[(u64, Vec3)], from: u64, at: Vec3) -> Vec<(u64, u8)> {
+    let mut by: Vec<(f32, u64)> = near.iter().filter(|(k, _)| *k != from).map(|(k, p)| (p.distance(at), *k)).filter(|(d, _)| *d <= CHAIN_REACH).collect();
+    by.sort_by(|a, b| a.0.total_cmp(&b.0));
+    by.into_iter().take(2).enumerate().map(|(i, (_, k))| (k, i as u8)).collect()
 }
 
 #[cfg(test)]
@@ -614,7 +685,8 @@ mod tests {
         assert_eq!(Element::of_weapon(crate::weapons::HAMMER), Element::Frost);
         assert_eq!(Element::of_weapon(crate::weapons::CHOMP), Element::Blood);
         assert_eq!(Element::of_weapon(crate::weapons::RANG), Element::Poison);
-        for e in [Element::Fire, Element::Frost, Element::Blood, Element::Poison] {
+        assert_eq!(Element::of_weapon(crate::weapons::SWORD), Element::Lightning);
+        for e in [Element::Fire, Element::Frost, Element::Blood, Element::Poison, Element::Lightning] {
             assert_eq!(Element::from_u8(e as u8), e);
         }
         // (the shots their own, whatever's in hand; the trap kit and the statuses none)
@@ -622,6 +694,18 @@ mod tests {
         assert_eq!(of_attack(Attack::VenomCloud), Some(Element::Poison));
         assert_eq!(of_attack(Attack::Bomb), None);
         assert_eq!(of_attack(Attack::Hemorrhage), None);
+        assert_eq!(of_attack(Attack::Shock), None);
+        assert_eq!(of_attack(Attack::ShockArc(1)), None);
+    }
+
+    #[test]
+    fn shock_jumps_to_the_two_nearest_within_reach() {
+        let at = Vec3::ZERO;
+        let near = [(1, Vec3::new(9.0, 0.0, 0.0)), (2, Vec3::new(2.0, 0.0, 0.0)), (3, Vec3::new(0.0, 1.0, 4.0)), (4, Vec3::new(0.0, 0.0, 1.0)), (5, Vec3::new(5.5, 0.0, 0.0))];
+        // (not back onto the one it came from, key 4)
+        assert_eq!(chain_picks(&near, 4, at), vec![(2, 0), (3, 1)]);
+        assert_eq!(chain_picks(&near[..1], 4, at), vec![]);
+        assert_eq!(chain_picks(&[], 4, at), vec![]);
     }
 
     #[test]
@@ -633,5 +717,7 @@ mod tests {
         assert!(blows(Element::Blood, Attack::Chomp, 68.0) >= 12);
         // frost the slowest of them
         assert!(BUILD[Element::Frost as usize] < BUILD[Element::Blood as usize]);
+        // the sword's shock: a string too
+        assert!(blows(Element::Lightning, Attack::Punch, 68.0) >= 6);
     }
 }

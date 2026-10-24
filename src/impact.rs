@@ -125,11 +125,26 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::MaxUpper => Some((0, 1.6, true)),
         Attack::MaxQuake => Some((0, 1.2, true)),
         Attack::MaxCyclone => Some((2, 1.4, true)),
+        Attack::MaxStarCut => Some((2, 1.2, true)),
         Attack::RideCrash => Some((5, 1.7, true)),
         Attack::BrosAttack => Some((6, 1.8, true)),
         Attack::Sigil => Some((6, 1.7, true)),
         Attack::SigilTap => Some((1, 0.8, false)),
         Attack::Fire(_) | Attack::Ice(_) | Attack::Dark(_) | Attack::Venom(_) | Attack::VenomCloud | Attack::Frostbite | Attack::Hemorrhage | Attack::PoisonTick => return None,
+        // (the shock: a short hold on whoever it jumps to)
+        Attack::Shock => Some((3, 1.3, true)),
+        Attack::ShockArc(_) => Some((2, 0.9, false)),
+        // (the sword's bolts: a crack of a hold; the storm's giant one a heavy one)
+        Attack::Bolt(_) | Attack::BoltBlast => Some((2, 1.1, false)),
+        Attack::Javelin(_) => Some((3, 1.2, false)),
+        Attack::Storm => Some((1, 0.8, false)),
+        Attack::StormEnd => Some((8, 1.8, true)),
+        // the sword: a short crisp hold on each cut (its pace is quick), its finishers a heavier one
+        Attack::SwordSlash(0..=2) | Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordSpin | Attack::SwordHurricane | Attack::SwordCross | Attack::SwordRave(0..=2) => Some((2, 1.0, false)),
+        Attack::SwordStab | Attack::SwordFlurry | Attack::SwordBeam => Some((1, 0.7, false)),
+        Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordThrust | Attack::SwordRise | Attack::SwordBreaker => Some((3, 1.2, false)),
+        Attack::SwordSlash(_) | Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordCrossBurst | Attack::SwordFlurryEnd | Attack::SwordRave(_) | Attack::SwordIai | Attack::SwordLauncher | Attack::SwordGreatSpin(_) => Some((5, 1.4, true)),
+        Attack::SwordCleave | Attack::SwordHelm | Attack::SwordHelmRing | Attack::SwordBreakerRing => Some((6, 1.6, true)),
     }
 }
 
@@ -237,6 +252,9 @@ static RINGS: Mutex<Vec<Ring>> = Mutex::new(Vec::new());
 static BITS: Mutex<Vec<Flying>> = Mutex::new(Vec::new());
 /// the hammer's swing: its head and the middle of its handle, a few ticks back
 static SWING: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
+/// the Star Sword's cut: its tip and the blade's lower part, a few ticks back
+static BLADE: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
+const BLADE_TIME: f32 = 0.2;
 const MAX_RINGS: usize = 8;
 const MAX_BITS: usize = 40;
 pub const BIT_TIME: f32 = 0.7;
@@ -435,6 +453,24 @@ pub fn frost(feet: Vec3) {
 pub fn element_spark(at: Vec3, tint: [f32; 3], k: f32) {
     let off = Vec3::new(crate::rand01() - 0.5, crate::rand01() * 0.4, crate::rand01() - 0.5) * 0.4;
     spark(at + off, 0.25 + 0.55 * k, [tint[0], tint[1], tint[2], 0.45 + 0.45 * k]);
+}
+
+/// The Star Sword's crack of lightning on the ground (its moves' FX_ZAP; bolt.rs draws the bolt):
+/// a pale gold ring, sparks.
+pub fn zap(at: Vec3) {
+    ring(at + Vec3::Y * 0.05, 2.0, 0.3, [1.0, 0.95, 0.55, 0.9]);
+    for _ in 0..3 {
+        element_spark(at + Vec3::Y * 0.3, [1.0, 0.95, 0.6], 1.0);
+    }
+}
+
+/// A gleam running down the sword (a charge's JUST moment, the quick draw): white sparks at its
+/// tip, a small ring of light.
+pub fn gleam(tip: Vec3) {
+    for _ in 0..2 {
+        element_spark(tip, [1.0, 1.0, 0.85], 1.6);
+    }
+    ring(tip, 0.5, 0.2, [1.0, 1.0, 0.9, 0.9]);
 }
 
 pub fn flame_lick(at: Vec3) {
@@ -841,6 +877,20 @@ pub fn swing_trail() -> Vec<(Vec3, Vec3, f32)> {
     swing.iter().map(|(h, m, t)| (*h, *m, t.elapsed().as_secs_f32() / SWING_TIME)).filter(|(.., t)| *t < 1.0).collect()
 }
 
+/// Game thread: the Star Sword cutting this tick (its tip, its blade low by the guard; Elden Ring
+/// positions): a point of its ribbon.
+pub fn blade_point(tip: Vec3, low: Vec3) {
+    let mut blade = BLADE.lock().unwrap_or_else(|e| e.into_inner());
+    blade.retain(|(_, _, t)| t.elapsed().as_secs_f32() < BLADE_TIME);
+    blade.push((tip, low, Instant::now()));
+}
+
+/// The sword's ribbon, oldest first: tip, low on the blade, how faded (0-1).
+pub fn blade_trail() -> Vec<(Vec3, Vec3, f32)> {
+    let blade = BLADE.lock().unwrap_or_else(|e| e.into_inner());
+    blade.iter().map(|(h, m, t)| (*h, *m, t.elapsed().as_secs_f32() / BLADE_TIME)).filter(|(.., t)| *t < 1.0).collect()
+}
+
 /// Enemies flying through the air (juggle.rs): their streaks, by enemy (points and when).
 static STREAKS: Mutex<Vec<(u64, Vec3, Instant)>> = Mutex::new(Vec::new());
 const STREAK_TIME: f32 = 0.25;
@@ -987,6 +1037,7 @@ pub fn clear() {
     RINGS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     BITS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     SWING.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    BLADE.lock().unwrap_or_else(|e| e.into_inner()).clear();
     CHOMP_TRAIL.lock().unwrap_or_else(|e| e.into_inner()).clear();
     FLYING_SPARKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     RUBBLE.lock().unwrap_or_else(|e| e.into_inner()).clear();

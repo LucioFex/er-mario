@@ -72,8 +72,9 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | D-pad up | Wing cap (recharges in about 55 s) |
 | D-pad right | **Mega Mushroom** (see below) |
 
-**Weapons (LB).** A tap of LB takes the next weapon: fists, hammer, Chain Chomp, boomerang. Holding
-LB goes back to the fists. A banner shows the weapon's name for a moment.
+**Weapons (LB).** A tap of LB takes the next weapon: fists, [Star Sword](#star-sword), hammer,
+Chain Chomp, boomerang. Holding LB goes back to the fists. A banner shows the weapon's name for a
+moment.
 
 **Mixing weapons (swap strikes).** Tap LB in the middle of a string, or right after a blow, and
 Mario switches on the spot, opening with the new weapon's swap strike while the string goes on
@@ -342,6 +343,59 @@ the dice, never twice in a row) sends Mario flying far off, screaming; if a wall
 smacks into it with stars and a bonk (`src/blown.rs`). And a fall from very high up (over 22 m)
 is the end of him, as in Elden Ring.
 
+### Star Sword
+
+The fifth weapon (`src/sword.rs`; its moves are data in `src/swordmoves.rs`, picked from the
+buttons by `src/swordplay.rs`, played by the move engine `src/script.rs`): a real 3D sword built
+into the gauntlets with the trap kit, a silver blade with a light-blue edge and a gold Power Star
+by the guard, two little Wing Cap wings for a guard, a red grip with gold rings and a star for a
+pommel. It rides across Mario's back with its hilt over his right shoulder and comes out with a
+flourish at the first blow; his arm follows the blade (arm IK) and its cuts hit along the blade
+itself, leaving a white-blue trail. Quick and precise, good on crowds: between the fists and the
+Chain Chomp. Its element is **lightning**. Every blow that lands can be cut short into the dash, a
+jump or a swap; the stick is read against the enemy in front (not against where Mario faces).
+
+| Input | Move | Share |
+|---|---|---|
+| X, X, X, X | **Star string**: a diagonal, a backhand, a rising diagonal, a full turn that knocks them back | 7 / 7 / 8 / 12% |
+| X, X, (beat), X | **Star whirl**: two turns cutting all round him (three blows), an upward flick | 3 × 5% + 8% |
+| X, (beat), X | **Thunder cleave**: both hands overhead and down, a crack of lightning where it lands, cracks a stance | 14% |
+| back, forward + X | **Bullet Bill thrust**: flies point first at the enemy, up to 8 m (DMC's Stinger) | 12% |
+| mash X as it lands | **Thousand stabs**: nine stabs in 1.2 s, a last thrust that knocks back | 2% each + 10% |
+| back + X | **Rising cut**: launches small and medium enemies; **X still held** and Mario goes up with them (DMC's High Time) | 10% |
+| X + A | **Spin jump**: up off the ground spinning twice, ends in the air (Link's) | 4 × 3% + 6% |
+| X held, let go | **Star wave**: an iai cut that sends a crescent of light along the ground, 10 m. Let go just as the blade **gleams** (with a soft chime): **JUST!**, three cuts and three crescents | 10% / 3 × 8% |
+| Y | **Star spin**: a quick full turn | 9% |
+| Y held, let go | **Great Spin**: three charge levels (a gleam and a chime at each); one, two or three turns, a ring of lightning from the second; it reaches 30% farther at full health | 12 / 16 / 20% |
+| Y, X | **Hurricane**: two seconds of spinning, the stick steers him about; a short dizzy wobble after | 6 × 3% + 8% |
+| X, Y | **Cross cut**: two crossing cuts leave a glowing X in the air that bursts 0.4 s later | 7% + 12% |
+| X, X, Y | **Star launcher**: Mario and the enemy go up for the air string | 10% |
+| forward + Y | **Helm Splitter**: a leap onto the enemy, a plunging cleave, a ring of lightning where he lands | 16% + 6% |
+| B, then X (or X in the dash) | **Lightning iai**: through the enemy and past it in one cut, its line cracks with lightning a beat later behind him | 11% |
+| X in a perfect dodge's slow time | **Flurry Rush**: in at the enemy, six cuts and a wide last one, untouchable meanwhile (Breath of the Wild); one per perfect dodge | 6 × 3% + 8% |
+| X x4 in the air | **Aerial Rave**: three cuts that hold him up, a turn that throws them off (once a jump; three times with an enemy up there) | 6 / 6 / 7 / 10% |
+| Y in the air | **Helm Breaker**: a fast plunging cut, a ring of lightning on landing | 12% + 6% |
+| LT in the air | **Pogo**: the point straight down; on an enemy he bounces up again (three a jump; after that LT is the ground pound again) | 8% |
+| LB into the sword mid-fight | **Quick draw**: drawn as an iai cut in front (in the air, a spinning cut) | 10% |
+| a string's finisher at full health | **Sword beam**: a small crescent flies 12 m (Zelda's) | 4% |
+| a finisher with MAX ready | **Star Cut End**: a flash, the world slowed, then cuts of lightning across every enemy within 8 m, three times (Vergil's Judgement Cut End) | 3 × 5% |
+
+The shares are a regular enemy's max HP before the damage factor (0.57 in vanilla, see
+[Damage balance](#damage-balance)); bosses take their usual small part. Long strings fade as with
+every weapon. Each cut strikes an enemy once, however long the blade stays in a big body (the
+hit-stop no longer lets one cut land again).
+
+**RB with the sword** is lightning of its own, never a projectile in another colour
+(`src/bolt.rs`):
+
+| Charge | On the ground | In the air |
+|---|---|---|
+| a tap | **Skyward Strike**: the sword raised, a bolt shoots up off it and falls on the enemy aimed at (10%) | **Zeus throw**: a bolt javelin hurled down at the enemy (12%) |
+| 1 s | a thicker bolt (14%) | a bigger javelin (16%) |
+| 2 s | a bolt with a blast round him (20% + 8%) | a javelin (22%) |
+| 4 s | three bolts jumping from one enemy to the next (14% each) | the javelin splits in three where it lands (24%, then 10% on the three nearest) |
+| 10 s | **Storm cloud** (Mario Kart's Thunder Cloud): a dark 3D cloud flies over the enemy and rains bolts on everyone under it for 4 s (6% a bolt), then a giant one (45% within 4.5 m) | the same, cast from the air |
+
 ### Elements
 
 Each weapon imbues Mario's blows with one of Elden Ring's elements, and turns RB into a shot of
@@ -353,6 +407,7 @@ it (`src/element.rs`; the looks in `src/elemfx.rs`):
 | Hammer | Frost | **Frostbite**: a burst of 9%, then for 10 s every blow on him hits 20% harder | An ice block lobbed in an arc at the enemy, tumbling; it shatters (charged: its shards hit whoever stands round it) |
 | Chain Chomp | Blood | **Blood loss**: a burst of 12% | A dark orb with crimson cracks and two gleaming eyes: quick, homes in hard, charged it bores through |
 | Boomerang | Poison | **Poison**: about 1% a second for 20 s | A poison glob, lobbed; it bursts into a cloud that poisons whoever stays in it |
+| Star Sword | Lightning | **Shock**: a bolt from the sky on him (16%) that shakes his stance hard, and jumps to the two nearest enemies within 6 m (60% and 40% of it) | Its own moves: see [RB with the sword](#star-sword) |
 
 Every enemy takes them as Elden Ring has him: his resistance to each status (NpcParam) is what it
 takes to set it off (an immune one never; never less than a string of blows: some five of the
@@ -400,7 +455,8 @@ close and risky hits.
 | Trap kit | — | Banana **6%** + knockdown, shell **7.5%** a hit + knockdown (up to 5 hits, bouncing from enemy to enemy), Bob-omb **21%** in its blast, spring **2%** |
 | Rock Mushroom | — | **7%** a roll-over (once a second per enemy) + knockdown, slam **12%** |
 | Hook moves | — | Home run **10.5%** (+6% landing, never a kill), bowled **6%**, tether **9%** each, swing kick **13.5%** |
-| MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%** |
+| MAX finishers | — | Flurry **2%** ×6 + **7.5%**, cross quake **7%** a step, Chomp ring **10.5%**, Star Cut End **3%** ×3 |
+| Star Sword | — | **1-11%** per blow (its table's shares ×0.57: the string 4 / 4 / 4.5 / 7%, the thunder cleave 8%, the Great Spin 7-11%, a stab 1%); crescents 4.5-6%, sword beam 2%; its RB bolts 6-14%, the storm cloud 3.5% a bolt and 26% for its giant one; shock 9% |
 | Capture: its attacks **5% / 8.5%**, charge **6%** each, wall slam | — | **11%** and the stance broken |
 
 (The shares above were worked out with a 0.75 damage factor; the current one is 0.57, 0.42 with Reforged, whose enemies are meant to hold out longer (ini `damage_factor`), so take 24% off each (44% with Reforged; the hammer's row is at 0.6 already, see its own table; throws, the pole swing's impact, Yoshi's trample and the bat keep theirs); bosses take about 11% of them (13% with Reforged; ini `boss_damage_factor`), more for the
@@ -500,17 +556,17 @@ replaces this fork's DLL with the original one.
 |---|---|---|
 | Left stick | W A S D | Move |
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
-| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive. A punch out of a run brakes him into the blow (no sliding past the enemy). Right on a blow's impact: NICE!. Back + X: launcher. X + A together: the weapon's rising blow |
+| X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive. A punch out of a run brakes him into the blow (no sliding past the enemy). Right on a blow's impact: NICE!. Back + X: launcher. X + A together: the weapon's rising blow. With the [Star Sword](#star-sword), X is only its moves (no punches, kicks or dives) |
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B. Forward + Y: leap into the weapon's dive |
 | B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow |
 | A just before an enemy's blow | | Mikiri stomp |
-| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer an ice block, the Chain Chomp a dark orb, the boomerang a poison glob (up to the 4 s charge) |
+| RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer an ice block, the Chain Chomp a dark orb, the boomerang a poison glob (up to the 4 s charge); with the Star Sword its lightning (the skyward strike, the Zeus throw in the air, held 10 s the storm cloud) |
 | D-pad | | Left Rock Mushroom, up Wing cap, right Mega Mushroom, down takes the cap off (and interact) |
 | R3 | | Parry; with LT held, the grab |
 | RT | Middle mouse button | The hook (see above), with LT held it pulls the enemy to Mario. Then X on a small one: home run; RT on another: tether; held on a big one: pole swing. Held as it catches a spot high up or a colossus: the rope (stick pumps, A held climbs, B held lowers, RT up lets go with the swing's speed) |
 | LT held (crouched or sliding) + X / Y / B / RB / LB | | Trap kit: banana, shell (hold Y: red), Bob-omb, spring, stopwatch. Thrown out of a slide or a run they carry his speed |
-| LB | | Next weapon (fists, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
-| LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab) |
+| LB | | Next weapon (fists, Star Sword, hammer, Chain Chomp, boomerang); hold to go back to the fists. Mid-string: a swap strike |
+| LT | K | Crouch, ground pound in the air (not when the press goes with RT or R3: the pull, the grab). With the Star Sword in the air: the pogo (three a jump) |
 | Right stick | Arrow keys | Lakitu's camera: left / right turn it smoothly round Mario (faster the further you push; the way Elden Ring's own camera turns: its System > Camera "reverse X axis" option flips it, on is SM64's old way), down zooms out, up zooms in (and into the first-person view). In a fight the camera backs off to keep Mario and the enemy in view, more the farther you've zoomed out |
 | D-pad down | E | Interact: talk, pick up, graces, doors (on the pad it also ends the cap, the Rock or the Mega Mushroom). It presses the game's own interact button, Y; if you moved it in the game's controls, set `pad_interact = A` (B, Y, LB, RB, BACK, START) in `er_mario.ini` |
 | L3 (left stick click) | R | Whistle for Yoshi (co-op: on release; held 0.6 s, warp to your partner) |

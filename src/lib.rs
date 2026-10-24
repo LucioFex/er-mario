@@ -7,6 +7,7 @@ mod assets;
 mod autopad;
 mod audio;
 mod blown;
+mod bolt;
 mod boomerang;
 mod brosattack;
 mod hook;
@@ -67,6 +68,10 @@ mod sm64;
 mod squish;
 mod status;
 mod swing;
+mod swordplay;
+mod sword;
+mod swordmoves;
+mod wave;
 mod stats;
 mod timing;
 mod traps;
@@ -768,17 +773,29 @@ static FOLLOW_ENDED: Mutex<Option<(std::time::Instant, [f32; 3])>> = Mutex::new(
 const GRAMMAR_FOE: f32 = 12.0;
 const FOCUS_KEEP: u32 = 30;
 
-/// A scripted move's fist reach (script.rs `reach`): the right arm straight out ahead at shoulder
-/// height, the elbow down and out, by `weight` (arm IK, ik.rs).
-fn reach_ik(parts: &mut [engine_mario::PartPose; engine_mario::PARTS], state: &sm64::SM64MarioState, weight: f32) {
+/// A scripted move's hand reach (script.rs `reach`), by `weight` (arm IK, ik.rs): with a blade
+/// pointed (`blade`: the sword's yaw, pitch, roll round his facing) the hand out along its way
+/// (sword.rs), else the right arm straight out ahead tipped up by `pitch` degrees; the elbow down
+/// and out.
+fn reach_ik(parts: &mut [engine_mario::PartPose; engine_mario::PARTS], state: &sm64::SM64MarioState, weight: f32, pitch: f32, blade: Option<((f32, f32, f32), f32)>) {
     let face = state.face_angle;
     // (the parts' axes: SM64's mirrored)
-    let fwd = glam::Vec3::new(-face.sin(), 0.0, face.cos());
+    let (s, c) = pitch.to_radians().sin_cos();
+    let fwd = glam::Vec3::new(-face.sin() * c, s, face.cos() * c);
     let (shoulder, elbow, hand) = (parts[7].pos, parts[8].pos, parts[9].pos);
     let arm = (elbow - shoulder).length() + (hand - elbow).length();
-    let out = (parts[7].pos - parts[4].pos).with_y(0.0).normalize_or(fwd.cross(glam::Vec3::Y));
-    ik::arm(parts, true, shoulder + fwd * arm * 0.97, -glam::Vec3::Y + out * 0.6, weight);
+    let out = (parts[7].pos - parts[4].pos).with_y(0.0).normalize_or(fwd.with_y(0.0).cross(glam::Vec3::Y));
+    let goal = match blade {
+        Some((b, twist)) => sword::hand_goal(shoulder, arm, face, b, twist),
+        None => shoulder + fwd * arm * 0.97,
+    };
+    ik::arm(parts, true, goal, -glam::Vec3::Y + out * 0.6, weight);
 }
+
+/// the sword's tip turning this far round its grip in a tick (m) is a cut: its ribbon (impact.rs)
+const BLADE_CUT: f32 = 0.09;
+/// a steered move (the Hurricane) turns him toward the stick this fast at most (degrees a tick)
+const STEER_RATE: f32 = 8.0;
 
 /// No ground anywhere near this long (s): Mario goes back to the last ground he stood on.
 const NO_GROUND_WAIT: f32 = 15.0;
@@ -2575,6 +2592,7 @@ fn frame(data: &FD4TaskData) {
                 weapons::clear();
                 hammer::set_out(false);
                 chomp::set_out(false);
+                sword::set_out(false);
                 boomerang::clear();
                 boomerang::Boomerang::new()
             },
@@ -3056,6 +3074,8 @@ fn frame(data: &FD4TaskData) {
                 mega::clear();
             }
             coins::shift(glam::Vec3::from(d));
+            m.fire.bolts.shift(glam::Vec3::from(d));
+            m.fire.waves.shift(glam::Vec3::from(d));
             colossus::shift(glam::Vec3::from(d));
             m.traps.shift(glam::Vec3::from(d));
             bat::shift(glam::Vec3::from(d));
@@ -3586,6 +3606,7 @@ fn frame(data: &FD4TaskData) {
             weapons::set(weapons::FISTS);
             hammer::set_out(false);
             chomp::set_out(false);
+            sword::set_out(false);
         }
         // (in the middle of one of the weapons' moves too: the new one comes in swinging, moves.rs;
         // not while a fireball is being thrown)
@@ -3610,6 +3631,7 @@ fn frame(data: &FD4TaskData) {
         if let Some(w) = m.moves.switch_weapon(l_hammer && !kit_held, hands_free && !big && !rock::active() && !bossride::active() && !colossus::active() && !m.dead && !m.fire.throwing(m.ticks), m.state.action, m.ticks) {
             hammer::set_out(w == weapons::HAMMER);
             chomp::set_out(w == weapons::CHOMP);
+            sword::set_out(w == weapons::SWORD);
             let hand = to_er(m.origin, m.state.position);
             impact::summon(glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2), w != weapons::FISTS);
             element::switched(w, glam::Vec3::new(hand.0, hand.1 + 0.7, hand.2));
@@ -3812,8 +3834,32 @@ fn frame(data: &FD4TaskData) {
                 .flatten()
         };
         let _perf10 = perf::span(perf::MOVES);
-        let moved = m.moves.tick(b_dash, y_move, x_move, a_pressed, inputs.button_a != 0, fire_allowed, interacting, &m.state, m.combo.action_timer, m.combo.locked != 0, lean, stick, flow, m.ticks);
+        // (L2 for the sword's pogo: not one going with the hook or R3)
+        let z_alone = inputs.button_z != 0 && !b_hook && !r3;
+        let moved = m.moves.tick(
+            b_dash,
+            y_move,
+            x_move,
+            a_pressed,
+            inputs.button_a != 0,
+            fire_allowed,
+            interacting,
+            &m.state,
+            m.combo.action_timer,
+            m.combo.locked != 0,
+            lean,
+            stick,
+            flow,
+            weapon_on == weapons::SWORD,
+            z_alone,
+            m.ticks,
+        );
         drop(_perf10);
+        // the Star Sword in hand: X is its moves' alone (swordplay.rs), never SM64's punches, kicks
+        // and dives, nor er_moves.c's (its dash strike); X stays read for the moves and the NICE!
+        if weapon_on == weapons::SWORD && sword::owns_b(m.state.action) {
+            inputs.button_b = 0;
+        }
         let request = kit_request.or(moved);
         // the boulder off something big
         let request = request.or_else(|| rock::take_bounce(m.state.velocity).map(moves::Request::Velocity));
@@ -3950,15 +3996,31 @@ fn frame(data: &FD4TaskData) {
         let request = match request {
             Some(moves::Request::Script { id: move_id, air, .. }) => {
                 let to = focus.map(|f| f.1);
-                log(format!("script: {} starts ({})", script::MOVES[move_id as usize].name, to.map_or("no enemy near".to_string(), |d| format!("an enemy {d:.1} m off"))));
+                log(format!("script: {} starts ({})", script::named(move_id), to.map_or("no enemy near".to_string(), |d| format!("an enemy {d:.1} m off"))));
                 m.moves.script.start(move_id, to);
                 Some(moves::Request::Script { id: move_id, air, yaw: focus.map(|f| f.0) })
             }
             r => r,
         };
-        let script_frame = m.moves.script.frame(m.state.action, m.combo.action_arg, m.combo.action_timer, 1.0 / scale());
+        let mut script_frame = m.moves.script.frame(m.state.action, m.combo.action_arg, m.combo.action_timer, 1.0 / scale());
         if let Some(f) = script_frame.filter(|f| f.c.end != 0) {
-            log(format!("script: {} ended", script::MOVES[f.id as usize].name));
+            log(format!("script: {} ended", script::named(f.id)));
+        }
+        if let Some(f) = script_frame.as_mut().filter(|f| f.c.end == 0) {
+            let mv = &script::MOVES[f.id as usize];
+            // (the Hurricane: the stick steers him round, as fast as STEER_RATE)
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            if mv.steer && sx * sx + sy * sy >= 0.04 {
+                let want = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
+                let off = (want - m.state.face_angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                f.c.turn = off.to_degrees().clamp(-STEER_RATE, STEER_RATE);
+            }
+            // (the rising cut: X still held as it launches, he goes up with the enemy)
+            if mv.held_rise.is_some_and(|(t, _)| t == f.t) && x_move {
+                f.c.set_vel_y = 1;
+                f.c.vel_y = mv.held_rise.map_or(0.0, |r| r.1);
+                log(format!("script: {}, X held: up with it", mv.name));
+            }
         }
         let result = worker::call("tick", move |ctx| {
             // (the co-op leash held him back last tick, or he warped: from there)
@@ -4100,23 +4162,33 @@ fn frame(data: &FD4TaskData) {
             // the hammer in his hand (out, and not swimming or in a cutscene)
             const ACT_GROUP_MASK: u32 = 0x1C0;
             let busy_hands = matches!(state.action & ACT_GROUP_MASK, 0x0C0 | 0x100) || peace;
+            // (the Star Sword's blade, held where its move points it)
+            let blade = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action)).and_then(|f| f.blade);
+            // the scripted move's hand reach first (what's in his hand goes where it goes): out along
+            // the blade's way when the move points one, else straight out ahead; held through a
+            // hit-stop too (the arm doesn't pop back)
+            if let Some(f) = script_frame.filter(|f| f.c.end == 0 && f.reach > 0.0 && script::is_script(state.action)) {
+                if let Some(p) = parts.as_mut() {
+                    reach_ik(p, &state, f.reach, f.reach_pitch, blade.map(|b| (b, f.c.twist)));
+                }
+            }
             let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
             // (the Chain Chomp's body hits like the hammer's head)
             let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
-            let swing = chomp_swing.or(hammer_swing);
-            // the scripted move's tick ran (not held by a hit-stop): what it shows, its fist's reach,
-            // its hit window
+            let sword_swing = parts.as_mut().and_then(|p| sword::pose(p, &state, blade, hands_free && !busy_hands));
+            // (the weapon in hand's: another one still shrinking away after a swap reaches nothing)
+            let swing = match weapon_on {
+                weapons::SWORD => sword_swing,
+                weapons::CHOMP => chomp_swing,
+                weapons::HAMMER => hammer_swing,
+                _ => None,
+            };
+            // the scripted move's tick ran (not held by a hit-stop): what it shows, its hit window
             let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);
             if let Some(f) = script_ran {
                 combo.fx |= f.fx;
             }
-            // (the fist's reach held through a hit-stop too: the arm doesn't pop back)
-            if let Some(f) = script_frame.filter(|f| f.c.end == 0 && f.reach > 0.0 && script::is_script(state.action)) {
-                if let Some(p) = parts.as_mut() {
-                    reach_ik(p, &state, f.reach);
-                }
-            }
-            let window = script_ran.and_then(|f| f.window.map(|w| w.1));
+            let window = script_ran.and_then(|f| f.window.map(|w| w.1)).and_then(|w| script::window_open(w, state.action & 0x800 != 0));
             let hits = if alive { combat::hits(id, &state, &target_pos, &no_stomp, no_punch, &combo, swing, window) } else { Vec::new() };
             // (a long one: which part of it, for the log below)
             *LONG_TICK.lock().unwrap_or_else(|e| e.into_inner()) = (job_start.elapsed().as_secs_f32() * 1000.0, mario_ms, sound_ms, state.action);
@@ -4137,7 +4209,13 @@ fn frame(data: &FD4TaskData) {
         }
         PERF.lock().unwrap_or_else(|e| e.into_inner()).tick_ms += tt.elapsed().as_secs_f32() * 1000.0;
         match result {
-            Some((state, mesh, colors, normals, mut parts, hits, combo, swing)) => {
+            Some((state, mesh, colors, normals, mut parts, mut hits, combo, swing)) => {
+                // (a scripted move's window strikes each enemy once: a hit-stop holds the move's
+                // tick while the real ticks and the blow's cooldown run on, and a big body stays in
+                // the window)
+                if let Some((wi, w)) = script_frame.filter(|f| f.c.end == 0).and_then(|f| f.window) {
+                    hits.retain(|h| h.1 != w.attack || targets.get(h.0).is_none_or(|t| m.moves.script.first_strike(wi, t.key())));
+                }
                 // debug: Mario's centre crossing a loaded wall front to back in one tick
                 let step = glam::Vec3::from(state.position) - glam::Vec3::from(m.state.position);
                 if debug() && !FOLLOWING.load(Ordering::Relaxed) && step.length() < 200.0 {
@@ -4155,6 +4233,12 @@ fn frame(data: &FD4TaskData) {
                 // (a blow of the scripted move playing landed: its cancels open sooner)
                 if script::is_script(state.action) && hits.iter().any(|h| targets.get(h.0).is_some_and(|t| !t.is_prop())) {
                     m.moves.script.landed();
+                    // (the pogo: off the enemy, up again)
+                    if let Some(mv) = m.moves.script.active().and_then(|id| script::MOVES.get(id as usize)).filter(|mv| mv.bounce > 0.0) {
+                        let v = state.velocity;
+                        m.moves.queue(moves::Request::Bounce([v[0] * 0.4, mv.bounce, v[2] * 0.4]), m.ticks);
+                        log(format!("moves: {} bounces", mv.name));
+                    }
                 }
                 // a MAX finisher: its show (maxfin.rs), and the one going on
                 if let Some((attack, at)) = m.combat.take_max() {
@@ -4237,6 +4321,16 @@ fn frame(data: &FD4TaskData) {
                             _ => {}
                         }
                     }
+                    // the Star Sword cutting (its tip turning round the grip, not carried along on his
+                    // back as he runs): its ribbon
+                    // (only while a move points it: slung on his back it turns with him as he runs)
+                    let pointed = script_frame.is_some_and(|f| f.c.end == 0 && f.blade.is_some() && script::is_script(state.action));
+                    if let Some(s) = swing.filter(|s| s.blade && pointed) {
+                        let turned = ((s.head - s.grip) - (s.prev - s.prev_grip)).length() * scale();
+                        if turned > BLADE_CUT {
+                            impact::blade_point(er(s.head), er(s.grip.lerp(s.head, 0.25)));
+                        }
+                    }
                 }
                 m.combo = combo;
                 {
@@ -4293,6 +4387,49 @@ fn frame(data: &FD4TaskData) {
                     let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
                     let hand = parts.as_ref().map_or(feet + glam::Vec3::Y * 0.75, |p| feet + p[9].pos);
                     light::hand(parts.as_ref().map(|p| feet + p[6].pos));
+                    // the Star Sword's cast (bolt.rs): its move asked for, and let go off his hand
+                    // (off the sword raised over him, on the ground) when the move says
+                    if let Some(air) = m.fire.take_cast() {
+                        m.moves.queue(moves::Request::Script { id: if air { script::ZEUS_THROW } else { script::SKY_STRIKE }, air, yaw: None }, m.ticks);
+                    }
+                    if combo.fx & script::FX_RELEASE != 0 {
+                        let f = state.face_angle;
+                        let facing = glam::Vec3::new(-f.sin(), 0.0, f.cos());
+                        let from = if state.action & 0x800 != 0 { hand } else { hand + glam::Vec3::Y * 0.9 };
+                        m.fire.release(from, facing, m.origin, m.ticks);
+                    }
+                    // the sword's crescents (wave.rs) off its blow: the star wave, the JUST three, and a
+                    // finisher's sword beam only at full health (Zelda's: 8 whole wedges)
+                    let wave = if combo.fx & script::FX_WAVE3 != 0 {
+                        Some(wave::Kind::Just)
+                    } else if combo.fx & script::FX_WAVE != 0 {
+                        Some(wave::Kind::Wave)
+                    } else if combo.fx & script::FX_BEAM != 0 && state.health >> 8 >= 8 {
+                        Some(wave::Kind::Beam)
+                    } else {
+                        None
+                    };
+                    let facing = glam::Vec3::new(-state.face_angle.sin(), 0.0, state.face_angle.cos());
+                    if let Some(kind) = wave {
+                        m.fire.waves.cast(kind, feet, facing, m.ticks);
+                    }
+                    // ...the cross cut's X left hanging, a gleam on the blade, a crack of lightning
+                    // where its tip comes down (on the ground under it)
+                    if combo.fx & script::FX_CROSS != 0 {
+                        m.fire.waves.cast(wave::Kind::Cross, feet, facing, m.ticks);
+                    }
+                    let tip = swing.filter(|s| s.blade).map(|s| {
+                        let p = to_er(m.origin, s.head.into());
+                        glam::Vec3::new(p.0, p.1, p.2)
+                    });
+                    if combo.fx & script::FX_SPARKLE != 0 {
+                        impact::gleam(tip.unwrap_or(hand));
+                    }
+                    if combo.fx & script::FX_ZAP != 0 {
+                        let at = tip.map_or(feet + facing * 1.2, |t| glam::Vec3::new(t.x, feet.y, t.z));
+                        m.fire.bolts.zap(at, m.ticks);
+                        impact::zap(at);
+                    }
                     let _perf14 = perf::span(perf::WEAPONS);
                     m.rang.tick(&combo, &state, feet, hand, weapon_on == weapons::RANG, m.origin, m.ticks, &player_ref.chr_ins, &mut m.combat, &ray);
                     drop(_perf14);

@@ -32,7 +32,7 @@ pub struct How {
 fn name(attack: Attack, how: How) -> Option<(&'static str, [f32; 3], f32)> {
     let gold = [1.0, 0.85, 0.3];
     Some(match attack {
-        Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone => ("MAXED OUT!", [1.0, 0.7, 0.2], 5.0),
+        Attack::MaxFlurry | Attack::MaxUpper | Attack::MaxQuake | Attack::MaxCyclone | Attack::MaxStarCut => ("MAXED OUT!", [1.0, 0.7, 0.2], 5.0),
         Attack::Bowled => ("FRIENDLY FIRE!", [1.0, 0.55, 0.3], 5.0),
         Attack::HomeRun => ("OUT OF THE PARK!", gold, 5.0),
         Attack::Tether => ("HEAD TO HEAD!", [0.6, 0.85, 1.0], 4.0),

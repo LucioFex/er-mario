@@ -116,6 +116,40 @@ impl FireFx {
     }
 }
 
+/// A bolt of the sword's lightning (bolt.rs): its ends, its zigzag's seed, how far through its life
+/// (0-1), how thick (m)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bolt {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub seed: u16,
+    pub t: f32,
+    pub width: f32,
+}
+
+/// The storm cloud (bolt.rs): where, how wide (m), how far through its life (0-1), lit from inside
+/// by a bolt (0-1)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Storm {
+    pub pos: Vec3,
+    pub radius: f32,
+    pub t: f32,
+    pub flash: f32,
+}
+
+/// A crescent of the sword's (wave.rs): where its middle is, the way it goes (yaw, radians), its
+/// slant round that way (degrees, 0 flat), how wide (m), how much of it shows (0-1), which (0 the
+/// star wave, 1 a JUST one, 2 the sword beam)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Crescent {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub roll: f32,
+    pub width: f32,
+    pub alpha: f32,
+    pub kind: u8,
+}
+
 /// A star burst where a blow landed (`t` 0-1 through its life)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spark {
@@ -180,6 +214,12 @@ pub struct WorldFx {
     pub bits: Vec<Bit>,
     /// (not sent: encode leaves it out)
     pub rubble: Vec<Rock>,
+    /// the sword's lightning (bolt.rs) and crescents (wave.rs)
+    pub bolts: Vec<Bolt>,
+    pub storms: Vec<Storm>,
+    pub crescents: Vec<Crescent>,
+    /// the sword's cut (tip, low on the blade, how faded), as the hammer's `swing`
+    pub blade: Vec<(Vec3, Vec3, f32)>,
 }
 
 /// at most this many of each kind go out (the newest), and points per trail; of the statuses on
@@ -187,6 +227,8 @@ pub struct WorldFx {
 const MAX: usize = 24;
 const AURAS_MAX: usize = 8;
 const MOTES_MAX: usize = 10;
+const BOLTS_MAX: usize = 12;
+const CRESCENTS_MAX: usize = 6;
 
 impl WorldFx {
     /// Ours now (Elden Ring world positions).
@@ -217,6 +259,10 @@ impl WorldFx {
             rings: crate::impact::rings().into_iter().map(|(r, t)| Ring { pos: r.pos, radius: r.radius, tint: r.tint, t }).collect(),
             bits: crate::impact::bits().into_iter().map(|(b, pos, size, t, age)| Bit { coin: matches!(b, crate::impact::Bit::Coin), pos, size, t, age }).collect(),
             rubble: crate::impact::rubble_chunks(),
+            bolts: crate::bolt::looks(),
+            storms: crate::bolt::storm_looks(),
+            crescents: crate::wave::looks(),
+            blade: crate::impact::blade_trail(),
         }
     }
 
@@ -238,6 +284,16 @@ impl WorldFx {
         self.fire.clouds.iter_mut().for_each(|c| c.pos += d);
         self.fire.auras.iter_mut().for_each(|a| a.pos += d);
         self.fire.motes.iter_mut().for_each(|m| m.pos += d);
+        for b in &mut self.bolts {
+            b.from += d;
+            b.to += d;
+        }
+        self.storms.iter_mut().for_each(|s| s.pos += d);
+        self.crescents.iter_mut().for_each(|c| c.pos += d);
+        for b in &mut self.blade {
+            b.0 += d;
+            b.1 += d;
+        }
         for s in &mut self.streaks {
             s.iter_mut().for_each(|p| p.0 += d);
         }
@@ -398,6 +454,37 @@ impl WorldFx {
             w.unit(m.t);
             w.unit(m.size);
         });
+        // (added with the Star Sword, at the end again)
+        w.most = most.min(BOLTS_MAX);
+        w.records(&self.bolts, |w, b| {
+            w.pos(b.from);
+            w.pos(b.to);
+            w.out.extend_from_slice(&b.seed.to_le_bytes());
+            w.unit(b.t);
+            w.unit(b.width);
+        });
+        w.most = most.min(2);
+        w.records(&self.storms, |w, s| {
+            w.pos(s.pos);
+            w.unit(s.radius / 16.0);
+            w.unit(s.t);
+            w.unit(s.flash);
+        });
+        w.most = most.min(CRESCENTS_MAX);
+        w.records(&self.crescents, |w, c| {
+            w.pos(c.pos);
+            w.angle(c.yaw);
+            w.unit((c.roll + 90.0) / 180.0);
+            w.unit(c.width / 8.0);
+            w.unit(c.alpha);
+            w.out.push(c.kind);
+        });
+        w.most = most;
+        w.records(&self.blade, |w, b| {
+            w.pos(b.0);
+            w.pos(b.1);
+            w.unit(b.2);
+        });
     }
 
     /// The partner's from `b` (positions around their Tarnished: `shifted` puts them where we show
@@ -437,6 +524,18 @@ impl WorldFx {
             fx.fire.clouds = r.records(|r| Some(Cloud { pos: r.pos()?, age: r.ticks()?, life: r.ticks()?, radius: r.age()?, vis: 1.0 }))?;
             fx.fire.auras = r.records(|r| Some(Aura { pos: r.pos()?, height: r.unit()? * 16.0, radius: r.unit()? * 8.0, element: r.u8()?, age: r.u8()? as u32, left: r.unit()? }))?;
             fx.fire.motes = r.records(|r| Some(Mote { pos: r.pos()?, element: r.u8()?, t: r.unit()?, size: r.unit()? }))?;
+        }
+        // (a sender from before the Star Sword: none)
+        if r.at < r.b.len() {
+            fx.bolts = r.records(|r| Some(Bolt { from: r.pos()?, to: r.pos()?, seed: u16::from(r.u8()?) | u16::from(r.u8()?) << 8, t: r.unit()?, width: r.unit()? }))?;
+            fx.storms = r.records(|r| Some(Storm { pos: r.pos()?, radius: r.unit()? * 16.0, t: r.unit()?, flash: r.unit()? }))?;
+        }
+        if r.at < r.b.len() {
+            fx.crescents =
+                r.records(|r| Some(Crescent { pos: r.pos()?, yaw: r.angle()?, roll: r.unit()? * 180.0 - 90.0, width: r.unit()? * 8.0, alpha: r.unit()?, kind: r.u8()? }))?;
+        }
+        if r.at < r.b.len() {
+            fx.blade = r.records(|r| Some((r.pos()?, r.pos()?, r.unit()?)))?;
         }
         Some(fx)
     }
@@ -639,10 +738,24 @@ mod tests {
             rings: vec![Ring { pos: at(0.0), radius: 6.0, tint: [0.9, 0.8, 0.6, 1.0], t: 0.25 }],
             bits: vec![Bit { coin: true, pos: at(1.5), size: 0.4, t: 0.3, age: 0.7 }],
             rubble: Vec::new(),
+            bolts: vec![Bolt { from: at(20.0), to: at(1.0), seed: 4321, t: 0.4, width: 0.3 }],
+            storms: vec![Storm { pos: at(9.0), radius: 5.0, t: 0.6, flash: 0.8 }],
+            crescents: vec![Crescent { pos: at(3.5), yaw: -2.0, roll: -35.0, width: 2.8, alpha: 0.6, kind: 1 }],
+            blade: vec![(at(0.6), at(0.2), 0.3), (at(0.9), at(0.3), 0.1)],
         };
         let mut out = Vec::new();
         fx.encode(here, &mut out);
         let got = WorldFx::decode(&out).expect("reads").shifted(here);
+        let c = got.crescents[0];
+        let yaw_off = (c.yaw - -2.0f32).rem_euclid(std::f32::consts::TAU);
+        assert!(close(c.pos, at(3.5)) && yaw_off.min(std::f32::consts::TAU - yaw_off) < 0.001 && (c.roll + 35.0).abs() < 1.0, "{c:?}");
+        assert!((c.width - 2.8).abs() < 0.05 && (c.alpha - 0.6).abs() < 0.01 && c.kind == 1);
+        assert_eq!(got.blade.len(), 2);
+        assert!(close(got.blade[1].0, at(0.9)) && close(got.blade[1].1, at(0.3)) && (got.blade[0].2 - 0.3).abs() < 0.01);
+        let bolt = got.bolts[0];
+        assert!(close(bolt.from, at(20.0)) && close(bolt.to, at(1.0)) && bolt.seed == 4321 && (bolt.t - 0.4).abs() < 0.01 && (bolt.width - 0.3).abs() < 0.01);
+        let storm = got.storms[0];
+        assert!(close(storm.pos, at(9.0)) && (storm.radius - 5.0).abs() < 0.1 && (storm.flash - 0.8).abs() < 0.01);
         let (o, want) = (got.fire.orbs[0], fx.fire.orbs[0]);
         assert!(close(o.pos, want.pos) && close(o.vel, want.vel) && (o.size - 7.0).abs() < 0.002 && o.level == 5 && o.age == 77 && o.flags == ORB_REFLECTED && o.element == 2);
         assert!((o.ground.expect("ground") - want.ground.expect("ground")).abs() < 0.07 && o.vis == 1.0);
@@ -668,7 +781,8 @@ mod tests {
         // nothing: tiny, and empty again
         let mut none = Vec::new();
         WorldFx::default().encode(here, &mut none);
-        assert!(none.len() < 32);
+        // (two bytes for each empty record list at the end)
+        assert!(none.len() < 40, "{}", none.len());
         assert!(WorldFx::decode(&none).expect("reads").is_empty());
         // cut short: doesn't read
         assert!(WorldFx::decode(&out[..out.len() - 1]).is_none());
@@ -727,12 +841,13 @@ mod tests {
         let mut older = vec![out[0], out[1] - 1];
         older.extend_from_slice(&out[2..2 + size - 1]);
         older.extend_from_slice(&out[2 + size..]);
-        // (and without the three lists at the end: each an empty record list, two bytes)
-        older.truncate(older.len() - 6);
+        // (and without the seven lists at the end: each an empty record list, two bytes)
+        older.truncate(older.len() - 14);
         let got = WorldFx::decode(&older).expect("reads");
         assert_eq!(got.fire.orbs.len(), 1);
         assert!(got.fire.orbs[0].element == 0 && got.fire.orbs[0].level == 3);
         assert!(got.fire.clouds.is_empty() && got.fire.auras.is_empty() && got.fire.motes.is_empty());
+        assert!(got.bolts.is_empty() && got.storms.is_empty() && got.crescents.is_empty() && got.blade.is_empty());
     }
 
     #[test]

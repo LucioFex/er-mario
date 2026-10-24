@@ -28,6 +28,8 @@ const FROST: [f32; 3] = [0.85, 0.94, 1.0];
 /// the dark orb's: its black, its cracks, its rim
 const DARK: [f32; 3] = [0.05, 0.0, 0.02];
 const CRACK: [f32; 3] = [1.0, 0.16, 0.22];
+/// lightning's glow
+const THUNDER: [f32; 3] = [1.0, 0.92, 0.45];
 const CRIMSON: [f32; 3] = [0.7, 0.04, 0.1];
 const BLOOD: [f32; 3] = [0.55, 0.02, 0.05];
 /// the poison's: its green, its purple, the haze
@@ -557,6 +559,12 @@ pub fn mote(look: &mut Look, m: &Mote, eye: &Eye, clock: f32) {
             glow(look, m.pos, m.size * 0.6, CRACK, 0.8 * fade);
         }
         Element::Poison => bubble(look, m.pos, m.size * (0.6 + 0.4 * t), eye.pos, if (m.pos.x * 7.0) as i32 % 2 == 0 { VENOM } else { VENOM_DARK }, 0.9 * fade),
+        Element::Lightning => {
+            // a crackle: a white-hot spark that flickers in a yellow glow
+            let flick = 0.6 + 0.4 * ((clock * 41.0 + m.pos.x * 13.0).sin() * 0.5 + 0.5);
+            glow(look, m.pos, m.size * 2.4, THUNDER, 0.45 * fade * flick);
+            glow(look, m.pos, m.size * 0.7, [1.0, 1.0, 0.95], 0.9 * fade * flick);
+        }
     }
 }
 

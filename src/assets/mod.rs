@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{log, paths};
 
 /// Bump when the generated files change, so existing installs rebuild.
-const VERSION: &str = "er-mario assets 16";
+const VERSION: &str = "er-mario assets 17";
 const STAMP: &str = "package/.built";
 const PIECES: [&str; 4] = ["hd", "bd", "am", "lg"];
 /// Mario's chest piece models: his own, Metal Mario's and the wing cap's (caps.rs puts them on)
@@ -260,9 +260,14 @@ pub fn build(model: &model::MarioModel) -> Result<(), String> {
                             log(format!("assets: the gauntlets ({}): {info}; their own names {:?}", f.name, tex::utf16_with(&data, "AM_M_1280")));
                         }
                         // (the far LOD only after the near one took it: its materials come with it)
-                        let fit = bones.len() == crate::engine_mario::KIT_PARTS && kit_bones.as_ref().is_none_or(|b| *b == bones) && (suffix.is_empty() || kit_bones.is_some());
+                        // (the trap kit needs its seven; the sword, last, goes in if there's a bone
+                        // left for it)
+                        let fit = bones.len() >= crate::engine_mario::KIT_PARTS - 1 && kit_bones.as_ref().is_none_or(|b| *b == bones) && (suffix.is_empty() || kit_bones.is_some());
+                        if fit && bones.len() < crate::engine_mario::KIT_PARTS && suffix.is_empty() {
+                            log("assets: no bone left in the gauntlets for the Star Sword: the kit goes in without it");
+                        }
                         let built = if fit {
-                            flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + crate::engine_mario::KIT_PARTS, &bones)
+                            flver::build_kit(fl, &kit, crate::engine_mario::KIT..crate::engine_mario::KIT + bones.len(), &bones)
                         } else {
                             Err(format!("only {} finger bones for {} things ({bones:?})", bones.len(), crate::engine_mario::KIT_PARTS))
                         };

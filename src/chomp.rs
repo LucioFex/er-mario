@@ -279,7 +279,7 @@ pub fn pose(parts: &mut [PartPose; PARTS], state: &sm64::SM64MarioState, mv: &sm
     if hooked.is_some() {
         return None;
     }
-    Some(Swing { grip, head: now, prev: if scripted { prev } else { now }, scale: HIT_SCALE })
+    Some(Swing { grip, head: now, prev: if scripted { prev } else { now }, scale: HIT_SCALE, prev_grip: grip, blade: false })
 }
 
 pub fn clear() {
