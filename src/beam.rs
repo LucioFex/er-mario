@@ -23,7 +23,7 @@ const ABYSS_RANGE: f32 = 24.0;
 const RADIUS: [f32; 4] = [0.35, 0.45, 0.55, 0.65];
 const ABYSS_RADIUS: f32 = 1.3;
 /// a hit on each enemy in it this often (ticks)
-const HIT_EVERY: u32 = 3;
+pub(crate) const HIT_EVERY: u32 = 3;
 /// the Abyss beam draws regular enemies this far a tick toward its core (m)
 const PULL: f32 = 0.06;
 /// aimed up or down at the enemy in front at most this far (degrees), the one in front this near

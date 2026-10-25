@@ -559,7 +559,7 @@ impl Attack {
             Attack::Venom(1) => (11.0, "damage_venom_charged"),
             Attack::Venom(2) => (15.0, "damage_venom_charged_2"),
             Attack::Venom(_) => (21.0, "damage_venom_max"),
-            Attack::VenomCloud => (1.5, "damage_venom_cloud"),
+            Attack::VenomCloud => (2.2, "damage_venom_cloud"),
             // the statuses (element.rs): a burst worth a heavy blow, poison a little a second for
             // its 20 s (a fifth of a regular enemy's health in all)
             Attack::Frostbite => (15.0, "damage_frostbite"),
@@ -570,19 +570,21 @@ impl Attack {
             Attack::Shock => (16.0, "damage_shock"),
             Attack::ShockArc(0) => (9.6, "damage_shock_arc"),
             Attack::ShockArc(_) => (6.4, "damage_shock_arc_2"),
-            // the sword's RB: the fireball's worth, a little less each (its bolts don't miss); the
-            // storm a little at a time on everyone under it, its giant bolt the finisher
-            Attack::Bolt(0) => (10.0, "damage_bolt"),
-            Attack::Bolt(1) => (14.0, "damage_bolt_charged"),
-            Attack::Bolt(2) => (20.0, "damage_bolt_charged_2"),
-            Attack::Bolt(_) => (14.0, "damage_bolt_chain"),
-            Attack::BoltBlast => (8.0, "damage_bolt_blast"),
-            Attack::Javelin(0) => (12.0, "damage_javelin"),
-            Attack::Javelin(1) => (16.0, "damage_javelin_charged"),
-            Attack::Javelin(2) => (22.0, "damage_javelin_charged_2"),
-            Attack::Javelin(_) => (24.0, "damage_javelin_max"),
-            Attack::Storm => (6.0, "damage_storm"),
-            Attack::StormEnd => (45.0, "damage_storm_end"),
+            // the sword's RB: a fifth over the fireball of its charge (the user, 2026-10-25: every
+            // RB but fire's hit too little; before, a little under the fireball); the storm a little
+            // at a time on everyone under it, its giant bolt the finisher (three quarters of the
+            // giant fireball)
+            Attack::Bolt(0) => (15.0, "damage_bolt"),
+            Attack::Bolt(1) => (20.0, "damage_bolt_charged"),
+            Attack::Bolt(2) => (28.0, "damage_bolt_charged_2"),
+            Attack::Bolt(_) => (19.0, "damage_bolt_chain"),
+            Attack::BoltBlast => (11.0, "damage_bolt_blast"),
+            Attack::Javelin(0) => (15.0, "damage_javelin"),
+            Attack::Javelin(1) => (21.0, "damage_javelin_charged"),
+            Attack::Javelin(2) => (29.0, "damage_javelin_charged_2"),
+            Attack::Javelin(_) => (40.0, "damage_javelin_max"),
+            Attack::Storm => (9.0, "damage_storm"),
+            Attack::StormEnd => (65.0, "damage_storm_end"),
             // the Star Sword (the user's table, 2026-10-23): between the fists and the Chain Chomp,
             // quick and precise, crowds too
             Attack::SwordSlash(0) | Attack::SwordSlash(1) => (7.0, "damage_sword_slash"),
@@ -650,20 +652,24 @@ impl Attack {
             // carries him in: no safer), the beam a little each tick (its worth in how long it pours
             // and that it pierces), the Glacier a giant's on each it passes, the spray least (the
             // carpet's poison is the rest)
-            Attack::IceRocket(0) => (14.0, "damage_ice_rocket"),
-            Attack::IceRocket(1) => (19.0, "damage_ice_rocket_charged"),
-            Attack::IceRocket(2) => (26.0, "damage_ice_rocket_charged_2"),
-            Attack::IceRocket(_) => (36.0, "damage_ice_rocket_max"),
-            Attack::IceDive => (16.0, "damage_ice_dive"),
-            Attack::FrostWave => (8.0, "damage_frost_wave"),
-            Attack::Glacier => (60.0, "damage_glacier"),
-            Attack::GlacierSpikes => (20.0, "damage_glacier_spikes"),
-            Attack::DarkBeam(0) => (2.0, "damage_dark_beam"),
-            Attack::DarkBeam(1) => (2.5, "damage_dark_beam_charged"),
-            Attack::DarkBeam(2) => (3.0, "damage_dark_beam_charged_2"),
-            Attack::DarkBeam(_) => (3.5, "damage_dark_beam_max"),
-            Attack::AbyssBeam => (3.6, "damage_abyss_beam"),
-            Attack::Spray => (4.0, "damage_poison_spray"),
+            // (the user, 2026-10-25: every RB but fire's hit too little: each charge now a fifth
+            // over the fireball's at least, the 10 s ones three quarters of the giant's main blow;
+            // before, the rocket 14 / 19 / 26 / 36, the Glacier 60 + 20, the beam 2-3.5 a hit and
+            // the Abyss 3.6, the spray 4 and its carpet 1.5)
+            Attack::IceRocket(0) => (17.5, "damage_ice_rocket"),
+            Attack::IceRocket(1) => (25.0, "damage_ice_rocket_charged"),
+            Attack::IceRocket(2) => (34.0, "damage_ice_rocket_charged_2"),
+            Attack::IceRocket(_) => (47.0, "damage_ice_rocket_max"),
+            Attack::IceDive => (21.0, "damage_ice_dive"),
+            Attack::FrostWave => (10.5, "damage_frost_wave"),
+            Attack::Glacier => (90.0, "damage_glacier"),
+            Attack::GlacierSpikes => (30.0, "damage_glacier_spikes"),
+            Attack::DarkBeam(0) => (2.5, "damage_dark_beam"),
+            Attack::DarkBeam(1) => (3.2, "damage_dark_beam_charged"),
+            Attack::DarkBeam(2) => (3.8, "damage_dark_beam_charged_2"),
+            Attack::DarkBeam(_) => (4.4, "damage_dark_beam_max"),
+            Attack::AbyssBeam => (4.7, "damage_abyss_beam"),
+            Attack::Spray => (6.0, "damage_poison_spray"),
             // the pair finishers' reactions (Part 3d): a finisher's worth again, spread over its burst
             Attack::Steam => (8.0, "damage_steam"),
             Attack::Plasma => (14.0, "damage_plasma"),
@@ -3628,6 +3634,41 @@ impl Combat {
             None => false,
         });
         out
+    }
+}
+
+#[cfg(test)]
+mod rb_tests {
+    use super::Attack;
+
+    fn share(a: Attack) -> f32 {
+        a.percent().0
+    }
+
+    /// The user (2026-10-25): every charged RB but fire's hits too little. Each charge of the
+    /// others is worth 1.2 times the fireball of the same charge at least (the dark beam in all
+    /// its hits while it pours), and each 10 s move's main blow three quarters of the giant
+    /// fireball's.
+    #[test]
+    fn the_other_elements_rb_hit_harder_than_the_fireball() {
+        for l in 0..4u8 {
+            let fire = share(Attack::Fire(l)) * 1.2;
+            let hits = (crate::rbmoves::BEAM_TICKS[l as usize] as u32).div_ceil(crate::beam::HIT_EVERY) as f32;
+            let mut moves = vec![("ice rocket", share(Attack::IceRocket(l))), ("javelin", share(Attack::Javelin(l))), ("dark beam", share(Attack::DarkBeam(l)) * hits)];
+            if l < 3 {
+                moves.push(("bolt", share(Attack::Bolt(l))));
+            }
+            for (name, worth) in moves {
+                assert!(worth >= fire, "{name} at charge {l}: {worth} under {fire}");
+            }
+        }
+        let giant = share(Attack::Fire(4)) * 0.75;
+        for (name, a) in [("glacier", Attack::Glacier), ("storm's end", Attack::StormEnd)] {
+            assert!(share(a) >= giant, "{name}: {} under {giant}", share(a));
+        }
+        // (the Abyss beam: its hits over its 3 s, a giant's worth and a little more)
+        let abyss = share(Attack::AbyssBeam) * (crate::rbmoves::ABYSS_TICKS as u32).div_ceil(crate::beam::HIT_EVERY) as f32;
+        assert!(abyss >= share(Attack::Fire(4)) * 1.4, "abyss {abyss}");
     }
 }
 
