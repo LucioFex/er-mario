@@ -276,10 +276,14 @@ pub fn voice_for(sound: u32, n: u32) -> u32 {
     POOL[at as usize]
 }
 
+/// ...and not the long lunges (m): the planted feet would be dragged
+const MAX_LUNGE: f32 = 2.5;
+
 /// The sword's ground blows are fought on the feet (footwork.rs); not the ones that leave it
 /// (jumps, the air), nor the steered.
 pub fn footwork_move(id: u16) -> bool {
-    (SW_S1..=SW_DRAW_AIR).contains(&id) && MOVES.get(id as usize).is_some_and(|m| !m.air && m.vel_y.is_empty() && m.hold == (0, 0) && !m.steer && m.blade_held.1 > 0)
+    (SW_S1..=SW_DRAW_AIR).contains(&id)
+        && MOVES.get(id as usize).is_some_and(|m| !m.air && m.vel_y.is_empty() && m.hold == (0, 0) && !m.steer && m.blade_held.1 > 0 && m.approach.is_none_or(|a| a.max <= MAX_LUNGE))
 }
 
 /// The side the move's first cut ends on: +1 his right, -1 his left, 0 straight (the blade's yaw
@@ -308,7 +312,8 @@ pub const FOLLOW_DRIFT: f32 = 0.45;
 /// squared) `off_deg` away from his facing: how much he turns this tick (degrees) and how far he
 /// drifts along it (m a tick). None outside it or with the stick at rest.
 pub fn follow_through(m: &Move, t: u16, off_deg: f32, stick_sq: f32) -> Option<(f32, f32)> {
-    if t < m.follow.0 || t >= m.follow.1 || stick_sq < 0.04 {
+    // (not on a tick the move re-aims on: the snap would undo the steer)
+    if t < m.follow.0 || t >= m.follow.1 || stick_sq < 0.04 || m.aim.contains(&t) {
         return None;
     }
     Some((off_deg.clamp(-FOLLOW_TURN, FOLLOW_TURN), FOLLOW_DRIFT / 30.0))
@@ -863,6 +868,13 @@ mod tests {
         for id in [BULLET_PUNCH, FIST_FLURRY, SW_POGO, SW_DRAW_AIR, SW_RISE] {
             assert!(!footwork_move(id), "{id}");
         }
+        // (the long lunges drag planted feet: they keep the clip's legs)
+        for id in [SW_IAI, SW_FLURRY] {
+            assert!(!footwork_move(id), "{id}");
+        }
+        for id in SW_S1..=SW_DRAW_AIR {
+            assert!(!footwork_move(id) || MOVES[id as usize].approach.is_none_or(|a| a.max <= 2.5), "{}", MOVES[id as usize].name);
+        }
         // (the slash ends on his left, the backhand on his right; the chop is heavy)
         assert_eq!(cut_side(&MOVES[SW_S1 as usize]), -1.0);
         assert_eq!(cut_side(&MOVES[SW_S2 as usize]), 1.0);
@@ -1057,6 +1069,19 @@ mod tests {
         assert_eq!(fx.iter().filter(|f| **f != 0).count(), 3);
     }
 
+    /// The stick's turn never lands on a tick the move re-aims on: the snap would undo it.
+    #[test]
+    fn the_follow_through_never_fights_the_aim() {
+        for m in MOVES.iter().filter(|m| m.follow.1 > m.follow.0) {
+            for &t in m.aim.iter().filter(|t| **t > 0) {
+                assert!(follow_through(m, t, 30.0, 1.0).is_none(), "{} steers on its aim tick {t}", m.name);
+            }
+            // (and the string's light blows start it after their re-aim)
+            let last_aim = m.aim.iter().copied().filter(|t| *t < m.follow.0 + 3).max().unwrap_or(0);
+            assert!(m.follow.0 > last_aim || last_aim == 0, "{} follows from {} but aims at {last_aim}", m.name, m.follow.0);
+        }
+    }
+
     #[test]
     fn the_stick_steers_the_follow_through() {
         let m = Move { follow: (5, 12), ..BASE };
@@ -1094,9 +1119,12 @@ mod tests {
                 let f = p.frame(ACT_ER_SCRIPT, b as u32, t as i32, 100.0).unwrap();
                 let (pb, fb) = (prev.blade.unwrap_or_default(), f.blade.unwrap_or_default());
                 let name = format!("{} -> {} at {t}", m.name, MOVES[b as usize].name);
-                assert!((f.c.twist - prev.c.twist).abs() <= 40.0, "{name}: twist {} then {}", prev.c.twist, f.c.twist);
+                // (measured over the joins: at most 33 degrees of twist and 67 of blade a tick, the
+                // carry-in bleeding a far gap over its ticks and the wind-up's peak)
+                let (tw, bl) = (35.0, 70.0);
+                assert!((f.c.twist - prev.c.twist).abs() <= tw, "{name}: twist {} then {}", prev.c.twist, f.c.twist);
                 assert!((f.c.pitch - prev.c.pitch).abs() <= 25.0, "{name}: lean");
-                assert!((fb.0 - pb.0).abs() <= 75.0 && (fb.1 - pb.1).abs() <= 75.0 && (fb.2 - pb.2).abs() <= 75.0, "{name}: blade {pb:?} then {fb:?}");
+                assert!((fb.0 - pb.0).abs() <= bl && (fb.1 - pb.1).abs() <= bl && (fb.2 - pb.2).abs() <= bl, "{name}: blade {pb:?} then {fb:?}");
                 assert!((f.c.squash - prev.c.squash).abs() <= 0.12, "{name}: squash");
                 assert!((f.c.dip - prev.c.dip).abs() <= 4.0, "{name}: dip");
                 prev = f;

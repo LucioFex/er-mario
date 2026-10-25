@@ -40,6 +40,8 @@ const CROUCH_TICKS: i32 = 8;
 pub const HIP_DROP_MAX: f32 = 0.08;
 /// a planted foot farther than this share of its leg's length from its hip re-steps
 const REACH_SHARE: f32 = 0.97;
+/// his own body's radius for the other bodies a step keeps out of (m)
+const BODY: f32 = 0.3;
 
 /// An enemy to fight round: its centre and body radius (m, horizontal), and whether it's a
 /// colossus (climbed, not circled).
@@ -61,6 +63,8 @@ pub struct Ask {
     pub side: f32,
     pub last_side: f32,
     pub heavy: bool,
+    /// other bodies near (not the enemy fought): a step never goes into one
+    pub others: [Option<Foe>; 4],
 }
 
 /// The planned step: where his feet end up, the yaw he ends facing (the enemy), and the foot that
@@ -78,6 +82,12 @@ fn basis(yaw: f32) -> (Vec2, Vec2) {
     (Vec2::new(s, c), Vec2::new(c, -s))
 }
 
+/// The yaw he stands turned to when a move starts: toward the enemy the move's aim turns him to
+/// (at once, on its first tick), else as he is.
+pub fn facing_for(feet: Vec2, face: f32, aim: Option<Vec2>) -> f32 {
+    aim.map_or(face, |at| yaw_to(feet, at))
+}
+
 /// The yaw from `from` toward `to`.
 pub fn yaw_to(from: Vec2, to: Vec2) -> f32 {
     (to.x - from.x).atan2(to.y - from.y)
@@ -87,13 +97,22 @@ pub fn yaw_to(from: Vec2, to: Vec2) -> f32 {
 /// round the enemy at most MAX_ORBIT a blow; always inside the blade's reach band (out of its
 /// body); the other side if a wall is in the way, else in place; with no enemy a short step ahead.
 pub fn step(a: &Ask, blocked: impl Fn(Vec2, Vec2) -> bool) -> Step {
-    let first = if a.side != 0.0 {
-        a.side.signum()
-    } else if a.last_side != 0.0 {
+    // (a string alternates: the other side than the last blow's, whatever the cut's own)
+    let first = if a.last_side != 0.0 {
         -a.last_side.signum()
+    } else if a.side != 0.0 {
+        a.side.signum()
     } else {
         1.0
     };
+    // (never into another body, unless he already stands in its reach and the step leaves it)
+    let into_other = |to: Vec2| {
+        a.others.iter().flatten().any(|o| {
+            let d = (to - o.pos).length();
+            d < o.radius + BODY && d < (a.feet - o.pos).length()
+        })
+    };
+    let blocked = |from: Vec2, to: Vec2| blocked(from, to) || into_other(to);
     let len = if a.heavy { HEAVY_STEP } else { LIGHT_STEP };
     let face = |to: Vec2| a.foe.map_or(a.facing, |f| yaw_to(to, f.pos));
     let Some(foe) = a.foe else {
@@ -221,6 +240,10 @@ pub struct Feet {
     pelvis: Vec3,
     /// a step planned before the feet are planted: fired as they are
     pending: Option<(Step, bool)>,
+    /// the script is frozen (a hit-stop): the swing waits with the body
+    hold: bool,
+    /// he left the ground or the blow: the feet follow the clip's at once
+    released: bool,
 }
 
 impl Feet {
@@ -239,8 +262,9 @@ impl Feet {
             self.pending = Some((*s, heavy));
             return;
         }
+        // (a foot still swinging, or waiting, goes on from where it is: no snap)
         for f in self.feet.iter_mut().filter(|f| f.t < STEP_TICKS as i32) {
-            f.plant = f.to;
+            f.plant = f.cur + Vec3::Y * f.lift;
             f.t = STEP_TICKS as i32;
         }
         self.widen = if heavy { WIDEN } else { 1.0 };
@@ -263,11 +287,24 @@ impl Feet {
         }
     }
 
+    /// The body is held a tick (a hit-stop): the feet's swing and the hips wait with it.
+    pub fn hold(&mut self, on: bool) {
+        self.hold = on;
+    }
+
+    /// He left the ground, or a blow was cut short into a dash: no world anchors, the feet go
+    /// where the clip has them from now.
+    pub fn release(&mut self) {
+        self.released = self.live;
+        self.pending = None;
+    }
+
     /// One tick: `on` while a move that uses the footwork plays (else it blends out over 3 ticks);
     /// `body` and `yaw` as Mario is now; `rig`: the clip's legs. None when it's all off.
     pub fn tick(&mut self, on: bool, body: Vec3, yaw: f32, rig: &Rig) -> Option<Pose> {
         const BLEND: f32 = 1.0 / 3.0;
         if on {
+            self.released = false;
             if !self.live {
                 let pending = self.pending.take();
                 self.engage(body, yaw, rig);
@@ -286,6 +323,12 @@ impl Feet {
             return None;
         }
         self.body = body;
+        if self.released {
+            for (f, a) in self.feet.iter_mut().zip(rig.ankle) {
+                f.plant = Vec3::new(body.x + a.x, a.y, body.z + a.z);
+                f.t = STEP_TICKS as i32;
+            }
+        }
         let b2 = Vec2::new(body.x, body.z);
         let (_, left) = basis(yaw);
         // (a planted foot the body has left too far behind steps to its stance, the second after the first)
@@ -307,16 +350,17 @@ impl Feet {
             }
         }
         let n = STEP_TICKS as i32;
+        let adv = !self.hold as i32;
         for f in self.feet.iter_mut() {
             f.lift = 0.0;
             f.cur = f.plant;
             if f.t < 0 {
-                f.t += 1;
+                f.t += adv;
             } else if f.t < n {
                 let u = (f.t + 1) as f32 / n as f32;
                 f.cur = f.from.lerp(f.to, u * u * (3.0 - 2.0 * u));
                 f.lift = LIFT * (std::f32::consts::PI * u).sin();
-                f.t += 1;
+                f.t += adv;
                 if f.t >= n {
                     f.plant = f.to;
                 }
@@ -327,11 +371,11 @@ impl Feet {
         if self.shift > 0 {
             let side = if self.lead == 0 { 1.0 } else { -1.0 };
             want += Vec3::new(left.x * side * SHIFT, -SHIFT_DROP, left.y * side * SHIFT);
-            self.shift -= 1;
+            self.shift -= adv;
         }
         if self.crouch > 0 {
             want.y -= CROUCH;
-            self.crouch -= 1;
+            self.crouch -= adv;
         }
         want.y = want.y.max(-HIP_DROP_MAX);
         self.pelvis += (want - self.pelvis) * 0.5;
@@ -363,6 +407,8 @@ struct Footing {
     t: u16,
     foe: Option<Vec2>,
     last_side: f32,
+    /// the script tick the walk last advanced on (a frozen script repeats it)
+    seen: Option<u16>,
 }
 
 static FOOTING: Mutex<Option<Footing>> = Mutex::new(None);
@@ -373,6 +419,9 @@ static FOOTING: Mutex<Option<Footing>> = Mutex::new(None);
 pub struct Plan {
     pub lunge: bool,
     pub ask: Option<Ask>,
+    /// the script's tick, and whether the move aims (turns him to the enemy) on it
+    pub t: u16,
+    pub aim: bool,
 }
 
 /// A wall, or no floor, where a step would end (SM64 units: `y` his height, `k` m a unit).
@@ -394,11 +443,22 @@ fn blocked(from: Vec2, to: Vec2, y: f32, k: f32) -> bool {
 pub fn drive(c: &mut sm64::SM64ErScript, plan: &Plan, pos: [f32; 3], face: f32, k: f32) {
     let mut g = FOOTING.lock().unwrap_or_else(|e| e.into_inner());
     let ft = g.get_or_insert_with(Footing::default);
+    drive_with(ft, c, plan, pos, face, k, |a, b| blocked(a, b, pos[1], k));
+}
+
+fn drive_with(ft: &mut Footing, c: &mut sm64::SM64ErScript, plan: &Plan, pos: [f32; 3], face: f32, k: f32, wall: impl Fn(Vec2, Vec2) -> bool) {
     let here = Vec2::new(pos[0] * k, pos[2] * k);
     let mut facing = face;
+    // (a frozen script - a hit-stop - repeats its tick: nothing moves, the swing waits too)
+    let frozen = plan.ask.is_none() && ft.seen == Some(plan.t);
+    ft.feet.hold(frozen);
+    if frozen {
+        return;
+    }
+    ft.seen = Some(plan.t);
     if let Some(mut ask) = plan.ask {
         ask.last_side = ft.last_side;
-        let s = step(&ask, |a, b| blocked(a, b, pos[1], k));
+        let s = step(&ask, wall);
         ft.feet.step(&s, ask.heavy);
         (ft.to, ft.t, ft.foe) = (Some(s.to), 0, ask.foe.map(|f| f.pos));
         ft.last_side = if s.lead_right { 1.0 } else { -1.0 };
@@ -407,7 +467,8 @@ pub fn drive(c: &mut sm64::SM64ErScript, plan: &Plan, pos: [f32; 3], face: f32, 
     }
     let Some(to) = ft.to else { return };
     let mut after = facing + c.turn.to_radians();
-    if let (Some(foe), true) = (ft.foe, plan.ask.is_none()) {
+    // (not on the move's aim ticks either: its snap to the enemy comes on top)
+    if let (Some(foe), true) = (ft.foe, plan.ask.is_none() && !plan.aim) {
         let off = (yaw_to(here, foe) - after + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         let extra = off.to_degrees().clamp(-TURN_RATE, TURN_RATE);
         c.turn += extra;
@@ -429,8 +490,9 @@ const TURN_RATE: f32 = 12.0;
 
 /// After the tick (in the worker), on Mario's poses: the feet planted in the world, the hips
 /// shifted, the legs' IK (ik.rs). `on`: a footwork move is playing; else it blends out over 3
-/// ticks. `pos`, `face`: Mario now; `k`: metres a unit.
-pub fn legs(parts: &mut [PartPose; PARTS], on: bool, pos: [f32; 3], face: f32, k: f32) {
+/// ticks, or at once with `release` (he left the ground, or dashed out of the blow). `pos`,
+/// `face`: Mario now; `k`: metres a unit.
+pub fn legs(parts: &mut [PartPose; PARTS], on: bool, release: bool, pos: [f32; 3], face: f32, k: f32) {
     let mut g = FOOTING.lock().unwrap_or_else(|e| e.into_inner());
     if !on && !g.as_ref().is_some_and(|f| f.feet.live) {
         return;
@@ -438,7 +500,7 @@ pub fn legs(parts: &mut [PartPose; PARTS], on: bool, pos: [f32; 3], face: f32, k
     let ft = g.get_or_insert_with(Footing::default);
     // (the parts' x is mirrored; left/right as he stands: the thigh that is on his left is first)
     let mirror = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
-    let (fwd, left) = basis(face);
+    let (_, left) = basis(face);
     let lat = |v: Vec3| mirror(v).x * left.x + mirror(v).z * left.y;
     let legs: [[usize; 3]; 2] = if lat(parts[10].pos) >= lat(parts[13].pos) { [[10, 11, 12], [13, 14, 15]] } else { [[13, 14, 15], [10, 11, 12]] };
     let len = |l: &[usize; 3]| (parts[l[1]].pos - parts[l[0]].pos).length() + (parts[l[2]].pos - parts[l[1]].pos).length();
@@ -448,18 +510,29 @@ pub fn legs(parts: &mut [PartPose; PARTS], on: bool, pos: [f32; 3], face: f32, k
         reach: [len(&legs[0]), len(&legs[1])],
     };
     let body = Vec3::new(pos[0] * k, pos[1] * k, pos[2] * k);
-    let Some(out) = ft.feet.tick(on, body, face, &rig) else {
-        (ft.to, ft.last_side) = (None, 0.0);
-        return;
-    };
-    // the weight shifts: all of him but the legs moves with the hips
-    let shift = mirror(out.pelvis) * out.weight;
-    for (i, p) in parts.iter_mut().enumerate().skip(1) {
-        if !matches!(i, 11 | 12 | 14 | 15) {
-            p.pos += shift;
+    if !on {
+        ft.feet.hold(false);
+        if release {
+            ft.feet.release();
         }
     }
-    // the knees bend forward
+    let Some(out) = ft.feet.tick(on, body, face, &rig) else {
+        (ft.to, ft.last_side, ft.seen) = (None, 0.0, None);
+        return;
+    };
+    pose_parts(parts, &out, &legs, face);
+}
+
+/// The pose on the parts: the weight shifts (all of him moves with the hips, legs too: their
+/// bones keep their lengths for the IK), then the legs' IK puts the ankles where planted, the
+/// knees bending forward.
+fn pose_parts(parts: &mut [PartPose; PARTS], out: &Pose, legs: &[[usize; 3]; 2], face: f32) {
+    let mirror = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+    let (fwd, _) = basis(face);
+    let shift = mirror(out.pelvis) * out.weight;
+    for p in parts.iter_mut().skip(1) {
+        p.pos += shift;
+    }
     let pole = Vec3::new(-fwd.x, 0.0, fwd.y);
     for (i, l) in legs.iter().enumerate() {
         ik::leg(parts, l[0] == 13, mirror(out.ankle[i]), pole, out.weight);
@@ -479,7 +552,7 @@ mod tests {
     /// Mario at `feet` facing the foe at the origin; `r` its radius.
     fn ask(feet: Vec2, r: f32, side: f32) -> Ask {
         let facing = (-feet.x).atan2(-feet.y);
-        Ask { feet, facing, foe: Some(Foe { pos: Vec2::ZERO, radius: r, colossus: false }), side, last_side: 0.0, heavy: false }
+        Ask { feet, facing, foe: Some(Foe { pos: Vec2::ZERO, radius: r, colossus: false }), side, last_side: 0.0, heavy: false, others: [None; 4] }
     }
 
     fn at(dist: f32, deg: f32) -> Vec2 {
@@ -597,7 +670,7 @@ mod tests {
     #[test]
     fn with_no_enemy_it_is_a_short_step_forward() {
         let facing = 0.7f32;
-        let a = Ask { feet: Vec2::new(3.0, -2.0), facing, foe: None, side: -1.0, last_side: 0.0, heavy: false };
+        let a = Ask { feet: Vec2::new(3.0, -2.0), facing, foe: None, side: -1.0, last_side: 0.0, heavy: false, others: [None; 4] };
         let s = step(&a, free);
         let d = s.to - a.feet;
         assert!(d.length() > 0.2 && d.length() <= 0.35 + 1e-4, "{}", d.length());
@@ -785,5 +858,179 @@ mod tests {
         // (off for good: a fresh plant next time, where the clip's feet are)
         let o = f.tick(true, Vec3::new(5.0, 0.0, 5.0), 0.0, &rig()).unwrap();
         assert!((world(Vec3::new(5.0, 0.0, 5.0), &o, 0) - Vec2::new(5.1, 5.0)).length() < 1e-4);
+    }
+
+    // ---- the review's fixes ----
+
+    #[test]
+    fn a_whole_string_alternates_sides() {
+        use crate::script::{cut_side, MOVES, SW_S1, SW_S2, SW_S3, SW_S4};
+        let (mut feet, mut last, mut leads) = (at(1.6, 0.0), 0.0, Vec::new());
+        for id in [SW_S1, SW_S2, SW_S3, SW_S4] {
+            let mut a = ask(feet, 0.5, cut_side(&MOVES[id as usize]));
+            a.last_side = last;
+            let s = step(&a, free);
+            leads.push(s.lead_right);
+            last = if s.lead_right { 1.0 } else { -1.0 };
+            feet = s.to;
+        }
+        assert!(leads.windows(2).all(|w| w[0] != w[1]), "leads {leads:?}");
+    }
+
+    #[test]
+    fn a_step_never_goes_into_another_body() {
+        let mut a = ask(at(1.6, 0.0), 0.5, 1.0);
+        let right = step(&a, free);
+        let left = step(&Ask { side: -1.0, ..a }, free);
+        let body = |pos: Vec2| Foe { pos, radius: 0.4, colossus: false };
+        // (bodies just past where the steps would end)
+        let beyond = |to: Vec2| body(to + (to - a.feet).normalize() * 0.5);
+        let (r, l) = (beyond(right.to), beyond(left.to));
+        a.others[0] = Some(r);
+        let s = step(&a, free);
+        assert!((s.to - r.pos).length() >= 0.4 + BODY - 1e-3 && s.to != a.feet, "went to {:?}", s.to);
+        // (bodies on both sides: he stays)
+        a.others[1] = Some(l);
+        let s = step(&a, free);
+        assert_eq!(s.to, a.feet);
+    }
+
+    #[test]
+    fn a_swinging_foot_goes_on_from_where_it_is() {
+        let mut f = Feet::default();
+        f.tick(true, Vec3::ZERO, 0.0, &rig());
+        f.step(&plan(Vec2::new(0.0, 0.3), 0.0, true), false);
+        let mut body = Vec3::new(0.0, 0.0, 0.3);
+        let mut prev = [Vec3::new(0.1, 0.0, 0.0), Vec3::new(-0.1, 0.0, 0.0)];
+        let mut worst = 0.0f32;
+        for k in 0..12 {
+            if k == 2 {
+                // (a chained blow fires the next step with the lead foot mid-swing, the other waiting)
+                f.step(&plan(Vec2::new(0.05, 0.5), 0.0, false), false);
+                body = Vec3::new(0.05, 0.0, 0.5);
+            }
+            let o = f.tick(true, body, 0.0, &rig()).unwrap();
+            for i in 0..2 {
+                let now = Vec3::new(body.x + o.ankle[i].x, o.ankle[i].y, body.z + o.ankle[i].z);
+                if k > 0 {
+                    worst = worst.max((now - prev[i]).length());
+                }
+                prev[i] = now;
+            }
+        }
+        // (a swing covers at most 35% of its way in a tick: 0.19 m of a 0.55 m reach; a snap is 0.3)
+        assert!(worst < 0.21, "a foot jumped {worst} m in a tick");
+    }
+
+    #[test]
+    fn a_frozen_script_waits_and_the_step_is_still_walked_whole() {
+        let mut ft = Footing::default();
+        let face = 0.0f32;
+        let mut pos = [0.0f32, 0.0, 0.0];
+        let a = Ask { feet: Vec2::ZERO, facing: face, foe: None, side: 1.0, last_side: 0.0, heavy: false, others: [None; 4] };
+        let mut stepped: Option<Vec2> = None;
+        // (script ticks 0, 1, 2 then a 6-tick freeze on 2, then 3, 4, 5...)
+        let ticks = [0u16, 1, 2, 2, 2, 2, 2, 2, 3, 4, 5, 6];
+        let mut last = None;
+        for t in ticks {
+            let mut c = sm64::SM64ErScript::default();
+            let p = Plan { lunge: false, ask: (t == 0).then_some(a), t, aim: false };
+            drive_with(&mut ft, &mut c, &p, pos, face, 1.0, |_, _| false);
+            if t == 0 {
+                stepped = ft.to;
+            }
+            // (libsm64 runs the script only on a new tick: the velocities of a frozen one are dropped)
+            if last != Some(t) {
+                let (f, l) = basis(face);
+                let d = f * c.forward_vel + l * c.side_vel;
+                pos[0] += d.x;
+                pos[2] += d.y;
+            } else {
+                assert!(c.forward_vel == 0.0 && c.side_vel == 0.0 && c.turn == 0.0, "a frozen tick moved him");
+            }
+            last = Some(t);
+        }
+        let to = stepped.unwrap();
+        assert!((Vec2::new(pos[0], pos[2]) - to).length() < 1e-3, "ended at {pos:?}, planned {to:?}");
+    }
+
+    #[test]
+    fn the_feet_wait_in_a_hit_stop() {
+        let mut f = Feet::default();
+        f.tick(true, Vec3::ZERO, 0.0, &rig());
+        f.step(&plan(Vec2::new(0.0, 0.3), 0.0, true), false);
+        let body = Vec3::new(0.0, 0.0, 0.3);
+        f.tick(true, body, 0.0, &rig()).unwrap();
+        f.hold(true);
+        let a = f.tick(true, body, 0.0, &rig()).unwrap();
+        for _ in 0..6 {
+            let o = f.tick(true, body, 0.0, &rig()).unwrap();
+            assert!((o.ankle[1] - a.ankle[1]).length() < 1e-5 && (o.ankle[0] - a.ankle[0]).length() < 1e-5);
+        }
+        f.hold(false);
+        f.tick(true, body, 0.0, &rig()).unwrap();
+        let o = f.tick(true, body, 0.0, &rig()).unwrap();
+        assert!((o.ankle[1] - a.ankle[1]).length() > 1e-3, "never went on");
+    }
+
+    #[test]
+    fn the_aim_ticks_are_not_turned_twice() {
+        let mut ft = Footing::default();
+        let foe = Foe { pos: Vec2::new(0.0, 2.0), radius: 0.5, colossus: false };
+        let a = Ask { feet: Vec2::ZERO, facing: 0.0, foe: Some(foe), side: 1.0, last_side: 0.0, heavy: false, others: [None; 4] };
+        let mut c = sm64::SM64ErScript::default();
+        drive_with(&mut ft, &mut c, &Plan { lunge: false, ask: Some(a), t: 0, aim: true }, [0.0; 3], 0.0, 1.0, |_, _| false);
+        // (turned 40 degrees off the enemy: on an aim tick its snap does the turning, else the step does)
+        let off = 40.0f32.to_radians();
+        let mut c = sm64::SM64ErScript::default();
+        drive_with(&mut ft, &mut c, &Plan { lunge: false, ask: None, t: 1, aim: true }, [0.0; 3], off, 1.0, |_, _| false);
+        assert_eq!(c.turn, 0.0);
+        let mut c = sm64::SM64ErScript::default();
+        drive_with(&mut ft, &mut c, &Plan { lunge: false, ask: None, t: 2, aim: false }, [0.0; 3], off, 1.0, |_, _| false);
+        assert!(c.turn < -1.0, "turn {}", c.turn);
+        // (a move starts turned to the enemy it aims at, else as it stands)
+        let at_foe = facing_for(Vec2::ZERO, 0.0, Some(Vec2::new(2.0, 0.0)));
+        assert!((at_foe - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(facing_for(Vec2::ZERO, 0.3, None), 0.3);
+    }
+
+    fn leg_parts() -> [PartPose; PARTS] {
+        use glam::Quat;
+        let mut p = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
+        // (the parts' x is mirrored: the left leg is at -x)
+        for (hip, x) in [(10, -0.1f32), (13, 0.1)] {
+            p[hip].pos = Vec3::new(x, 0.75, 0.0);
+            p[hip + 1].pos = Vec3::new(x, 0.4, 0.05);
+            p[hip + 2].pos = Vec3::new(x, 0.0, 0.0);
+        }
+        p
+    }
+
+    #[test]
+    fn the_hip_shift_keeps_the_bones_their_lengths() {
+        let mut p = leg_parts();
+        let bones = [(10, 11), (11, 12), (13, 14), (14, 15)];
+        let before: Vec<f32> = bones.iter().map(|(a, b)| (p[*b].pos - p[*a].pos).length()).collect();
+        let out = Pose { weight: 1.0, ankle: [Vec3::new(0.1, 0.0, 0.0), Vec3::new(-0.1, 0.0, 0.0)], pelvis: Vec3::new(0.03, -0.075, 0.02) };
+        pose_parts(&mut p, &out, &[[10, 11, 12], [13, 14, 15]], 0.0);
+        let after: Vec<f32> = bones.iter().map(|(a, b)| (p[*b].pos - p[*a].pos).length()).collect();
+        for (b, a) in before.iter().zip(&after) {
+            assert!((b - a).abs() < 1e-3, "bones {before:?} then {after:?}");
+        }
+    }
+
+    #[test]
+    fn leaving_the_ground_lets_the_feet_go_at_once() {
+        let mut f = Feet::default();
+        f.tick(true, Vec3::ZERO, 0.0, &rig());
+        f.step(&plan(Vec2::new(0.0, 0.3), 0.0, true), false);
+        f.tick(true, Vec3::new(0.0, 0.0, 0.3), 0.0, &rig());
+        // (a blow cut into a jump: the body is far off, the clip's feet are by it)
+        let body = Vec3::new(0.0, 1.0, 1.5);
+        f.release();
+        let o = f.tick(false, body, 0.0, &rig()).unwrap();
+        for i in 0..2 {
+            assert!((o.ankle[i] - rig().ankle[i]).length() < 1e-4, "foot {i} still anchored at {:?}", o.ankle[i]);
+        }
     }
 }

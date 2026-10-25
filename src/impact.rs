@@ -237,6 +237,20 @@ pub fn sword_blow(attack: Attack) -> bool {
     )
 }
 
+/// How heavy a sword cut sounds (0 light, 2 heavy): by its hit-stop, but the string's light slashes
+/// stay light whatever their stop.
+fn sword_weight(attack: Attack, stop: u32) -> u8 {
+    if matches!(attack, Attack::SwordSlash(0..=2)) {
+        0
+    } else if stop >= 5 {
+        2
+    } else if stop >= 3 {
+        1
+    } else {
+        0
+    }
+}
+
 /// A glint of light at `at` (Star Power's round him, starpower.rs): its colour, its size (m).
 pub fn glint(at: Vec3, tint: [f32; 4], size: f32) {
     spark(at, size, tint);
@@ -291,7 +305,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     // heavier blows, a little camera jolt on each: no SM64 punch sound under them
     let sword = sword_blow(attack);
     if sword {
-        let weight = if stop >= 5 { 2 } else if stop >= 3 { 1 } else { 0 };
+        let weight = sword_weight(attack, stop);
         crate::sfx::play(crate::sfx::Sfx::Hit(weight), [0.42, 0.52, 0.62][weight as usize]);
         if !heavy {
             crate::lakitu::shake(0.12 + 0.06 * stop as f32);
@@ -1392,5 +1406,13 @@ mod tests {
         assert_eq!(stops, [2, 3, 3, 6]);
         assert!(feel(Attack::SwordSlash(3)).unwrap().2, "the chop shakes the camera");
         assert!(!feel(Attack::SwordSlash(1)).unwrap().2);
+    }
+
+    #[test]
+    fn the_light_slashes_sound_light_and_the_chop_heavy() {
+        for i in 0..3 {
+            assert_eq!(sword_weight(Attack::SwordSlash(i), feel(Attack::SwordSlash(i)).unwrap().0), 0, "slash {i}");
+        }
+        assert_eq!(sword_weight(Attack::SwordSlash(3), feel(Attack::SwordSlash(3)).unwrap().0), 2);
     }
 }

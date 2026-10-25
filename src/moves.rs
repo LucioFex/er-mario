@@ -146,6 +146,11 @@ const BREAKDANCE: u32 = 9;
 const ANIM_GROUND_KICK: i32 = 0x66;
 /// A press too soon in a scripted move is kept this long (ticks) for when it can cut it.
 const SCRIPT_BUFFER: u32 = 12;
+
+/// A press kept (`buffer`: its button and tick) is still wanted at `tick`.
+fn still_held(buffer: Option<(u8, u32)>, tick: u32) -> Option<(u8, u32)> {
+    buffer.filter(|(_, at)| tick.wrapping_sub(*at) <= SCRIPT_BUFFER)
+}
 /// the pause combo: the third X this long (ticks) after the second, a beat instead of a quick
 /// press (it used to count from the second punch's end, a timing hard to find)
 const PAUSE_MIN: u32 = 10;
@@ -1064,7 +1069,7 @@ impl Moves {
             } else if b_pressed && !open(DASH) {
                 self.script_buffer = Some((crate::combo::B, tick));
             }
-            let held = self.script_buffer.filter(|(_, at)| tick.wrapping_sub(*at) <= SCRIPT_BUFFER);
+            let held = still_held(self.script_buffer, tick);
             let take = |bit: u8, need: u8| held.is_some_and(|(b, _)| b == bit) && open(need);
             let (bx, by, bb) = (take(crate::combo::X, NEXT), take(crate::combo::Y, NEXT), take(crate::combo::B, DASH));
             if bx || by || bb {
@@ -1692,16 +1697,19 @@ mod tests {
     use super::*;
     use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
 
-    /// A press while a blow of the string is still in its wait is kept long enough to chain on
-    /// the tick the next one opens, however early it came (S1-S3's NEXT is 6 ticks in at most).
+    /// A press while a blow of the string is still in its wait is kept until the tick the next one
+    /// opens (S1-S3's NEXT is 6 ticks in at most) and dropped some ticks after.
     #[test]
     fn a_press_waits_for_the_next_blow() {
         use crate::script::{MOVES, NEXT, SW_S1, SW_S3};
-        assert_eq!(SCRIPT_BUFFER, 12);
         for id in SW_S1..=SW_S3 {
             let next = MOVES[id as usize].cancels.iter().find(|c| c.into & NEXT != 0).unwrap().from;
-            assert!(SCRIPT_BUFFER >= next as u32 * 2, "{}", MOVES[id as usize].name);
+            // (pressed on the blow's first tick)
+            assert!(still_held(Some((crate::combo::X, 100)), 100 + next as u32).is_some(), "{}", MOVES[id as usize].name);
         }
+        assert!(still_held(Some((crate::combo::X, 100)), 100 + SCRIPT_BUFFER).is_some());
+        assert!(still_held(Some((crate::combo::X, 100)), 101 + SCRIPT_BUFFER).is_none());
+        assert!(still_held(None, 5).is_none());
     }
 
     fn action(r: Option<Request>) -> Option<(u32, u32)> {

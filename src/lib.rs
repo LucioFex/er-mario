@@ -4637,15 +4637,32 @@ fn frame(data: &FD4TaskData) {
             let ask = (f.t == 0).then(|| {
                 let k = scale();
                 let feet = glam::Vec2::new(m.state.position[0] * k, m.state.position[2] * k);
-                let foe = m.focus.filter(|_| focus.is_some()).and_then(|(key, _)| targets.iter().find(|t| t.key() == key)).map(|t| footwork::Foe {
+                let foe_of = |t: &combat::Target| footwork::Foe {
                     pos: glam::Vec2::new(t.sm[0] * k, t.sm[2] * k),
                     radius: t.radius * k,
                     colossus: colossus::is_colossus(t.radius * k, t.height * k),
-                });
-                let facing = foe.map_or(m.state.face_angle, |e| footwork::yaw_to(feet, e.pos));
-                footwork::Ask { feet, facing, foe, side: script::cut_side(mv), last_side: 0.0, heavy: script::heavy_blow(mv) }
+                };
+                // (the enemy the move's aim turns him to, else the one fought)
+                let aimed = aim.and_then(|(x, z, _)| targets.iter().find(|t| t.sm[0] == x && t.sm[2] == z));
+                let fought = aimed.or_else(|| m.focus.filter(|_| focus.is_some()).and_then(|(key, _)| targets.iter().find(|t| t.key() == key)));
+                let foe = fought.map(foe_of);
+                let facing = footwork::facing_for(feet, m.state.face_angle, aimed.map(|t| glam::Vec2::new(t.sm[0] * k, t.sm[2] * k)));
+                // (the other bodies close by: a step keeps out of them)
+                let mut near: Vec<(f32, footwork::Foe)> = targets
+                    .iter()
+                    .filter(|t| !t.friendly() && !t.is_prop() && fought.is_none_or(|f| f.key() != t.key()))
+                    .map(|t| foe_of(t))
+                    .map(|e| ((e.pos - feet).length(), e))
+                    .filter(|(d, _)| *d < 4.0)
+                    .collect();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let mut others = [None; 4];
+                for (slot, (_, e)) in others.iter_mut().zip(near) {
+                    *slot = Some(e);
+                }
+                footwork::Ask { feet, facing, foe, side: script::cut_side(mv), last_side: 0.0, heavy: script::heavy_blow(mv), others }
             });
-            Some(footwork::Plan { lunge: mv.approach.is_some(), ask })
+            Some(footwork::Plan { lunge: mv.approach.is_some(), ask, t: f.t, aim: mv.aim.contains(&f.t) })
         });
         // the boomerang's glide: this tick's rule (glide.rs) for libsm64's action; the hammer's guard
         // up, since when; the Chain Chomp's grip on the enemy it slams
@@ -4846,7 +4863,9 @@ fn frame(data: &FD4TaskData) {
             // the feet planted in the world, the hips shifted, the legs' IK (blends out when the
             // blows are over)
             if let Some(p) = parts.as_mut() {
-                footwork::legs(p, foot_plan.is_some(), state.position, state.face_angle, foot_k);
+                // (off the ground, or dashed out of the blow: the feet leave the world's anchors at once)
+                let release = foot_plan.is_none() && (state.action & 0x800 != 0 || matches!(state.action, moves::ACT_ER_DASH | moves::ACT_ER_AIR_DASH));
+                footwork::legs(p, foot_plan.is_some(), release, state.position, state.face_angle, foot_k);
             }
             // the scripted move's tick ran (not held by a hit-stop): what it shows (before the weapons are posed: a heavy blow's squash), its hit window
             let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);

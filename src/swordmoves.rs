@@ -84,7 +84,7 @@ pub const S1: Move = Move {
     windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(0), 0)],
     cancels: &[c(NEXT, 6, 4), c(DJS, 6, 4)],
     sounds: &[(0, VOICE_LIGHT, 0.25), (1, SWING_LIGHT, 0.4)],
-    follow: (5, 12),
+    follow: (7, 12),
     locked: (0, 2),
     ..BASE
 };
@@ -109,7 +109,7 @@ pub const S2: Move = Move {
     windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(1), 0)],
     cancels: &[c(NEXT, 5, 4), c(DJS, 6, 4)],
     sounds: &[(0, VOICE_LIGHT, 0.25), (1, SWING_LIGHT, 0.42)],
-    follow: (5, 11),
+    follow: (6, 11),
     locked: (0, 2),
     ..BASE
 };
@@ -134,7 +134,7 @@ pub const S3: Move = Move {
     windows: &[w(3, 5, Shape::Weapon, Attack::SwordSlash(2), 0)],
     cancels: &[c(NEXT, 6, 4), c(DJS, 6, 4)],
     sounds: &[(1, SWING, 0.45), (4, HOO, 0.0)],
-    follow: (6, 12),
+    follow: (7, 12),
     locked: (0, 3),
     ..BASE
 };
