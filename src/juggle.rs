@@ -81,6 +81,19 @@ struct Juggled {
     mob: FieldInsHandle,
     pos: Vec3,
     phase: Phase,
+    /// its body (m), and whether it's a small regular one (the air tricks are for those)
+    radius: f32,
+    height: f32,
+    small: bool,
+    /// air: it bounced off a wall this string; it had its OTG bounce since it last touched the ground
+    wall_used: bool,
+    otg_used: bool,
+}
+
+impl Juggled {
+    fn new(mob: FieldInsHandle, pos: Vec3, phase: Phase, radius: f32, height: f32, small: bool) -> Self {
+        Juggled { mob, pos, phase, radius, height, small, wall_used: false, otg_used: false }
+    }
 }
 
 static UP: Mutex<Vec<Juggled>> = Mutex::new(Vec::new());
@@ -143,6 +156,13 @@ pub fn refusal(radius_m: f32, height_m: f32, regular: bool, stunned: bool) -> Op
 /// enemy that's stunned (a regular one is `regular`); `high`: the hammer's launcher, sending it
 /// flying high up. True if it's up now.
 pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32, regular: bool, stunned: bool, high: bool) -> bool {
+    lift(h, mario, radius_m, height_m, regular, stunned, high.then_some(LAUNCH_HEIGHT))
+}
+
+/// `try_launch`, `launch`: the height it flies to (the launcher's), or None to hang up with Mario.
+fn lift(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32, regular: bool, stunned: bool, launch: Option<f32>) -> bool {
+    let high = launch.is_some();
+    let fly = launch.unwrap_or(LAUNCH_HEIGHT);
     // (co-op guest: the host owns the enemies, moving one here would only make it jump)
     if crate::coop::guest() {
         return false;
@@ -154,7 +174,7 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
         // (falling already: back up; up with him: a while longer)
         if high {
-            j.phase = launched(j.pos, mario, LAUNCH_HEIGHT);
+            j.phase = launched(j.pos, mario, fly);
         } else if let Phase::Up { last_hit, .. } = &mut j.phase {
             *last_hit = Instant::now();
         } else if let Phase::Falling { .. } | Phase::Bounce { .. } = j.phase {
@@ -177,8 +197,8 @@ pub fn try_launch(h: &FieldInsHandle, mario: Vec3, radius_m: f32, height_m: f32,
     if high {
         crate::impact::launched(pos);
     }
-    let phase = if high { launched(pos, mario, LAUNCH_HEIGHT) } else { Phase::Up { dir: d.normalize_or(Vec3::Z), dist: d.length().clamp(NEAR, FAR), last_hit: Instant::now() } };
-    up.push(Juggled { mob: *h, pos, phase });
+    let phase = if high { launched(pos, mario, fly) } else { Phase::Up { dir: d.normalize_or(Vec3::Z), dist: d.length().clamp(NEAR, FAR), last_hit: Instant::now() } };
+    up.push(Juggled::new(*h, pos, phase, radius_m, height_m, regular && refusal(radius_m, height_m, true, false).is_none()));
     true
 }
 
@@ -235,7 +255,7 @@ pub fn pull(h: &FieldInsHandle, air: bool, radius_m: f32, medium: bool) -> bool 
     let p = chr.modules.physics.position;
     let pos = Vec3::new(p.0, p.1, p.2);
     log(format!("juggle: c{:04} pulled in{}", chr.character_id, if air { " (up there)" } else { "" }));
-    up.push(Juggled { mob: *h, pos, phase });
+    up.push(Juggled::new(*h, pos, phase, radius_m, 2.0, !medium));
     true
 }
 
@@ -259,7 +279,7 @@ pub fn sling(h: &FieldInsHandle, arc: crate::chompslam::Arc, lurch: bool) -> boo
         j.phase = phase;
         return true;
     }
-    up.push(Juggled { mob: *h, pos: arc.start, phase });
+    up.push(Juggled::new(*h, arc.start, phase, 0.6, 2.0, false));
     true
 }
 
@@ -362,6 +382,12 @@ pub fn ground_bounce(h: &FieldInsHandle, radius_m: f32, height_m: f32, regular: 
         if !matches!(j.phase, Phase::Falling { .. } | Phase::Bounce { .. }) {
             return false;
         }
+        // (one OTG bounce until it has touched the ground: the ring hits on and on)
+        let (now, used) = once(j.otg_used, false, true);
+        j.otg_used = used;
+        if !now {
+            return false;
+        }
         j.phase = phase;
         return true;
     }
@@ -372,9 +398,112 @@ pub fn ground_bounce(h: &FieldInsHandle, radius_m: f32, height_m: f32, regular: 
     }
     let p = chr.modules.physics.position;
     log(format!("juggle: c{:04} bounced off the ground ({:.1} x {:.1} m)", chr.character_id, radius_m, height_m));
-    up.push(Juggled { mob: *h, pos: Vec3::new(p.0, p.1, p.2), phase });
+    let mut j = Juggled::new(*h, Vec3::new(p.0, p.1, p.2), phase, radius_m, height_m, true);
+    j.otg_used = true;
+    up.push(j);
     true
 }
+
+// Air (v4 Part 12.7): a wall bounces a flight back, a fast one billiards into the next enemy
+
+/// the wall bounce: it leaves the wall this fast (m/s), the flights it checks for a wall are at least
+/// this fast (m/s), and the share of its max HP the knock costs (%)
+pub const WALL_SPEED: f32 = 3.0;
+const WALL_MIN_SPEED: f32 = 2.0;
+pub const WALL_SHARE: f32 = 3.0;
+/// billiards: the speed that carries it into the next (m/s), how high the next flies (m), the share
+/// each takes (%), how many it chains in a string, and how far a body may be to be looked at (m)
+const BILLIARD_SPEED: f32 = 4.0;
+const BILLIARD_HEIGHT: f32 = 2.5;
+pub const BILLIARD_SHARE: f32 = 3.0;
+pub const BILLIARD_CHAIN: u32 = 3;
+const BILLIARD_LOOK: f32 = 1.6;
+
+/// Where a flight along `dir` (horizontal) hit a surface: `p0` on its line, `side` a ray 0.4 m to the
+/// side and `up` one 0.5 m higher, both along it (None: missed). The wall's normal facing the flight,
+/// horizontal; None for a floor or a ceiling. With the side rays missing: head on.
+pub fn wall_normal(dir: Vec3, p0: Vec3, side: Option<Vec3>, up: Option<Vec3>) -> Option<Vec3> {
+    let back = -Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
+    let (Some(a), Some(b)) = (side, up) else { return Some(back) };
+    let n = (a - p0).cross(b - p0).normalize_or_zero();
+    if n == Vec3::ZERO {
+        return Some(back);
+    }
+    let n = if n.dot(dir) > 0.0 { -n } else { n };
+    if n.y.abs() > 0.5 {
+        return None;
+    }
+    Some(Vec3::new(n.x, 0.0, n.z).normalize_or(back))
+}
+
+/// The velocity (horizontal, WALL_SPEED m/s) after a flight at `vel` hits a wall with `normal`: its
+/// reflection, pushed off the wall a bit (one running along it still leaves it), and turned to
+/// Mario's side (`toward`, horizontal) if it would go the other way.
+pub fn wall_bounce(vel: Vec3, normal: Vec3, toward: Vec3) -> Vec3 {
+    let n = Vec3::new(normal.x, 0.0, normal.z).normalize_or(Vec3::X);
+    let v = Vec3::new(vel.x, 0.0, vel.z);
+    let r = v - 2.0 * v.dot(n) * n;
+    let mut d = (r.normalize_or(n) + n * 0.5).normalize_or(n);
+    if d.dot(toward) < 0.0 {
+        d = (d + toward).normalize_or(toward);
+    }
+    d * WALL_SPEED
+}
+
+/// A bounce that happens once until something resets it (the string's wall bounce, the OTG bounce
+/// until the ground is touched): (it bounces now, used from now on). The reset comes first.
+pub fn once(used: bool, reset: bool, asked: bool) -> (bool, bool) {
+    let used = used && !reset;
+    if asked && !used {
+        (true, true)
+    } else {
+        (false, used)
+    }
+}
+
+/// A body the air tricks play on: small or medium (a boss or a big body never; the string's own
+/// limits for the rest).
+pub fn air_size(radius_m: f32, height_m: f32) -> bool {
+    radius_m <= MEDIUM_RADIUS && height_m <= MEDIUM_HEIGHT
+}
+
+pub fn billiard_fast(speed: f32) -> bool {
+    speed > BILLIARD_SPEED
+}
+
+pub fn chain_ok(chained: u32) -> bool {
+    chained < BILLIARD_CHAIN
+}
+
+/// Two bodies (feet `a`, `b`; radius, height in m) touch: close sideways and overlapping in height.
+pub fn touches(a: Vec3, ar: f32, ah: f32, b: Vec3, br: f32, bh: f32) -> bool {
+    let d = Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    d < ar + br && a.y < b.y + bh && b.y < a.y + ah
+}
+
+/// An enemy on the ground (or anywhere) a flight may hit: its handle, feet, body (m).
+pub struct Body {
+    pub handle: FieldInsHandle,
+    pub feet: Vec3,
+    pub radius: f32,
+    pub height: f32,
+}
+
+/// billiards this string
+static CHAINED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Extra shares (the wall knock, the billiards): the enemy and the % of its max HP.
+static SHARES: Mutex<Vec<(FieldInsHandle, f32)>> = Mutex::new(Vec::new());
+
+fn share(h: FieldInsHandle, pct: f32) {
+    SHARES.lock().unwrap_or_else(|e| e.into_inner()).push((h, pct));
+}
+
+/// The shares since the last call (lib.rs deals them: combat::impact_soft).
+pub fn take_shares() -> Vec<(FieldInsHandle, f32)> {
+    std::mem::take(&mut *SHARES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 
 /// `h` isn't juggled any more (another move takes it: bat.rs), its gravity back.
 pub fn release(h: &FieldInsHandle) {
@@ -397,16 +526,20 @@ pub fn clear() {
         }
     }
     up.clear();
+    CHAINED.store(0, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Game thread, every frame: the lifted ones follow Mario (his feet `mario`, Elden Ring), or fall.
-/// `hit` casts a ray (from, to) against the map.
-pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+/// `hit` casts a ray (from, to) against the map; `bodies` lists the enemies around a point (m).
+pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>, bodies: impl Fn(Vec3, f32) -> Vec<Body>) {
     let facing = Vec3::new(-face_angle.sin(), 0.0, face_angle.cos());
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     if up.is_empty() {
+        CHAINED.store(0, std::sync::atomic::Ordering::Relaxed);
         return;
     }
+    // the fast flights of this frame, for the billiards
+    let mut fast: Vec<(FieldInsHandle, Vec3, f32, f32)> = Vec::new();
     let Ok(wcm) = (unsafe { WorldChrMan::instance_mut() }) else { return };
     up.retain_mut(|j| {
         let Some(chr) = wcm.chr_ins_by_handle_mut(&j.mob) else { return false };
@@ -414,6 +547,35 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
         if chr.modules.data.hp <= 0 || crate::carry::is_carried(&j.mob) || crate::knock::is_flying(&j.mob) || crate::bat::is_flying(&j.mob) {
             chr.modules.physics.gravity_disabled = false;
             return false;
+        }
+        // air: a wall in the way of a flight (sent up, falling, bouncing) throws it back toward Mario
+        if j.small && !j.wall_used {
+            let vel = match j.phase {
+                Phase::Flying { vel, .. } | Phase::Falling { vel, .. } | Phase::Bounce { vel } => vel,
+                _ => Vec3::ZERO,
+            };
+            let speed = Vec3::new(vel.x, 0.0, vel.z).length();
+            if speed >= WALL_MIN_SPEED {
+                let dir = Vec3::new(vel.x, 0.0, vel.z) / speed;
+                let from = j.pos + Vec3::Y * 0.8;
+                let reach = j.radius + speed * dt;
+                if let Some(p0) = hit(from, from + dir * reach) {
+                    let (side, high) = (Vec3::new(-dir.z, 0.0, dir.x) * 0.4, Vec3::Y * 0.5);
+                    let far = reach + 0.6;
+                    let p1 = hit(from + side, from + side + dir * far);
+                    let p2 = hit(from + high, from + high + dir * far);
+                    if let Some(n) = wall_normal(dir, p0, p1, p2) {
+                        let toward = Vec3::new(mario.x - j.pos.x, 0.0, mario.z - j.pos.z).normalize_or(-dir);
+                        let out = wall_bounce(vel, n, toward);
+                        let (_, used) = once(j.wall_used, false, true);
+                        j.wall_used = used;
+                        j.phase = Phase::Falling { vel: Vec3::new(out.x, vel.y, out.z), since: Instant::now() };
+                        share(j.mob, WALL_SHARE);
+                        crate::impact::air_bounce(p0);
+                        log(format!("air: wall bounce c{:04}", chr.character_id));
+                    }
+                }
+            }
         }
         let (next, keep) = match j.phase {
             Phase::Up { dir, dist, last_hit } => {
@@ -498,6 +660,8 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
                 if let Some(ground) = hit(j.pos + Vec3::Y * 0.5, next - Vec3::Y * 0.05) {
                     // (a real fall bounces once: a blow then sends it back up)
                     let landed = Vec3::new(next.x, ground.y, next.z);
+                    // (it touched the ground: the OTG bounce is ready again)
+                    j.otg_used = once(j.otg_used, true, false).1;
                     if vel.y < -3.0 {
                         crate::impact::launched(landed);
                         j.phase = Phase::Bounce { vel: Vec3::new(vel.x * BOUNCE_KEEP, BOUNCE_UP, vel.z * BOUNCE_KEEP) };
@@ -522,6 +686,10 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
         if !keep && speed > 2.0 {
             crate::impact::thud(next);
         }
+        // air: flying fast, it may knock into the next enemy (below, once the lists are free)
+        if keep && j.small && billiard_fast(speed) && matches!(j.phase, Phase::Flying { .. } | Phase::Falling { .. } | Phase::Bounce { .. } | Phase::Slung { .. }) {
+            fast.push((j.mob, next, j.radius, j.height));
+        }
         j.pos = next;
         let ph = &mut chr.modules.physics;
         ph.position = HavokPosition(next.x, next.y, next.z, 0.0);
@@ -534,6 +702,34 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
         }
         keep
     });
+    drop(up);
+    // air billiards: a fast one that touches another enemy launches it too, a small share to both
+    for (striker, pos, sr, sh) in fast {
+        for b in bodies(pos + Vec3::Y * 0.9, sr + BILLIARD_LOOK) {
+            if !chain_ok(CHAINED.load(std::sync::atomic::Ordering::Relaxed)) {
+                return;
+            }
+            if is_juggled(&b.handle) || !air_size(b.radius, b.height) || !touches(pos, sr, sh, b.feet, b.radius, b.height) {
+                continue;
+            }
+            let (regular, stunned) = match pull_size(&b.handle, b.radius, b.height) {
+                PullSize::Small => (true, false),
+                PullSize::Medium => (false, crate::swing::is_open(&b.handle) || crate::swing::toughness_of(&b.handle).is_some_and(|(now, max)| max > 0.0 && now <= 0.0)),
+                PullSize::Big => continue,
+            };
+            if !(regular || stunned) || !lift(&b.handle, mario, b.radius, b.height, regular, stunned, Some(BILLIARD_HEIGHT)) {
+                continue;
+            }
+            CHAINED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            share(striker, BILLIARD_SHARE);
+            share(b.handle, BILLIARD_SHARE);
+            crate::impact::air_clack((pos + b.feet) * 0.5 + Vec3::Y * 0.9);
+            if let Ok(wcm) = unsafe { WorldChrMan::instance() } {
+                let id = |h: &FieldInsHandle| wcm.chr_ins_by_handle(h).map_or(0, |c| c.character_id);
+                log(format!("air: billiard c{:04} -> c{:04}", id(&striker), id(&b.handle)));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -573,5 +769,90 @@ mod tests {
         // (only a small one: the string's limits)
         assert!(refusal(0.5, 1.8, true, false).is_none());
         assert!(refusal(2.0, 5.0, true, false).is_some());
+    }
+
+    /// The wall bounce: the flight's horizontal velocity reflects about the wall's normal, at 3 m/s.
+    #[test]
+    fn a_wall_bounce_reflects_about_the_normal_at_three_metres_a_second() {
+        let n = Vec3::new(-1.0, 0.0, 0.0);
+        let v = wall_bounce(Vec3::new(8.0, 0.0, 0.0), n, Vec3::new(-1.0, 0.0, 0.0));
+        assert!((v - Vec3::new(-WALL_SPEED, 0.0, 0.0)).length() < 1e-4, "{v}");
+        // (a glancing blow keeps its slant, still 3 m/s)
+        let v = wall_bounce(Vec3::new(4.0, 0.0, 4.0), n, Vec3::new(-1.0, 0.0, 0.0));
+        assert!(v.x < 0.0 && v.z > 0.0 && (v.length() - WALL_SPEED).abs() < 1e-4, "{v}");
+        // (one running along the wall, or no way back: off the normal, toward Mario's side)
+        let v = wall_bounce(Vec3::new(0.0, 0.0, 5.0), n, Vec3::new(-1.0, 0.0, 0.0));
+        assert!(v.x < 0.0 && (v.length() - WALL_SPEED).abs() < 1e-4, "{v}");
+        // (never away from Mario: a reflection that points the wrong way is turned onto the normal)
+        let v = wall_bounce(Vec3::new(-4.0, 0.0, 4.0), n, Vec3::new(1.0, 0.0, 0.0));
+        assert!(v.x > 0.0, "{v}");
+    }
+
+    /// Floors and ceilings don't bounce, walls do: three rays along the flight give the surface.
+    #[test]
+    fn only_a_wall_bounces_not_a_floor_or_a_ceiling() {
+        let dir = Vec3::X;
+        // a wall at x = 5 facing -X: the three hits are on the plane
+        let n = wall_normal(dir, Vec3::new(5.0, 1.0, 0.0), Some(Vec3::new(5.0, 1.0, 0.4)), Some(Vec3::new(5.0, 1.5, 0.0))).unwrap();
+        assert!((n - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-4, "{n}");
+        // a slanted wall: the normal turns with it (still horizontal)
+        let n = wall_normal(dir, Vec3::new(5.0, 1.0, 0.0), Some(Vec3::new(5.4, 1.0, 0.4)), Some(Vec3::new(5.0, 1.5, 0.0))).unwrap();
+        assert!(n.y.abs() < 1e-4 && n.x < 0.0 && n.z > 0.0, "{n}");
+        // a floor sloping up to meet the flight: the points rise with the distance
+        assert!(wall_normal(dir, Vec3::new(5.0, 1.0, 0.0), Some(Vec3::new(5.0, 1.0, 0.4)), Some(Vec3::new(5.5, 1.5, 0.0))).is_none());
+        // a ceiling: the same, mirrored
+        assert!(wall_normal(dir, Vec3::new(5.0, 1.0, 0.0), Some(Vec3::new(5.0, 1.0, 0.4)), Some(Vec3::new(5.5, 0.5, 0.0))).is_none());
+        // (the side rays missing: head on, off the flight itself)
+        let n = wall_normal(dir, Vec3::new(5.0, 1.0, 0.0), None, None).unwrap();
+        assert!((n + Vec3::X).length() < 1e-4);
+    }
+
+    /// Once per enemy per string (the wall) and once per landing (the OTG): asked again, no.
+    #[test]
+    fn a_bounce_happens_once_until_the_ground_is_touched() {
+        let (now, used) = once(false, false, true);
+        assert!(now && used);
+        let (now, used) = once(used, false, true);
+        assert!(!now && used, "no second bounce in the air");
+        let (now, used) = once(used, true, false);
+        assert!(!now && !used, "the ground touched: ready again");
+        let (now, _) = once(used, false, true);
+        assert!(now);
+        // (touching the ground and asked in the same breath: the ground came first)
+        assert!(once(true, true, true).0);
+    }
+
+    /// The wall bounce and the billiards are for small ones, never bosses or big bodies.
+    #[test]
+    fn air_billiards_and_wall_bounces_are_for_small_and_medium_bodies() {
+        assert!(air_size(0.5, 1.8));
+        assert!(air_size(1.2, 3.0));
+        assert!(!air_size(2.0, 5.0));
+        assert!(!air_size(1.0, 4.0));
+        assert!(!air_size(1.5, 3.0));
+    }
+
+    /// A billiard needs speed and a touch: bodies overlapping sideways and in height.
+    #[test]
+    fn a_billiard_needs_speed_and_a_touch() {
+        assert!(!billiard_fast(3.9) && billiard_fast(4.1));
+        let a = Vec3::new(0.0, 1.0, 0.0);
+        // 1.0 m apart, radii 0.5 + 0.6: touching
+        assert!(touches(a, 0.5, 1.8, Vec3::new(1.0, 1.0, 0.0), 0.6, 1.8));
+        assert!(!touches(a, 0.5, 1.8, Vec3::new(1.2, 1.0, 0.0), 0.6, 1.8));
+        // over its head: no
+        assert!(!touches(a, 0.5, 1.8, Vec3::new(0.5, 3.0, 0.0), 0.6, 1.8));
+        // under its feet: no
+        assert!(!touches(a, 0.5, 1.8, Vec3::new(0.5, -1.0, 0.0), 0.6, 1.8));
+        // its feet in his head: yes
+        assert!(touches(a, 0.5, 1.8, Vec3::new(0.5, 2.5, 0.0), 0.6, 1.8));
+    }
+
+    /// The chain: up to three per string.
+    #[test]
+    fn a_billiard_chain_stops_at_three() {
+        assert!((0..BILLIARD_CHAIN).all(chain_ok));
+        assert!(!chain_ok(BILLIARD_CHAIN));
+        assert_eq!(BILLIARD_CHAIN, 3);
     }
 }

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::mem::Discriminant;
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -301,6 +302,38 @@ pub fn max_ready() -> Option<f32> {
     }
 }
 
+/// AIR xN (v4 Part 12.7): blows landed in a row without Mario touching the ground raise the style
+/// (not the damage) by AIR_STEP each past the first, up to AIR_CAP; the HUD shows it from AIR_SHOW
+pub const AIR_STEP: f32 = 0.05;
+pub const AIR_CAP: f32 = 1.5;
+pub const AIR_SHOW: u32 = 3;
+
+pub fn air_mult(n: u32) -> f32 {
+    (1.0 + AIR_STEP * n.saturating_sub(1) as f32).min(AIR_CAP)
+}
+
+/// The air count after a frame or a blow: the ground resets it, a blow in the air adds one.
+pub fn air_count(n: u32, airborne: bool, blow: bool) -> u32 {
+    if !airborne {
+        0
+    } else if blow {
+        n + 1
+    } else {
+        n
+    }
+}
+
+static AIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static AIRBORNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Game thread, every frame: Mario is in the air (the count goes on) or touches the ground (it resets).
+pub fn set_air(airborne: bool) {
+    AIRBORNE.store(airborne, Relaxed);
+    if !airborne {
+        AIR.store(0, Relaxed);
+    }
+}
+
 /// Uses the MAX finisher up: true if it was ready (then the streak starts over).
 pub fn take_max() -> bool {
     let mut m = MAX.lock().unwrap_or_else(|e| e.into_inner());
@@ -380,7 +413,9 @@ pub fn hit(attack: Attack, target: u64) {
     if !weak(attack) {
         max_hit();
     }
-    let points = m.blow(now, attack, target) * if weak(attack) { WEAK_SCALE } else { 1.0 };
+    let n = air_count(AIR.load(Relaxed), AIRBORNE.load(Relaxed), !weak(attack));
+    AIR.store(n, Relaxed);
+    let points = m.blow(now, attack, target) * if weak(attack) { WEAK_SCALE } else { 1.0 } * air_mult(n);
     add(m, now, points);
 }
 
@@ -548,6 +583,8 @@ pub struct Show {
     pub alpha: f32,
     pub left: f32,
     pub star_age: Option<f32>,
+    /// blows in a row without touching the ground (AIR xN)
+    pub air: u32,
 }
 
 pub fn show() -> Option<Show> {
@@ -572,6 +609,7 @@ pub fn show() -> Option<Show> {
         alpha,
         left: (1.0 - since / KEEP).clamp(0.0, 1.0),
         star_age,
+        air: AIR.load(Relaxed),
     })
 }
 
@@ -631,6 +669,37 @@ pub fn clear() {
 
 #[cfg(test)]
 mod tests {
+
+    use super::{air_count, air_mult, AIR_CAP};
+
+    /// AIR xN: style x(1 + 0.05 (N - 1)), capped at x1.5; the first hit is plain.
+    #[test]
+    fn the_air_multiplier_climbs_to_one_and_a_half() {
+        assert_eq!(air_mult(0), 1.0);
+        assert_eq!(air_mult(1), 1.0);
+        assert!((air_mult(2) - 1.05).abs() < 1e-6);
+        assert!((air_mult(5) - 1.2).abs() < 1e-6);
+        assert!((air_mult(11) - 1.5).abs() < 1e-6);
+        assert_eq!(air_mult(50), AIR_CAP);
+        assert!((1..60).map(air_mult).all(|m| m <= AIR_CAP));
+    }
+
+    /// The count: blows in the air add one, the ground resets it, blows on the ground are plain.
+    #[test]
+    fn the_air_count_resets_on_landing() {
+        let mut n = 0;
+        for _ in 0..4 {
+            n = air_count(n, true, true);
+        }
+        assert_eq!(n, 4);
+        // (touching the ground between blows: starts over)
+        n = air_count(n, false, false);
+        assert_eq!(n, 0);
+        // (a blow on the ground adds nothing)
+        assert_eq!(air_count(0, false, true), 0);
+        // (airborne with no blow: the count holds)
+        assert_eq!(air_count(3, true, false), 3);
+    }
     use super::*;
 
     /// What a string of blows is worth now: the final points and the best rank, for blows at

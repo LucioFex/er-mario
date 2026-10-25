@@ -519,6 +519,22 @@ with a moment of slow motion, the camera punched in and **CRITICAL**, once an en
 on a broken stance; the sword's thrust, iai or stabs in his back; a Chain Chomp bite on one up in
 the air; a boomerang striking him both on its way out and back.
 
+### Air
+
+Small enemies only (a medium one only while stunned), never bosses or big bodies (`src/juggle.rs`):
+
+- **Wall bounce**: a juggled enemy carried by a hit into a wall (at 2 m/s or more) bounces off it
+  back toward Mario at 3 m/s, a puff of dust and a soft thud, 3% extra, once per enemy per string.
+  Floors and ceilings don't count. It stays within reach for the next blow.
+- **Spike and bounce (OTG)**: the Helm Breaker, the Leap Splitter and the hammer's diving comet
+  bounce a small enemy 1.5 m up off the ground, ready to relaunch; once until it has touched the
+  ground again.
+- **Air billiards**: a launched enemy flying faster than 4 m/s that touches another launches it
+  too (2.5 m up, 3% to both), up to 3 a string.
+- **AIR xN**: blows in a row without Mario touching the ground raise the style gained (not the
+  damage) by 5% each past the first, up to x1.5; a small "AIR xN" under the HITS counter from the
+  third.
+
 ### Star Power
 
 Reaching rank **S** earns the fight's **Star** (one a fight, one kept at most: a star by the style

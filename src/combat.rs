@@ -3176,15 +3176,16 @@ impl Combat {
                     if !crate::juggle::try_launch(handle, me, radius_m, height_m, regular, stunned, high) && !crate::coop::guest() {
                         log_not_lifted(handle, radius_m, height_m, stunned);
                     }
-                } else if matches!(attack, Attack::SwordLeapRing) && !hands_off(handle) {
-                    // (the Leap Splitter's wave: a small one bounces off the ground, OTG; a bigger
-                    // one just takes the blow)
+                } else if matches!(attack, Attack::SwordLeapRing | Attack::SwordBreakerRing | Attack::CometRing) && !hands_off(handle) {
+                    // (the Leap Splitter's wave, the Helm Breaker's and the hammer comet's rings: a
+                    // small one bounces off the ground, OTG; a bigger one just takes the blow)
                     let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
                     if !crate::juggle::ground_bounce(handle, radius_m, height_m, liftable(handle)) {
                         crate::juggle::hit(handle, me);
                     }
-                } else if matches!(attack, Attack::MeteorPunch) {
-                    // (driven down: up there it hits the ground and bounces once)
+                } else if matches!(attack, Attack::MeteorPunch | Attack::SwordBreaker | Attack::Comet) {
+                    // (driven down: up there it hits the ground and bounces once; the Helm Breaker's and
+                    // the comet's rings then bounce it OTG)
                     if !crate::juggle::spike(handle) {
                         crate::juggle::hit(handle, me);
                     }

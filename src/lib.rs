@@ -3042,13 +3042,30 @@ fn frame(data: &FD4TaskData) {
         // enemies up in the air with Mario (the air combos), or falling back down
         {
             let me = to_er(m.origin, m.state.position);
-            juggle::update(data.delta_time.time, glam::Vec3::new(me.0, me.1, me.2), m.state.face_angle, |from, to| {
-                let h = havok?;
-                let d = to - from;
-                h.phys_world
-                    .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
-                    .map(|h| glam::Vec3::new(h.0, h.1, h.2))
-            });
+            let origin = m.origin;
+            style::set_air(m.state.action & 0x800 != 0);
+            juggle::update(
+                data.delta_time.time,
+                glam::Vec3::new(me.0, me.1, me.2),
+                m.state.face_angle,
+                |from, to| {
+                    let h = havok?;
+                    let d = to - from;
+                    h.phys_world
+                        .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                        .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+                },
+                |at, range| {
+                    combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), range, origin)
+                        .iter()
+                        .filter_map(|t| t.shootable().map(|h| juggle::Body { handle: *h, feet: t.feet(), radius: t.radius * scale(), height: t.height * scale() }))
+                        .collect()
+                },
+            );
+            // the wall knocks and billiards of the air combos
+            for (mob, pct) in juggle::take_shares() {
+                combat::impact_soft(&mut m.combat, &mob, pct, m.ticks);
+            }
         }
         // enemies the giant fireball blew away, landing
         let landed = knock::update(data.delta_time.time, |from, to| {

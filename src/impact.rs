@@ -1366,6 +1366,20 @@ pub fn rubble_chunks() -> Vec<crate::fx::Rock> {
         .collect()
 }
 
+/// An enemy bounced off a wall in the air (juggle.rs): a small ring of dust and a soft thud.
+pub fn air_bounce(at: Vec3) {
+    ring(at, 1.0, 0.25, DUST);
+    puffs(at, 3, 0.3);
+    worker::call("air_bounce", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_HEAVY_LANDING, 0.25) });
+}
+
+/// A flying enemy knocked into another (air billiards): a few stars and a soft knock.
+pub fn air_clack(at: Vec3) {
+    burst(at, 3, Bit::Star);
+    puffs(at - Vec3::Y * 0.6, 2, 0.2);
+    worker::call("air_clack", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_HEAVY_LANDING, 0.2) });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

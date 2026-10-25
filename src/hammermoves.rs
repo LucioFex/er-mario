@@ -183,7 +183,7 @@ pub const LEAP_FULL: Move = Move {
 /// his side. No way out of it, no one to hit; the guard is shut two seconds in all.
 pub const STUN: Move = Move {
     name: "guard broken",
-    len: 30,
+    len: crate::guard::STUN_TICKS as u16,
     clips: &[clip(0, SOFT_BACK_KB)],
     pitch: &[k(0, -14.0, Out), k(8, -20.0, InOut), k(22, -8.0, InOut), k(30, 0.0, InOut)],
     squash: &[k(0, 0.94, Out), k(10, 0.97, InOut), k(30, 1.0, InOut)],

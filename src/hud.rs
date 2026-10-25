@@ -2219,6 +2219,10 @@ impl ImguiRenderLoop for Overlay {
                 let (x0, y0) = (right - w, y + 9.0 * px);
                 dl.add_rect([x0, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 0.45 * st.alpha)).filled(true).build();
                 dl.add_rect([right - w * st.left, y0], [right, y0 + h], imgui::ImColor32::from_rgba_f32s(t[0], t[1], t[2], 0.9 * st.alpha)).filled(true).build();
+                // AIR xN: small and soft, under the bar, from the third blow in the air
+                if st.air >= crate::style::AIR_SHOW {
+                    line(&format!("AIR X{}", st.air), right, y + 20.0 * px, 8.0 * px, 0.8, [0.72, 0.88, 1.0, st.alpha * 0.7]);
+                }
                 // the star finish: its banner over the middle of the screen
                 if let Some(a) = st.star_age {
                     let pop = (1.0 - a / 0.15).max(0.0);
