@@ -299,6 +299,9 @@ pub const SWAMP_MOVE: Move = Move {
     ..BASE
 };
 
+/// the sword's charge that ricochets (4 s, the third level)
+pub const RICOCHET_LEVEL: u8 = 3;
+
 /// The move a charge of `el` at `level` (4: the 10 s giant) asks for, in the air or not (None:
 /// the fists' fire throws its shots, fireball.rs).
 pub fn cast_move(el: Element, level: u8, air: bool) -> Option<u16> {
@@ -309,6 +312,9 @@ pub fn cast_move(el: Element, level: u8, air: bool) -> Option<u16> {
         Element::Lightning => {
             if air {
                 ZEUS_THROW
+            } else if level == RICOCHET_LEVEL {
+                // (the 4 s charge: the thrust and the bolt that ricochets; the 10 s one keeps its storm)
+                SW_RICOCHET
             } else {
                 SKY_STRIKE
             }
@@ -356,6 +362,12 @@ mod tests {
         assert_eq!(cast_move(Element::Fire, 2, false), None);
         assert_eq!(cast_move(Element::Lightning, 1, false), Some(SKY_STRIKE));
         assert_eq!(cast_move(Element::Lightning, 4, true), Some(ZEUS_THROW));
+        // the 4 s charge on the ground is the Ricochet Bolt's thrust; in the air the javelin still
+        assert_eq!(cast_move(Element::Lightning, 3, false), Some(SW_RICOCHET));
+        assert_eq!(cast_move(Element::Lightning, 3, true), Some(ZEUS_THROW));
+        assert_eq!(cast_move(Element::Lightning, 2, false), Some(SKY_STRIKE));
+        // (the 10 s storm cloud keeps its raised sword)
+        assert_eq!(cast_move(Element::Lightning, 4, false), Some(SKY_STRIKE));
         for l in 0..4u8 {
             assert_eq!(cast_move(Element::Frost, l, false), Some(ICE_ROCKET + l as u16));
             assert_eq!(cast_move(Element::Blood, l, false), Some(DARK_BEAM + l as u16));

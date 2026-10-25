@@ -471,6 +471,8 @@ impl Fire {
         let Some((el, level, air, _)) = self.cast.take() else { return };
         let feet = er(origin, state.position);
         match el {
+            // (the 4 s thrust: the bolt out of the blade's tip, ricocheting; the rest as ever)
+            Element::Lightning if self.playing == Some(crate::script::SW_RICOCHET) => self.bolts.ricochet(hand, facing, origin, tick, ray),
             Element::Lightning => self.bolts.cast(level, air, hand, facing, origin, tick),
             Element::Frost if level >= GIANT => self.spawn(GIANT, Element::Frost, state, origin, tick),
             Element::Frost | Element::Fire => {}

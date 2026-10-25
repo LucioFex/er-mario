@@ -188,6 +188,11 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         // the kart: a jolt of a hold, the bump a heavy one
         Attack::KartRam => Some((2, 1.2, false)),
         Attack::KartBump => Some((3, 1.4, true)),
+        // the Leap Splitter: the cleave a long hold (7) and a camera jolt, the wave it crashes into
+        // a solid one; the Star Calibur's thrust a crisp one
+        Attack::SwordLeap => Some((7, 1.7, true)),
+        Attack::SwordLeapRing => Some((3, 1.2, false)),
+        Attack::SwordCalibur => Some((3, 1.2, false)),
     }
 }
 
@@ -216,6 +221,9 @@ pub fn sword_blow(attack: Attack) -> bool {
             | Attack::SwordBreakerRing
             | Attack::SwordPogo
             | Attack::SwordDraw
+            | Attack::SwordLeap
+            | Attack::SwordLeapRing
+            | Attack::SwordCalibur
     )
 }
 
@@ -1028,6 +1036,21 @@ pub fn blade_point(tip: Vec3, low: Vec3) {
 /// Game thread: a finisher's cut (Part 12): two stars off the sword's tip.
 pub fn blade_stars(tip: Vec3) {
     burst(tip, 2, Bit::Star);
+}
+
+/// Game thread: the stars on the blade spent by a heavy cut (Part 12.5): a gold burst at `at` (bigger
+/// by `n`), stars flying off it, a soft zing (quiet: it comes with every heavy cut after a NICE!).
+pub fn star_spend(at: Vec3, n: u8) {
+    spark(at, 0.9 + 0.3 * n as f32, GOLD);
+    burst(at, 2 + 2 * n as usize, Bit::Star);
+    worker::call("star spend", move |_| unsafe {
+        sm64::sm64_play_sound_volume(SOUND_GENERAL_SHORT_STAR, 0.2);
+    });
+}
+
+/// Game thread: a lit star twinkling on the blade at `at` (Elden Ring position): one small gold glint.
+pub fn star_glint(at: Vec3) {
+    spark(at, 0.16, GOLD);
 }
 
 /// The sword's ribbon, oldest first: tip, low on the blade, how faded (0-1).

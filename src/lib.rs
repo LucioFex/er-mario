@@ -4969,6 +4969,16 @@ fn frame(data: &FD4TaskData) {
                     // back as he runs): its ribbon
                     // (only while a move points it: slung on his back it turns with him as he runs)
                     let pointed = script_frame.is_some_and(|f| f.c.end == 0 && f.blade.is_some() && script::is_script(state.action));
+                    // Star Charge: the stars a NICE! lit, small gold glints along the blade's fuller
+                    // (every few ticks; a lit one stays lit, swordplay.rs)
+                    if let Some(s) = swing.filter(|s| s.blade) {
+                        let lit = swordplay::stars_shown(m.ticks);
+                        if lit > 0 && m.ticks % 4 == 0 {
+                            for k in 0..lit {
+                                impact::star_glint(er(s.grip.lerp(s.head, 0.4 + 0.2 * k as f32)));
+                            }
+                        }
+                    }
                     if let Some(s) = swing.filter(|s| s.blade && pointed) {
                         let turned = ((s.head - s.grip) - (s.prev - s.prev_grip)).length() * scale();
                         if turned > BLADE_CUT {
@@ -5052,7 +5062,15 @@ fn frame(data: &FD4TaskData) {
                         let f = state.face_angle;
                         let facing = glam::Vec3::new(-f.sin(), 0.0, f.cos());
                         // (the sword raised over him on the ground: its bolt off its tip)
-                        let from = if state.action & 0x800 != 0 || weapon_on != weapons::SWORD { hand } else { hand + glam::Vec3::Y * assets::kit::SWORD_TIP };
+                        // (the Ricochet Bolt's thrust: the blade out level ahead of him, the bolt off its tip)
+                        let thrust = script_frame.is_some_and(|f| f.id == script::SW_RICOCHET);
+                        let from = if thrust {
+                            hand + facing * assets::kit::SWORD_TIP
+                        } else if state.action & 0x800 != 0 || weapon_on != weapons::SWORD {
+                            hand
+                        } else {
+                            hand + glam::Vec3::Y * assets::kit::SWORD_TIP
+                        };
                         m.fire.release(from, facing, &state, m.origin, m.ticks, &ray);
                     }
                     // the sword's crescents (wave.rs) off its blow: the star wave, the JUST three, and a

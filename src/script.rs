@@ -393,10 +393,15 @@ pub const ABYSS_AIR: u16 = 63;
 pub const POISON_SWEEP: u16 = 64;
 pub const POISON_AIR: u16 = 68;
 pub const SWAMP: u16 = 69;
+/// the Star Sword's later moves (Part 12.5, swordmoves.rs; they sit after the RB moves so no id
+/// moved): the Leap Splitter, the Star Calibur in the air, the Ricochet Bolt's thrust
+pub const SW_LEAP: u16 = 70;
+pub const SW_CALIBUR: u16 = 71;
+pub const SW_RICOCHET: u16 = 72;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
-    (SW_S1..=SW_DRAW_AIR).contains(&id)
+    (SW_S1..=SW_DRAW_AIR).contains(&id) || (SW_LEAP..=SW_CALIBUR).contains(&id)
 }
 
 
@@ -576,6 +581,9 @@ pub const MOVES: &[Move] = &[
     rb::POISON_SWEEPS[3],
     rb::POISON_AIR_MOVE,
     rb::SWAMP_MOVE,
+    sw::LEAP,
+    sw::CALIBUR,
+    sw::RICOCHET,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -1124,10 +1132,10 @@ mod tests {
     #[test]
     fn every_id_has_its_move() {
         // (the last id of each table: indexing MOVES by an id with no data would panic)
-        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP] {
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP, SW_LEAP, SW_CALIBUR, SW_RICOCHET] {
             assert!((id as usize) < MOVES.len(), "{id}");
         }
-        assert_eq!(MOVES.len(), SWAMP as usize + 1);
+        assert_eq!(MOVES.len(), SW_RICOCHET as usize + 1);
     }
 
     #[test]

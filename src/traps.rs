@@ -877,16 +877,28 @@ fn shell_speed(it: &Item) -> f32 {
 /// nobody else: it bounces off as ever.
 fn ricochet(it: &Item, near: &[combat::Target], just: u64, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Option<(u64, Vec3)> {
     let tally = |key: u64| it.tally.iter().find(|(k, ..)| *k == key).map_or((0, f32::MIN), |&(_, n, at)| (n, at));
-    near.iter()
-        .filter(|t| t.shootable().is_some() && t.key() != just)
-        .map(|t| (t.key(), foot(t)))
-        .filter(|(_, f)| (*f - it.pos).with_y(0.0).length() < RICOCHET_RADIUS && (f.y - it.pos.y).abs() < RICOCHET_RISE)
-        // (not through a wall: a clear line from the shell to it, or one that ends at it)
-        .filter(|(_, f)| ray(it.pos + Vec3::Y * 0.5, *f + Vec3::Y * 0.4).is_none_or(|w| (w - *f).with_y(0.0).length() < 1.0))
+    let cands: Vec<(u64, Vec3)> = near.iter().filter(|t| t.shootable().is_some()).map(|t| (t.key(), foot(t))).collect();
+    // (not through a wall: a clear line from the shell to it, or one that ends at it)
+    let clear = |from: Vec3, f: Vec3| ray(from + Vec3::Y * 0.5, f + Vec3::Y * 0.4).is_none_or(|w| (w - f).with_y(0.0).length() < 1.0);
+    ricochet_next(it.pos, &cands, just, tally, RICOCHET_RADIUS, RICOCHET_RISE, clear)
+}
+
+/// Who a ricochet goes for next (the shell's and the sword's Ricochet Bolt's): of `cands` (key,
+/// where), those within `reach` m of `from` along the ground and `rise` m up or down, in sight
+/// (`clear(from, to)`), never `just`, the one hit last; of those the one hit the fewest times
+/// (`tally(key)`: how many, and when last, a smaller number older), then the one hit longest ago,
+/// then the nearest. None when there's nobody else.
+pub fn ricochet_next(from: Vec3, cands: &[(u64, Vec3)], just: u64, tally: impl Fn(u64) -> (u32, f32), reach: f32, rise: f32, clear: impl Fn(Vec3, Vec3) -> bool) -> Option<(u64, Vec3)> {
+    cands
+        .iter()
+        .filter(|(key, _)| *key != just)
+        .filter(|(_, f)| (*f - from).with_y(0.0).length() <= reach && (f.y - from.y).abs() < rise)
+        .filter(|(_, f)| clear(from, *f))
         .min_by(|(a, fa), (b, fb)| {
             let ((na, ta), (nb, tb)) = (tally(*a), tally(*b));
-            na.cmp(&nb).then(ta.total_cmp(&tb)).then((*fa - it.pos).length_squared().total_cmp(&(*fb - it.pos).length_squared()))
+            na.cmp(&nb).then(ta.total_cmp(&tb)).then((*fa - from).length_squared().total_cmp(&(*fb - from).length_squared()))
         })
+        .copied()
 }
 
 /// The Bob-omb goes off: a blast all around, the regular enemies in it sent up in the air.
@@ -930,5 +942,59 @@ fn spring_launch(it: &mut Item, near: &[combat::Target], player: &ChrIns, combat
             it.squash_vel = -2.0;
             log("traps: an enemy sent up by the spring");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(x: f32, z: f32) -> Vec3 {
+        Vec3::new(x, 0.0, z)
+    }
+
+    fn none(_: u64) -> (u32, f32) {
+        (0, f32::MIN)
+    }
+
+    fn open(_: Vec3, _: Vec3) -> bool {
+        true
+    }
+
+    /// The ricochet's rule: fewest hits first, then hit longest ago, then the nearest; never the one
+    /// just hit.
+    #[test]
+    fn a_ricochet_goes_for_the_fewest_hits_then_the_oldest_then_the_nearest() {
+        let c = [(1, at(3.0, 0.0)), (2, at(6.0, 0.0)), (3, at(4.0, 0.0))];
+        // all fresh: the nearest, not the one just hit
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 1, none, 8.0, 3.0, open).map(|r| r.0), Some(3));
+        // (3 hit once already: 2 hasn't been hit at all, though farther)
+        let hits = |k: u64| if k == 3 { (1, 5.0) } else { (0, f32::MIN) };
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 1, hits, 8.0, 3.0, open).map(|r| r.0), Some(2));
+        // equal hits: the one hit longest ago, however far
+        let aged = |k: u64| match k {
+            2 => (1, 1.0),
+            3 => (1, 4.0),
+            _ => (1, 9.0),
+        };
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 1, aged, 8.0, 3.0, open).map(|r| r.0), Some(2));
+        // (and where it is comes with it)
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 1, aged, 8.0, 3.0, open).map(|r| r.1), Some(at(6.0, 0.0)));
+    }
+
+    #[test]
+    fn a_ricochet_needs_sight_and_reach() {
+        let c = [(1, at(3.0, 0.0)), (2, at(5.0, 0.0)), (3, at(9.0, 0.0)), (4, Vec3::new(2.0, 6.0, 0.0))];
+        // the nearest behind a wall: the next one
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 99, none, 8.0, 3.0, |_, to| to.x != 3.0).map(|r| r.0), Some(2));
+        // past 8 m along the ground: out; 6 m up: out
+        let far = [(3, at(9.0, 0.0)), (4, Vec3::new(2.0, 6.0, 0.0))];
+        assert_eq!(ricochet_next(Vec3::ZERO, &far, 99, none, 8.0, 3.0, open), None);
+        // at exactly 8 m: in
+        assert_eq!(ricochet_next(Vec3::ZERO, &[(5, at(8.0, 0.0))], 99, none, 8.0, 3.0, open).map(|r| r.0), Some(5));
+        // alone: nobody else
+        assert_eq!(ricochet_next(Vec3::ZERO, &[(1, at(3.0, 0.0))], 1, none, 8.0, 3.0, open), None);
+        // (blocked all round: none)
+        assert_eq!(ricochet_next(Vec3::ZERO, &c, 99, none, 8.0, 3.0, |_, _| false), None);
     }
 }

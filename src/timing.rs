@@ -166,7 +166,7 @@ pub fn landed(handle: &FieldInsHandle, attack: Attack, at: Vec3, tick: u32) -> O
     s.landed = Some((*handle, attack, tick, at, extra.is_some()));
     if let Some(e) = extra {
         drop(s);
-        cheer(e, at, attack);
+        cheer(e, at, attack, tick);
     }
     extra
 }
@@ -188,11 +188,13 @@ pub fn late_nice(tick: u32) -> Option<(FieldInsHandle, Attack, f32)> {
         l.4 = true;
     }
     drop(s);
-    cheer(extra, pos, attack);
+    cheer(extra, pos, attack, tick);
     Some((handle, attack, extra))
 }
 
-fn cheer(extra: f32, at: Vec3, attack: Attack) {
+fn cheer(extra: f32, at: Vec3, attack: Attack, tick: u32) {
+    // (with the sword out each one lights a star on the blade: swordplay.rs)
+    crate::swordplay::star_lit(tick);
     let great = extra >= GREAT;
     log(format!("timing: {} on {attack:?} (+{:.0}%)", if great { "GREAT" } else { "NICE" }, extra * 100.0));
     crate::style::nice(at, great);
@@ -206,6 +208,7 @@ fn cheer(extra: f32, at: Vec3, attack: Attack) {
 
 /// Mario was hurt: the streak of "NICE!"s is over.
 pub fn hurt() {
+    crate::swordplay::stars_lose();
     let mut s = state();
     s.streak = 0;
     s.streak_at = None;

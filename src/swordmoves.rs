@@ -11,7 +11,7 @@
 use crate::combat::Attack;
 use crate::moves::{FX_BANG, FX_LAUNCH, FX_SLAM};
 use crate::script::Ease::*;
-use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, VOICE_LIGHT, FX_BEAM, FX_CROSS, FX_SPARKLE, FX_WAVE, FX_WAVE3, FX_ZAP, JUMP, NEXT, SWAP};
+use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, VOICE_LIGHT, FX_BEAM, FX_CROSS, FX_RELEASE, FX_SPARKLE, FX_WAVE, FX_WAVE3, FX_ZAP, JUMP, NEXT, SWAP};
 use crate::sfx::{SWING, SWING_HEAVY, SWING_LIGHT};
 
 const FIRST_PUNCH: i32 = 0x67;
@@ -803,6 +803,91 @@ pub const DRAW_AIR: Move = Move {
     ..BASE
 };
 
+// ---- Part 12.5: the Leap Splitter, the Star Calibur, the Ricochet Bolt's thrust --------------
+
+/// X X X, a beat, X: a hop (about 0.8 m, a real SM64 air step) with the blade raised overhead in
+/// both hands, then it comes down in a plunging vertical cleave that crashes into the ground: a
+/// short wave of lightning there, small enemies bounced off it (Nero's Split, Mario's jump)
+pub const LEAP: Move = Move {
+    name: "Leap Splitter",
+    len: 30,
+    clips: &[still(0, FIRST_PUNCH), clip(3, DOUBLE_JUMP_RISE), clip(9, SECOND_PUNCH), clip(14, GENERAL_LAND)],
+    twist: &[k(0, 0.0, Linear), k(7, -8.0, InOut), k(9, 8.0, Out), k(18, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(3, 8.0, Out), k(7, -10.0, Out), k(9, 22.0, Out), k(14, 10.0, Linear), k(24, 0.0, InOut)],
+    aim: &[0, 3, 7],
+    approach: Some(Approach { from: 3, to: 9, max: 2.5, gap: 1.2 }),
+    vel_y: &[(3, 22.0), (9, -60.0)],
+    hold: (7, 9),
+    squash: &[k(0, 1.0, Linear), k(3, 0.86, Out), k(5, 1.1, Out), k(8, 1.04, Linear), k(10, 1.12, Out), k(12, 0.88, Out), k(20, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(3, 4.0, Out), k(5, 0.0, Out), k(11, 0.0, Linear), k(12, 4.0, Out), k(22, 0.0, InOut)],
+    reach: &[k(0, 0.6, Linear), k(3, 1.0, Out), k(26, 1.0, Linear), k(29, 0.5, InOut)],
+    // (up over his head, hung there at the top, then straight down in two ticks: the tip stays
+    // out of the ground, like the string's)
+    blade_yaw: &[k(0, -20.0, Linear), k(3, 0.0, Out), k(26, 0.0, Linear), k(29, -20.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(3, 95.0, Out), k(7, 130.0, InOut), k(8, 130.0, Linear), k(9, 40.0, In), k(10, -19.0, Out), k(26, -19.0, Linear), k(29, -19.0, InOut)],
+    blade_held: (0, 30),
+    windows: &[
+        w(9, 11, Shape::Weapon, Attack::SwordLeap, FX_BANG),
+        wg(10, 28, Shape::Around { radius: 250.0, ahead: 80.0 }, Attack::SwordLeapRing, FX_SLAM | FX_ZAP),
+    ],
+    cancels: &[c(ALL, 22, 18)],
+    sounds: &[(2, YAH, 0.0), (9, SWING_HEAVY, 0.55), (10, HEAVY_LANDING, 0.3)],
+    locked: (0, 12),
+    ..BASE
+};
+
+/// forward + X in the air: the point drawn back low, then a thrust up and ahead (25 degrees) that
+/// carries him toward the enemy (up to 6 m), held up there a moment at its end; the air string
+/// goes on out of it (Dante's Rebellion Star Calibur, here a rising lunge)
+pub const CALIBUR: Move = Move {
+    name: "Star Calibur",
+    len: 20,
+    clips: &[still(0, FIRST_PUNCH), Clip { from: 2, anim: DIVE, frames: &[k(2, 0.0, Linear), k(5, 5.0, Out), k(9, 6.0, Linear)] }],
+    twist: &[k(0, 0.0, Linear), k(2, -30.0, InOut), k(4, 8.0, Out), k(16, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(2, 8.0, InOut), k(4, -25.0, Out), k(10, -25.0, Linear), k(18, 0.0, InOut)],
+    aim: &[0, 2],
+    approach: Some(Approach { from: 2, to: 9, max: 6.0, gap: 1.2 }),
+    // (up as he goes, then held where he ended: a short hang)
+    vel_y: &[(2, 26.0), (9, 0.0)],
+    hold: (2, 17),
+    squash: &[k(0, 1.0, Linear), k(2, 0.9, InOut), k(4, 1.1, Out), k(9, 1.0, InOut)],
+    reach: &[k(0, 0.3, Linear), k(2, 0.15, InOut), k(4, 1.0, Out), k(12, 1.0, Linear), k(19, 0.4, InOut)],
+    blade_yaw: &[k(0, -20.0, Linear), k(2, -25.0, InOut), k(4, 0.0, Out), k(12, 0.0, Linear), k(19, -15.0, InOut)],
+    blade_pitch: &[k(0, -10.0, Linear), k(2, -12.0, InOut), k(4, 25.0, Out), k(12, 25.0, Linear), k(19, -19.0, InOut)],
+    blade_roll: &[k(0, 90.0, Linear)],
+    blade_held: (0, 20),
+    windows: &[w(3, 9, Shape::Front { reach: 200.0 }, Attack::SwordCalibur, 0)],
+    cancels: &[c(NEXT | DASH | SWAP, 12, 9)],
+    sounds: &[(1, YAH, 0.0), (2, SWING, 0.5)],
+    locked: (0, 4),
+    air: true,
+    land_ends: true,
+    ..BASE
+};
+
+/// RB at 4 s on the ground: the coil, then the sword thrust straight ahead, level, and held out;
+/// the bolt leaves its tip (bolt.rs, FX_RELEASE) and ricochets from enemy to enemy
+pub const RICOCHET: Move = Move {
+    name: "Ricochet thrust",
+    len: 22,
+    clips: &[still(0, FIRST_PUNCH), clip(5, FIRST_PUNCH_FAST)],
+    twist: &[k(0, 0.0, Linear), k(5, -30.0, InOut), k(7, 10.0, Out), k(18, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(5, -6.0, InOut), k(7, 6.0, Out), k(18, 0.0, InOut)],
+    aim: &[0, 5],
+    squash: &[k(0, 1.0, Linear), k(5, 0.88, InOut), k(7, 1.1, Out), k(12, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(5, 3.0, InOut), k(7, 0.0, Out)],
+    reach: &[k(0, 0.3, Linear), k(5, 0.15, InOut), k(7, 1.0, Out), k(16, 1.0, Linear), k(21, 0.4, InOut)],
+    blade_yaw: &[k(0, -20.0, Linear), k(5, -25.0, InOut), k(7, 0.0, Out), k(16, 0.0, Linear), k(21, -15.0, InOut)],
+    blade_pitch: &[k(0, -15.0, Linear), k(5, -12.0, InOut), k(7, -4.0, Out), k(16, -4.0, Linear), k(21, -19.0, InOut)],
+    blade_roll: &[k(0, 90.0, Linear)],
+    blade_held: (0, 22),
+    cancels: &[c(ALL, 14, 14)],
+    sounds: &[(0, UH, 0.0), (6, SWING, 0.45)],
+    fx: &[(7, FX_RELEASE)],
+    locked: (0, 7),
+    ..BASE
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,9 +897,14 @@ mod tests {
         &MOVES[id as usize]
     }
 
+    /// Every move of the sword's own, the Part 12.5 ones too.
+    fn all() -> impl Iterator<Item = u16> {
+        (SW_S1..=SW_DRAW_AIR).chain([SW_LEAP, SW_CALIBUR])
+    }
+
     #[test]
     fn every_sword_id_has_its_move() {
-        let want: [(u16, &str); 26] = [
+        let want: [(u16, &str); 28] = [
             (SW_S1, "star slash"),
             (SW_S2, "star backhand"),
             (SW_S3, "star rising slash"),
@@ -841,6 +931,8 @@ mod tests {
             (SW_DRAW, "quick draw"),
             (SW_DRAW_AIR, "quick draw (air)"),
             (SW_S2 + 1, "star rising slash"),
+            (SW_LEAP, "Leap Splitter"),
+            (SW_CALIBUR, "Star Calibur"),
         ];
         // (the other weapons' moves come after the sword's)
         assert!(MOVES.len() > SW_DRAW_AIR as usize);
@@ -849,13 +941,100 @@ mod tests {
             assert!(is_sword(id));
         }
         assert!(!is_sword(BULLET_PUNCH) && !is_sword(SKY_STRIKE) && !is_sword(ZEUS_THROW));
+        // (the Ricochet Bolt is the sword's RB move, like the skyward strike)
+        assert_eq!(sword(SW_RICOCHET).name, "Ricochet thrust");
+        assert!(!is_sword(SW_RICOCHET));
+    }
+
+    /// SM64's air: gravity 4 units a tick, up to the terminal speed; `hold` ticks have none.
+    fn rise_of(m: &Move) -> f32 {
+        let (mut vy, mut y, mut top) = (0.0f32, 0.0f32, 0.0f32);
+        let first = m.vel_y.first().map_or(0, |v| v.0);
+        for t in first..m.len {
+            if let Some((_, v)) = m.vel_y.iter().find(|(at, _)| *at == t) {
+                vy = *v;
+            }
+            y += vy;
+            top = top.max(y);
+            if !(m.hold.0 <= t && t < m.hold.1) {
+                vy -= 4.0;
+            }
+            if top > 0.0 && y <= 0.0 && vy < 0.0 {
+                break;
+            }
+        }
+        top
+    }
+
+    /// X X X, a beat, X (Part 12.5): a small real hop (about 0.8 m), the blade overhead, then a
+    /// plunging two-handed cleave into the ground with a short wave there; a heavy hold (7).
+    #[test]
+    fn the_leap_splitter_hops_and_crashes_down() {
+        let m = sword(SW_LEAP);
+        assert!(!m.air && m.vel_y.len() == 2 && m.vel_y[0].1 > 0.0 && m.vel_y[1].1 < 0.0);
+        let rise = rise_of(m);
+        assert!((70.0..=95.0).contains(&rise), "hops {rise} units");
+        // the blade up over his head on the way, then down through the air
+        let up = m.blade_pitch.iter().map(|k| k.v).fold(f32::MIN, f32::max);
+        assert!(up >= 110.0, "blade up to {up}");
+        // the cleave in the air, then the ground wave once he lands (short: about 3 m)
+        let air = m.windows.iter().find(|w| w.attack == Attack::SwordLeap).expect("the cleave");
+        let wave = m.windows.iter().find(|w| w.attack == Attack::SwordLeapRing).expect("the wave");
+        assert!(!air.ground && wave.ground && wave.from >= air.from);
+        match wave.shape {
+            Shape::Around { radius, ahead } => assert!((220.0..=350.0).contains(&(radius + ahead)), "{radius} + {ahead}"),
+            s => panic!("{s:?}"),
+        }
+        // (hit-stop 7, a camera jolt; the blow a finisher: the camera punch and the stars)
+        assert_eq!(crate::impact::stop(Attack::SwordLeap), 7);
+        assert!(Attack::SwordLeap.finisher());
+        assert!(wave.fx & (FX_SLAM | FX_ZAP) != 0);
+        // (no spin, a stab of lightning to land, the share 16% over the two before the sword's x0.92)
+        assert!(m.twist.iter().all(|k| k.v.abs() < 90.0));
+        assert!(m.sounds.iter().any(|s| crate::sfx::from_script(s.1).is_some()));
+    }
+
+    /// Forward + X in the air (Part 12.5): a thrust 25 degrees up that carries him up to 6 m
+    /// toward the enemy, a short hang at the end, landing ends it.
+    #[test]
+    fn the_star_calibur_rises_and_hangs() {
+        let m = sword(SW_CALIBUR);
+        assert!(m.air && m.land_ends);
+        let lunge = m.approach.expect("a lunge toward the enemy");
+        assert_eq!(lunge.max, 6.0);
+        assert!(lunge.gap >= 1.2, "stops farther than the blade's old reach");
+        assert!(m.vel_y.iter().any(|(_, v)| *v > 0.0), "rises");
+        let pitch = m.blade_pitch.iter().map(|k| k.v).fold(f32::MIN, f32::max);
+        assert!((24.0..=26.0).contains(&pitch), "blade up {pitch} degrees");
+        // (held up there after the thrust: gravity off past its last tick of lunge)
+        assert!(m.hold.0 <= lunge.from && m.hold.1 >= lunge.to + 4, "{:?} {:?}", m.hold, (lunge.from, lunge.to));
+        assert!(m.windows.iter().all(|w| w.attack == Attack::SwordCalibur));
+        // (the air string goes on out of it)
+        assert!(m.cancels.iter().any(|c| c.into & NEXT != 0));
+        assert!(m.twist.iter().all(|k| k.v.abs() < 90.0));
+    }
+
+    /// RB at 4 s on the ground (Part 12.5): a forward thrust with no spin and no blow of its own;
+    /// the bolt leaves the tip (bolt.rs) when it lets go.
+    #[test]
+    fn the_ricochet_thrust_lets_the_bolt_go() {
+        let m = sword(SW_RICOCHET);
+        assert!(!m.air && m.windows.is_empty());
+        assert_eq!(m.fx.iter().filter(|f| f.1 & FX_RELEASE != 0).count(), 1);
+        assert!(m.twist.iter().all(|k| k.v.abs() < 90.0));
+        // the blade out ahead, level, past the point of release
+        let release = m.fx.iter().find(|f| f.1 & FX_RELEASE != 0).unwrap().0 as f32;
+        let pitch = crate::script::eval(m.blade_pitch, release, 0.0);
+        assert!((-19.0..=5.0).contains(&pitch), "{pitch}");
+        assert!(crate::script::eval(m.reach, release, 0.0) >= 0.95);
+        assert!(m.cancels.iter().any(|c| c.into & DASH != 0));
     }
 
     /// No spins (the user: the sword never turns him round, Dante's Rebellion doesn't): no move
     /// twists his body or swings the blade past half a turn.
     #[test]
     fn the_sword_never_spins() {
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             let most = |keys: &[crate::script::Key]| keys.iter().map(|k| k.v.abs()).fold(0.0f32, f32::max);
             assert!(most(m.twist) < 90.0, "{}: twists {}", m.name, most(m.twist));
@@ -908,7 +1087,7 @@ mod tests {
     /// The knees do the crouch (pitch, squash), not the floor: the model sinks 4 units at most.
     #[test]
     fn no_sword_move_sinks_him_in_the_floor() {
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             let most = m.dip.iter().map(|k| k.v).fold(0.0f32, f32::max);
             assert!(most <= 4.0, "{}: dip {most}", m.name);
@@ -957,7 +1136,7 @@ mod tests {
     #[test]
     fn the_swings_are_the_mods_sounds() {
         const SWISH: u32 = 0x305C_0081;
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             assert!(!m.sounds.iter().any(|s| s.1 == SWISH), "{}", m.name);
             if !m.windows.is_empty() {
@@ -991,9 +1170,12 @@ mod tests {
                     | Attack::SwordBreakerRing
                     | Attack::SwordPogo
                     | Attack::SwordDraw
+                    | Attack::SwordLeap
+                    | Attack::SwordLeapRing
+                    | Attack::SwordCalibur
             )
         };
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             for w in sword(id).windows {
                 assert!(sword_blow(w.attack), "{}: {:?}", sword(id).name, w.attack);
             }
@@ -1008,7 +1190,7 @@ mod tests {
         // (a window strikes each enemy once, script::Player::first_strike; a repeat of the same
         // blow starts at least its cooldown after the one before, so each lands: the hit-stops only
         // add real ticks in between)
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             for (i, pair) in m.windows.windows(2).enumerate() {
                 if pair[0].attack == pair[1].attack {
@@ -1021,7 +1203,7 @@ mod tests {
     #[test]
     fn any_landed_blow_can_be_dashed_out_of() {
         // (the dynamic pillar: but the charges, which are no blow, and the air finishers' ends)
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             if m.windows.is_empty() {
                 continue;
@@ -1034,7 +1216,7 @@ mod tests {
     #[test]
     fn spins_end_facing_where_they_began() {
         // (a body turned a whole number of turns: the move after it doesn't snap round)
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             if let Some(last) = m.twist.last() {
                 if last.v.abs() >= 180.0 {
@@ -1070,7 +1252,7 @@ mod tests {
             (grip + crate::sword::held_dir(0.0, b.0, b.1) * crate::assets::kit::SWORD_TIP).y
         };
         let mut low = Vec::new();
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             // (the air moves dive: the floor is far under them, their plunges meant)
             if m.air {
@@ -1095,7 +1277,7 @@ mod tests {
         // stays under it, or the blade lags behind its cut)
         use crate::script::eval;
         let mut fast = Vec::new();
-        for id in SW_S1..=SW_DRAW_AIR {
+        for id in all() {
             let m = sword(id);
             let dir = |t: f32| crate::sword::held_dir(0.0, eval(m.blade_yaw, t, 0.0), eval(m.blade_pitch, t, 0.0));
             for t in m.blade_held.0..m.blade_held.1.saturating_sub(1) {

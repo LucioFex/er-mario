@@ -257,11 +257,16 @@ pub enum Attack {
     /// bumped (its worth by the speed into it: Combat::deal_scaled)
     KartRam,
     KartBump,
+    /// the Star Sword's later moves (Part 12.5): the Leap Splitter's cleave and the ground wave it
+    /// crashes into (small ones bounce off it), the Star Calibur's rising thrust in the air
+    SwordLeap,
+    SwordLeapRing,
+    SwordCalibur,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 190] = [
+const CODES: [Attack; 193] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -290,6 +295,7 @@ const CODES: [Attack; 190] = [
     Attack::StarBlast,
     Attack::CannonPound,
     Attack::KartRam, Attack::KartBump,
+    Attack::SwordLeap, Attack::SwordLeapRing, Attack::SwordCalibur,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -423,6 +429,10 @@ impl Attack {
             // stagger
             Attack::KartRam => Attack::Kick.spec(),
             Attack::KartBump => Attack::Stomp.spec(),
+            // the Leap Splitter's cleave a ground pound's, its wave a stomp's; the Calibur a sweep's
+            Attack::SwordLeap => Attack::GroundPound.spec(),
+            Attack::SwordLeapRing => Attack::Stomp.spec(),
+            Attack::SwordCalibur => Attack::Sweep.spec(),
         }
     }
 
@@ -701,6 +711,11 @@ impl Attack {
             // fling and the stagger are the point, and every bump spins a big one's rammer out
             Attack::KartRam => (14.0, "damage_kart_ram"),
             Attack::KartBump => (10.0, "damage_kart_bump"),
+            // the Leap Splitter: the cleave and the wave it crashes into 16% together (Part 12.5);
+            // the Star Calibur a thrust and a bit
+            Attack::SwordLeap => (10.0 * SWORD_SHARE, "damage_sword_leap"),
+            Attack::SwordLeapRing => (6.0 * SWORD_SHARE, "damage_sword_leap_ring"),
+            Attack::SwordCalibur => (9.0 * SWORD_SHARE, "damage_sword_calibur"),
         }
     }
 
@@ -855,7 +870,10 @@ impl Attack {
             | Attack::SwordBreaker
             | Attack::SwordBreakerRing
             | Attack::SwordPogo
-            | Attack::SwordDraw => 1.3,
+            | Attack::SwordDraw
+            | Attack::SwordLeap
+            | Attack::SwordLeapRing
+            | Attack::SwordCalibur => 1.3,
             // (the fists up close, as their punches)
             Attack::FistFlurry | Attack::MeteorPunch | Attack::Dropkick => 1.3,
             Attack::FistFlurryEnd | Attack::SuperPunch(_) => 1.4,
@@ -927,9 +945,9 @@ impl Attack {
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
-            Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw => 6,
+            Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordLeap | Attack::SwordCalibur => 6,
             Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordFlurryEnd => 12,
-            Attack::SwordHelmRing | Attack::SwordBreakerRing => 30,
+            Attack::SwordHelmRing | Attack::SwordBreakerRing | Attack::SwordLeapRing => 30,
             // (each crescent and the cross's burst strike an enemy once themselves: wave.rs)
             Attack::SwordCrossBurst | Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordBeam => 1,
             Attack::RangBig => 5,
@@ -968,6 +986,7 @@ impl Attack {
                 | Attack::SwordCrossBurst
                 | Attack::SwordLauncher
                 | Attack::SwordHelm
+                | Attack::SwordLeap
                 | Attack::SwordFlurryEnd
                 | Attack::SwordRave(3)
                 | Attack::SwordBreakerRing
@@ -1014,7 +1033,7 @@ impl Attack {
             // (the sword's heavy cuts crack a stance a little)
             Attack::SwordSlash(3) => 4.0,
             Attack::SwordCleave | Attack::SwordGreatSpin(2) => 8.0,
-            Attack::SwordHelm => 10.0,
+            Attack::SwordHelm | Attack::SwordLeap => 10.0,
             Attack::SwordBreakerRing => 6.0,
             // (the hammer's new blows: as its swings and slams)
             Attack::HammerCharge | Attack::Comet => 6.0,
@@ -1649,7 +1668,7 @@ const SHOVE_HEAVY: f32 = 0.6;
 /// heavy cut's more; None for the others (the many-hit ones' each blow, the launchers: they'd push
 /// the enemy out of the rest of it) and for what isn't the sword's.
 fn sword_shove(attack: Attack) -> Option<f32> {
-    let ends_run = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo);
+    let ends_run = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo | Attack::SwordLeap | Attack::SwordLeapRing | Attack::SwordCalibur);
     ends_run.then(|| if crate::impact::stop(attack) >= 5 { SHOVE_HEAVY } else { SHOVE })
 }
 
@@ -3110,6 +3129,13 @@ impl Combat {
                     if !crate::juggle::try_launch(handle, me, radius_m, height_m, regular, stunned, high) && !crate::coop::guest() {
                         log_not_lifted(handle, radius_m, height_m, stunned);
                     }
+                } else if matches!(attack, Attack::SwordLeapRing) && !hands_off(handle) {
+                    // (the Leap Splitter's wave: a small one bounces off the ground, OTG; a bigger
+                    // one just takes the blow)
+                    let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
+                    if !crate::juggle::ground_bounce(handle, radius_m, height_m, liftable(handle)) {
+                        crate::juggle::hit(handle, me);
+                    }
                 } else if matches!(attack, Attack::MeteorPunch) {
                     // (driven down: up there it hits the ground and bounces once)
                     if !crate::juggle::spike(handle) {
@@ -3198,6 +3224,15 @@ impl Combat {
                 } else {
                     1.0
                 };
+                // Star Charge (swordplay.rs): the heavy sword blow spends the stars a NICE! lit, +15%
+                // each, a gold burst where it lands and a soft zing
+                let (star_mult, spent) = crate::swordplay::star_blow(attack, tick);
+                if spent > 0 {
+                    let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                    crate::impact::star_spend(at, spent);
+                    log(format!("combat: {spent} stars spent on {attack:?} (x{star_mult:.2})"));
+                }
+                scale *= star_mult;
                 // one hammer swing landing on him again (a big body stays in its reach the whole
                 // swing, and each hit's hit-stop holds the swing while the cooldown runs out: Morgott
                 // took a backhand three times): each hit half the one before, the next blow whole

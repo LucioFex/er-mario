@@ -415,6 +415,7 @@ enemy in front (not against where Mario faces).
 | X, X, X, X | **Combo A**: a diagonal cleave, a rising backhand, a rising diagonal, then the **Rebellion chop**: the blade cocked behind his head in both hands, a two-handed chop with a deep lunge, frozen there; it knocks them back | 7 / 7 / 8 / 12% |
 | X, (beat), X | **Thunder cleave**: both hands overhead and down, a crack of lightning where it lands, cracks a stance | 14% |
 | X, X, (beat), X | **Million Stab** (Combo B): a flash, nine stabs in 1.2 s rooted in a wide stance, a last full-length lunge that blows them back | 2% each + 10% |
+| X, X, X, (beat), X | **Leap Splitter** (Nero's Split): a hop of 0.8 m, the blade overhead in both hands, then a plunging vertical cleave that crashes into the ground, a short ground wave (3 m), a heavy hold and a camera jolt; small enemies bounce 1.5 m off the ground for a relaunch. No spin | 10% + 6% |
 | back, forward + X | **Stinger**: a deep coil, then he shoots point first at the enemy, almost flat, up to 8 m, and stops dead on it | 12% |
 | mash X as it lands | **Million Stab** off the Stinger | 2% each + 10% |
 | back + X, or Y | **High Time**: a deep coil, then a rising cut from the ground straight up that launches small and medium enemies; **the button still held** and Mario goes up with them | 10% |
@@ -425,8 +426,10 @@ enemy in front (not against where Mario faces).
 | B, then X (or X in the dash) | **Lightning iai**: through the enemy and past it in one cut, its line cracks with lightning a beat later behind him | 11% |
 | X in a perfect dodge's slow time | **Flurry Rush**: in at the enemy, six cuts and a wide last one, untouchable meanwhile (Breath of the Wild); one per perfect dodge | 6 × 3% + 8% |
 | X x4 in the air | **Aerial Rave**: three cuts that hold him up, then the blade raised high and down through them, Mario dropping with it (once a jump; three times with an enemy up there) | 6 / 6 / 7 / 10% |
+| forward + X in the air | **Star Calibur**: the point drawn back, then a thrust 25° up and ahead that carries him toward the enemy (up to 6 m) and leaves him hanging a moment; the air string goes on out of it (once a jump) | 9% |
 | Y in the air | **Helm Breaker**: a moment's hang, a fall straight down with the blade, a ring of lightning and a long crouch where he lands | 12% + 6% |
 | LT in the air | **Pogo**: the point straight down; on an enemy he bounces up again (three a jump; after that LT is the ground pound again) | 8% |
+| a NICE! with the sword | **Star Charge** (Nero's Exceed): each NICE! lights one of 3 gold stars along the blade; the next heavy blow (the Rebellion chop, the Stinger, the Leap Splitter) spends them all, +15% each, a gold burst and a soft zing. Lost when he is hit, after 6 s without a new one, or on swapping weapon | +15% a star |
 | LB into the sword mid-fight | **Quick draw**: drawn as an iai cut in front (in the air, a cut down across him) | 10% |
 | a string's finisher at full health | **Sword beam**: a small crescent flies 12 m (Zelda's) | 4% |
 | a finisher with MAX ready | **Star Cut End**: a flash, the world slowed, then cuts of lightning across every enemy within 8 m, three times (Vergil's Judgement Cut End) | 3 × 5% |
@@ -446,7 +449,7 @@ a flash of the screen and a jolt of the camera; its charge is a small crackling 
 | a tap | **Skyward Strike**: the sword raised, a bolt shoots up off it and falls on the enemy aimed at (10%) | **Zeus throw**: a bolt javelin hurled down at the enemy (12%) |
 | 1 s | a thicker bolt (14%) | a bigger javelin (16%) |
 | 2 s | a bolt with a blast round him (20% + 8%) | a javelin (22%) |
-| 4 s | three bolts jumping from one enemy to the next (14% each) | the javelin splits in three where it lands (24%, then 10% on the three nearest) |
+| 4 s | **Ricochet Bolt**: he thrusts the sword ahead (no spin) and a horizontal bolt leaves the tip at the first enemy in front (28%), then ricochets like the shell: up to 5 jumps of 8 m in sight, to the one hit fewest times, then longest ago, then the nearest, never the same twice in a row, each hit 0.85 of the one before | the javelin splits in three where it lands (24%, then 10% on the three nearest) |
 | 10 s | **Storm cloud** (Mario Kart's Thunder Cloud): a dark 3D cloud flies over the enemy and rains bolts on everyone under it for 4 s (6% a bolt), then a giant one (45% within 4.5 m) | the same, cast from the air |
 
 ### Elements

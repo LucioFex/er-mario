@@ -434,6 +434,8 @@ pub struct Moves {
     sword_missing: bool,
     /// Aerial Raves begun in this jump (each holds him up a while)
     raves: u8,
+    /// the Star Calibur was used in this jump (once an airtime)
+    calibur_used: bool,
     /// the scripted move playing as moves were last read (by its start's count), and since when
     play_was: Option<u32>,
     play_since: u32,
@@ -528,6 +530,7 @@ impl Moves {
             z_held: false,
             sword_missing: false,
             raves: 0,
+            calibur_used: false,
             play_was: None,
             play_since: 0,
             first_was: false,
@@ -787,6 +790,7 @@ impl Moves {
         if a & ACT_FLAG_AIR == 0 {
             self.pogos = POGOS;
             self.raves = 0;
+            self.calibur_used = false;
             self.fist_air = 0;
         }
         let sword = sword_in_hand && !crate::mega::active();
@@ -1239,6 +1243,7 @@ impl Moves {
                 // (a perfect dodge's counter gives one Flurry Rush)
                 countering: crate::dodge::flurry_ready(),
                 pogos: self.pogos,
+                calibur_used: self.calibur_used,
             };
             let id = crate::swordplay::choose(&input, &sword_state)?;
             let Some(m) = crate::script::MOVES.get(id as usize) else {
@@ -1249,6 +1254,9 @@ impl Moves {
             };
             if id == crate::script::SW_POGO {
                 self.pogos = self.pogos.saturating_sub(1);
+            }
+            if id == crate::script::SW_CALIBUR {
+                self.calibur_used = true;
             }
             if id == crate::script::SW_FLURRY {
                 crate::dodge::spend_flurry();

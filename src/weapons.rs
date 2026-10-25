@@ -38,6 +38,8 @@ pub fn next(w: u8) -> u8 {
 
 /// Takes `w` in hand (the banner names it).
 pub fn set(w: u8) {
+    // (the Star Sword's stars go out with it)
+    crate::swordplay::stars_lose();
     CURRENT.store(w % COUNT, Ordering::Relaxed);
     *SWITCHED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     crate::log(format!("weapons: {}", NAMES[(w % COUNT) as usize]));

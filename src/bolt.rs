@@ -4,6 +4,9 @@
 //! the air, Zeus's throw: a bolt javelin hurled at the enemy, bigger charged, splitting in three
 //! where it lands. Ten seconds' charge: a storm cloud (Mario Kart's Thunder Cloud) flies over the
 //! enemy and rains bolts on everyone under it for four seconds, a giant one to end.
+//! RB at 4 s on the ground (Part 12.5) is the Ricochet Bolt instead: a thrust, the bolt out of the
+//! tip at the first enemy ahead, then jumping on like the shell (traps.rs: fewest hits, then
+//! longest ago, then nearest, in sight), five jumps of 8 m, each hit a sixth less than the last.
 //! All of it 3D in the HUD's overlay (hud.rs: zigzag bolts with branches, the cloud's mesh).
 
 use std::collections::HashMap;
@@ -56,6 +59,73 @@ const SOUND_ZAP: i32 = 0x1416_0001;
 pub const STORM_LEVEL: u8 = 4;
 /// a sword move's crack of lightning comes down from this high (m)
 const ZAP_UP: f32 = 4.5;
+/// the Ricochet Bolt: jumps after the first hit, each hit worth this of the one before, how far up or
+/// down a jump may reach (m), ticks to the first hit and between jumps, how thick it is (m)
+pub const RICOCHET_JUMPS: u8 = 5;
+pub const RICOCHET_DECAY: f32 = 0.85;
+const RICOCHET_RISE: f32 = 4.0;
+const RICOCHET_FIRST: u32 = 3;
+const RICOCHET_AFTER: u32 = 5;
+const RICOCHET_WIDTH: f32 = 0.2;
+
+/// The Ricochet Bolt's way from enemy to enemy: whom it hit and when, whom it hit last, the jumps
+/// left. Pure; the bolt (`Bolts`) feeds it where the enemies are.
+#[derive(Clone, Debug)]
+pub struct Chain {
+    just: u64,
+    /// (enemy, hits, when it was last hit: the hit's number)
+    tally: Vec<(u64, u32, f32)>,
+    left: u8,
+    hits: u32,
+}
+
+impl Chain {
+    /// A bolt that has just hit `first`.
+    pub fn new(first: u64) -> Chain {
+        Chain { just: first, tally: vec![(first, 1, 0.0)], left: RICOCHET_JUMPS, hits: 1 }
+    }
+
+    /// What hit number `n` (0 the first) is worth of the first.
+    pub fn share(n: u32) -> f32 {
+        RICOCHET_DECAY.powi(n as i32)
+    }
+
+    /// The hit about to land: its number counting from 0 (the first hit was 0).
+    pub fn hits(&self) -> u32 {
+        self.hits
+    }
+
+    /// Where it jumps on from `from`: the enemy (of `cands`, key and where) the shell's rule picks
+    /// (traps.rs `ricochet_next`) within JUMP_REACH m in sight, if any jump is left; counted.
+    pub fn next(&mut self, from: Vec3, cands: &[(u64, Vec3)], clear: impl Fn(Vec3, Vec3) -> bool) -> Option<(u64, Vec3)> {
+        if self.left == 0 {
+            return None;
+        }
+        let tally = |key: u64| self.tally.iter().find(|t| t.0 == key).map_or((0, f32::MIN), |t| (t.1, t.2));
+        let (key, at) = crate::traps::ricochet_next(from, cands, self.just, tally, JUMP_REACH, RICOCHET_RISE, clear)?;
+        self.left -= 1;
+        match self.tally.iter_mut().find(|t| t.0 == key) {
+            Some(t) => {
+                t.1 += 1;
+                t.2 = self.hits as f32;
+            }
+            None => self.tally.push((key, 1, self.hits as f32)),
+        }
+        self.hits += 1;
+        self.just = key;
+        Some((key, at))
+    }
+}
+
+/// A Ricochet Bolt on its way to `target` (aimed at `at`), from `from`: when it lands, the hit's
+/// worth.
+struct Ricochet {
+    chain: Chain,
+    target: FieldInsHandle,
+    at: Vec3,
+    land: u32,
+    share: f32,
+}
 
 /// A bolt's zigzag from `from` to `to`: `n` segments, each point off the straight line by up to
 /// `wiggle` of its length (none at the ends), the same for the same `seed`.
@@ -147,6 +217,7 @@ struct Look {
 #[derive(Default)]
 pub struct Bolts {
     strikes: Vec<Strike>,
+    ricochets: Vec<Ricochet>,
     javelins: Vec<Javelin>,
     storm: Option<Storm>,
     looks: Vec<Look>,
@@ -205,6 +276,11 @@ fn chest_of(h: &FieldInsHandle) -> Option<Vec3> {
     Some(Vec3::new(p.0, p.1 + 0.9, p.2))
 }
 
+/// A clear line from `from` to `to` (an enemy's chest): the map doesn't stop it short of the enemy.
+fn sighted(ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>, from: Vec3, to: Vec3) -> bool {
+    ray(from, to).is_none_or(|w| (w - to).length() < 1.0)
+}
+
 /// The enemies near `at` (m): handle, chest, feet.
 fn enemies(at: Vec3, reach: f32, origin: [f32; 3]) -> Vec<(FieldInsHandle, Vec3, Vec3)> {
     combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), reach, origin)
@@ -258,6 +334,51 @@ impl Bolts {
             _ => (Attack::Bolt(3), None, 2),
         };
         self.strikes.push(Strike { land: tick + FALL_AFTER, target: target.map(|t| t.0), at, attack, blast, jumps, struck: Vec::new(), width: WIDTH[level as usize] });
+    }
+
+    /// The Ricochet Bolt lets go (the thrust, RB at 4 s on the ground): out of the sword's tip `tip`
+    /// at the first enemy ahead `facing` in sight (the cast's aim), then on from one to the next.
+    /// `ray(from, to)`: where the map is in the way.
+    pub fn ricochet(&mut self, tip: Vec3, facing: Vec3, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let near = enemies(tip, RANGE + 4.0, origin);
+        // (in sight: nothing but the enemy's own side in the way)
+        let seen: Vec<(FieldInsHandle, Vec3, Vec3)> = near.into_iter().filter(|(_, c, _)| sighted(ray, tip, *c)).collect();
+        let chests: Vec<Vec3> = seen.iter().map(|n| n.1).collect();
+        let ahead = facing.with_y(0.0).normalize_or(Vec3::Z);
+        let Some((h, c, _)) = pick(tip, facing, &chests, RANGE, CONE).map(|i| seen[i]) else {
+            // (no one ahead in sight: the bolt flies off into the air)
+            log("bolt: ricochet, no one ahead");
+            self.look(tip, tip + ahead * 10.0, RICOCHET_WIDTH, tick);
+            sound(SOUND_ZAP, 0.22);
+            return;
+        };
+        log("bolt: ricochet, an enemy aimed at");
+        self.look(tip, c, RICOCHET_WIDTH, tick);
+        sound(SOUND_ZAP, 0.22);
+        self.ricochets.push(Ricochet { chain: Chain::new(combat::handle_key(&h)), target: h, at: c, land: tick + RICOCHET_FIRST, share: Chain::share(0) });
+    }
+
+    /// The ricochets' hits landing and jumping on (`tick`'s due ones).
+    fn bounce(&mut self, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let (due, wait): (Vec<Ricochet>, Vec<Ricochet>) = std::mem::take(&mut self.ricochets).into_iter().partition(|r| tick >= r.land);
+        self.ricochets = wait;
+        for mut r in due {
+            let at = chest_of(&r.target).unwrap_or(r.at);
+            let near = combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), 4.0, origin);
+            if let Some(i) = near.iter().position(|t| t.shootable() == Some(&r.target)) {
+                combat.deal_scaled(player, &near, &[(i, Attack::Bolt(2), false)], tick, r.share);
+            }
+            crate::impact::element_spark(at, [1.0, 0.95, 0.6], 1.0);
+            sound(SOUND_ZAP, 0.16);
+            // (on to the next by the shell's rule, in sight)
+            let around = enemies(at, JUMP_REACH + 2.0, origin);
+            let cands: Vec<(u64, Vec3)> = around.iter().map(|(h, c, _)| (combat::handle_key(h), *c)).collect();
+            let hit = r.chain.hits();
+            let Some((key, to)) = r.chain.next(at, &cands, |a, b| sighted(ray, a, b)) else { continue };
+            let Some((h, ..)) = around.iter().find(|(h, ..)| combat::handle_key(h) == key) else { continue };
+            self.look(at, to, RICOCHET_WIDTH * (0.6 + 0.4 * Chain::share(hit)), tick);
+            self.ricochets.push(Ricochet { target: *h, at: to, land: tick + RICOCHET_AFTER, share: Chain::share(hit), ..r });
+        }
     }
 
     /// The charge building (fireball.rs): a little bolt out of the sky onto `at` near him, its crack
@@ -393,6 +514,7 @@ impl Bolts {
                 self.strikes.push(Strike { land: tick + 3 * (k as u32 + 1), target: Some(h), at: c, attack: Attack::Bolt(0), blast: None, jumps: 0, struck: Vec::new(), width: WIDTH[1] });
             }
         }
+        self.bounce(player, combat, origin, tick, ray);
         self.rain(player, combat, origin, tick);
         self.publish(tick);
     }
@@ -481,6 +603,9 @@ impl Bolts {
         for s in &mut self.strikes {
             s.at += d;
         }
+        for r in &mut self.ricochets {
+            r.at += d;
+        }
         for j in &mut self.javelins {
             j.pos += d;
         }
@@ -525,5 +650,83 @@ mod tests {
         // (behind and to the side don't count, nor past the range)
         assert_eq!(pick(me, ahead, &c[2..4], 30.0, 0.5), None);
         assert_eq!(pick(me, ahead, &c[4..], 30.0, 0.5), None);
+    }
+
+    fn at(x: f32, z: f32) -> Vec3 {
+        Vec3::new(x, 0.0, z)
+    }
+
+    fn clear(_: Vec3, _: Vec3) -> bool {
+        true
+    }
+
+    /// Runs a chain over fixed enemies (key, where) from the first one: the keys it jumps to in
+    /// order, as many as it makes.
+    fn jumps(first: u64, enemies: &[(u64, Vec3)], clear: impl Fn(Vec3, Vec3) -> bool) -> Vec<u64> {
+        let mut chain = Chain::new(first);
+        let mut from = enemies.iter().find(|e| e.0 == first).unwrap().1;
+        let mut out = Vec::new();
+        while let Some((key, to)) = chain.next(from, enemies, &clear) {
+            out.push(key);
+            from = to;
+            assert!(out.len() <= 20, "never ends");
+        }
+        out
+    }
+
+    /// Three enemies: A B C A B C (like the shell: the fewest hits, then the longest ago, then the
+    /// nearest), five jumps and no more.
+    #[test]
+    fn a_ricochet_cycles_through_them_for_five_jumps() {
+        let e = [(1, at(0.0, 0.0)), (2, at(3.0, 0.0)), (3, at(5.0, 0.0))];
+        assert_eq!(jumps(1, &e, clear), vec![2, 3, 1, 2, 3]);
+        assert_eq!(RICOCHET_JUMPS, 5);
+    }
+
+    /// Two enemies: back and forth, never the same twice in a row; one alone: nowhere to go.
+    #[test]
+    fn a_ricochet_never_hits_the_same_one_twice_in_a_row() {
+        let two = [(1, at(0.0, 0.0)), (2, at(4.0, 0.0))];
+        let order = jumps(1, &two, clear);
+        assert_eq!(order, vec![2, 1, 2, 1, 2]);
+        let alone = [(1, at(0.0, 0.0))];
+        assert!(jumps(1, &alone, clear).is_empty());
+        // (any group: no key twice in a row, counting the first)
+        let e = [(1, at(0.0, 0.0)), (2, at(1.0, 2.0)), (3, at(-2.0, 1.0)), (4, at(3.0, -3.0))];
+        let mut seq = vec![1];
+        seq.extend(jumps(1, &e, clear));
+        assert!(seq.windows(2).all(|w| w[0] != w[1]), "{seq:?}");
+        assert_eq!(seq.len(), 6);
+    }
+
+    /// Each jump is 8 m at most (along the ground) and in sight.
+    #[test]
+    fn a_ricochet_jumps_8_m_in_sight() {
+        assert_eq!(JUMP_REACH, 8.0);
+        // (the second is 7 m from the first, the third 9 m from the second: it stops there)
+        let e = [(1, at(0.0, 0.0)), (2, at(7.0, 0.0)), (3, at(16.0, 0.0))];
+        assert_eq!(jumps(1, &e, clear), vec![2, 1, 2, 1, 2]);
+        // (only 3, out of 8 m of both: nowhere)
+        assert!(jumps(3, &[(3, at(16.0, 0.0)), (1, at(0.0, 0.0))], clear).is_empty());
+        // behind a wall: not that one, even the nearest
+        let e = [(1, at(0.0, 0.0)), (2, at(2.0, 0.0)), (3, at(5.0, 0.0))];
+        let seen = |_: Vec3, to: Vec3| to.x != 2.0;
+        let order = jumps(1, &e, seen);
+        assert_eq!(order, vec![3, 1, 3, 1, 3]);
+    }
+
+    /// Each hit is 0.85 of the one before.
+    #[test]
+    fn each_hit_is_a_sixth_less() {
+        assert_eq!(Chain::share(0), 1.0);
+        assert!((Chain::share(1) - 0.85).abs() < 1e-6);
+        assert!((Chain::share(2) - 0.7225).abs() < 1e-6);
+        // five jumps in: the sixth hit is 44% of the first
+        assert!((Chain::share(5) - 0.4437).abs() < 1e-3);
+        assert!(Chain::share(5) > 0.4);
+        let mut c = Chain::new(1);
+        assert_eq!(c.hits(), 1);
+        c.next(Vec3::ZERO, &[(1, at(0.0, 0.0)), (2, at(2.0, 0.0))], clear);
+        assert_eq!(c.hits(), 2);
     }
 }

@@ -295,6 +295,44 @@ pub fn spike(h: &FieldInsHandle) -> bool {
     true
 }
 
+/// How high a small enemy slammed into the ground bounces off it (m): the Leap Splitter's OTG.
+pub const OTG_HEIGHT: f32 = 1.5;
+
+/// The speed up (m/s) that takes a body `height` m high under the juggle's gravity.
+pub fn bounce_speed(height: f32) -> f32 {
+    (2.0 * GRAVITY * height).sqrt()
+}
+
+/// A blow slammed `h` into the ground (the Leap Splitter's wave): a small enemy (one the string's
+/// launcher could lift) bounces OTG_HEIGHT m off it, ready for a blow to send it up again. False
+/// for a bigger one, or when it's not here to bounce.
+pub fn ground_bounce(h: &FieldInsHandle, radius_m: f32, height_m: f32, regular: bool) -> bool {
+    // (co-op guest: the host owns the enemies)
+    if crate::coop::guest() || refusal(radius_m, height_m, regular, false).is_some() || crate::stopwatch::frozen(h) {
+        return false;
+    }
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    let phase = Phase::Bounce { vel: Vec3::Y * bounce_speed(OTG_HEIGHT) };
+    if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
+        // (one already in the air is up there for the string, not slammed: only a fall or a bounce
+        // goes round again)
+        if !matches!(j.phase, Phase::Falling { .. } | Phase::Bounce { .. }) {
+            return false;
+        }
+        j.phase = phase;
+        return true;
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return false };
+    let Some(chr) = wcm.chr_ins_by_handle(h) else { return false };
+    if chr.modules.data.hp <= 0 {
+        return false;
+    }
+    let p = chr.modules.physics.position;
+    log(format!("juggle: c{:04} bounced off the ground ({:.1} x {:.1} m)", chr.character_id, radius_m, height_m));
+    up.push(Juggled { mob: *h, pos: Vec3::new(p.0, p.1, p.2), phase });
+    true
+}
+
 /// `h` isn't juggled any more (another move takes it: bat.rs), its gravity back.
 pub fn release(h: &FieldInsHandle) {
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
@@ -438,4 +476,21 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
         }
         keep
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Leap Splitter's OTG bounce: about 1.5 m up off the ground.
+    #[test]
+    fn the_ground_bounce_rises_one_and_a_half_metres() {
+        let v = bounce_speed(OTG_HEIGHT);
+        let apex = v * v / (2.0 * GRAVITY);
+        assert!((apex - 1.5).abs() < 1e-3, "{apex}");
+        assert!(OTG_HEIGHT > BOUNCE_UP * BOUNCE_UP / (2.0 * GRAVITY), "higher than a fall's bounce");
+        // (only a small one: the string's limits)
+        assert!(refusal(0.5, 1.8, true, false).is_none());
+        assert!(refusal(2.0, 5.0, true, false).is_some());
+    }
 }
