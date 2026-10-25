@@ -386,6 +386,15 @@ pub fn model(k: &Kart, spin: f32, roll: f32, wheel_spin: &[f32; 4]) -> Model {
     Model { parts }
 }
 
+/// The drawn tyres' bottoms over the ground straight under their middles (m; under 0 in it), or
+/// none found.
+pub fn tyre_gaps(m: &Model, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> [Option<f32>; 4] {
+    std::array::from_fn(|i| {
+        let c = m.parts[WHEELS + i].0;
+        ray(c + Vec3::Y * 1.0, c - Vec3::Y * 1.5).map(|g| c.y - kart::WHEEL_R - g.y)
+    })
+}
+
 /// Where Mario sits: his feet, the way he faces (flat), and the turn of the kart off his upright
 /// self (world: his parts are turned by it round his feet).
 pub fn seat(k: &Kart, spin: f32, roll: f32) -> (Vec3, Vec3, Quat) {
@@ -468,8 +477,14 @@ pub fn lethal(peak: f32, at: f32) -> bool {
 /// drift's slide); it looks this far ahead and this high (m); the stick's look eased at this rate
 const CHASE_ZOOM: f32 = 0.95;
 const CHASE_LIFT: f32 = 0.3;
-const CHASE_FAST: f32 = 1.4;
-const CHASE_BOOST: f32 = 1.0;
+/// farther back at speed (m: at its top speed going forward, at BACKING_FAST backing up), in a
+/// boost; higher by this much a metre farther (third test: 1.4 / 1.0 m and level was too near to
+/// see the way ahead)
+const CHASE_FAST: f32 = 4.0;
+const CHASE_BACKING: f32 = 3.0;
+const BACKING_FAST: f32 = 12.0;
+const CHASE_BOOST: f32 = 1.8;
+const CHASE_RISE: f32 = 0.3;
 const CHASE_TURN: f32 = 5.0;
 const CHASE_HEIGHT: f32 = 2.5;
 const TRAVEL: (f32, f32) = (3.0, 10.0);
@@ -508,8 +523,9 @@ impl ChaseCam {
         let travel = if along > 0.0 { flat.x.atan2(flat.z) } else { nose };
         let w = ((along - TRAVEL.0) / (TRAVEL.1 - TRAVEL.0)).clamp(0.0, 1.0) * TRAVEL_SHARE;
         let want = nose + wrap(travel - nose) * w;
+        let fast = if along >= 0.0 { CHASE_FAST * (along / kart::TOP).clamp(0.0, 1.2) } else { CHASE_BACKING * (-along / BACKING_FAST).clamp(0.0, 1.0) };
         if !self.started {
-            *self = ChaseCam { started: true, yaw: want, yaw_vel: 0.0, y: pos.y, back: 0.0, look };
+            *self = ChaseCam { started: true, yaw: want, yaw_vel: 0.0, y: pos.y, back: fast, look };
         }
         // (the yaw's spring in steps of a 60th of a second at most)
         let n = (dt * 60.0).ceil().max(1.0) as usize;
@@ -521,13 +537,12 @@ impl ChaseCam {
         }
         let rate = |r: f32| 1.0 - (-r * dt).exp();
         self.y += (pos.y - self.y) * rate(CHASE_HEIGHT);
-        let fast = (along.abs() / kart::TOP).clamp(0.0, 1.2);
-        self.back += (CHASE_FAST * fast + if boost { CHASE_BOOST } else { 0.0 } - self.back) * rate(2.0);
+        self.back += (fast + if boost { CHASE_BOOST } else { 0.0 } - self.back) * rate(2.0);
         self.look += wrap(look - self.look) * rate(CHASE_LOOK);
         let yaw = self.yaw + self.look;
         let dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
         let base = pos.with_y(self.y);
-        let eye = base - dir * (zoom.0 * CHASE_ZOOM + self.back) + Vec3::Y * (zoom.1 + CHASE_LIFT);
+        let eye = base - dir * (zoom.0 * CHASE_ZOOM + self.back) + Vec3::Y * (zoom.1 + CHASE_LIFT + self.back * CHASE_RISE);
         (eye, base + dir * LOOK_AHEAD + Vec3::Y * LOOK_UP)
     }
 }
@@ -784,6 +799,94 @@ mod tests {
         k
     }
 
+    /// The ground as a height over (x, z): a ray's first hit (marched, then halved), none from under it.
+    fn heightfield(h: impl Fn(f32, f32) -> f32 + Copy) -> impl Fn(Vec3, Vec3) -> Option<Vec3> {
+        move |a: Vec3, b: Vec3| {
+            let below = |p: Vec3| p.y <= h(p.x, p.z);
+            if below(a) {
+                return None;
+            }
+            let n = 24;
+            for k in 1..=n {
+                let t = k as f32 / n as f32;
+                if below(a.lerp(b, t)) {
+                    let (mut lo, mut hi) = ((k - 1) as f32 / n as f32, t);
+                    for _ in 0..20 {
+                        let mid = (lo + hi) * 0.5;
+                        if below(a.lerp(b, mid)) { hi = mid } else { lo = mid }
+                    }
+                    return Some(a.lerp(b, hi));
+                }
+            }
+            None
+        }
+    }
+
+    /// How deep the drawn kart is in the ground at worst and on average (m): its tyres all round
+    /// their rims and its tub's belly (kartmesh.rs: 0.28 m under its middle), driven over `h`.
+    fn sunk(h: impl Fn(f32, f32) -> f32 + Copy, lane: f32, throttle: f32, secs: f32) -> (f32, f32) {
+        let ray = heightfield(h);
+        let mut k = Kart::new(Vec3::new(lane, h(lane, 0.0) + 0.8, 0.0), 0.0);
+        for _ in 0..60 {
+            k.step(&kart::Input::default(), DT, &ray);
+        }
+        let (mut worst, mut sum, mut n) = (0.0f32, 0.0f32, 0usize);
+        for _ in 0..(secs / DT) as usize {
+            k.step(&kart::Input { throttle, ..Default::default() }, DT, &ray);
+            let m = model(&k, 0.0, 0.0, &[0.0; 4]);
+            let mut deepest = 0.0f32;
+            for i in 0..4 {
+                let c = m.parts[WHEELS + i].0;
+                for a in -6..=6 {
+                    let a = a as f32 * 0.2;
+                    let p = c + k.rot * Vec3::new(0.0, -a.cos(), a.sin()) * kart::WHEEL_R;
+                    deepest = deepest.max(h(p.x, p.z) - p.y);
+                }
+            }
+            for x in [-0.4f32, 0.0, 0.4] {
+                for z in [-0.6f32, 0.0, 0.45] {
+                    let p = k.pos + k.rot * Vec3::new(x, -0.28, z);
+                    deepest = deepest.max(h(p.x, p.z) - p.y);
+                }
+            }
+            worst = worst.max(deepest);
+            sum += deepest;
+            n += 1;
+        }
+        (worst, sum / n as f32)
+    }
+
+    /// The user's photos (2026-10-24/25): the tyres sunk in the ground. Driven over bumps, a wheel
+    /// was drawn where the step had moved its mount on (half a metre at speed), at the spring's
+    /// length measured before: up to 0.29 m into the rise ahead (0.14 m over 12 cm bumps).
+    #[test]
+    fn the_drawn_kart_stays_out_of_the_ground() {
+        for lane in [0.0f32, 3.1, 7.7] {
+            for (amp, worst_most, mean_most) in [(0.0f32, 0.001f32, 0.001f32), (0.12, 0.03, 0.01), (0.25, 0.12, 0.03)] {
+                let h = move |x: f32, z: f32| amp * ((x * 1.3).sin() * (z * 0.9).cos() + (z * 2.1 + x * 0.4).sin() * 0.5);
+                for throttle in [0.0f32, 1.0] {
+                    let (worst, mean) = sunk(h, lane, throttle, 6.0);
+                    assert!(worst <= worst_most && mean <= mean_most, "bumps {amp} lane {lane} throttle {throttle}: {worst:.3} m deep at worst, {mean:.3} on average");
+                }
+            }
+        }
+        // parked on a 20 degree slope, across it and up it
+        for (sx, sz) in [(0.36f32, 0.0f32), (0.0, 0.36)] {
+            let (worst, _) = sunk(move |x, z| x * sx + z * sz, 0.0, 0.0, 3.0);
+            assert!(worst < 0.01, "slope {sx} {sz}: {worst:.3}");
+        }
+    }
+
+    #[test]
+    fn the_tyre_gaps_read_the_ground_under_them() {
+        let ray = heightfield(|_, _| 0.0);
+        let k = settled(0.0);
+        let gaps = tyre_gaps(&model(&k, 0.0, 0.0, &[0.0; 4]), &ray);
+        assert!(gaps.iter().all(|g| g.is_some_and(|g| g.abs() < 0.01)), "{gaps:?}");
+        let none = |_: Vec3, _: Vec3| None;
+        assert!(tyre_gaps(&model(&k, 0.0, 0.0, &[0.0; 4]), &none).iter().all(|g| g.is_none()));
+    }
+
     #[test]
     fn the_model_hangs_its_wheels_and_turns_the_front_ones() {
         let k = settled(0.0);
@@ -933,6 +1036,32 @@ mod tests {
             gaps.push(flat.length());
         }
         assert!(gaps[0] < gaps[1] && gaps[1] < gaps[2], "{gaps:?}");
+    }
+
+    /// Where the eye settles behind a kart going `speed` along its nose for 3 s: (back, up) from it.
+    fn settled_view(speed: f32) -> (f32, f32) {
+        let mut cam = ChaseCam::default();
+        let (mut pos, dt) = (Vec3::ZERO, 1.0 / 60.0);
+        let mut eye = Vec3::ZERO;
+        for _ in 0..180 {
+            pos += Vec3::Z * speed * dt;
+            eye = cam.step(pos, Vec3::Z, Vec3::Z * speed, ZOOMS[1], 0.0, false, dt).0;
+        }
+        ((pos - eye).with_y(0.0).length(), eye.y - pos.y)
+    }
+
+    /// The user (third test): going fast forward or backing up fast, the camera should pull back
+    /// much farther (before: 1.4 m more at the top speed, 0.4 m backing up at 10 m/s).
+    #[test]
+    fn the_kart_camera_pulls_back_at_speed() {
+        let (rest, rest_up) = settled_view(0.0);
+        let (half, _) = settled_view(kart::TOP * 0.5);
+        let (top, top_up) = settled_view(kart::TOP);
+        let (backing, _) = settled_view(-12.0);
+        assert!(half - rest > 1.5, "half speed: {:.2} m more", half - rest);
+        assert!(top - rest > 3.2, "top speed: {:.2} m more", top - rest);
+        assert!(top_up - rest_up > 0.6, "top speed: {:.2} m higher", top_up - rest_up);
+        assert!(backing - rest > 2.5, "backing up: {:.2} m more", backing - rest);
     }
 
     /// Its springs bouncing it 10 cm at 6 Hz and its heading shivering 6 degrees at 8 Hz (rough

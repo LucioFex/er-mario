@@ -254,6 +254,10 @@ hides (rays to its heart and rim), and faces are cut at the camera instead of lo
 right by the camera never vanishes or goes flat. Far off they use fewer faces, and one too small on
 screen is a single sprite.
 
+**The camera on slopes.** Lakitu reads the ground's grade ahead of Mario (even steep hillsides):
+uphill it comes down a little and looks up the slope, downhill it rises and looks down the way he
+goes.
+
 **The camera indoors.** Lakitu senses the room around Mario (walls all around, the ceiling): in a
 corridor or a small room it comes closer and lower and stays under the ceiling, a wall right behind
 it makes it slide round to where it can see instead of zooming into Mario's back, and it keeps off
@@ -309,12 +313,24 @@ damage counts in wedges (`src/grab.rs`). When the enemy's animation lifts or swi
 body, Mario's pose follows it (`src/engine_mario.rs`), so he's really up in the troll's fist.
 
 **Ailments and fire.** Elden Ring's ailments build up on Mario as on any Tarnished, the game does
-their damage (in wedges), and Mario shows them the SM64 way (`src/status.rs`): poison and scarlet
-rot make him cough (Hazy Maze's gas) in green or orange puffs, blood loss bursts red (that wedge
-costs no knockback), frostbite freezes him stiff for a second and leaves him shivering, sleep
-knocks him out (mash buttons to wake up sooner), madness shocks him, and a fire on him sends him
-running round in flames like SM64's (the burn's damage is Elden Ring's, not SM64's). Deathblight
-stays off.
+their damage (in wedges), Mario shows them the SM64 way (`src/status.rs`), and each costs him
+something of its own while it lasts:
+
+| Ailment | What it does to Mario |
+|---|---|
+| Poison | Drains him (the game's damage); he coughs (Hazy Maze's gas) in green puffs; **heavy legs**: 85% of his top speed while it drains him |
+| Scarlet rot | Drains him (faster); orange puffs; **the rot eats healing**: coins heal half as much |
+| Blood loss | A red burst: **a wedge and a half at once**, no knockback |
+| Frostbite | **Frozen stiff** for a second, then shivering; **frostbitten for 30 s**: every blow costs 20% more; icy glints |
+| Sleep | **Knocked out** up to 3 s (mash buttons to wake up sooner; a hit wakes him) |
+| Madness | **Shocked**, a yellow flash; his **style meter (and MAX) and a charge in his hand are lost** |
+| Fire on him | SM64's burning run (the burn's damage is Elden Ring's) |
+| Deathblight | Off |
+
+The stuns (frozen, asleep, shocked) land even in the middle of a blow on the ground, and in the air
+as soon as he lands. Lava floors give SM64's lava boost; **poison and rot swamps are not lava**:
+Mario wades in them with bubbles round his feet while the swamp builds the ailment up (each floor
+is told apart by the effects the game puts on whoever stands on it).
 
 **Giant fireball.** Held 10 s, RB throws a ball of fire that works like a kamehameha: regular
 enemies it runs into are swept along inside it, burning a little at a time; a boss or a big body
@@ -607,8 +623,9 @@ A tap of L3 again and he hops out.
 | Right stick | Look round (Lakitu comes back behind after a second and a half) |
 
 Lakitu's camera chases behind the kart at Mario's own camera distance (C-down / C-up on foot pick
-near, middle or far; the kart's view keeps it, a little farther at speed and in a boost, with
-streaks of wind at the screen's edges). It follows the way the kart goes (in a drift, between its
+near, middle or far; the kart's view keeps it), and pulls well back and up with speed: 4 m farther
+at the top speed, 3 m backing up fast, almost 2 m more in a boost, with streaks of wind at the
+screen's edges. It follows the way the kart goes (in a drift, between its
 nose and its slide) on a smooth spring, rides out the springs' bounce and the shiver of rough
 ground, and stays behind when backing up. The engine is synthesised by the
 mod (no recordings): a buzzing two-stroke that climbs with the speed, the tyres hissing in a drift

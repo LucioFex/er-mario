@@ -928,9 +928,11 @@ SM64_LIB_FN void sm64_er_lava(int32_t marioId)
 /* Elden Ring's ailments and burns on Mario (status.rs): kind 1 coughs (poison, rot), 2 shivers
  * (frostbite), 3 falls asleep, 4 wakes up, 5 is shocked (madness), 6 catches fire for `ticks`
  * (SM64's burning run; the burn's damage is Elden Ring's, not SM64's), 7 stops coughing or
- * shivering (they'd loop until the stick moves). Only from a calm action: on the ground, not hurt
- * or in a move, holding nothing (a fire also in the air, not hanging, on a shell or with the Metal
- * cap). Returns whether it took (status.rs tries again a moment later). */
+ * shivering (they'd loop until the stick moves). The cough only from a calm action: on the ground,
+ * not hurt or in a move, holding nothing; the stuns (shiver, sleep, shock) also in the middle of a
+ * blow on the ground (v4 Part 11: from a calm moment alone they seldom came in a fight and were
+ * lost); a fire also in the air, not hanging, on a shell or with the Metal cap. Returns whether it
+ * took (status.rs tries again a moment later: in the air, once he lands). */
 extern int er_soft_burn;
 SM64_LIB_FN int32_t sm64_er_status(int32_t marioId, int32_t kind, int32_t ticks)
 {
@@ -939,6 +941,7 @@ SM64_LIB_FN int32_t sm64_er_status(int32_t marioId, int32_t kind, int32_t ticks)
     u32 group = m->action & ACT_GROUP_MASK;
     int grounded = group == ACT_GROUP_STATIONARY || group == ACT_GROUP_MOVING;
     int calm = grounded && !(m->action & ACT_FLAG_INVULNERABLE) && m->heldObj == NULL;
+    int on_feet = (grounded || group == ACT_GROUP_OBJECT) && !(m->action & (ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_SWIMMING | ACT_FLAG_HANGING | ACT_FLAG_ON_POLE | ACT_FLAG_RIDING_SHELL)) && m->heldObj == NULL;
     int burning = m->action == ACT_BURNING_GROUND || m->action == ACT_BURNING_JUMP || m->action == ACT_BURNING_FALL;
     switch (kind) {
         case 1:
@@ -946,18 +949,18 @@ SM64_LIB_FN int32_t sm64_er_status(int32_t marioId, int32_t kind, int32_t ticks)
             set_mario_action(m, ACT_COUGHING, 0);
             return 1;
         case 2:
-            if (!calm) return 0;
+            if (!on_feet) return 0;
             set_mario_action(m, ACT_SHIVERING, 0);
             return 1;
         case 3:
-            if (!calm) return 0;
+            if (!on_feet) return 0;
             set_mario_action(m, ACT_START_SLEEPING, 0);
             return 1;
         case 4:
             if (m->action == ACT_START_SLEEPING || m->action == ACT_SLEEPING) set_mario_action(m, ACT_WAKING_UP, 0);
             return 1;
         case 5:
-            if (!calm) return 0;
+            if (!on_feet) return 0;
             drop_and_set_mario_action(m, ACT_SHOCKED, 0);
             return 1;
         case 6:

@@ -145,8 +145,13 @@ pub fn first_person() -> bool {
 
 struct Cam {
     fp: Option<FirstPerson>,
-    /// running up a hill: how far the look target rises (the camera looks up the slope)
+    /// on a slope: how far the look target rises (up the slope; below 0 down it) and how far the
+    /// eye comes down (below 0: up)
     look_up: f32,
+    eye_down: f32,
+    /// the grade read at each point ahead (GRADE_AT), one a frame in turn
+    grades: [Option<f32>; 2],
+    grade_turn: usize,
     /// extra height to see over a hill behind Mario (rises fast, settles slowly)
     lift: f32,
     /// how far the camera is from the focus right now (walls pull it in fast, it eases back out)
@@ -421,6 +426,9 @@ pub fn update(
         Cam {
             fp: None,
             look_up: 0.0,
+            eye_down: 0.0,
+            grades: [None; 2],
+            grade_turn: 0,
             lift: 0.0,
             dist: NEAR.0,
             mario,
@@ -904,16 +912,17 @@ pub fn update(
     cam.mate_frame += (want_mate_frame - cam.mate_frame) * rate(1.5);
     let (dist, height) = (dist + cam.mate * (1.0 - 0.5 * enc), height + cam.mate * 0.3 * (1.0 - 0.5 * enc));
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
-    // uphill ahead (in the view direction): look up the slope, the camera a bit lower
-    // (the ground ahead, measured from a point in the open near head height: from high up it
-    // would find ceilings and roofs indoors)
-    let ahead = mario - flat.normalize_or_zero() * 5.0;
-    let probe = Vec3::new(ahead.x, mario.y + FOCUS_HEIGHT * ks + 1.5, ahead.z);
-    let open = hit(mario + Vec3::Y * FOCUS_HEIGHT * ks, probe).is_none();
-    let rise = if open { hit(probe, ahead - Vec3::Y * 8.0).map(|g| g.y - ground).unwrap_or(0.0) } else { 0.0 };
-    let want_up = (rise * 0.6).clamp(0.0, 3.0);
-    cam.look_up += (want_up - cam.look_up) * rate(3.0);
-    let height = height - (cam.look_up * 0.5).min(height * 0.7);
+    // a slope ahead (in the view direction): uphill it looks up the slope from a little lower,
+    // downhill it rises and looks down the way he goes
+    // (one point a frame, in turn: the rays are the frame's)
+    let i = cam.grade_turn % GRADE_AT.len();
+    cam.grade_turn = cam.grade_turn.wrapping_add(1);
+    cam.grades[i] = grade_at(head, ground, -flat.normalize_or_zero(), GRADE_AT[i], &hit);
+    let grade = grade_of(&cam.grades);
+    let (want_look, want_eye) = slope_lean(grade);
+    cam.look_up += (want_look - cam.look_up) * rate(3.0);
+    cam.eye_down += (want_eye - cam.eye_down) * rate(3.0);
+    let height = height - cam.eye_down.min(height * 0.7);
     // under a low ceiling: below it, never pressed up against it
     let height = height.min((cam.ceiling_y - CEILING_GAP - cam.focus.y).max(0.25 * ks));
     cam.leash = cam.focus + flat + Vec3::Y * height;
@@ -1167,6 +1176,55 @@ fn shake_left(since: std::time::Instant, strength: f32) -> f32 {
     if p > 0.0 { strength * p * p } else { 0.0 }
 }
 
+/// The ground's grade ahead of Mario along `view` (flat, unit): rise over run (m a metre, uphill
+/// above 0), against the ground under him (`ground`, its height) from his head `head`. Each point
+/// ahead is looked down on from as high as a line from his head reaches it unblocked (45 degrees
+/// up at most, then lower, then level): a steep hillside ahead still counts (the old probe, level
+/// with his head plus 1.5 m, ran into any slope past ~26 degrees and read it as flat ground) and a
+/// ceiling indoors is never taken for the ground. A point with no ground under it (a cliff) or
+/// none in reach (a wall) is left out; none at all, flat.
+#[cfg(test)]
+fn grade_ahead(head: Vec3, ground: f32, view: Vec3, hit: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> f32 {
+    grade_of(&GRADE_AT.map(|d| grade_at(head, ground, view, d, hit)))
+}
+
+/// The grade read at one point `d` metres ahead (grade_ahead), or none there.
+fn grade_at(head: Vec3, ground: f32, view: Vec3, d: f32, hit: &impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Option<f32> {
+    let along = head + view * d;
+    let top = [1.0, 0.5, 0.0].into_iter().map(|k| along + Vec3::Y * (d * k)).find(|&t| hit(head, t).is_none())?;
+    let g = hit(top, top - Vec3::Y * (top.y - ground + d * GRADE_MOST + 1.0))?;
+    Some((g.y - ground) / d)
+}
+
+/// The points' grades as one (their mean; none read, flat).
+fn grade_of(grades: &[Option<f32>]) -> f32 {
+    let read: Vec<f32> = grades.iter().flatten().copied().collect();
+    if read.is_empty() { 0.0 } else { (read.iter().sum::<f32>() / read.len() as f32).clamp(-GRADE_MOST, GRADE_MOST) }
+}
+
+/// How the view leans on a grade `g` ahead: (look, eye) in metres, how far the point looked at
+/// rises (below 0: drops) and how far the eye comes down (below 0: goes up). Uphill it looks up
+/// the slope from a little lower; downhill it rises and looks down the way he goes.
+fn slope_lean(g: f32) -> (f32, f32) {
+    if g >= 0.0 {
+        let look = (g * UPHILL_LOOK).min(UPHILL_MOST);
+        (look, look * 0.5)
+    } else {
+        let k = (g * DOWNHILL_LEAN).max(-DOWNHILL_MOST);
+        (k, k)
+    }
+}
+
+/// the grade ahead: measured this far ahead (m), read up to this steep (rise a metre); uphill the
+/// look rises this much a unit of grade, at most this far (m); downhill the look drops and the eye
+/// rises this much a unit of grade, at most this far (m)
+const GRADE_AT: [f32; 2] = [2.5, 5.0];
+const GRADE_MOST: f32 = 1.2;
+const UPHILL_LOOK: f32 = 3.5;
+const UPHILL_MOST: f32 = 3.0;
+const DOWNHILL_LEAN: f32 = 2.2;
+const DOWNHILL_MOST: f32 = 1.6;
+
 /// Writes the render camera: rows right, up, forward, position (keeping the game's handedness).
 fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
     let m = &render.matrix;
@@ -1199,3 +1257,87 @@ fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
         Some(([right.x, right.y, right.z, up.x, up.y, up.z, fwd.x, fwd.y, fwd.z, pos.x, pos.y, pos.z], std::time::Instant::now()));
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ground as a height over (x, z), a ceiling over it maybe: a ray's first hit (marched,
+    /// then halved), none from inside.
+    fn world(h: impl Fn(f32, f32) -> f32 + Copy, ceiling: Option<f32>) -> impl Fn(Vec3, Vec3) -> Option<Vec3> {
+        move |a: Vec3, b: Vec3| {
+            let solid = |p: Vec3| p.y <= h(p.x, p.z) || ceiling.is_some_and(|c| p.y >= c);
+            if solid(a) {
+                return None;
+            }
+            let n = 64;
+            for k in 1..=n {
+                let t = k as f32 / n as f32;
+                if solid(a.lerp(b, t)) {
+                    let (mut lo, mut hi) = ((k - 1) as f32 / n as f32, t);
+                    for _ in 0..24 {
+                        let mid = (lo + hi) * 0.5;
+                        if solid(a.lerp(b, mid)) {
+                            hi = mid
+                        } else {
+                            lo = mid
+                        }
+                    }
+                    return Some(a.lerp(b, hi));
+                }
+            }
+            None
+        }
+    }
+
+    /// Mario at the origin looking along +z on ground `h`: the grade read ahead.
+    fn grade(h: impl Fn(f32, f32) -> f32 + Copy, ceiling: Option<f32>) -> f32 {
+        let ground = h(0.0, 0.0);
+        grade_ahead(Vec3::new(0.0, ground + FOCUS_HEIGHT, 0.0), ground, Vec3::Z, &world(h, ceiling))
+    }
+
+    /// The view's pitch (degrees, below the level above 0) from the eye `dist` back and `height` up
+    /// from Mario's head, both leaned for grade `g`.
+    fn pitch(dist: f32, height: f32, g: f32) -> f32 {
+        let (look, eye) = slope_lean(g);
+        let eye_y = height - eye.min(height * 0.7);
+        (eye_y - look).atan2(dist).to_degrees()
+    }
+
+    /// The user (third test): at the foot of a hill to climb, the camera looked too far down. The
+    /// old probe read every slope past ~26 degrees as flat (its line from his head ran into the
+    /// hillside) and never leaned downhill.
+    #[test]
+    fn the_grade_ahead_is_read_on_steep_slopes_too() {
+        for deg in [10.0f32, 20.0, 30.0, 40.0] {
+            let t = deg.to_radians().tan();
+            let up = grade(move |_, z| z.max(0.0) * t, None);
+            let down = grade(move |_, z| -z.max(0.0) * t, None);
+            assert!((up - t).abs() < 0.08, "{deg} up: {up:.2} for {t:.2}");
+            assert!((down + t).abs() < 0.08, "{deg} down: {down:.2} for {t:.2}");
+        }
+        // flat; indoors under a ceiling 1.4 m over his head: flat, not the ceiling
+        assert!(grade(|_, _| 0.0, None).abs() < 0.02);
+        assert!(grade(|_, _| 0.0, Some(FOCUS_HEIGHT + 1.4)).abs() < 0.02);
+        // a cliff's edge ahead (no ground in reach): no reading
+        assert!(grade(|_, z| if z > 1.0 { -60.0 } else { 0.0 }, None).abs() < 0.02);
+        // a wall ahead: no slope made up
+        assert!(grade(|_, z| if z > 1.5 { 20.0 } else { 0.0 }, None).abs() < 0.02);
+    }
+
+    #[test]
+    fn the_view_leans_with_the_slope() {
+        // (the middle zoom: 7 m back, 2.2 m up)
+        let (dist, height) = (7.0, 2.2);
+        let flat = pitch(dist, height, 0.0);
+        assert!((flat - 17.4).abs() < 0.5, "{flat}");
+        // up a 30 degree hill: about level, a little up at most
+        let up = pitch(dist, height, 30f32.to_radians().tan());
+        assert!(up < 2.0 && up > -12.0, "uphill {up:.1}");
+        // down a 20 degree slope: looking down it, the eye higher
+        let down = pitch(dist, height, -20f32.to_radians().tan());
+        assert!(down > 25.0 && down < 40.0, "downhill {down:.1}");
+        assert!(slope_lean(-0.36).1 < 0.0, "the eye rises downhill");
+        // gentle grades lean gently
+        assert!((pitch(dist, height, 0.05) - flat).abs() < 3.0);
+    }
+}

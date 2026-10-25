@@ -164,10 +164,77 @@ pub(crate) fn set_scale(s: f32) {
 pub(crate) fn size_factor() -> f32 {
     scale() / BASE_SCALE
 }
-/// The game's floor materials that are lava (ChrPhysicsMaterialInfo::hit_material): the
-/// HitMtrlParam rows that put the lava burn (SpEffect 4101) on whoever stands on them. 7 is the
-/// lava of Mt. Gelmir, the others are other places' (Rykard's arena among them).
-const LAVA_MATERIALS: [i32; 6] = [7, 24, 27, 39, 47, 62];
+/// The floor materials once taken for lava (ChrPhysicsMaterialInfo::hit_material, a HitMtrlParam
+/// row): only if the rows can't be read. 47 among them is Caelid's rot swamp (log 2026-10-25: rot
+/// on him, the "lava damage" thrown away there): SM64's lava boost in a swamp. Now each floor is
+/// read from its row's effects (floors()).
+const LAVA_FALLBACK: [i32; 6] = [7, 24, 27, 39, 47, 62];
+
+/// The map's floor materials that aren't plain ground, from their HitMtrlParam rows' effects
+/// (status::floor_kind): lava, poison and rot swamps. Read once, the first time the params are
+/// there (not while a lava fight has emptied the lava rows, safe_lava).
+struct Floors {
+    lava: Vec<i32>,
+    swamps: Vec<(i32, usize)>,
+}
+
+static FLOORS: Mutex<Option<std::sync::Arc<Floors>>> = Mutex::new(None);
+
+fn floors() -> std::sync::Arc<Floors> {
+    let mut g = FLOORS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(f) = g.as_ref() {
+        return f.clone();
+    }
+    let fallback = || std::sync::Arc::new(Floors { lava: LAVA_FALLBACK.to_vec(), swamps: Vec::new() });
+    let Ok(repo) = (unsafe { eldenring::cs::SoloParamRepository::instance() }) else { return fallback() };
+    let effect = |id: i32| -> Option<status::FloorEffect> {
+        let p = repo.get::<eldenring::cs::SpEffectParam>(u32::try_from(id).ok()?)?;
+        Some(status::FloorEffect { id, hurts: p.change_hp_point() > 0 || p.change_hp_rate() > 0.0, poison: p.poizon_attack_power(), rot: p.disease_attack_power() })
+    };
+    let (mut lava, mut swamps, mut rows) = (Vec::new(), Vec::new(), 0);
+    for id in 0..1000u32 {
+        let Some(row) = repo.get::<eldenring::cs::HitMtrlParam>(id) else { continue };
+        rows += 1;
+        let ids = [
+            row.sp_effect_id_on_hit0(),
+            row.sp_effect_id_on_hit1(),
+            row.sp_effect_id_for_wet00(),
+            row.sp_effect_id_for_wet01(),
+            row.sp_effect_id_for_wet02(),
+            row.sp_effect_id_for_wet03(),
+            row.sp_effect_id_for_wet04(),
+        ];
+        let effects: Vec<status::FloorEffect> = ids.into_iter().filter(|&e| e > 0).filter_map(effect).collect();
+        match status::floor_kind(&effects) {
+            status::Floor::Lava => lava.push(id as i32),
+            status::Floor::Swamp(k) => swamps.push((id as i32, k)),
+            status::Floor::Plain => {}
+        }
+    }
+    if rows == 0 {
+        log("floors: no floor materials read, the old lava list kept");
+        let f = fallback();
+        *g = Some(f.clone());
+        return f;
+    }
+    // (none found burning at all: the rows aren't what they seem; the old list, less the swamps)
+    if lava.is_empty() {
+        lava = LAVA_FALLBACK.iter().copied().filter(|m| !swamps.iter().any(|s| s.0 == *m)).collect();
+        log("floors: no lava found among the floor materials, the old list kept");
+    }
+    log(format!("floors: lava {lava:?}, swamps {swamps:?} (poison 0, rot 1; of {rows} floor materials; once taken for lava {LAVA_FALLBACK:?})"));
+    let f = std::sync::Arc::new(Floors { lava, swamps });
+    *g = Some(f.clone());
+    f
+}
+
+fn is_lava(material: i32) -> bool {
+    floors().lava.contains(&material)
+}
+
+fn swamp_of(material: i32) -> Option<usize> {
+    floors().swamps.iter().find(|s| s.0 == material).map(|s| s.1)
+}
 /// Havok collision layers Mario collides with (terrain, buildings, props, ...).
 const COLLISION_LAYERS: [u32; 11] = [0x1e, 0x2e, 0x37, 0x38, 0x39, 0x3a, 0x46, 0x47, 0x48, 0x49, 0x51];
 /// Raycast filter for the ground probes.
@@ -2110,7 +2177,7 @@ fn safe_lava(on: bool) -> bool {
     };
     if on {
         let mut own = Vec::new();
-        for id in LAVA_MATERIALS {
+        for id in floors().lava.clone() {
             let Some(row) = repo.get_mut::<eldenring::cs::HitMtrlParam>(id as u32) else { continue };
             own.push((
                 id,
@@ -3380,6 +3447,13 @@ fn frame(data: &FD4TaskData) {
             (b_fire, b_dash, y_move, x_move, l_hammer, b_hook) = (false, false, false, false, false, false);
             dpad = [false; 4];
         }
+        // poisoned: heavy legs (his top speed by his stick's reach; not the kart's wheel or the
+        // cannon's aim)
+        if !karting::holds() && !cannon::holds() {
+            let legs = status::stick_scale();
+            inputs.stick_x *= legs;
+            inputs.stick_y *= legs;
+        }
         // co-op: down, waiting for the partner (revive.rs): no moving; next to a downed partner,
         // D-pad down held revives them (and isn't the cap's)
         if revive::downed() {
@@ -3652,7 +3726,7 @@ fn frame(data: &FD4TaskData) {
             // (also for a moment after: the burn keeps ticking while he's bounced up)
             static ON_LAVA: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let mut on_lava = ON_LAVA.lock().unwrap_or_else(|e| e.into_inner());
-            if LAVA_MATERIALS.contains(&player_ref.chr_ins.modules.physics.material_info.hit_material) {
+            if is_lava(player_ref.chr_ins.modules.physics.material_info.hit_material) {
                 *on_lava = Some(std::time::Instant::now());
             }
             // (not in a boss fight: there's no telling the burn from his hits, and in an arena
@@ -4351,7 +4425,14 @@ fn frame(data: &FD4TaskData) {
         let tt = std::time::Instant::now();
         let tick_span = perf::span(perf::TICK);
         // lava under the Tarnished (he stands where Mario does): SM64's lava boost
-        let lava = !safe_lava(combat::lava_fight()) && LAVA_MATERIALS.contains(&player_ref.chr_ins.modules.physics.material_info.hit_material);
+        let material = player_ref.chr_ins.modules.physics.material_info.hit_material;
+        let lava = !safe_lava(combat::lava_fight()) && is_lava(material);
+        // a poison or rot swamp: he wades (bubbles), the swamp's build-up does the rest
+        {
+            let feet = to_er(m.origin, m.state.position);
+            let on_ground = m.state.action & 0x800 == 0;
+            status::wade(swamp_of(material).filter(|_| on_ground && !m.dead), glam::Vec3::new(feet.0, feet.1, feet.2), material);
+        }
         let lift_k = size_factor();
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
         // (the kart's heavy blow rolled its flight above: that's this blow's, not one going on)
@@ -4373,6 +4454,14 @@ fn frame(data: &FD4TaskData) {
         };
         let mario_at = m.state.position;
         let bled = status::just_set_in();
+        // (rotting: a coin heals him less)
+        let heal_k = status::heal_scale();
+        // (madness: his style and a charge in his hand are lost)
+        if status::take_madness() {
+            log("status: madness, his style and his charge lost");
+            style::hurt();
+            m.fire.douse(&m.state, m.origin, m.ticks);
+        }
         // (the boulder: hits cost half, no knockback)
         let rocking = rock::active();
         // (L2 held: the grab and the hook's pull)
@@ -4422,6 +4511,14 @@ fn frame(data: &FD4TaskData) {
             _ => None,
         }
         .map(|lost| m.tough.cut(health_before, lost));
+        // (blood loss: its burst costs a wedge and a half at once, uncut, or the blow's own if dearer;
+        // once)
+        let direct = if matches!(hurt, Some(combat::Hurt::Hit(_))) && status::take_bled() {
+            let bled = (health_before as i32 - status::BLEED_COST).max(0) as i16;
+            Some(direct.map_or(bled, |d| d.min(bled)))
+        } else {
+            direct
+        };
         // a scripted move (script.rs): its frame for this tick, the one it starts with or the next of
         // the one playing (by SM64's own tick count of it: a hit-stop holds it)
         // (it starts turned to the enemy the stick was read against, its lunge as far as that one's
@@ -4520,8 +4617,8 @@ fn frame(data: &FD4TaskData) {
                 None => {}
             }
             if kills > 0 {
-                // (a wedge and a half each)
-                unsafe { sm64::sm64_mario_heal(id, (6 * kills).min(32) as u8) };
+                // (a wedge and a half each; rotting, half of it)
+                unsafe { sm64::sm64_mario_heal(id, ((6 * kills) as f32 * heal_k).round().clamp(1.0, 32.0) as u8) };
                 unsafe { sm64::sm64_play_sound_volume(SOUND_COIN, 0.5) };
             }
             // Bowser's tail swing: Mario grabs the boss (SM64's pickup, swing and throw follow)

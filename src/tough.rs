@@ -5,15 +5,30 @@
 //! set when Mario is made), before it clamps a dying Mario to 0xFF, so a lethal blow still kills
 //! and its lethal falls, which put him straight on 0xFF, stand. The health the mod takes itself
 //! (blows while he's sent flying or let go of, the boulder's, the saddle's, drains) is cut here.
-//! Fractions carry over to the next loss.
+//! Fractions carry over to the next loss. Frostbitten (status.rs), every loss costs more.
 
 /// 40% more health, 30% less damage
 const HEALTH_MORE: f32 = 1.4;
 const DAMAGE_LESS: f32 = 0.3;
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// how much dearer every loss is now (status.rs: frostbite), as f32 bits
+static FRAIL: AtomicU32 = AtomicU32::new(0x3F80_0000);
+
+/// Every loss of health `k` times dearer from now on (1: as always).
+pub fn set_frail(k: f32) {
+    FRAIL.store(k.max(0.0).to_bits(), Ordering::Relaxed);
+}
+
 /// The share of a loss of health that's taken.
 pub fn loss_share() -> f32 {
-    (1.0 - DAMAGE_LESS) / HEALTH_MORE
+    loss_share_at(f32::from_bits(FRAIL.load(Ordering::Relaxed)))
+}
+
+/// The share of a loss taken with every loss `frail` times dearer.
+fn loss_share_at(frail: f32) -> f32 {
+    (1.0 - DAMAGE_LESS) / HEALTH_MORE * frail
 }
 
 #[derive(Default)]
@@ -49,6 +64,11 @@ mod tests {
             n += 1;
         }
         assert_eq!(n, 16);
+    }
+
+    #[test]
+    fn frostbitten_a_loss_costs_more() {
+        assert!((loss_share_at(1.2) - 0.6).abs() < 1e-6 && (loss_share_at(1.0) - 0.5).abs() < 1e-6);
     }
 
     #[test]

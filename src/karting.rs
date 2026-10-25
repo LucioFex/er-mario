@@ -508,12 +508,16 @@ pub fn update(inp: &In, targets: &[Target], combat: &mut Combat, player: &ChrIns
     crate::audio::set_engine(Some(tone));
     if ride.report.elapsed().as_secs_f32() >= REPORT {
         ride.report = Instant::now();
+        // (the drawn tyres' bottoms over the map's ground straight under them, cm: near 0 where
+        // the ground's collision is where it's drawn)
+        let gaps = kartplay::tyre_gaps(&ride.model, ray).map(|g| g.map_or("-".to_string(), |g| format!("{:.0}", g * 100.0)));
         log(format!(
-            "kart: {:.1} m/s, coins {}, wheels down {grounded}, drift {}, mushrooms {}",
+            "kart: {:.1} m/s, coins {}, wheels down {grounded}, drift {}, mushrooms {}, tyres over the ground [{}] cm",
             k.speed(),
             k.coins,
             k.drift_level(),
-            ride.driver.mushrooms().0
+            ride.driver.mushrooms().0,
+            gaps.join(", ")
         ));
     }
     publish(&ride, traps);

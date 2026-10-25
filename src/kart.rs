@@ -252,6 +252,24 @@ impl Kart {
         for k in 0..n {
             self.substep(i, hop && k == 0, h, ray);
         }
+        self.place_wheels(ray);
+    }
+
+    /// The wheels as drawn: each under its mount where the chassis is now, on the ground there.
+    /// (Their springs' lengths were measured before the last step moved the chassis on: at speed
+    /// half a metre back, so over bumps the drawn tyres sank into the rise ahead.)
+    fn place_wheels(&mut self, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        let up = self.up();
+        for (w, mount) in self.wheels.iter_mut().zip(MOUNTS) {
+            let at = self.pos + self.rot * mount;
+            // (one off the ground hangs, or rests on ground the step brought within its reach)
+            let snap = if w.contact.is_some() { SNAP } else { 0.0 };
+            w.reach = match ray(at + up * RAY_UP, at - up * (SUSPENSION + WHEEL_R + snap)) {
+                Some(p) => ((p - at).dot(-up) - WHEEL_R).clamp(0.0, SUSPENSION + snap),
+                None if w.contact.is_some() => w.reach,
+                None => SUSPENSION,
+            };
+        }
     }
 
     fn substep(&mut self, i: &Input, hop: bool, h: f32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
