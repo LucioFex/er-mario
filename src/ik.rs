@@ -12,19 +12,40 @@ use crate::engine_mario::{PartPose, PARTS};
 const LEFT: [usize; 3] = [4, 5, 6];
 const RIGHT: [usize; 3] = [7, 8, 9];
 const PEACE: usize = 20;
+/// ...and the legs: thigh (hip), shin (knee), foot (ankle)
+const LEFT_LEG: [usize; 3] = [10, 11, 12];
+const RIGHT_LEG: [usize; 3] = [13, 14, 15];
 
 /// Turns the arm (`right` or left) so its hand reaches `goal` (part space: relative to Mario), the
 /// elbow toward `pole` (a direction), by `weight`.
 pub fn arm(parts: &mut [PartPose; PARTS], right: bool, goal: Vec3, pole: Vec3, weight: f32) {
+    solve(parts, if right { RIGHT } else { LEFT }, goal, pole, weight);
+    if right {
+        parts[PEACE] = PartPose { scale: parts[PEACE].scale, ..parts[RIGHT[2]] };
+    }
+}
+
+/// Turns the leg (`right` or left) so its ankle reaches `goal` (part space), the knee toward `pole`
+/// (ahead of him: knees bend forward), by `weight`. The foot keeps its own turn (flat as SM64's
+/// pose has it, not tipped with the shin).
+pub fn leg(parts: &mut [PartPose; PARTS], right: bool, goal: Vec3, pole: Vec3, weight: f32) {
+    let idx = if right { RIGHT_LEG } else { LEFT_LEG };
+    let foot = parts[idx[2]].rot;
+    if solve(parts, idx, goal, pole, weight) {
+        parts[idx[2]].rot = foot;
+    }
+}
+
+/// The two-bone solve on parts `[s, e, h]`; false if it left them alone.
+fn solve(parts: &mut [PartPose; PARTS], [s, e, h]: [usize; 3], goal: Vec3, pole: Vec3, weight: f32) -> bool {
     let w = weight.clamp(0.0, 1.0);
     if w <= 0.001 || !goal.is_finite() {
-        return;
+        return false;
     }
-    let [s, e, h] = if right { RIGHT } else { LEFT };
     let (a, b, c) = (parts[s].pos, parts[e].pos, parts[h].pos);
     let (l1, l2) = ((b - a).length(), (c - b).length());
     if l1 < 1e-5 || l2 < 1e-5 {
-        return;
+        return false;
     }
     let to = goal - a;
     let dir = to.try_normalize().unwrap_or_else(|| (c - a).normalize_or(Vec3::X));
@@ -49,9 +70,7 @@ pub fn arm(parts: &mut [PartPose; PARTS], right: bool, goal: Vec3, pole: Vec3, w
     parts[e].rot = (q2 * q1 * parts[e].rot).normalize();
     parts[h].pos = hand;
     parts[h].rot = (q2 * q1 * parts[h].rot).normalize();
-    if right {
-        parts[PEACE] = PartPose { scale: parts[PEACE].scale, ..parts[h] };
-    }
+    true
 }
 
 #[cfg(test)]
@@ -116,6 +135,87 @@ mod tests {
         assert!((p[9].rot * Vec3::X).dot(along) > 0.999);
         assert!((p[8].rot * Vec3::X).dot(along) > 0.999);
         assert_eq!(p[20].pos, p[9].pos);
+    }
+
+    /// A leg straight down from the hip: 0.4 m thigh, 0.4 m shin (right: parts 13-15).
+    fn standing() -> [PartPose; PARTS] {
+        let mut p = [PartPose { rot: Quat::IDENTITY, pos: Vec3::ZERO, scale: 1.0, stretch: Vec3::ONE }; PARTS];
+        for (i, y) in [(13, 0.0), (14, -0.4), (15, -0.8)] {
+            p[i].pos = Vec3::new(0.1, y, 0.0);
+        }
+        p
+    }
+
+    fn leg_lengths(p: &[PartPose; PARTS]) -> (f32, f32) {
+        ((p[14].pos - p[13].pos).length(), (p[15].pos - p[14].pos).length())
+    }
+
+    #[test]
+    fn a_reachable_ankle_is_reached_with_the_knee_forward() {
+        let mut p = standing();
+        let goal = Vec3::new(0.12, -0.6, 0.15);
+        leg(&mut p, true, goal, Vec3::Z, 1.0);
+        assert!((p[15].pos - goal).length() < 0.001, "ankle at {:?}", p[15].pos);
+        let (a, b) = leg_lengths(&p);
+        assert!((a - 0.4).abs() < 0.001 && (b - 0.4).abs() < 0.001, "lengths {a} {b}");
+        // (the knee ahead of the hip-to-ankle line)
+        let line = (goal - p[13].pos).normalize();
+        let off = (p[14].pos - p[13].pos) - line * (p[14].pos - p[13].pos).dot(line);
+        assert!(off.z > 0.05, "knee off the line {off:?}");
+    }
+
+    #[test]
+    fn a_straight_leg_bends_forward_when_it_shortens() {
+        let mut p = standing();
+        leg(&mut p, true, Vec3::new(0.1, -0.6, 0.0), Vec3::Z, 1.0);
+        assert!(p[14].pos.z > 0.1, "knee at {:?}", p[14].pos);
+        assert!(p[14].pos.y < p[13].pos.y);
+    }
+
+    #[test]
+    fn an_unreachable_ankle_straightens_the_leg_toward_it() {
+        let mut p = standing();
+        leg(&mut p, true, Vec3::new(0.1, -0.5, 1.5), Vec3::Z, 1.0);
+        let dir = Vec3::new(0.0, -0.5, 1.5).normalize();
+        assert!((p[15].pos - (p[13].pos + dir * 0.8)).length() < 0.002, "ankle at {:?}", p[15].pos);
+        let (a, b) = leg_lengths(&p);
+        assert!((a - 0.4).abs() < 0.001 && (b - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn the_leg_never_goes_not_a_number() {
+        // (exactly at full stretch, at the hip itself, right under it, and a hair short of the least reach)
+        for goal in [Vec3::new(0.1, -0.8, 0.0), Vec3::new(0.1, 0.0, 0.0), Vec3::new(0.1, -1e-6, 0.0), Vec3::new(0.1, -0.00001, 0.0001)] {
+            for pole in [Vec3::Z, Vec3::ZERO, Vec3::Y] {
+                let mut p = standing();
+                leg(&mut p, true, goal, pole, 1.0);
+                for i in 13..16 {
+                    assert!(p[i].pos.is_finite() && p[i].rot.is_finite(), "goal {goal:?} pole {pole:?}: part {i} {:?}", p[i].pos);
+                }
+                let (a, b) = leg_lengths(&p);
+                assert!((a - 0.4).abs() < 0.001 && (b - 0.4).abs() < 0.001, "goal {goal:?} lengths {a} {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_foot_keeps_its_own_turn_and_the_other_leg_stays() {
+        let mut p = standing();
+        p[15].rot = Quat::from_rotation_y(0.4);
+        p[12].pos = Vec3::new(-0.1, -0.8, 0.0);
+        leg(&mut p, true, Vec3::new(0.2, -0.6, 0.2), Vec3::Z, 1.0);
+        assert_eq!(p[15].rot, Quat::from_rotation_y(0.4));
+        assert_eq!(p[12].pos, Vec3::new(-0.1, -0.8, 0.0));
+        let mut none = standing();
+        leg(&mut none, true, Vec3::new(0.2, -0.6, 0.2), Vec3::Z, 0.0);
+        assert_eq!(none[15].pos, standing()[15].pos);
+        let mut left = standing();
+        left[10].pos = Vec3::new(-0.1, 0.0, 0.0);
+        left[11].pos = Vec3::new(-0.1, -0.4, 0.0);
+        left[12].pos = Vec3::new(-0.1, -0.8, 0.0);
+        leg(&mut left, false, Vec3::new(-0.1, -0.6, 0.1), Vec3::Z, 1.0);
+        assert!((left[12].pos - Vec3::new(-0.1, -0.6, 0.1)).length() < 0.001);
+        assert_eq!(left[15].pos, standing()[15].pos);
     }
 
     #[test]

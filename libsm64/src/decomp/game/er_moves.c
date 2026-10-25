@@ -3428,6 +3428,12 @@ static void er_script_begin(struct MarioState *m, const struct SM64ErScript *f) 
         }
     }
     mario_set_forward_vel(m, f->forwardVel);
+    if (f->sideVel != 0.0f) {
+        // (a footwork step sideways: along his left, the step's walls and ledges as ever)
+        s16 left = m->faceAngle[1] + 0x4000;
+        m->vel[0] += sins(left) * f->sideVel;
+        m->vel[2] += coss(left) * f->sideVel;
+    }
 }
 
 /** What a frame does after the step (which draws him straight): the lean, roll, twist, squash. */

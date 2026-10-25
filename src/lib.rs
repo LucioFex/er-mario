@@ -51,6 +51,7 @@ mod gameover;
 mod hammer;
 mod hammermoves;
 mod hud;
+mod footwork;
 mod ik;
 mod impact;
 mod juggle;
@@ -4544,6 +4545,28 @@ fn frame(data: &FD4TaskData) {
                 log(format!("script: {}, X held: up with it", mv.name));
             }
         }
+        // (the Star Sword's ground blows are fought on the feet: one step a blow, the legs' IK,
+        // footwork.rs; not on Torrent, in the kart, as Mega, in the air)
+        let foot_plan = script_frame.filter(|f| f.c.end == 0).and_then(|f| {
+            let walking = !RIDING.load(Ordering::Relaxed) && !FOLLOWING.load(Ordering::Relaxed) && yoshi::ridden().is_none() && !mega::active() && !rock::active() && !bossride::active() && !karting::holds();
+            if weapon_on != weapons::SWORD || !walking || m.state.action & 0x800 != 0 || !script::footwork_move(f.id) {
+                return None;
+            }
+            let mv = &script::MOVES[f.id as usize];
+            let ask = (f.t == 0).then(|| {
+                let k = scale();
+                let feet = glam::Vec2::new(m.state.position[0] * k, m.state.position[2] * k);
+                let foe = m.focus.filter(|_| focus.is_some()).and_then(|(key, _)| targets.iter().find(|t| t.key() == key)).map(|t| footwork::Foe {
+                    pos: glam::Vec2::new(t.sm[0] * k, t.sm[2] * k),
+                    radius: t.radius * k,
+                    colossus: colossus::is_colossus(t.radius * k, t.height * k),
+                });
+                let facing = foe.map_or(m.state.face_angle, |e| footwork::yaw_to(feet, e.pos));
+                footwork::Ask { feet, facing, foe, side: script::cut_side(mv), last_side: 0.0, heavy: script::heavy_blow(mv) }
+            });
+            Some(footwork::Plan { lunge: mv.approach.is_some(), ask })
+        });
+        let (foot_pos, foot_face, foot_k) = (m.state.position, m.state.face_angle, scale());
         let mesh_drawn = EZ_MARIO.load(Ordering::Relaxed) || DEBUG_DRAW.load(Ordering::Relaxed);
         // (X held, charging: the weapon held up meanwhile, below)
         let charging_now = m.moves.charging();
@@ -4654,6 +4677,11 @@ fn frame(data: &FD4TaskData) {
             if let Some(r) = request {
                 r.apply(id);
             }
+            // (the footwork's step: the body walks it on top of the move's own speed)
+            let mut script_frame = script_frame;
+            if let (Some(f), Some(plan)) = (script_frame.as_mut().filter(|f| f.c.end == 0), foot_plan.as_ref()) {
+                footwork::drive(&mut f.c, plan, foot_pos, foot_face, foot_k);
+            }
             if let Some(f) = script_frame {
                 unsafe { sm64::sm64_er_script(&f.c) };
             }
@@ -4712,6 +4740,11 @@ fn frame(data: &FD4TaskData) {
                 if let Some(p) = parts.as_mut() {
                     reach_ik(p, &state, f.reach, f.reach_pitch, blade.map(|b| (b, f.c.twist)));
                 }
+            }
+            // the feet planted in the world, the hips shifted, the legs' IK (blends out when the
+            // blows are over)
+            if let Some(p) = parts.as_mut() {
+                footwork::legs(p, foot_plan.is_some(), state.position, state.face_angle, foot_k);
             }
             // the scripted move's tick ran (not held by a hit-stop): what it shows (before the weapons are posed: a heavy blow's squash), its hit window
             let script_ran = script_frame.filter(|f| f.c.end == 0 && script::is_script(state.action) && combo.action_timer == f.t as i32 + 1);

@@ -276,6 +276,30 @@ pub fn voice_for(sound: u32, n: u32) -> u32 {
     POOL[at as usize]
 }
 
+/// The sword's ground blows are fought on the feet (footwork.rs); not the ones that leave it
+/// (jumps, the air), nor the steered.
+pub fn footwork_move(id: u16) -> bool {
+    (SW_S1..=SW_DRAW_AIR).contains(&id) && MOVES.get(id as usize).is_some_and(|m| !m.air && m.vel_y.is_empty() && m.hold == (0, 0) && !m.steer && m.blade_held.1 > 0)
+}
+
+/// The side the move's first cut ends on: +1 his right, -1 his left, 0 straight (the blade's yaw
+/// at the end of its first window; + is left).
+pub fn cut_side(m: &Move) -> f32 {
+    let Some(w) = m.windows.first() else { return 0.0 };
+    let yaw = eval(m.blade_yaw, w.to as f32, 0.0);
+    if yaw.abs() < 8.0 {
+        0.0
+    } else {
+        -yaw.signum()
+    }
+}
+
+/// A heavy blow: its first window is more than the string's light slashes (footwork widens the
+/// stance and bends the knees).
+pub fn heavy_blow(m: &Move) -> bool {
+    m.windows.first().is_some_and(|w| !matches!(w.attack, Attack::SwordSlash(0..=2)))
+}
+
 /// The follow-through's stick turn (degrees a tick) and drift (m/s).
 pub const FOLLOW_TURN: f32 = 7.0;
 pub const FOLLOW_DRIFT: f32 = 0.45;
@@ -769,6 +793,7 @@ impl Player {
             locked: within(m.locked) as i32,
             sound: sound.map_or(0, |s| s.1),
             sound_volume: sound.map_or(0.0, |s| s.2),
+            side_vel: 0.0,
         };
         self.cancel = cancel;
         let mut blade = within(m.blade_held).then(|| (eval(m.blade_yaw, tf, 0.0), eval(m.blade_pitch, tf, 0.0), eval(m.blade_roll, tf, 0.0)));
@@ -803,6 +828,20 @@ mod tests {
         assert_eq!(eval(KEYS, 30.0, 0.0), 5.0);
         assert_eq!(eval(&[], 3.0, 1.0), 1.0);
         assert_eq!(eval(&[k(4, 2.0, In)], 0.0, 1.0), 2.0);
+    }
+
+    #[test]
+    fn the_footwork_goes_with_the_ground_blows_and_their_cut_sides() {
+        for id in [SW_S1, SW_S2, SW_S3, SW_S4] {
+            assert!(footwork_move(id), "{id}");
+        }
+        for id in [BULLET_PUNCH, FIST_FLURRY, SW_POGO, SW_DRAW_AIR, SW_RISE] {
+            assert!(!footwork_move(id), "{id}");
+        }
+        // (the slash ends on his left, the backhand on his right; the chop is heavy)
+        assert_eq!(cut_side(&MOVES[SW_S1 as usize]), -1.0);
+        assert_eq!(cut_side(&MOVES[SW_S2 as usize]), 1.0);
+        assert!(!heavy_blow(&MOVES[SW_S1 as usize]) && heavy_blow(&MOVES[SW_S4 as usize]));
     }
 
     #[test]

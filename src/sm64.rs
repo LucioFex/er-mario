@@ -276,6 +276,8 @@ pub struct SM64ErScript {
     /// a sound this tick (0 none), soft at this volume (<= 0: at his body)
     pub sound: u32,
     pub sound_volume: f32,
+    /// units per tick to his left on top of forward_vel (footwork steps)
+    pub side_vel: f32,
 }
 
 /// What the combos' moves (libsm64's er_moves.c) did on a tick: what they hit (moves::Hit), what

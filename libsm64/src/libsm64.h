@@ -113,6 +113,7 @@ struct SM64ErScript
     int32_t locked;        /* the move can't be left (no dash): er_move_locked */
     uint32_t sound;        /* a sound this tick (0 none), soft at soundVolume (<= 0: at his body) */
     float soundVolume;
+    float sideVel;         /* units per tick to his left on top of forwardVel (footwork steps; < 0 right) */
 };
 
 struct SM64MarioGeometryBuffers
