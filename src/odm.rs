@@ -571,6 +571,16 @@ pub fn vault(mob: &FieldInsHandle, feet: Vec3, tick: u32, ray: &impl Fn(Vec3, Ve
     true
 }
 
+/// A backstab of another kind (the sword's Phantom Cut): blows on `h` for the next BACKSTAB_TIME s
+/// count for more, as after the vault.
+pub fn mark_behind(h: &FieldInsHandle, at: Vec3) {
+    let mut list = BEHIND.lock().unwrap_or_else(|e| e.into_inner());
+    list.retain(|(k, t)| *k != combat::handle_key(h) && t.elapsed().as_secs_f32() < BACKSTAB_TIME);
+    list.push((combat::handle_key(h), Instant::now()));
+    drop(list);
+    crate::style::callout("BEHIND!", Some(at + Vec3::Y * 2.0), [0.85, 0.9, 1.0], false, 2.0);
+}
+
 /// The vault's backstab: blows on `h` a moment after count for more (combat.rs); 1 otherwise.
 pub fn behind_bonus(h: &FieldInsHandle) -> f32 {
     let key = combat::handle_key(h);

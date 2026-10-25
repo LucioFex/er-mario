@@ -193,6 +193,9 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::SwordLeap => Some((7, 1.7, true)),
         Attack::SwordLeapRing => Some((3, 1.2, false)),
         Attack::SwordCalibur => Some((3, 1.2, false)),
+        // the Phantom Cut's line a solid hit; the parry a brief one (its clash is starstep.rs's)
+        Attack::SwordPhantom => Some((5, 1.5, true)),
+        Attack::SwordParry => Some((2, 1.0, false)),
     }
 }
 
@@ -224,6 +227,7 @@ pub fn sword_blow(attack: Attack) -> bool {
             | Attack::SwordLeap
             | Attack::SwordLeapRing
             | Attack::SwordCalibur
+            | Attack::SwordPhantom
     )
 }
 
@@ -652,6 +656,54 @@ pub fn perfect_dodge(feet: Vec3) {
     ring(feet + Vec3::Y * 0.9, 1.1, 0.28, [0.55, 0.8, 1.0, 0.8]);
     spark(feet + Vec3::Y * 0.9, 1.2, [0.6, 0.85, 1.0, 0.8]);
     burst(feet + Vec3::Y * 1.0, 3, Bit::Star);
+}
+
+/// The Star Step's parry (starstep.rs): the blades clash at `at` (Elden Ring): a white-gold flash,
+/// a ring, stars, a small camera jolt and the heavy hit bank, louder than a hit but not harsh.
+pub fn clash(at: Vec3) {
+    spark(at, 1.7, WHITE);
+    spark(at, 1.0, GOLD);
+    ring(at, 1.3, 0.28, GOLD);
+    burst(at, 5, Bit::Star);
+    crate::lakitu::shake(0.35);
+    crate::sfx::play(crate::sfx::Sfx::Hit(2), 0.7);
+}
+
+/// The Phantom Cut's vanish: a line of star sparkles from where Mario was to where he is (a
+/// afterimage), a ring where he left.
+pub fn phantom_streak(from: Vec3, to: Vec3) {
+    const N: usize = 8;
+    for i in 0..=N {
+        let p = from.lerp(to, i as f32 / N as f32);
+        spark(p, 0.35, [0.7, 0.85, 1.0, 0.9]);
+        if i % 2 == 0 {
+            burst(p, 1, Bit::Star);
+        }
+    }
+    ring(from, 1.0, 0.25, [0.6, 0.8, 1.0, 0.8]);
+    worker::call("phantom streak", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_GENERAL_SHORT_STAR, 0.3) });
+}
+
+/// The Phantom Cut's line flashing across the enemy at `at` (its chest, Elden Ring), a slash
+/// slanting `slant` (a unit vector across it), then the burst.
+pub fn phantom_cut(at: Vec3, slant: Vec3) {
+    for i in -4i32..=4 {
+        spark(at + slant * (i as f32 * 0.22), 0.5 - 0.04 * i.abs() as f32, WHITE);
+    }
+    spark(at, 1.5, GOLD);
+    ring(at, 1.4, 0.3, GOLD);
+    burst(at, 6, Bit::Star);
+    crate::lakitu::shake(0.3);
+}
+
+/// The Star Trick's blink: stars where he left and where he lands (Elden Ring).
+pub fn blink(from: Vec3, to: Vec3) {
+    burst(from, 3, Bit::Star);
+    ring(from, 0.9, 0.22, [0.7, 0.85, 1.0, 0.8]);
+    burst(to, 4, Bit::Star);
+    spark(to, 1.0, GOLD);
+    ring(to, 1.2, 0.3, GOLD);
+    worker::call("star trick", |_| unsafe { sm64::sm64_play_sound_volume(SOUND_GENERAL_SHORT_STAR, 0.4) });
 }
 
 /// The action command (timing.rs): a gold burst on the blow, a quick ring, a few stars; a "GREAT!"

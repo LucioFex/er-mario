@@ -398,6 +398,11 @@ pub const SWAMP: u16 = 69;
 pub const SW_LEAP: u16 = 70;
 pub const SW_CALIBUR: u16 = 71;
 pub const SW_RICOCHET: u16 = 72;
+/// the Star Step's moves (Part 12.6a, starstep.rs queues them): Mario behind the enemy sheathing
+/// after the Phantom Cut, and hanging over it after the Star Trick's blink (the sword's own, but
+/// not "sword moves" for the pause strings: no beat comes of them)
+pub const SW_SHEATH: u16 = 73;
+pub const SW_TRICK: u16 = 74;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
@@ -584,6 +589,8 @@ pub const MOVES: &[Move] = &[
     sw::LEAP,
     sw::CALIBUR,
     sw::RICOCHET,
+    sw::SHEATH,
+    sw::TRICK,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -1132,10 +1139,10 @@ mod tests {
     #[test]
     fn every_id_has_its_move() {
         // (the last id of each table: indexing MOVES by an id with no data would panic)
-        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP, SW_LEAP, SW_CALIBUR, SW_RICOCHET] {
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP, SW_LEAP, SW_CALIBUR, SW_RICOCHET, SW_SHEATH, SW_TRICK] {
             assert!((id as usize) < MOVES.len(), "{id}");
         }
-        assert_eq!(MOVES.len(), SW_RICOCHET as usize + 1);
+        assert_eq!(MOVES.len(), SW_TRICK as usize + 1);
     }
 
     #[test]

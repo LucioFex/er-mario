@@ -888,6 +888,52 @@ pub const RICOCHET: Move = Move {
     ..BASE
 };
 
+// ---- B: the Star Step's moves (Part 12.6a; starstep.rs does the rest) -------------------------
+
+/// The Phantom Cut's pose: Mario has just landed behind the enemy; the blade held out a moment,
+/// then eased back down behind him as if sheathed, and the cut line flashes (starstep.rs, at tick
+/// CUT_AFTER). Untouchable till then. No blow of its own.
+pub const SHEATH: Move = Move {
+    name: "Phantom sheath",
+    len: 18,
+    clips: &[still(0, FIRST_PUNCH), clip(10, GENERAL_LAND)],
+    twist: &[k(0, 20.0, Linear), k(6, 10.0, InOut), k(12, 0.0, InOut)],
+    pitch: &[k(0, 4.0, Linear), k(10, 0.0, InOut)],
+    invulnerable: (0, 11),
+    squash: &[k(0, 0.94, Linear), k(10, 1.0, InOut)],
+    dip: &[k(0, 3.0, Linear), k(10, 0.0, InOut)],
+    reach: &[k(0, 1.0, Linear), k(8, 1.0, Linear), k(16, 0.5, InOut)],
+    blade_yaw: &[k(0, 60.0, Linear), k(7, 60.0, Linear), k(12, -160.0, InOut), k(17, -30.0, InOut)],
+    blade_pitch: &[k(0, 0.0, Linear), k(7, 0.0, Linear), k(12, -19.0, InOut)],
+    blade_roll: &[k(0, 90.0, Linear), k(7, 90.0, Linear), k(12, 0.0, InOut)],
+    blade_held: (0, 18),
+    cancels: &[c(ALL, 12, 12)],
+    locked: (0, 10),
+    ..BASE
+};
+
+/// The Star Trick's blink landed over the enemy: hanging there a few ticks (no gravity), untouchable,
+/// the blade pointing down at it; then the air string goes on from it.
+pub const TRICK: Move = Move {
+    name: "Star Trick",
+    len: 14,
+    clips: &[still(0, FIRST_PUNCH), clip(3, DIVE)],
+    pitch: &[k(0, 10.0, Linear), k(4, 25.0, Out), k(10, 0.0, InOut)],
+    hold: (0, 8),
+    invulnerable: (0, 9),
+    squash: &[k(0, 0.95, Linear), k(4, 1.05, Out), k(10, 1.0, InOut)],
+    reach: &[k(0, 1.0, Linear), k(8, 1.0, Linear), k(13, 0.5, InOut)],
+    blade_yaw: &[k(0, 0.0, Linear)],
+    blade_pitch: &[k(0, -60.0, Linear), k(8, -60.0, Linear), k(13, -19.0, InOut)],
+    blade_roll: &[k(0, 90.0, Linear)],
+    blade_held: (0, 14),
+    cancels: &[c(ALL, 8, 8)],
+    locked: (0, 6),
+    air: true,
+    land_ends: true,
+    ..BASE
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1012,6 +1058,38 @@ mod tests {
         // (the air string goes on out of it)
         assert!(m.cancels.iter().any(|c| c.into & NEXT != 0));
         assert!(m.twist.iter().all(|k| k.v.abs() < 90.0));
+    }
+
+    /// The Phantom Cut's pose (Part 12.6a): Mario behind the enemy, untouchable, the blade held out
+    /// and eased back as if sheathed before the cut line flashes; the cut itself is starstep.rs's.
+    #[test]
+    fn the_phantom_sheath_holds_the_blade_out_then_eases_it_back() {
+        let m = sword(SW_SHEATH);
+        assert!(!m.air && m.windows.is_empty());
+        assert!(!is_sword(SW_SHEATH) && !is_sword(SW_TRICK));
+        // (untouchable till the cut, which flashes at CUT_AFTER ticks)
+        let cut = crate::starstep::CUT_AFTER as u16;
+        assert!(m.invulnerable.0 == 0 && m.invulnerable.1 >= cut, "{:?}", m.invulnerable);
+        // the blade out ahead early, back down behind him at the cut
+        let early = crate::script::eval(m.blade_yaw, 2.0, 0.0);
+        let late = crate::script::eval(m.blade_yaw, cut as f32 + 2.0, 0.0);
+        assert!((late - early).abs() >= 90.0, "{early} -> {late}");
+        // (free again soon after the cut, X is the Riposte's)
+        assert!(m.cancels.iter().any(|c| c.into & NEXT != 0 && c.from <= cut + 4));
+        assert!(m.twist.iter().all(|k| k.v.abs() < 90.0));
+    }
+
+    /// The Star Trick's hang (Part 12.6a): in the air, gravity off a few ticks, untouchable, the
+    /// blade pointing down at the enemy it blinked over.
+    #[test]
+    fn the_star_trick_hangs_a_few_ticks_over_the_enemy() {
+        let m = sword(SW_TRICK);
+        assert!(m.air && m.land_ends && m.windows.is_empty());
+        assert!(m.hold.0 == 0 && (4..=10).contains(&m.hold.1), "{:?}", m.hold);
+        assert!(m.invulnerable.1 >= m.hold.1);
+        let down = m.blade_pitch.iter().map(|k| k.v).fold(f32::MAX, f32::min);
+        assert!(down <= -45.0, "blade down {down}");
+        assert!(m.cancels.iter().any(|c| c.into & NEXT != 0 && c.from <= m.hold.1 + 2));
     }
 
     /// RB at 4 s on the ground (Part 12.5): a forward thrust with no spin and no blow of its own;

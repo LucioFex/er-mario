@@ -2053,6 +2053,10 @@ s32 act_er_dash(struct MarioState *m) {
     }
 
     speed = sErDashSpeed[m->actionTimer < ER_DASH_TICKS ? m->actionTimer : ER_DASH_TICKS - 1];
+    // (the Star Sword's Star Step, arg 1: the same dash, about 2.2 m with the slide of its end)
+    if (m->actionArg == 1) {
+        speed *= 0.45f;
+    }
     mario_set_forward_vel(m, speed);
     set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
 

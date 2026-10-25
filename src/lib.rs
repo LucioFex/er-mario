@@ -84,6 +84,7 @@ mod sfx;
 mod sm64;
 mod squish;
 mod starpower;
+mod starstep;
 mod status;
 mod swing;
 mod swordplay;
@@ -3250,6 +3251,7 @@ fn frame(data: &FD4TaskData) {
         colossus::clear();
         odm::clear();
         dodge::clear();
+        starstep::clear();
         grab::clear();
         status::clear();
         caps::clear();
@@ -4501,6 +4503,11 @@ fn frame(data: &FD4TaskData) {
                 m.moves.script.start(move_id, to);
                 Some(moves::Request::Script { id: move_id, air, yaw: focus.map(|f| f.0) })
             }
+            // (the Star Sword's B: its parry window opens, starstep.rs; the dash otherwise)
+            Some(moves::Request::StarStep { air }) => {
+                starstep::begin(m.ticks, air);
+                Some(moves::Request::StarStep { air })
+            }
             r => r,
         };
         // (the stick and the camera's turn this tick: the steered boomerang reads them after it)
@@ -5056,6 +5063,14 @@ fn frame(data: &FD4TaskData) {
                     if let Some((el, level, air)) = m.fire.take_cast() {
                         if let Some(id) = rbmoves::cast_move(el, level, air) {
                             m.moves.queue(moves::Request::Script { id, air: script::MOVES.get(id as usize).is_some_and(|mv| mv.air), yaw: None }, m.ticks);
+                        }
+                    }
+                    // the Star Sword's B (starstep.rs): the step's parry window, the Phantom Cut's line
+                    {
+                        let sin = starstep::In { id, origin: m.origin, tick: m.ticks, action: state.action, feet, focus: m.focus.map(|f| f.0), targets: &targets };
+                        let out = starstep::tick(&sin, &mut m.combat, &player_ref.chr_ins, &ray);
+                        if let Some((sid, air)) = out.queue {
+                            m.moves.queue(moves::Request::Script { id: sid, air, yaw: None }, m.ticks);
                         }
                     }
                     if combo.fx & script::FX_RELEASE != 0 {

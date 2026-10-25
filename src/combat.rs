@@ -262,11 +262,15 @@ pub enum Attack {
     SwordLeap,
     SwordLeapRing,
     SwordCalibur,
+    /// the Star Step (Part 12.6a, starstep.rs): the Phantom Cut's line across a small enemy, and
+    /// the parry's clash that staggers a bigger one
+    SwordPhantom,
+    SwordParry,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 193] = [
+const CODES: [Attack; 195] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -296,6 +300,7 @@ const CODES: [Attack; 193] = [
     Attack::CannonPound,
     Attack::KartRam, Attack::KartBump,
     Attack::SwordLeap, Attack::SwordLeapRing, Attack::SwordCalibur,
+    Attack::SwordPhantom, Attack::SwordParry,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -433,6 +438,8 @@ impl Attack {
             Attack::SwordLeap => Attack::GroundPound.spec(),
             Attack::SwordLeapRing => Attack::Stomp.spec(),
             Attack::SwordCalibur => Attack::Sweep.spec(),
+            // the Phantom Cut breaks a stance like a ground pound; the parry staggers like one
+            Attack::SwordPhantom | Attack::SwordParry => Attack::GroundPound.spec(),
         }
     }
 
@@ -716,6 +723,10 @@ impl Attack {
             Attack::SwordLeap => (10.0 * SWORD_SHARE, "damage_sword_leap"),
             Attack::SwordLeapRing => (6.0 * SWORD_SHARE, "damage_sword_leap_ring"),
             Attack::SwordCalibur => (9.0 * SWORD_SHARE, "damage_sword_calibur"),
+            // the Star Step (Part 12.6a): the Phantom Cut 12% on a small one it never misses; the
+            // parry only the clash's sting, the stagger is the point (the Riposte after it)
+            Attack::SwordPhantom => (12.0 * SWORD_SHARE, "damage_sword_phantom"),
+            Attack::SwordParry => (2.0 * SWORD_SHARE, "damage_sword_parry"),
         }
     }
 
@@ -873,6 +884,7 @@ impl Attack {
             | Attack::SwordDraw
             | Attack::SwordLeap
             | Attack::SwordLeapRing
+            | Attack::SwordPhantom
             | Attack::SwordCalibur => 1.3,
             // (the fists up close, as their punches)
             Attack::FistFlurry | Attack::MeteorPunch | Attack::Dropkick => 1.3,
@@ -895,7 +907,7 @@ impl Attack {
             // (no cannon in a boss fight: a boss only takes it when one's near without its bar)
             Attack::CannonPound => 1.0,
             // (a boss only takes the glancing half of it, and the kart spins out each time)
-            Attack::KartRam | Attack::KartBump => 1.0,
+            Attack::KartRam | Attack::KartBump | Attack::SwordParry => 1.0,
         }
     }
 
@@ -945,7 +957,7 @@ impl Attack {
             Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordGreatSpin(_) => 3,
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
-            Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordLeap | Attack::SwordCalibur => 6,
+            Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordLeap | Attack::SwordCalibur | Attack::SwordPhantom | Attack::SwordParry => 6,
             Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordFlurryEnd => 12,
             Attack::SwordHelmRing | Attack::SwordBreakerRing | Attack::SwordLeapRing => 30,
             // (each crescent and the cross's burst strike an enemy once themselves: wave.rs)
@@ -1033,7 +1045,9 @@ impl Attack {
             // (the sword's heavy cuts crack a stance a little)
             Attack::SwordSlash(3) => 4.0,
             Attack::SwordCleave | Attack::SwordGreatSpin(2) => 8.0,
-            Attack::SwordHelm | Attack::SwordLeap => 10.0,
+            Attack::SwordHelm | Attack::SwordLeap | Attack::SwordPhantom => 10.0,
+            // (the parry: a guard break's weight)
+            Attack::SwordParry => 18.0,
             Attack::SwordBreakerRing => 6.0,
             // (the hammer's new blows: as its swings and slams)
             Attack::HammerCharge | Attack::Comet => 6.0,
@@ -1668,7 +1682,7 @@ const SHOVE_HEAVY: f32 = 0.6;
 /// heavy cut's more; None for the others (the many-hit ones' each blow, the launchers: they'd push
 /// the enemy out of the rest of it) and for what isn't the sword's.
 fn sword_shove(attack: Attack) -> Option<f32> {
-    let ends_run = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo | Attack::SwordLeap | Attack::SwordLeapRing | Attack::SwordCalibur);
+    let ends_run = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo | Attack::SwordLeap | Attack::SwordLeapRing | Attack::SwordCalibur | Attack::SwordPhantom);
     ends_run.then(|| if crate::impact::stop(attack) >= 5 { SHOVE_HEAVY } else { SHOVE })
 }
 
@@ -3806,6 +3820,20 @@ mod tests {
         let far_wall = |a: Vec3, b: Vec3| (a.x < 6.0 && b.x >= 6.0).then(|| Vec3::new(6.0, a.y, a.z));
         assert!(super::wall_behind(chest, Vec3::ZERO, super::WALL_REACH, far_wall).is_none());
         assert!(Attack::SuperPunch(1).splats() && Attack::Dropkick.splats() && !Attack::Punch.splats());
+    }
+
+    #[test]
+    fn the_star_steps_blows() {
+        // (the Phantom Cut: 12% x the sword's 0.92; a boss never meets it, the parry on a boss is
+        // a plain clash; the parry's worth is its stagger)
+        let (phantom, parry) = (Attack::SwordPhantom.percent().0, Attack::SwordParry.percent().0);
+        assert!((phantom - 12.0 * super::SWORD_SHARE).abs() < 1e-4, "{phantom}");
+        assert!(parry < 3.0 && Attack::SwordParry.posture() >= 15.0);
+        assert!(crate::impact::sword_blow(Attack::SwordPhantom) && !crate::impact::sword_blow(Attack::SwordParry));
+        assert!(Attack::SwordPhantom.cooldown() >= 6);
+        for a in [Attack::SwordPhantom, Attack::SwordParry] {
+            assert_eq!(Attack::from_code(a.code()), Some(a));
+        }
     }
 
     #[test]

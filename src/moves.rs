@@ -104,7 +104,7 @@ const WEAPON_ACTIONS: [u32; 11] = [
 ];
 /// a switch that waited for a weapon's move to end is dropped after this many ticks
 const PENDING_TICKS: u32 = 45;
-const ACT_IDLE: u32 = 0x0C40_0201;
+pub const ACT_IDLE: u32 = 0x0C40_0201;
 const ACT_WALKING: u32 = 0x0400_0440;
 /// (SM64's, soft: the charge beginning, a level of it reached)
 const SOUND_CHARGE_BEGIN: i32 = 0x305C_0081;
@@ -134,7 +134,7 @@ const ACT_MOVE_PUNCHING: u32 = 0x0080_0457;
 const ACT_SLIDE_KICK: u32 = 0x0180_08AA;
 const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 const ACT_TWIRLING: u32 = 0x1080_08A4;
-const ACT_FREEFALL: u32 = 0x0100_088C;
+pub const ACT_FREEFALL: u32 = 0x0100_088C;
 const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
 const ACT_TRIPLE_JUMP: u32 = 0x0100_0882;
 const ACT_SIDE_FLIP: u32 = 0x0100_0887;
@@ -319,6 +319,9 @@ pub enum Request {
     /// a scripted move (script.rs MOVES), on the ground or in the air, turned to `yaw` (SM64's
     /// radians: the enemy the stick was read against) as it starts
     Script { id: u16, air: bool, yaw: Option<f32> },
+    /// the Star Sword's B (starstep.rs): the short step, or the air Trick; lib.rs decides what it
+    /// comes to (a parry, the Phantom Cut, a blink) and otherwise it is the dash
+    StarStep { air: bool },
 }
 
 impl Request {
@@ -338,6 +341,7 @@ impl Request {
                 }
                 Request::Velocity(v) => sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]),
                 Request::Flow([x, y, z]) => sm64::sm64_er_zip(id, x, y, z, 0, 1),
+                Request::StarStep { air } => sm64::sm64_set_mario_action_arg(id, if air { ACT_ER_AIR_DASH } else { ACT_ER_DASH }, if air { 0 } else { crate::starstep::STEP_ARG }),
                 Request::Script { id: move_id, air, yaw } => {
                     sm64::sm64_set_mario_action_arg(id, if air { crate::script::ACT_ER_SCRIPT_AIR } else { crate::script::ACT_ER_SCRIPT }, move_id as u32);
                     if let Some(yaw) = yaw {
@@ -375,6 +379,8 @@ pub struct Moves {
     /// gives the air dash back, a few times a jump: dash in between blows)
     air_dashed: bool,
     air_dashes: u32,
+    /// Star Tricks (the sword's air B) this airtime
+    star_tricks: u8,
     air_spun: bool,
     twirl_since: Option<u32>,
     /// L1 went down at this tick (None: up), and it already went back to the fists
@@ -467,9 +473,25 @@ pub fn dodging(action: u32) -> bool {
     action == ACT_ER_DASH || action == ACT_ER_AIR_DASH
 }
 
+/// What B does with the weapon in hand (Part 12.6): its own move, the dash by default. The hammer's
+/// guard, the boomerang's glide and the Chomp's slam slot in here (12.6b).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BKind {
+    Dash,
+    /// the Star Sword's Star Step on foot, Star Trick in the air (starstep.rs)
+    Star,
+}
+
+pub fn b_kind(weapon: u8) -> BKind {
+    match weapon {
+        crate::weapons::SWORD => BKind::Star,
+        _ => BKind::Dash,
+    }
+}
+
 /// Enemy blows go through him: the dash, the Mikiri's somersault over the blow.
 pub fn untouchable(action: u32) -> bool {
-    dodging(action) || action == ACT_ER_MIKIRI
+    dodging(action) || action == ACT_ER_MIKIRI || crate::starstep::veiled()
 }
 
 /// On his feet and free to counter (the Mikiri, timing.rs): not in the air, not hurt or in a
@@ -494,6 +516,7 @@ impl Moves {
             dash_ready: 0,
             air_dashed: false,
             air_dashes: 0,
+            star_tricks: 0,
             air_spun: false,
             twirl_since: None,
             lb_since: None,
@@ -543,6 +566,22 @@ impl Moves {
     }
 
     /// A move asked for from elsewhere (the sword's cast): it goes in on the next tick.
+    /// B with the sword (everything allowed already): the Star Step on foot, a Star Trick in the
+    /// air (TRICKS an airtime; lib.rs makes it a parry, the Phantom Cut, a blink or the plain dash).
+    fn star_press(&mut self, air: bool, x: bool, step: u32, tick: u32, from: &str) -> Option<Request> {
+        if air {
+            if self.star_tricks >= crate::starstep::TRICKS {
+                return None;
+            }
+            self.star_tricks += 1;
+            crate::log(format!("moves: star trick {from}").trim_end());
+            return Some(Request::StarStep { air: true });
+        }
+        self.offset.dash_started(x, step, tick);
+        crate::log(format!("moves: star step {from}").trim_end());
+        Some(Request::StarStep { air: false })
+    }
+
     pub fn queue(&mut self, r: Request, tick: u32) {
         self.queued = Some((r, tick));
     }
@@ -960,6 +999,9 @@ impl Moves {
             // the dash out of it (its own: the rest of the moves wait for NEXT)
             if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() && allowed {
                 self.dash_ready = tick + DASH_COOLDOWN;
+                if b_kind(if sword { crate::weapons::SWORD } else { self.weapon }) == BKind::Star {
+                    return self.star_press(air, x, self.string_done(tick), tick, "out of the move");
+                }
                 if air {
                     if self.air_dashed {
                         return None;
@@ -1054,6 +1096,7 @@ impl Moves {
         if !air {
             self.air_dashed = false;
             self.air_dashes = 0;
+            self.star_tricks = 0;
             self.air_spun = false;
         }
         let air_blow = matches!(a, ACT_ER_AIR_COMBO | ACT_ER_HAMMER_AIR | ACT_ER_CHOMP_AIR | ACT_ER_AIR_THROW);
@@ -1185,6 +1228,10 @@ impl Moves {
         // (not in a hammer blow's wind-up and impact: it's committed)
         if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() {
             let step = if in_string { self.string_done(tick) } else { 0 };
+            if (ground || in_air) && b_kind(if sword { crate::weapons::SWORD } else { self.weapon }) == BKind::Star {
+                self.dash_ready = tick + DASH_COOLDOWN;
+                return self.star_press(!ground, x, step, tick, "");
+            }
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 self.offset.dash_started(x, step, tick);
@@ -1502,6 +1549,51 @@ mod tests {
     fn step(m: &mut Moves, action: u32, anim: i32, x: bool, tick: u32) -> Option<Request> {
         let state = sm64::SM64MarioState { action, anim_id: anim, health: 0x880, ..Default::default() };
         m.tick(false, false, x, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, tick)
+    }
+
+    /// One tick with B held now (`b`), the sword in hand or not, `weapon` the one the fists' table is on.
+    fn b_step(m: &mut Moves, action: u32, b: bool, sword: bool, tick: u32) -> Option<Request> {
+        let state = sm64::SM64MarioState { action, health: 0x880, ..Default::default() };
+        m.tick(b, false, false, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, sword, false, tick)
+    }
+
+    /// Part 12.6a: B is the weapon's own move: the sword's Star Step, the dash for the rest.
+    #[test]
+    fn b_is_the_star_step_with_the_sword_and_the_dash_with_the_rest() {
+        use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
+        assert_eq!(b_kind(SWORD), BKind::Star);
+        for w in [FISTS, HAMMER, RANG, CHOMP] {
+            assert_eq!(b_kind(w), BKind::Dash, "{w}");
+        }
+        let mut m = Moves::new();
+        b_step(&mut m, ACT_IDLE, false, true, 100);
+        let r = b_step(&mut m, ACT_IDLE, true, true, 101);
+        assert!(matches!(r, Some(Request::StarStep { air: false })), "{r:?}");
+        let mut m = Moves::new();
+        b_step(&mut m, ACT_IDLE, false, false, 100);
+        let r = b_step(&mut m, ACT_IDLE, true, false, 101);
+        assert!(matches!(r, Some(Request::Action(ACT_ER_DASH, 0))), "{r:?}");
+    }
+
+    /// The Star Trick: two in an airtime (a plain air dash with no enemy counts), landing gives them back.
+    #[test]
+    fn the_star_trick_is_two_an_airtime() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        let mut t = 100;
+        let press = |m: &mut Moves, t: &mut u32, air: bool| {
+            let a = if air { ACT_JUMP } else { ACT_IDLE };
+            *t += 20;
+            b_step(m, a, false, true, *t);
+            *t += 1;
+            b_step(m, a, true, true, *t)
+        };
+        assert!(matches!(press(&mut m, &mut t, true), Some(Request::StarStep { air: true })));
+        assert!(matches!(press(&mut m, &mut t, true), Some(Request::StarStep { air: true })));
+        assert!(press(&mut m, &mut t, true).is_none());
+        // (the ground gives them back)
+        b_step(&mut m, ACT_IDLE, false, true, t + 2);
+        assert!(matches!(press(&mut m, &mut t, true), Some(Request::StarStep { air: true })));
     }
 
     #[test]
