@@ -269,6 +269,7 @@ extern SM64_LIB_FN void sm64_er_mikiri(int32_t marioId, float x, float y, float 
 extern SM64_LIB_FN void sm64_er_rock(int32_t marioId, int on);
 extern SM64_LIB_FN void sm64_er_star_music(int on);
 extern SM64_LIB_FN void sm64_er_set_chomp_longer(float k);
+extern SM64_LIB_FN void sm64_er_set_glide(float vy, float fwd, float turn, int done);
 extern SM64_LIB_FN void sm64_er_cling_pitch(float radians);
 extern SM64_LIB_FN void sm64_er_set_peak(int32_t marioId, float y);
 extern SM64_LIB_FN void sm64_er_script(const struct SM64ErScript *frame);

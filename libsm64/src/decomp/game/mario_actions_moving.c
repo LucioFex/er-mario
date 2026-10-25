@@ -2057,6 +2057,10 @@ s32 act_er_dash(struct MarioState *m) {
     if (m->actionArg == 1) {
         speed *= 0.45f;
     }
+    // (the hammer's heavy roll, arg 2: B with the stick pushed, guard.rs)
+    if (m->actionArg == 2) {
+        speed *= 0.6f;
+    }
     mario_set_forward_vel(m, speed);
     set_mario_animation(m, MARIO_ANIM_FAST_LONGJUMP);
 

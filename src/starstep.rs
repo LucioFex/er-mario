@@ -203,7 +203,7 @@ fn put(i: &In, to: Option<Vec3>, yaw: f32, action: u32, up: f32) {
 }
 
 /// `attack` on enemy `mob` (its radius `radius_m`).
-fn strike(i: &In, combat: &mut Combat, player: &ChrIns, mob: &FieldInsHandle, at: Vec3, radius_m: f32, attack: Attack) {
+pub(crate) fn strike(i: &In, combat: &mut Combat, player: &ChrIns, mob: &FieldInsHandle, at: Vec3, radius_m: f32, attack: Attack) {
     let near = combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), 4.0 + radius_m, i.origin);
     let key = combat::handle_key(mob);
     if let Some(n) = near.iter().position(|t| t.shootable().is_some_and(|h| combat::handle_key(h) == key)) {

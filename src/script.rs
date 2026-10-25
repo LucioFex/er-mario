@@ -403,6 +403,12 @@ pub const SW_RICOCHET: u16 = 72;
 /// not "sword moves" for the pause strings: no beat comes of them)
 pub const SW_SHEATH: u16 = 73;
 pub const SW_TRICK: u16 = 74;
+/// B per weapon (Part 12.6b): the hammer's broken guard (guard.rs queues it), the Chomp's slam, the
+/// air harpoon and the yank of a big one (lib.rs picks them, chompslam.rs)
+pub const HAMMER_STUN: u16 = 75;
+pub const CHOMP_SLAM: u16 = 76;
+pub const CHOMP_HARPOON: u16 = 77;
+pub const CHOMP_YANK: u16 = 78;
 
 /// One of the Star Sword's moves.
 pub fn is_sword(id: u16) -> bool {
@@ -591,6 +597,10 @@ pub const MOVES: &[Move] = &[
     sw::RICOCHET,
     sw::SHEATH,
     sw::TRICK,
+    hammer::STUN,
+    chomp::SLAM,
+    chomp::HARPOON,
+    chomp::YANK,
 ];
 
 // ---- playing them ---------------------------------------------------------------------------
@@ -1139,10 +1149,10 @@ mod tests {
     #[test]
     fn every_id_has_its_move() {
         // (the last id of each table: indexing MOVES by an id with no data would panic)
-        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP, SW_LEAP, SW_CALIBUR, SW_RICOCHET, SW_SHEATH, SW_TRICK] {
+        for id in [ZEUS_THROW, SW_DRAW_AIR, FIST_DROPKICK, HAMMER_COMET, CHOMP_FRENZY, RANG_CATCH, SWAMP, SW_LEAP, SW_CALIBUR, SW_RICOCHET, SW_SHEATH, SW_TRICK, HAMMER_STUN, CHOMP_SLAM, CHOMP_HARPOON, CHOMP_YANK] {
             assert!((id as usize) < MOVES.len(), "{id}");
         }
-        assert_eq!(MOVES.len(), SW_TRICK as usize + 1);
+        assert_eq!(MOVES.len(), CHOMP_YANK as usize + 1);
     }
 
     #[test]

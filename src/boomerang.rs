@@ -198,6 +198,11 @@ const HOLD: u32 = 10;
 const WOUND_SIZE: f32 = 2.2;
 /// (er_moves.c ER_BIG_CHARGE_MAX: ticks to wind up fully)
 const WIND_TICKS: f32 = 40.0;
+/// the glide (glide.rs): the boomerang flat over his raised hand, turning like a propeller (radians a
+/// tick), this far over the hand (m), a size up so it reads from afar
+const GLIDE_SPIN: f32 = 0.9;
+const GLIDE_LIFT: f32 = 0.22;
+const GLIDE_SIZE: f32 = 1.25;
 
 static READY: AtomicU32 = AtomicU32::new(MAX_OUT);
 static SPRITES: Mutex<(Vec<Sprite>, Option<Vec3>, Option<Instant>)> = Mutex::new((Vec::new(), None, None));
@@ -494,6 +499,15 @@ impl Boomerang {
             return;
         }
         let Some(slot) = (0..RANGS).find(|s| !self.out.iter().any(|r| r.slot == *s)) else { return };
+        // gliding (glide.rs): held up over his head, spinning flat; he doesn't spin
+        if action == moves::ACT_ER_GLIDE {
+            self.in_hand = 1.0;
+            self.idle = 0;
+            self.winding = 0;
+            let rot = Quat::from_rotation_y(-(mv.action_timer as f32) * GLIDE_SPIN);
+            parts[RANG + slot] = PartPose { rot, pos: parts[9].pos + Vec3::Y * GLIDE_LIFT, scale: GLIDE_SIZE, stretch: Vec3::ONE };
+            return;
+        }
         // in his hand while he throws (and a moment after), on his back otherwise; the big one
         // grows in his hand as he winds it up
         let throwing = matches!(action, moves::ACT_ER_THROW | moves::ACT_ER_AIR_THROW) && mv.action_arg <= moves::THROW_BIG;

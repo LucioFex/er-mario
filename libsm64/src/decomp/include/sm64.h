@@ -315,6 +315,7 @@
 #define ACT_ER_SWING_KICK              0x00800896 // (0x096 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) off the rope or the line
 #define ACT_ER_LEAP                    0x00800897 // (0x097 | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) forward + Y, the gap closer
 #define ACT_ER_SCRIPT_AIR              0x0080089E // (0x09E | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) a scripted move in the air (script.rs)
+#define ACT_ER_GLIDE                   0x0000089F // (0x09F | ACT_FLAG_AIR) the boomerang's glide, held overhead (glide.rs)
 #define ACT_ER_RISE                    0x0080089D // (0x09D | ACT_FLAG_AIR | ACT_FLAG_ATTACKING) X + A, the weapon's rising blow
 #define ACT_THROWN_FORWARD             0x010208BD // (0x0BD | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)
 #define ACT_THROWN_BACKWARD            0x010208BE // (0x0BE | ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_FLAG_ALLOW_VERTICAL_WIND_ACTION)

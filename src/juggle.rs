@@ -71,6 +71,10 @@ enum Phase {
     /// dragged in by the hook: hung in front of him once there if he's in the air (`air`), set down
     /// otherwise
     Pulled { since: Instant, air: bool, near: f32 },
+    /// heaved over Mario by the Chomp Slam (chompslam.rs): along `arc`, `t` from -BITE/FLIGHT (the
+    /// Chomp's bite: still where it was) to 1 (landed); `lurch`: the yank of a big one, a short
+    /// step toward him that ends on its feet
+    Slung { arc: crate::chompslam::Arc, t: f32, lurch: bool },
 }
 
 struct Juggled {
@@ -80,6 +84,16 @@ struct Juggled {
 }
 
 static UP: Mutex<Vec<Juggled>> = Mutex::new(Vec::new());
+
+/// Slams that landed since the last `take_landed`: the enemy and where (Elden Ring).
+static LANDED: Mutex<Vec<(FieldInsHandle, Vec3)>> = Mutex::new(Vec::new());
+
+/// A sling at progress `t` (negative: still held, waiting for the Chomp's bite) advanced by `dt` s
+/// over `flight` s: its new progress, and whether it landed.
+pub fn sling_step(t: f32, dt: f32, flight: f32) -> (f32, bool) {
+    let t = t + dt / flight.max(1e-3);
+    (t.min(1.0), t >= 1.0)
+}
 
 fn key(h: &FieldInsHandle) -> u64 {
     unsafe { std::mem::transmute_copy::<FieldInsHandle, u64>(h) }
@@ -92,7 +106,7 @@ pub fn is_juggled(h: &FieldInsHandle) -> bool {
 /// Some enemy hangs in the air with Mario, or was launched up there for him (his air blows lift
 /// him to stay up, and X goes on with the air string: libsm64's er_juggle).
 pub fn active() -> bool {
-    UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| !matches!(j.phase, Phase::Falling { .. } | Phase::Bounce { .. }))
+    UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| !matches!(j.phase, Phase::Falling { .. } | Phase::Bounce { .. } | Phase::Slung { .. }))
 }
 
 /// Mario `mario` caught `j` up there: it hangs in front of him from now on.
@@ -225,6 +239,35 @@ pub fn pull(h: &FieldInsHandle, air: bool, radius_m: f32, medium: bool) -> bool 
     true
 }
 
+/// The Chomp Slam (chompslam.rs) takes `h` along `arc`: after the Chomp's bite (BITE s) it flies
+/// FLIGHT s and lands (`take_landed`), bouncing off the ground for a blow to send it up again;
+/// `lurch`: a big one's yank, the arc a short step on the ground. False if it can't be moved now.
+pub fn sling(h: &FieldInsHandle, arc: crate::chompslam::Arc, lurch: bool) -> bool {
+    // (co-op guest: the host owns the enemies)
+    if crate::coop::guest() || crate::stopwatch::frozen(h) {
+        return false;
+    }
+    let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return false };
+    let Some(chr) = wcm.chr_ins_by_handle(h) else { return false };
+    if chr.modules.data.hp <= 0 || crate::carry::is_carried(h) || crate::knock::is_flying(h) {
+        return false;
+    }
+    let phase = Phase::Slung { arc, t: -crate::chompslam::BITE / crate::chompslam::FLIGHT, lurch };
+    let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) {
+        j.pos = arc.start;
+        j.phase = phase;
+        return true;
+    }
+    up.push(Juggled { mob: *h, pos: arc.start, phase });
+    true
+}
+
+/// The slams that landed since the last call.
+pub fn take_landed() -> Vec<(FieldInsHandle, Vec3)> {
+    std::mem::take(&mut *LANDED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// `h` is being dragged in by the hook.
 pub fn is_pulled(h: &FieldInsHandle) -> bool {
     UP.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| key(&j.mob) == key(h) && matches!(j.phase, Phase::Pulled { .. }))
@@ -242,7 +285,7 @@ pub fn hit(h: &FieldInsHandle, mario: Vec3) {
         }
         Phase::Flying { since, .. } => since.elapsed().as_secs_f32() >= CATCH_AFTER,
         Phase::Hover { .. } => true,
-        Phase::Falling { .. } | Phase::Pulled { .. } => false,
+        Phase::Falling { .. } | Phase::Pulled { .. } | Phase::Slung { .. } => false,
         // on the bounce: up again
         Phase::Bounce { .. } => {
             log("juggle: off the bounce, up again");
@@ -278,7 +321,7 @@ pub fn shot(h: &FieldInsHandle) {
             crate::impact::launched(j.pos);
             j.phase = launched(j.pos, j.pos, RELAUNCH_HEIGHT * 0.7);
         }
-        Phase::Flying { .. } | Phase::Pulled { .. } => {}
+        Phase::Flying { .. } | Phase::Pulled { .. } | Phase::Slung { .. } => {}
     }
 }
 
@@ -287,7 +330,7 @@ pub fn shot(h: &FieldInsHandle) {
 pub fn spike(h: &FieldInsHandle) -> bool {
     let mut up = UP.lock().unwrap_or_else(|e| e.into_inner());
     let Some(j) = up.iter_mut().find(|j| key(&j.mob) == key(h)) else { return false };
-    if matches!(j.phase, Phase::Bounce { .. } | Phase::Pulled { .. }) {
+    if matches!(j.phase, Phase::Bounce { .. } | Phase::Pulled { .. } | Phase::Slung { .. }) {
         return false;
     }
     j.phase = Phase::Falling { vel: Vec3::new(0.0, -SPIKE_SPEED, 0.0), since: Instant::now() };
@@ -400,6 +443,21 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
                     (next, true)
                 }
             }
+            Phase::Slung { arc, t, lurch } => {
+                let (t, landed) = sling_step(t, dt, crate::chompslam::FLIGHT);
+                if !landed {
+                    j.phase = Phase::Slung { arc, t, lurch };
+                    (arc.at(t.max(0.0)), true)
+                } else if lurch {
+                    // (the yank: set down, it falls the little that is left)
+                    j.phase = Phase::Falling { vel: Vec3::ZERO, since: Instant::now() };
+                    (arc.end, true)
+                } else {
+                    LANDED.lock().unwrap_or_else(|e| e.into_inner()).push((j.mob, arc.end));
+                    j.phase = Phase::Bounce { vel: Vec3::Y * bounce_speed(OTG_HEIGHT) };
+                    (arc.end, true)
+                }
+            }
             Phase::Flying { vel, since } => {
                 let vel = vel - Vec3::Y * GRAVITY * dt;
                 let next = j.pos + vel * dt;
@@ -481,6 +539,29 @@ pub fn update(dt: f32, mario: Vec3, face_angle: f32, hit: impl Fn(Vec3, Vec3) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slam's flight: held still for the bite (negative progress), then FLIGHT s to land, to the tick.
+    #[test]
+    fn a_sling_waits_for_the_bite_then_lands_after_its_flight() {
+        let (bite, flight) = (crate::chompslam::BITE, crate::chompslam::FLIGHT);
+        let mut t = -bite / flight;
+        let mut ticks = 0;
+        loop {
+            let (next, landed) = sling_step(t, 1.0 / 30.0, flight);
+            ticks += 1;
+            if t < 0.0 && next < 0.0 {
+                // (still held where it was)
+                assert!(!landed);
+            }
+            t = next;
+            if landed {
+                break;
+            }
+            assert!(ticks < 100);
+        }
+        assert_eq!(t, 1.0);
+        assert_eq!(ticks, ((bite + flight) * 30.0).ceil() as i32, "{ticks}");
+    }
 
     /// The Leap Splitter's OTG bounce: about 1.5 m up off the ground.
     #[test]

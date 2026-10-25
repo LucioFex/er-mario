@@ -231,6 +231,7 @@ unsafe extern "C" {
     /// er-mario patch: how much longer the Chomp's chain is than its moves say, past its place by
     /// him (Star Power's, starpower.rs; 1.25 otherwise)
     pub fn sm64_er_set_chomp_longer(k: f32);
+    pub fn sm64_er_set_glide(vy: f32, fwd: f32, turn: f32, done: i32);
     /// er-mario patch: shot from the cannon (cling mode 12): his body pitched this far up (radians)
     pub fn sm64_er_cling_pitch(radians: f32);
     /// er-mario patch: where a fall counts from (SM64 units)

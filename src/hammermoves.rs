@@ -16,6 +16,7 @@ const FAST_LONGJUMP: i32 = 0x13;
 const GROUND_POUND: i32 = 0x3D;
 const THROW_LIGHT_OBJECT: i32 = 0x52;
 const SINGLE_JUMP: i32 = 0x4D;
+const SOFT_BACK_KB: i32 = 0x74;
 
 /// (SM64's: the soft ones at that volume, the voice at his body)
 const SWISH: u32 = 0x305C_0081;
@@ -178,6 +179,24 @@ pub const LEAP_FULL: Move = Move {
     ..LEAP
 };
 
+/// The guard broke (guard.rs, Part 12.6b): staggered a second, leaning back, the hammer drooping at
+/// his side. No way out of it, no one to hit; the guard is shut two seconds in all.
+pub const STUN: Move = Move {
+    name: "guard broken",
+    len: 30,
+    clips: &[clip(0, SOFT_BACK_KB)],
+    pitch: &[k(0, -14.0, Out), k(8, -20.0, InOut), k(22, -8.0, InOut), k(30, 0.0, InOut)],
+    squash: &[k(0, 0.94, Out), k(10, 0.97, InOut), k(30, 1.0, InOut)],
+    dip: &[k(0, 4.0, Out), k(30, 0.0, InOut)],
+    reach: &[k(0, 0.25, Linear)],
+    blade_yaw: &[k(0, -40.0, Linear)],
+    blade_pitch: &[k(0, -60.0, Linear)],
+    blade_held: (0, 30),
+    sounds: &[(0, UH, 0.5)],
+    locked: (0, 30),
+    ..BASE
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +212,19 @@ mod tests {
         assert_eq!(hammer(HAMMER_VOLLEY).name, "Hammer Bros. volley");
         assert_eq!(hammer(HAMMER_COMET).name, "diving comet");
         assert!(hammer(HAMMER_COMET).air && !hammer(HAMMER_CHARGE).air && !hammer(HAMMER_VOLLEY).air);
+    }
+
+    /// The broken guard stuns him as long as the guard says, with no way out and nothing hit.
+    #[test]
+    fn a_broken_guard_is_a_second_with_no_way_out() {
+        let m = hammer(HAMMER_STUN);
+        assert_eq!(m.len as u32, crate::guard::STUN_TICKS);
+        assert!(m.cancels.is_empty() && m.windows.is_empty() && !m.air);
+        assert_eq!(m.locked, (0, m.len));
+        // (no immunity: the stun is the price)
+        assert_eq!(m.invulnerable, (0, 0));
+        assert!(m.pitch.iter().all(|k| k.v <= 0.0), "leaning back, never forward");
+        assert!(crate::guard::LOCK_TICKS > crate::guard::STUN_TICKS);
     }
 
     #[test]

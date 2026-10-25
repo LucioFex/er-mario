@@ -196,6 +196,12 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         // the Phantom Cut's line a solid hit; the parry a brief one (its clash is starstep.rs's)
         Attack::SwordPhantom => Some((5, 1.5, true)),
         Attack::SwordParry => Some((2, 1.0, false)),
+        // the Just Guard's clang a brief one (its clash is guard.rs'); the slam's landing a long
+        // hold and a jolt, the harpoon's spike alike, the yank a short one
+        Attack::HammerClang => Some((2, 1.0, false)),
+        Attack::ChompSlam => Some((6, 1.7, true)),
+        Attack::ChompSlamLand => Some((3, 1.2, false)),
+        Attack::ChompYank => Some((2, 1.0, false)),
     }
 }
 
@@ -667,6 +673,16 @@ pub fn clash(at: Vec3) {
     burst(at, 5, Bit::Star);
     crate::lakitu::shake(0.35);
     crate::sfx::play(crate::sfx::Sfx::Hit(2), 0.7);
+}
+
+/// The hammer's guard breaks (guard.rs): a red-white flash and ring in front of him, a jolt, the
+/// heavy hit bank.
+pub fn guard_break(at: Vec3) {
+    spark(at, 1.5, WHITE);
+    ring(at, 1.2, 0.3, [1.0, 0.35, 0.25, 0.9]);
+    burst(at, 4, Bit::Star);
+    crate::lakitu::shake(0.4);
+    crate::sfx::play(crate::sfx::Sfx::Hit(2), 0.6);
 }
 
 /// The Phantom Cut's vanish: a line of star sparkles from where Mario was to where he is (a

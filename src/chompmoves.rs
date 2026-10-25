@@ -14,6 +14,9 @@ const SECOND_PUNCH: i32 = 0x68;
 const SECOND_PUNCH_FAST: i32 = 0x6A;
 const FAST_LONGJUMP: i32 = 0x13;
 const GENERAL_LAND: i32 = 0x57;
+const GRAB_HEAVY_OBJECT: i32 = 0x59;
+const HEAVY_THROW: i32 = 0xB9;
+const GROUND_POUND: i32 = 0x3D;
 
 /// (SM64's: the soft ones at that volume, the voice at his body; the chain's clink, not verified)
 const SWISH: u32 = 0x305C_0081;
@@ -157,6 +160,82 @@ pub const FRENZY: Move = Move {
     ..BASE
 };
 
+/// B (Part 12.6b, chompslam.rs): the Chomp bites the enemy and Mario heaves it over his head onto the
+/// other side: two hands overhead (the right hand's reach, tipped straight up), the torso back, then
+/// forward as it lands. The enemy's flight is juggle.rs'; lib.rs puts the Chomp (its yaw, its reach,
+/// its height) on the enemy it holds, so the curves for them are only the rest pose. No blow of its
+/// own: the landing and its blast are lib.rs'.
+pub const SLAM: Move = Move {
+    name: "Chomp Slam",
+    len: 32,
+    clips: &[clip(0, GRAB_HEAVY_OBJECT), clip(12, HEAVY_THROW), clip(24, GENERAL_LAND)],
+    pitch: &[k(0, 0.0, Linear), k(4, -8.0, Out), k(9, -26.0, InOut), k(15, 4.0, In), k(19, 30.0, Out), k(25, 10.0, InOut), k(32, 0.0, InOut)],
+    aim: &[0],
+    squash: &[k(0, 1.0, Linear), k(9, 1.08, Out), k(19, 0.88, Out), k(26, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(19, 8.0, Out), k(28, 0.0, InOut)],
+    reach: &[k(0, 0.8, Linear), k(4, 1.0, Out), k(24, 1.0, Linear), k(30, 0.5, InOut)],
+    reach_pitch: 90.0,
+    blade_yaw: &[k(0, 0.0, Linear)],
+    blade_pitch: &[k(0, 0.0, Linear)],
+    blade_held: (0, 32),
+    out: &[k(0, 150.0, Linear)],
+    up: &[k(0, 70.0, Linear)],
+    bite: &[k(0, 0.0, Linear), k(3, 1.0, Out), k(5, 0.1, In), k(18, 0.1, Linear), k(20, 1.0, Out), k(24, 0.0, InOut)],
+    // (B again once it has landed: moves.rs slams back the other way)
+    cancels: &[c(DASH | SWAP, 22, 20)],
+    sounds: &[(0, HOO, 0.0), (4, CHOMP_BITE, 0.35), (9, SWISH, 0.4)],
+    locked: (0, 20),
+    ..BASE
+};
+
+/// In the air (Orion's Harpoon): the Chomp bites an enemy that is up there and he drives it down,
+/// hanging a moment, leaning into the throw.
+pub const HARPOON: Move = Move {
+    name: "Chomp harpoon",
+    len: 24,
+    clips: &[still(0, FIRST_PUNCH), clip(3, GROUND_POUND)],
+    pitch: &[k(0, 0.0, Linear), k(3, -12.0, Out), k(8, 28.0, In), k(16, 10.0, InOut), k(24, 0.0, InOut)],
+    aim: &[0, 3],
+    hold: (0, 10),
+    squash: &[k(0, 1.0, Linear), k(3, 1.06, Out), k(8, 0.9, Out), k(16, 1.0, InOut)],
+    reach: &[k(0, 0.8, Linear), k(4, 1.0, Out), k(18, 1.0, Linear), k(23, 0.5, InOut)],
+    reach_pitch: 60.0,
+    blade_yaw: &[k(0, 0.0, Linear)],
+    blade_pitch: &[k(0, 0.0, Linear)],
+    blade_held: (0, 24),
+    out: &[k(0, 150.0, Linear)],
+    up: &[k(0, 70.0, Linear)],
+    bite: &[k(0, 0.0, Linear), k(3, 1.0, Out), k(6, 0.1, In), k(14, 0.1, Linear), k(16, 1.0, Out), k(20, 0.0, InOut)],
+    cancels: &[c(ALL, 16, 12)],
+    sounds: &[(0, HOO, 0.0), (4, CHOMP_BITE, 0.35), (8, SWISH, 0.45)],
+    locked: (0, 8),
+    air: true,
+    land_ends: true,
+    ..BASE
+};
+
+/// A big one (or a boss): the Chomp bites and he hauls on the chain, a stance yank; it lurches
+/// toward him a step, nothing more.
+pub const YANK: Move = Move {
+    name: "Chomp yank",
+    len: 18,
+    clips: &[clip(0, GRAB_HEAVY_OBJECT), clip(10, GENERAL_LAND)],
+    pitch: &[k(0, 0.0, Linear), k(3, -6.0, Out), k(7, -20.0, InOut), k(10, 10.0, In), k(18, 0.0, InOut)],
+    aim: &[0],
+    squash: &[k(0, 1.0, Linear), k(7, 0.94, Out), k(12, 1.0, InOut)],
+    reach: &[k(0, 0.6, Linear), k(4, 1.0, Out), k(14, 1.0, Linear), k(17, 0.5, InOut)],
+    blade_yaw: &[k(0, 0.0, Linear)],
+    blade_pitch: &[k(0, 0.0, Linear)],
+    blade_held: (0, 18),
+    out: &[k(0, 150.0, Linear)],
+    up: &[k(0, 70.0, Linear)],
+    bite: &[k(0, 0.0, Linear), k(3, 1.0, Out), k(5, 0.1, In), k(11, 0.1, Linear), k(13, 1.0, Out), k(16, 0.0, InOut)],
+    cancels: &[c(DASH | SWAP, 12, 10)],
+    sounds: &[(0, HOO, 0.0), (4, CHOMP_BITE, 0.35)],
+    locked: (0, 9),
+    ..BASE
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +251,36 @@ mod tests {
         assert_eq!(chomp(CHOMP_RAM).name, "Chomp ram");
         assert_eq!(chomp(CHOMP_RAM_FULL).name, "Chomp ram (full)");
         assert_eq!(chomp(CHOMP_FRENZY).name, "Chomp frenzy");
+    }
+
+    /// The Chomp Slam (Part 12.6b): the torso goes back, then forward as the enemy lands (its flight
+    /// is chompslam's: bite + flight seconds), B again opens only after it landed.
+    #[test]
+    fn the_slam_heaves_back_then_slams_forward_as_it_lands() {
+        let m = chomp(CHOMP_SLAM);
+        assert!(!m.air && m.windows.is_empty());
+        let land = ((crate::chompslam::BITE + crate::chompslam::FLIGHT) * 30.0).round() as u16;
+        let at = |f: fn(f32, f32) -> bool| m.pitch.iter().copied().reduce(|a, b| if f(b.v, a.v) { b } else { a }).unwrap();
+        let (back, fwd) = (at(|b, a| b < a), at(|b, a| b > a));
+        assert!(back.v <= -20.0 && fwd.v >= 25.0, "{back:?} {fwd:?}");
+        assert!(back.t < fwd.t, "back before forward");
+        assert!(fwd.t.abs_diff(land) <= 2, "forward peak {} vs landing {land}", fwd.t);
+        // (overhead, both hands: the reach tipped straight up)
+        assert_eq!(m.reach_pitch, 90.0);
+        // (no dash, no second slam, before it has landed)
+        assert!(m.cancels.iter().all(|c| c.from.min(c.on_hit) >= land), "{:?}", m.cancels);
+        assert!(m.locked.1 >= land - 2);
+        assert!(m.cancels.iter().any(|c| c.into & DASH != 0));
+    }
+
+    #[test]
+    fn the_harpoon_hangs_and_drives_down_and_the_yank_is_short() {
+        let h = chomp(CHOMP_HARPOON);
+        assert!(h.air && h.land_ends && h.hold.1 >= 6);
+        assert!(h.pitch.iter().any(|k| k.v >= 25.0));
+        let y = chomp(CHOMP_YANK);
+        assert!(!y.air && y.len <= 20 && y.windows.is_empty());
+        assert_eq!(chomp(CHOMP_SLAM).name, "Chomp Slam");
     }
 
     #[test]

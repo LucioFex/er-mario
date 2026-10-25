@@ -266,11 +266,18 @@ pub enum Attack {
     /// the parry's clash that staggers a bigger one
     SwordPhantom,
     SwordParry,
+    /// B per weapon (Part 12.6b): the hammer's Just Guard recoil (guard.rs), the Chomp Slam: the
+    /// enemy heaved (and the air harpoon's spike), the ones it lands on, the stance yank of a big
+    /// one (chompslam.rs). The codes are full now: 199 is IMPACT_CODE, 200 the fireball's
+    HammerClang,
+    ChompSlam,
+    ChompSlamLand,
+    ChompYank,
 }
 
 /// Every attack but the fireball's levels, in a fixed order: their codes on the wire (coop.rs).
 /// Only ever add at the end (both players need the same build anyway).
-const CODES: [Attack; 195] = [
+const CODES: [Attack; 199] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
@@ -301,6 +308,7 @@ const CODES: [Attack; 195] = [
     Attack::KartRam, Attack::KartBump,
     Attack::SwordLeap, Attack::SwordLeapRing, Attack::SwordCalibur,
     Attack::SwordPhantom, Attack::SwordParry,
+    Attack::HammerClang, Attack::ChompSlam, Attack::ChompSlamLand, Attack::ChompYank,
 ];
 /// the fireball's levels: this plus the level
 const FIRE_CODE: u8 = 200;
@@ -440,6 +448,10 @@ impl Attack {
             Attack::SwordCalibur => Attack::Sweep.spec(),
             // the Phantom Cut breaks a stance like a ground pound; the parry staggers like one
             Attack::SwordPhantom | Attack::SwordParry => Attack::GroundPound.spec(),
+            // the Just Guard's recoil and the slam's landing stagger like a ground pound, the
+            // yank and the rest a kick's
+            Attack::HammerClang | Attack::ChompSlam | Attack::ChompSlamLand => Attack::GroundPound.spec(),
+            Attack::ChompYank => Attack::Kick.spec(),
         }
     }
 
@@ -727,6 +739,13 @@ impl Attack {
             // parry only the clash's sting, the stagger is the point (the Riposte after it)
             Attack::SwordPhantom => (12.0 * SWORD_SHARE, "damage_sword_phantom"),
             Attack::SwordParry => (2.0 * SWORD_SHARE, "damage_sword_parry"),
+            // B per weapon (Part 12.6b): the Just Guard's clang only stings (the counter after it is
+            // the point); the Chomp Slam 8% to the one heaved, 6% to each it lands on; the yank
+            // only shakes a stance (the harpoon's spike is a slam too)
+            Attack::HammerClang => (2.0, "damage_hammer_clang"),
+            Attack::ChompSlam => (8.0, "damage_chomp_slam"),
+            Attack::ChompSlamLand => (6.0, "damage_chomp_slam_land"),
+            Attack::ChompYank => (1.0, "damage_chomp_yank"),
         }
     }
 
@@ -908,6 +927,9 @@ impl Attack {
             Attack::CannonPound => 1.0,
             // (a boss only takes the glancing half of it, and the kart spins out each time)
             Attack::KartRam | Attack::KartBump | Attack::SwordParry => 1.0,
+            // (the clang and the yank are a stance's, not a boss's health)
+            Attack::HammerClang | Attack::ChompYank => 1.0,
+            Attack::ChompSlam | Attack::ChompSlamLand => 1.2,
         }
     }
 
@@ -958,6 +980,9 @@ impl Attack {
             Attack::SwordHurricane => 5,
             Attack::SwordCross => 10,
             Attack::SwordCleave | Attack::SwordThrust | Attack::SwordRise | Attack::SwordSpin | Attack::SwordLauncher | Attack::SwordHelm | Attack::SwordIai | Attack::SwordBreaker | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordLeap | Attack::SwordCalibur | Attack::SwordPhantom | Attack::SwordParry => 6,
+            // (the slam's landing and its blast are once a slam; a string slams again 14 ticks on)
+            Attack::HammerClang | Attack::ChompSlam | Attack::ChompYank => 6,
+            Attack::ChompSlamLand => 12,
             Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordFlurryEnd => 12,
             Attack::SwordHelmRing | Attack::SwordBreakerRing | Attack::SwordLeapRing => 30,
             // (each crescent and the cross's burst strike an enemy once themselves: wave.rs)
@@ -1047,7 +1072,11 @@ impl Attack {
             Attack::SwordCleave | Attack::SwordGreatSpin(2) => 8.0,
             Attack::SwordHelm | Attack::SwordLeap | Attack::SwordPhantom => 10.0,
             // (the parry: a guard break's weight)
-            Attack::SwordParry => 18.0,
+            Attack::SwordParry | Attack::HammerClang => 18.0,
+            // (the Chomp Slam: a hard landing; the yank takes a stance's worth by itself)
+            Attack::ChompSlam => 14.0,
+            Attack::ChompSlamLand => 8.0,
+            Attack::ChompYank => 16.0,
             Attack::SwordBreakerRing => 6.0,
             // (the hammer's new blows: as its swings and slams)
             Attack::HammerCharge | Attack::Comet => 6.0,
@@ -1617,6 +1646,10 @@ pub fn in_the_way(at: glam::Vec3, reach: f32) -> Vec<(FieldInsHandle, u64, bool)
 /// hit is left. The Godskins took three wedges a hit: the Noble (c3550, the fat one with the
 /// rapier) and the Apostle (c3560, the tall one), which covers the Godskin Duo too.
 const SOFTER: [(u32, f32); 2] = [(3550, 0.6), (3560, 0.6)];
+
+/// A loss of the Tarnished's HP this share of his max or more (after the attacker's softer share)
+/// is a blow; less is a poison, bleed or rot tick.
+pub const BLOW_MIN: f32 = 0.04;
 
 /// Who hit the player last (character id), and what's left of his hits (1 = all of it).
 pub fn last_attacker(player: &ChrIns) -> (Option<u32>, f32) {
@@ -3200,6 +3233,9 @@ impl Combat {
                 ) {
                     // (from afar: an enemy up in the air stays up where it is, Devil May Cry's guns)
                     crate::juggle::shot(handle);
+                } else if matches!(attack, Attack::ChompSlam | Attack::ChompSlamLand | Attack::ChompYank) {
+                    // (the Chomp Slam's own: the flight and the bounce are juggle::sling's, a landing
+                    // that sent it up again on the spot was no bounce for a blow to send up)
                 } else {
                     crate::juggle::hit(handle, me);
                 }
@@ -3651,6 +3687,12 @@ impl Combat {
         hits.len()
     }
 
+    /// The share of the Tarnished's max HP a blow took since the last check (0: none). The same
+    /// reading `took_damage` makes; the hammer's guard asks it before (guard.rs).
+    pub fn lost_share(&self, hp: i32, max: i32) -> f32 {
+        self.last_hp.map_or(0.0, |old| (old - hp).max(0) as f32 / max.max(1) as f32)
+    }
+
     /// Game thread: how the Tarnished's HP loss since the last check turns into Mario's health
     /// (his HP is refilled right after, so SM64's power meter is what counts): a real hit costs
     /// half a wedge or a whole one by its size with SM64's knockback (a whole one, or two, on a
@@ -3663,7 +3705,7 @@ impl Combat {
         }
         // (Mega Mario shrugs off half of it)
         let frac = lost as f32 / max.max(1) as f32 * scale * if crate::mega::active() { crate::mega::HURT } else { 1.0 };
-        if frac >= 0.04 {
+        if frac >= BLOW_MIN {
             return Some(Hurt::Hit(if frac < 0.25 { 1 } else { 2 }));
         }
         self.drain += frac;
@@ -3833,6 +3875,21 @@ mod tests {
         assert!(Attack::SwordPhantom.cooldown() >= 6);
         for a in [Attack::SwordPhantom, Attack::SwordParry] {
             assert_eq!(Attack::from_code(a.code()), Some(a));
+        }
+    }
+
+    /// B per weapon (Part 12.6b): the slam's numbers (8% to the one heaved, 6% to those it lands on),
+    /// the clang and the yank sting but stagger, the codes sit at the end.
+    #[test]
+    fn the_chomp_slam_and_the_clang_numbers() {
+        assert_eq!(Attack::ChompSlam.percent().0, 8.0);
+        assert_eq!(Attack::ChompSlamLand.percent().0, 6.0);
+        assert!(Attack::HammerClang.percent().0 <= 2.5 && Attack::HammerClang.posture() >= 15.0);
+        assert!(Attack::ChompYank.percent().0 <= 1.5 && Attack::ChompYank.posture() >= 15.0);
+        assert_eq!(Attack::SwordParry.code() + 1, Attack::HammerClang.code(), "appended at the end");
+        for a in [Attack::HammerClang, Attack::ChompSlam, Attack::ChompSlamLand, Attack::ChompYank] {
+            assert_eq!(Attack::from_code(a.code()), Some(a));
+            assert!(a.cooldown() >= 6);
         }
     }
 

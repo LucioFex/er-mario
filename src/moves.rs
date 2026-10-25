@@ -51,6 +51,8 @@ pub const ACT_ER_THROW: u32 = 0x0080_0397;
 const ACT_ER_CHOMP: u32 = 0x0080_0398;
 const ACT_ER_CHOMP_SPIN: u32 = 0x0080_0399;
 pub const ACT_ER_AIR_THROW: u32 = 0x0080_0890;
+/// the boomerang's glide (er_moves.c, glide.rs): in the air, no blows of its own
+pub const ACT_ER_GLIDE: u32 = 0x0000_089F;
 const ACT_ER_CHOMP_AIR: u32 = 0x0080_0891;
 /// the throws (er_moves.c ER_THROW_*): the boomerang's, then the fireball's by charge level
 pub const THROW_STORM: u32 = 1;
@@ -166,6 +168,8 @@ const AIR_DASHES: u32 = 3;
 const MEGA_SLAM_COOLDOWN: u32 = 75;
 /// ticks between two dashes
 const DASH_COOLDOWN: u32 = 12;
+/// the Chomp's slams this far apart (ticks): its flight and a breath
+const SLAM_COOLDOWN: u32 = 14;
 /// the stick this far toward or away from where he faces (cos) is "forward" / "back"; the back +
 /// X launcher only from about standing (a run turning round shouldn't launch)
 const LEAN: f32 = 0.6;
@@ -322,6 +326,11 @@ pub enum Request {
     /// the Star Sword's B (starstep.rs): the short step, or the air Trick; lib.rs decides what it
     /// comes to (a parry, the Phantom Cut, a blink) and otherwise it is the dash
     StarStep { air: bool },
+    /// the Chain Chomp's B (chompslam.rs): lib.rs picks the enemy and what comes of it (a slam, a
+    /// yank, the harpoon) and otherwise it is the dash
+    Slam { air: bool },
+    /// the boomerang's glide (er_moves.c's ACT_ER_GLIDE; the tick's speeds are glide_params')
+    Glide,
 }
 
 impl Request {
@@ -341,6 +350,8 @@ impl Request {
                 }
                 Request::Velocity(v) => sm64::sm64_set_mario_velocity(id, v[0], v[1], v[2]),
                 Request::Flow([x, y, z]) => sm64::sm64_er_zip(id, x, y, z, 0, 1),
+                Request::Slam { .. } => {}
+                Request::Glide => sm64::sm64_set_mario_action(id, ACT_ER_GLIDE),
                 Request::StarStep { air } => sm64::sm64_set_mario_action_arg(id, if air { ACT_ER_AIR_DASH } else { ACT_ER_DASH }, if air { 0 } else { crate::starstep::STEP_ARG }),
                 Request::Script { id: move_id, air, yaw } => {
                     sm64::sm64_set_mario_action_arg(id, if air { crate::script::ACT_ER_SCRIPT_AIR } else { crate::script::ACT_ER_SCRIPT }, move_id as u32);
@@ -456,6 +467,14 @@ pub struct Moves {
     /// a swap strike just started (the weapon taken), and the string's pair finisher used
     swapped: Option<u8>,
     mixed: bool,
+    /// the hammer's guard and the stick's raw push (0..1: `stick` below is read against the enemy)
+    guard: crate::guard::Guard,
+    raw_stick: f32,
+    /// the boomerang's glide
+    glide: crate::glide::Glide,
+    /// the Chomp's slam string, and the next slam allowed
+    slams: crate::chompslam::Slams,
+    slam_ready: u32,
 }
 
 /// the sword's pogo bounces a jump (Link's down-thrust)
@@ -473,20 +492,38 @@ pub fn dodging(action: u32) -> bool {
     action == ACT_ER_DASH || action == ACT_ER_AIR_DASH
 }
 
-/// What B does with the weapon in hand (Part 12.6): its own move, the dash by default. The hammer's
-/// guard, the boomerang's glide and the Chomp's slam slot in here (12.6b).
+/// What B does with the weapon in hand (Part 12.6): its own move, the dash by default.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BKind {
     Dash,
     /// the Star Sword's Star Step on foot, Star Trick in the air (starstep.rs)
     Star,
+    /// the hammer's guard with the stick still, the heavy roll with it pushed (guard.rs); the
+    /// dash in the air
+    Guard,
+    /// the boomerang's glide in the air (glide.rs); the dash on foot
+    Glide,
+    /// the Chain Chomp's slam (chompslam.rs)
+    Slam,
 }
 
 pub fn b_kind(weapon: u8) -> BKind {
     match weapon {
         crate::weapons::SWORD => BKind::Star,
+        crate::weapons::HAMMER => BKind::Guard,
+        crate::weapons::RANG => BKind::Glide,
+        crate::weapons::CHOMP => BKind::Slam,
         _ => BKind::Dash,
     }
+}
+
+/// On his feet and free for the hammer's guard: standing or walking, not in a move of his own.
+fn guard_stance(a: u32) -> bool {
+    a & (ACT_FLAG_AIR | ACT_FLAG_INVULNERABLE | ACT_NO_MOVES) == 0
+        && a & (ACT_FLAG_STATIONARY | ACT_FLAG_MOVING) != 0
+        && a & ACT_GROUP_MASK != ACT_GROUP_CUTSCENE
+        && !combo(a)
+        && !crate::script::is_script(a)
 }
 
 /// Enemy blows go through him: the dash, the Mikiri's somersault over the blow.
@@ -562,6 +599,11 @@ impl Moves {
             fist_air: 0,
             swapped: None,
             mixed: false,
+            guard: Default::default(),
+            raw_stick: 0.0,
+            glide: Default::default(),
+            slams: Default::default(),
+            slam_ready: 0,
         }
     }
 
@@ -580,6 +622,76 @@ impl Moves {
         self.offset.dash_started(x, step, tick);
         crate::log(format!("moves: star step {from}").trim_end());
         Some(Request::StarStep { air: false })
+    }
+
+    /// The stick's raw push (0..1), read before the tick: the hammer's B is a guard when it is
+    /// still, a roll when it is not.
+    pub fn set_raw_stick(&mut self, push: f32) {
+        self.raw_stick = push;
+    }
+
+    /// The hammer's guard is up (he walks at a third of his pace, lib.rs).
+    pub fn guarding(&self) -> bool {
+        self.guard.up()
+    }
+
+    /// Ticks the guard has been up.
+    pub fn guard_age(&self, tick: u32) -> Option<u32> {
+        self.guard.age(tick)
+    }
+
+    /// A blow lands (lib.rs): what the guard makes of it.
+    pub fn guard_judge(&mut self, tick: u32, front: bool, passes: bool) -> crate::guard::Verdict {
+        self.guard.judge(tick, front, passes)
+    }
+
+    /// The glide's rule for this tick, if he is gliding: from his last state (SM64 units a tick),
+    /// the stick's push and how far it points off his facing (degrees, + left). In metres a second
+    /// (glide::step); the time out ends it.
+    pub fn glide_params(&mut self, state: &sm64::SM64MarioState, stick: f32, off_deg: f32, tick: u32) -> Option<crate::glide::Params> {
+        let age = self.glide.age(tick)?;
+        let k = 30.0 * crate::scale();
+        let p = crate::glide::step(state.velocity[1] * k, state.forward_velocity * k, age, stick, off_deg);
+        if p.done {
+            self.glide.end();
+        }
+        Some(p)
+    }
+
+    /// An enemy step or the hook: the glide is his again.
+    pub fn glide_back(&mut self) {
+        self.glide.give_back();
+    }
+
+    /// The Chomp's B really started something (lib.rs found the enemy): a slam counts in the
+    /// string (`slam`), the next B waits a breath either way.
+    pub fn slam_started(&mut self, tick: u32, slam: bool) {
+        if slam {
+            self.slams.used(tick);
+        }
+        self.slam_ready = tick + SLAM_COOLDOWN;
+    }
+
+    /// Dead or reset: the weapons' B moves start over.
+    pub fn clear_b(&mut self) {
+        self.guard.clear();
+        self.glide.clear();
+        self.slams.clear();
+    }
+
+    /// The Chomp's B found nothing to bite: the dash, as any weapon's.
+    pub fn slam_fallback(&mut self, air: bool, tick: u32) -> Option<Request> {
+        if air {
+            if self.air_dashed {
+                return None;
+            }
+            self.air_dashed = true;
+            self.air_dashes += 1;
+            self.dash_ready = tick + DASH_COOLDOWN;
+            return Some(Request::Action(ACT_ER_AIR_DASH, 0));
+        }
+        self.dash_ready = tick + DASH_COOLDOWN;
+        Some(Request::Action(ACT_ER_DASH, 0))
     }
 
     pub fn queue(&mut self, r: Request, tick: u32) {
@@ -870,6 +982,26 @@ impl Moves {
         }
         let punching = a == ACT_PUNCHING || a == ACT_MOVE_PUNCHING;
         let air = a & ACT_FLAG_AIR != 0;
+        // the hammer's guard stays up while B is held on his feet with the hammer
+        if self.guard.up() && (!b || self.weapon != crate::weapons::HAMMER || sword_in_hand || !guard_stance(a) || crate::mega::active()) {
+            self.guard.release();
+        }
+        // the boomerang's glide: the ground, an enemy step or the hook give it back; it is over
+        // when the action isn't its own any more; X throws from the air
+        if !air {
+            self.glide.landed();
+        }
+        if a == ACT_ER_ZIP {
+            self.glide.give_back();
+        }
+        if self.glide.age(tick).is_some_and(|age| age >= 3) && a != ACT_ER_GLIDE {
+            self.glide.end();
+        }
+        if a == ACT_ER_GLIDE && x_pressed && allowed && self.weapon == crate::weapons::RANG && crate::boomerang::ready() > 0 {
+            self.glide.end();
+            crate::log("rang: glide ends in a throw (X)");
+            return Some(Request::Action(ACT_ER_AIR_THROW, 0));
+        }
         // the string's first blow over with no second (a second X in it goes on with the string):
         // a beat from now, X is the fists' heavy hook, the hammer's volley, the boomerang's pincer
         let in_string_move = match self.weapon {
@@ -998,6 +1130,16 @@ impl Moves {
             }
             // the dash out of it (its own: the rest of the moves wait for NEXT)
             if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() && allowed {
+                // (the Chomp's slam again, back the other way; the boomerang's glide, out of a throw in the air)
+                match b_kind(if sword { crate::weapons::SWORD } else { self.weapon }) {
+                    BKind::Slam if tick >= self.slam_ready && self.slams.can(tick) => return Some(Request::Slam { air }),
+                    BKind::Glide if air && a != ACT_ER_GLIDE && self.glide.ready(true) => {
+                        self.glide.start(tick);
+                        crate::log("rang: glide out of the move");
+                        return Some(Request::Glide);
+                    }
+                    _ => {}
+                }
                 self.dash_ready = tick + DASH_COOLDOWN;
                 if b_kind(if sword { crate::weapons::SWORD } else { self.weapon }) == BKind::Star {
                     return self.star_press(air, x, self.string_done(tick), tick, "out of the move");
@@ -1012,6 +1154,11 @@ impl Moves {
                     return Some(Request::Action(ACT_ER_AIR_DASH, 0));
                 }
                 self.offset.dash_started(x, self.string_done(tick), tick);
+                // (the hammer's with the stick pushed: the heavy roll)
+                if b_kind(self.weapon) == BKind::Guard && !sword && self.raw_stick >= crate::guard::NEUTRAL {
+                    crate::log("hammer: heavy roll out of the move");
+                    return Some(Request::Action(ACT_ER_DASH, crate::guard::ROLL_ARG));
+                }
                 crate::log("moves: dash out of the move");
                 return Some(Request::Action(ACT_ER_DASH, 0));
             }
@@ -1224,6 +1371,27 @@ impl Moves {
                 return Some(Request::Flow(to));
             }
         }
+        // B with the hammer, the boomerang or the Chomp (Part 12.6b): the guard with the stick still,
+        // the glide in the air, the slam; the roll is the dash below
+        if b_pressed && !locked && !crate::mega::active() && !sword {
+            match b_kind(self.weapon) {
+                BKind::Guard if ground && guard_stance(a) && self.raw_stick < crate::guard::NEUTRAL => {
+                    if self.guard.press(tick, self.raw_stick) == crate::guard::Press::Guard {
+                        crate::log("hammer: guard up");
+                    }
+                    return None;
+                }
+                BKind::Glide if in_air && a != ACT_ER_GLIDE && self.glide.ready(true) => {
+                    self.glide.start(tick);
+                    crate::log("rang: glide");
+                    return Some(Request::Glide);
+                }
+                BKind::Slam if (ground || in_air) && tick >= self.slam_ready && self.slams.can(tick) => {
+                    return Some(Request::Slam { air: !ground });
+                }
+                _ => {}
+            }
+        }
         // (no dashes for Mega Mario: too fast for a giant's collision, mario_step.c)
         // (not in a hammer blow's wind-up and impact: it's committed)
         if b_pressed && tick >= self.dash_ready && !locked && !crate::mega::active() {
@@ -1235,6 +1403,11 @@ impl Moves {
             if ground {
                 self.dash_ready = tick + DASH_COOLDOWN;
                 self.offset.dash_started(x, step, tick);
+                // (the hammer's with the stick pushed: the heavy roll)
+                if b_kind(self.weapon) == BKind::Guard && self.raw_stick >= crate::guard::NEUTRAL {
+                    crate::log("hammer: heavy roll");
+                    return Some(Request::Action(ACT_ER_DASH, crate::guard::ROLL_ARG));
+                }
                 crate::log("moves: dash");
                 return Some(Request::Action(ACT_ER_DASH, 0));
             }
@@ -1562,9 +1735,11 @@ mod tests {
     fn b_is_the_star_step_with_the_sword_and_the_dash_with_the_rest() {
         use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
         assert_eq!(b_kind(SWORD), BKind::Star);
-        for w in [FISTS, HAMMER, RANG, CHOMP] {
-            assert_eq!(b_kind(w), BKind::Dash, "{w}");
-        }
+        assert_eq!(b_kind(FISTS), BKind::Dash);
+        // (Part 12.6b: the others' own)
+        assert_eq!(b_kind(HAMMER), BKind::Guard);
+        assert_eq!(b_kind(RANG), BKind::Glide);
+        assert_eq!(b_kind(CHOMP), BKind::Slam);
         let mut m = Moves::new();
         b_step(&mut m, ACT_IDLE, false, true, 100);
         let r = b_step(&mut m, ACT_IDLE, true, true, 101);
@@ -1594,6 +1769,138 @@ mod tests {
         // (the ground gives them back)
         b_step(&mut m, ACT_IDLE, false, true, t + 2);
         assert!(matches!(press(&mut m, &mut t, true), Some(Request::StarStep { air: true })));
+    }
+
+    /// One tick with `weapon` in hand (not the sword), B held (`b`), the stick pushed `push`.
+    fn w_step(m: &mut Moves, weapon: u8, action: u32, b: bool, push: f32, x: bool, tick: u32) -> Option<Request> {
+        m.weapon = weapon;
+        m.set_raw_stick(push);
+        let state = sm64::SM64MarioState { action, health: 0x880, ..Default::default() };
+        m.tick(b, false, x, false, false, true, false, &state, 0, false, 0.0, (0.0, 0.0), None, false, false, tick)
+    }
+
+    /// The hammer's B with the stick still is the guard, up while B is held; let go, or in a swing, it drops.
+    #[test]
+    fn the_hammers_b_with_the_stick_still_is_a_guard() {
+        let mut m = Moves::new();
+        w_step(&mut m, HAMMER, ACT_IDLE, false, 0.0, false, 100);
+        let r = w_step(&mut m, HAMMER, ACT_IDLE, true, 0.0, false, 101);
+        assert!(r.is_none(), "{r:?}");
+        assert!(m.guarding());
+        assert_eq!(m.guard_age(104), Some(3));
+        // (held, walking: still up)
+        w_step(&mut m, HAMMER, ACT_WALKING, true, 0.5, false, 102);
+        assert!(m.guarding());
+        // (let go)
+        w_step(&mut m, HAMMER, ACT_IDLE, false, 0.0, false, 103);
+        assert!(!m.guarding());
+        // (a hammer swing drops it; so does another weapon)
+        w_step(&mut m, HAMMER, ACT_IDLE, true, 0.0, false, 110);
+        w_step(&mut m, HAMMER, ACT_IDLE, true, 0.0, false, 111);
+        assert!(m.guarding());
+        w_step(&mut m, HAMMER, ACT_ER_HAMMER, true, 0.0, false, 112);
+        assert!(!m.guarding());
+        w_step(&mut m, HAMMER, ACT_IDLE, false, 0.0, false, 120);
+        w_step(&mut m, HAMMER, ACT_IDLE, true, 0.0, false, 121);
+        assert!(m.guarding());
+        w_step(&mut m, FISTS, ACT_IDLE, true, 0.0, false, 122);
+        assert!(!m.guarding());
+    }
+
+    /// The Just Guard window counts from the press, however soon after a dash it came.
+    #[test]
+    fn the_guard_does_not_wait_for_the_dash_cooldown() {
+        let mut m = Moves::new();
+        m.dash_ready = 200;
+        w_step(&mut m, HAMMER, ACT_IDLE, false, 0.0, false, 100);
+        w_step(&mut m, HAMMER, ACT_IDLE, true, 0.0, false, 101);
+        assert!(m.guarding());
+    }
+
+    #[test]
+    fn the_hammers_b_with_the_stick_pushed_is_a_heavy_roll() {
+        let mut m = Moves::new();
+        w_step(&mut m, HAMMER, ACT_IDLE, false, 1.0, false, 100);
+        let r = w_step(&mut m, HAMMER, ACT_IDLE, true, 1.0, false, 101);
+        assert_eq!(action(r), Some((ACT_ER_DASH, crate::guard::ROLL_ARG)), "{r:?}");
+        assert!(!m.guarding());
+        // (the other weapons' plain dash keeps its arg)
+        let mut m = Moves::new();
+        w_step(&mut m, FISTS, ACT_IDLE, false, 1.0, false, 100);
+        let r = w_step(&mut m, FISTS, ACT_IDLE, true, 1.0, false, 101);
+        assert_eq!(action(r), Some((ACT_ER_DASH, 0)));
+    }
+
+    /// The boomerang's B: the dash on foot; in the air the glide, once an airtime.
+    #[test]
+    fn the_boomerangs_b_in_the_air_is_the_glide_once_an_airtime() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        w_step(&mut m, RANG, ACT_IDLE, false, 0.0, false, 100);
+        let r = w_step(&mut m, RANG, ACT_IDLE, true, 0.0, false, 101);
+        assert_eq!(action(r), Some((ACT_ER_DASH, 0)), "{r:?}");
+        // (in the air)
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 130);
+        let r = w_step(&mut m, RANG, ACT_JUMP, true, 0.0, false, 131);
+        assert!(matches!(r, Some(Request::Glide)), "{r:?}");
+        // (gliding: the glide's rule is asked for each tick)
+        let state = sm64::SM64MarioState { action: ACT_ER_GLIDE, ..Default::default() };
+        assert!(m.glide_params(&state, 0.0, 0.0, 132).is_some());
+        // (it ends: the second B in the same airtime is the air dash)
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 140);
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 141);
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 142);
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 143);
+        let r = w_step(&mut m, RANG, ACT_JUMP, true, 0.0, false, 144);
+        assert_eq!(action(r), Some((ACT_ER_AIR_DASH, 0)), "{r:?}");
+        // (the ground gives it back; so does an enemy step)
+        w_step(&mut m, RANG, ACT_IDLE, false, 0.0, false, 200);
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 230);
+        let r = w_step(&mut m, RANG, ACT_JUMP, true, 0.0, false, 231);
+        assert!(matches!(r, Some(Request::Glide)), "{r:?}");
+    }
+
+    #[test]
+    fn x_in_the_glide_throws_the_boomerang_from_the_air() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 130);
+        w_step(&mut m, RANG, ACT_JUMP, true, 0.0, false, 131);
+        w_step(&mut m, RANG, ACT_ER_GLIDE, true, 0.0, false, 132);
+        let r = w_step(&mut m, RANG, ACT_ER_GLIDE, true, 0.0, true, 133);
+        assert_eq!(action(r), Some((ACT_ER_AIR_THROW, 0)), "{r:?}");
+        // (the glide is over)
+        let state = sm64::SM64MarioState { action: ACT_ER_AIR_THROW, ..Default::default() };
+        assert!(m.glide_params(&state, 0.0, 0.0, 134).is_none());
+    }
+
+    /// The Chomp's B asks for a slam, three a string; the fourth is the dash.
+    #[test]
+    fn the_chomps_b_is_a_slam_three_a_string() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        let mut t = 100;
+        for n in 0..3 {
+            t += 20;
+            w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, t);
+            t += 1;
+            let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, t);
+            assert!(matches!(r, Some(Request::Slam { air: false })), "{n}: {r:?}");
+            m.slam_started(t, true);
+        }
+        t += 20;
+        w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, t);
+        t += 1;
+        let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, t);
+        assert_eq!(action(r), Some((ACT_ER_DASH, 0)), "{r:?}");
+        // (in the air: the harpoon's ask)
+        let mut m = Moves::new();
+        w_step(&mut m, CHOMP, ACT_JUMP, false, 0.0, false, 100);
+        let r = w_step(&mut m, CHOMP, ACT_JUMP, true, 0.0, false, 101);
+        assert!(matches!(r, Some(Request::Slam { air: true })), "{r:?}");
+        // (nothing to bite: the dash, once in the air)
+        assert_eq!(action(m.slam_fallback(true, 101)), Some((ACT_ER_AIR_DASH, 0)));
+        assert!(m.slam_fallback(true, 102).is_none());
     }
 
     #[test]

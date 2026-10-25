@@ -1137,6 +1137,18 @@ SM64_LIB_FN void sm64_er_set_stomp(float vel, float velA)
     er_stomp_vel_a = velA;
 }
 
+/** er-mario: the boomerang's glide (glide.rs): this tick's vertical and forward speed (units a
+ * tick), turn (degrees) and whether its 3 s are up */
+SM64_LIB_FN void sm64_er_set_glide(float vy, float fwd, float turn, int done)
+{
+    extern f32 er_glide_vy, er_glide_fwd, er_glide_turn;
+    extern s32 er_glide_done;
+    er_glide_vy = vy;
+    er_glide_fwd = fwd;
+    er_glide_turn = turn;
+    er_glide_done = done;
+}
+
 /** er-mario: Y is held (the hammer's slam charges while it is) */
 SM64_LIB_FN void sm64_er_set_hold_y(int held)
 {

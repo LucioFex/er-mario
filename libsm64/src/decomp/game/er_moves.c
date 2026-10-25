@@ -1897,6 +1897,48 @@ s32 act_er_air_throw(struct MarioState *m) {
     return FALSE;
 }
 
+/* ---- the boomerang's glide ------------------------------------------------------------------- */
+
+/* The rule of the tick comes from glide.rs (sm64_er_set_glide): vertical and forward speed (units a
+ * tick), the turn (degrees) and whether the 3 s are up. Mario holds the boomerang overhead (drawn by
+ * boomerang.rs, spinning), he doesn't spin. L2 pounds, A lets go; X is moves.rs' (the air throw). */
+f32 er_glide_vy = 0.0f;
+f32 er_glide_fwd = 0.0f;
+f32 er_glide_turn = 0.0f;
+s32 er_glide_done = 0;
+
+s32 act_er_glide(struct MarioState *m) {
+    if (m->actionTimer == 0) {
+        er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.4f);
+    }
+    if (m->input & INPUT_Z_PRESSED) {
+        return set_mario_action(m, ACT_GROUND_POUND, 0);
+    }
+    if ((m->input & INPUT_A_PRESSED) || er_glide_done) {
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    set_mario_animation(m, MARIO_ANIM_FALL_WITH_LIGHT_OBJ);
+    m->faceAngle[1] += er_angle(er_glide_turn);
+    mario_set_forward_vel(m, er_glide_fwd);
+    // (never any height out of it: the rule's speed is 0 or down)
+    m->vel[1] = er_glide_vy <= 0.0f ? er_glide_vy : 0.0f;
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            return set_mario_action(m, ACT_FREEFALL_LAND, 0);
+
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            return TRUE;
+    }
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+    m->actionTimer++;
+    return FALSE;
+}
+
 /* ---- the hook: along its line to what it caught ---------------------------------------------- */
 
 /** where the hook pulls him (SM64 units, hook.rs keeps it on a moving enemy), and to what: 0 an

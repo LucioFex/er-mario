@@ -21,6 +21,7 @@ mod carpet;
 mod carry;
 mod chomp;
 mod chompmoves;
+mod chompslam;
 mod collision;
 mod coins;
 mod colossus;
@@ -36,6 +37,7 @@ mod fireball;
 mod fistmoves;
 mod flame;
 mod fx;
+mod glide;
 mod grab;
 mod equip;
 mod kbd;
@@ -45,6 +47,7 @@ mod lakitu;
 mod light;
 mod mega;
 mod menu_mario;
+mod guard;
 mod havok_col;
 mod explore;
 mod gameover;
@@ -3252,6 +3255,8 @@ fn frame(data: &FD4TaskData) {
         odm::clear();
         dodge::clear();
         starstep::clear();
+        chompslam::clear();
+        m.moves.clear_b();
         grab::clear();
         status::clear();
         caps::clear();
@@ -3682,6 +3687,8 @@ fn frame(data: &FD4TaskData) {
             status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm, data.hp < data.max_hp);
             drop(_perf7);
         }
+        // (the hammer's guard made something of a blow: the verdict, who hit him; played out after his tick)
+        let mut guard_fx: Option<(guard::Verdict, Option<guard::Located>)> = None;
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
             // the enemy Mario holds (a boss by the tail, or a picked-up enemy) and one he just threw
@@ -3690,6 +3697,20 @@ fn frame(data: &FD4TaskData) {
             let pos = player_ref.chr_ins.modules.physics.position;
             let here = glam::Vec3::new(pos.0, pos.1, pos.2);
             let (attacker, scale) = combat::last_attacker(&player_ref.chr_ins);
+            // the hammer's guard (guard.rs): a blow from the front costs a quarter, the third breaks
+            // it, one just after B (the Just Guard) costs nothing; behind him, or a colossus's, goes through
+            let scale = if m.moves.guarding() && !m.dead && m.combat.lost_share(data.hp, data.max_hp) * scale >= combat::BLOW_MIN {
+                let facing = glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos());
+                let at = guard::locate(&player_ref.chr_ins.last_hit_by, here, &targets);
+                let (front, passes) = at.as_ref().map_or((true, false), |l| (guard::frontal(facing, l.pos - here), l.colossus));
+                let verdict = m.moves.guard_judge(m.ticks, front, passes);
+                if verdict != guard::Verdict::Through {
+                    guard_fx = Some((verdict, at));
+                }
+                guard::scaled(verdict, scale)
+            } else {
+                scale
+            };
             let damaged = m.combat.took_damage(data.hp, data.max_hp, scale);
             let was_damaged = damaged.is_some();
             if was_damaged {
@@ -4287,6 +4308,8 @@ fn frame(data: &FD4TaskData) {
                 .flatten()
         };
         let _perf10 = perf::span(perf::MOVES);
+        // (the raw push of the stick: the hammer's B is a guard with it still, a roll with it pushed)
+        m.moves.set_raw_stick((inputs.stick_x * inputs.stick_x + inputs.stick_y * inputs.stick_y).sqrt().min(1.0));
         // (L2 for the sword's pogo: not one going with the hook or R3)
         let z_alone = inputs.button_z != 0 && !b_hook && !r3;
         let moved = m.moves.tick(
@@ -4308,6 +4331,11 @@ fn frame(data: &FD4TaskData) {
             m.ticks,
         );
         drop(_perf10);
+        // the hammer's guard up (guard.rs): his walk slowed
+        if m.moves.guarding() {
+            inputs.stick_x *= guard::WALK;
+            inputs.stick_y *= guard::WALK;
+        }
         // X held, charging (charge.rs): his walk slowed, X no punch of SM64's meanwhile
         if let Some((w, held, level)) = m.moves.charging() {
             inputs.stick_x *= charge::WALK;
@@ -4508,6 +4536,35 @@ fn frame(data: &FD4TaskData) {
                 starstep::begin(m.ticks, air);
                 Some(moves::Request::StarStep { air })
             }
+            // (the Chomp's B: the enemy it bites and what comes of it, chompslam.rs; the dash when there is none)
+            Some(moves::Request::Slam { air }) => {
+                let feet = to_er(m.origin, m.state.position);
+                let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
+                let sin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: m.state.face_angle, air, focus: m.focus.map(|f| f.0), targets: &targets };
+                let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
+                let ray = |from: glam::Vec3, to: glam::Vec3| {
+                    let d = to - from;
+                    havok?
+                        .phys_world
+                        .cast_ray(RAY_FILTER, &HavokPosition(from.x, from.y, from.z, 0.0), eldenring::position::PositionDelta(d.x, d.y, d.z), player_ref)
+                        .map(|h| glam::Vec3::new(h.0, h.1, h.2))
+                };
+                let started = chompslam::pick(&sin).and_then(|p| {
+                    let slam = p.plan == chompslam::Plan::Slam;
+                    let me = m.state.position;
+                    let yaw = targets.iter().find(|t| t.key() == p.key).map(|t| (t.sm[0] - me[0]).atan2(t.sm[2] - me[2]));
+                    chompslam::begin(&sin, &p, &mut m.combat, &player_ref.chr_ins, &ray).map(|id| (id, slam, yaw))
+                });
+                match started {
+                    Some((id, slam, yaw)) => {
+                        m.moves.slam_started(m.ticks, slam);
+                        log(format!("script: {} starts", script::named(id)));
+                        m.moves.script.start(id, None);
+                        Some(moves::Request::Script { id, air: script::MOVES.get(id as usize).is_some_and(|mv| mv.air), yaw })
+                    }
+                    None => m.moves.slam_fallback(air, m.ticks),
+                }
+            }
             r => r,
         };
         // (the stick and the camera's turn this tick: the steered boomerang reads them after it)
@@ -4573,6 +4630,24 @@ fn frame(data: &FD4TaskData) {
             });
             Some(footwork::Plan { lunge: mv.approach.is_some(), ask })
         });
+        // the boomerang's glide: this tick's rule (glide.rs) for libsm64's action; the hammer's guard
+        // up, since when; the Chain Chomp's grip on the enemy it slams
+        let glide_set = {
+            let (sx, sy) = (inputs.stick_x, inputs.stick_y);
+            let push = (sx * sx + sy * sy).sqrt().min(1.0);
+            let off = if push >= 0.2 {
+                let want = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
+                ((want - m.state.face_angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).to_degrees()
+            } else {
+                0.0
+            };
+            m.moves.glide_params(&m.state, push, off, m.ticks).map(|p| {
+                let k = 1.0 / (30.0 * scale());
+                (p.vy * k, p.forward * k, p.turn, p.done as i32)
+            })
+        };
+        let guard_age = m.moves.guard_age(m.ticks);
+        let slam_grip = if weapon_on == weapons::CHOMP { chompslam::grip(m.state.position, m.state.face_angle, m.origin, m.ticks) } else { None };
         let (foot_pos, foot_face, foot_k) = (m.state.position, m.state.face_angle, scale());
         let mesh_drawn = EZ_MARIO.load(Ordering::Relaxed) || DEBUG_DRAW.load(Ordering::Relaxed);
         // (X held, charging: the weapon held up meanwhile, below)
@@ -4581,6 +4656,9 @@ fn frame(data: &FD4TaskData) {
             // (the co-op leash held him back last tick, or he warped: from there)
             if let Some([x, y, z]) = leash_fix {
                 unsafe { sm64::sm64_set_mario_position(id, x, y, z) };
+            }
+            if let Some((vy, fwd, turn, done)) = glide_set {
+                unsafe { sm64::sm64_er_set_glide(vy, fwd, turn, done) };
             }
             if lava {
                 unsafe { sm64::sm64_er_lava(id) };
@@ -4800,7 +4878,33 @@ fn frame(data: &FD4TaskData) {
                     _ => {}
                 }
             }
-            let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands));
+            // the Chain Chomp holds the enemy it slams: its place is the enemy's (chompslam.rs)
+            if let (Some((yaw, reach, up)), Some(f)) = (slam_grip, script_frame.filter(|f| f.c.end == 0 && matches!(f.id, script::CHOMP_SLAM | script::CHOMP_HARPOON | script::CHOMP_YANK))) {
+                let _ = f;
+                combo.chomp_scripted = 1;
+                combo.chomp_yaw = yaw;
+                combo.chomp_reach = reach;
+                combo.chomp_height = up;
+            }
+            // the hammer's guard (guard.rs): its head held up in front of him, blended in over three ticks
+            let guarding = guard_age.filter(|_| weapon_on == weapons::HAMMER && script_frame.is_none_or(|f| f.c.end != 0));
+            if let Some(age) = guarding {
+                let b = (age as f32 / guard::BLEND as f32).min(1.0);
+                if let Some(p) = parts.as_mut() {
+                    reach_ik(p, &state, 0.25 + 0.6 * b, 10.0 + 25.0 * b, None);
+                }
+                combo.hammer_scripted = 1;
+                combo.hammer_yaw = 0.0;
+                combo.hammer_pitch = 20.0 + 35.0 * b;
+                combo.hammer_scale = 1.0;
+            }
+            // the glide: the right hand up overhead with the boomerang (boomerang.rs spins it there)
+            if state.action == moves::ACT_ER_GLIDE && weapon_on == weapons::RANG {
+                if let Some(p) = parts.as_mut() {
+                    reach_ik(p, &state, 1.0, 90.0, None);
+                }
+            }
+            let hammer_swing = parts.as_mut().and_then(|p| hammer::pose(p, &state, &combo, hands_free && !busy_hands)).filter(|_| guarding.is_none());
             // (the Chain Chomp's body hits like the hammer's head)
             let chomp_swing = parts.as_mut().and_then(|p| chomp::pose(p, &state, &combo, hands_free && !busy_hands));
             // (the blade only the sword's: a hammer move's pointing would draw it out of sight)
@@ -4862,6 +4966,10 @@ fn frame(data: &FD4TaskData) {
                     timing::mikiri_done();
                 }
                 m.combat.deal(&player_ref.chr_ins, &targets, &hits, m.ticks);
+                // (the boomerang's glide: an enemy step gives it back)
+                if hits.iter().any(|h| h.1 == combat::Attack::Stomp && targets.get(h.0).is_some_and(|t| !t.is_prop())) {
+                    m.moves.glide_back();
+                }
                 if let Some((wi, w)) = window_now {
                     for h in hits.iter().filter(|h| h.1 == w.attack) {
                         if let Some(t) = targets.get(h.0).filter(|t| m.combat.landed_now(t.key(), w.attack, m.ticks)) {
@@ -5071,6 +5179,23 @@ fn frame(data: &FD4TaskData) {
                         let out = starstep::tick(&sin, &mut m.combat, &player_ref.chr_ins, &ray);
                         if let Some((sid, air)) = out.queue {
                             m.moves.queue(moves::Request::Script { id: sid, air, yaw: None }, m.ticks);
+                        }
+                        // the hammer's guard made something of a blow (guard.rs): the Just Guard's
+                        // clang and counter, the break's stun
+                        if let Some((verdict, at)) = guard_fx.take() {
+                            match verdict {
+                                guard::Verdict::Just => guard::just(&sin, &mut m.combat, &player_ref.chr_ins, at.as_ref()),
+                                guard::Verdict::Broken => {
+                                    guard::broken(feet);
+                                    m.moves.queue(moves::Request::Script { id: script::HAMMER_STUN, air: false, yaw: None }, m.ticks);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // the Chomp Slam landed (chompslam.rs, juggle.rs): the ground impact and its blast
+                        let cin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: state.face_angle, air: false, focus: m.focus.map(|f| f.0), targets: &targets };
+                        for (thrown, at) in juggle::take_landed() {
+                            chompslam::landed(&cin, &mut m.combat, &player_ref.chr_ins, &thrown, at);
                         }
                     }
                     if combo.fx & script::FX_RELEASE != 0 {
