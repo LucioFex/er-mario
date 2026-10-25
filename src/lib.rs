@@ -1033,35 +1033,6 @@ fn set_player_hp(hp: i32) {
     }
 }
 
-/// Deathblight never builds up on Mario (its gauge is kept full): an instant death has no place on
-/// a health meter of eight wedges. The other ailments do, and Mario shows them (status.rs).
-fn no_ailments() {
-    use eldenring::cs::GameDataMan;
-    // the gauges in the order of the resistances: poison, rot, blood loss, deathblight, frost,
-    // sleep (5, left out), madness
-    // (only deathblight now: the rest build up and Mario shows them, status.rs)
-    const BUILD_UPS: [usize; 1] = [status::BLIGHT];
-    // The character's resist module (module container +0x20): +0x10 the seven gauges (what's
-    // left of each resistance: they run down as an ailment builds up, and it sets in at 0),
-    // +0x2c their maxima. The game data has the same numbers, but only as a copy for the menus.
-    const GAUGES: usize = 0x10;
-    const MAXIMA: usize = 0x2c;
-    let Some(player) = (unsafe { WorldChrMan::instance() }).ok().and_then(|w| w.main_player.as_ref()) else { return };
-    let Ok(gdm) = (unsafe { GameDataMan::instance() }) else { return };
-    let max = gdm.main_player_game_data.resistance_gauge_max;
-    let module = unsafe { *((&*player.chr_ins.modules as *const _ as usize + 0x20) as *const usize) };
-    if max[0] == 0 || !explore::readable(module, 0x50) {
-        return;
-    }
-    // (only where the module is laid out as expected)
-    if unsafe { *((module + MAXIMA) as *const [u32; 7]) } != max {
-        return;
-    }
-    for i in BUILD_UPS {
-        unsafe { *((module + GAUGES + i * 4) as *mut u32) = max[i] };
-    }
-}
-
 /// Set when the Tarnished sits down at a site of grace (Mario's health refills).
 static REST: AtomicBool = AtomicBool::new(false);
 static SM64_READY: AtomicBool = AtomicBool::new(false);
@@ -3753,7 +3724,6 @@ fn frame(data: &FD4TaskData) {
             }
             if !m.dead && data.hp > 0 {
                 set_player_hp(data.max_hp);
-                no_ailments();
             }
             hurt
         };
@@ -4546,6 +4516,16 @@ fn frame(data: &FD4TaskData) {
                 let want = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
                 let off = (want - m.state.face_angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
                 f.c.turn = off.to_degrees().clamp(-STEER_RATE, STEER_RATE);
+            }
+            // (the string's follow-through: the stick turns him a little and drifts him along it,
+            // not planted; SM64's step stops him at walls)
+            if sx * sx + sy * sy >= 0.04 {
+                let want = (-sx).atan2(-sy) + inputs.cam_look_x.atan2(inputs.cam_look_z);
+                let off = (want - m.state.face_angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                if let Some((turn, drift)) = script::follow_through(mv, f.t, off.to_degrees(), sx * sx + sy * sy) {
+                    f.c.turn += turn;
+                    f.c.forward_vel += drift / scale();
+                }
             }
             // (a swing's sound that's the mod's own, sfx.rs: played here, once a tick of the move,
             // SM64 gets none)

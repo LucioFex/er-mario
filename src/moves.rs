@@ -143,7 +143,7 @@ const BREAKDANCE: u32 = 9;
 /// SM64's animation: the combo's kick
 const ANIM_GROUND_KICK: i32 = 0x66;
 /// A press too soon in a scripted move is kept this long (ticks) for when it can cut it.
-const SCRIPT_BUFFER: u32 = 8;
+const SCRIPT_BUFFER: u32 = 12;
 /// the pause combo: the third X this long (ticks) after the second, a beat instead of a quick
 /// press (it used to count from the second punch's end, a timing hard to find)
 const PAUSE_MIN: u32 = 10;
@@ -1463,6 +1463,18 @@ impl Moves {
 mod tests {
     use super::*;
     use crate::weapons::{CHOMP, FISTS, HAMMER, RANG, SWORD};
+
+    /// A press while a blow of the string is still in its wait is kept long enough to chain on
+    /// the tick the next one opens, however early it came (S1-S3's NEXT is 6 ticks in at most).
+    #[test]
+    fn a_press_waits_for_the_next_blow() {
+        use crate::script::{MOVES, NEXT, SW_S1, SW_S3};
+        assert_eq!(SCRIPT_BUFFER, 12);
+        for id in SW_S1..=SW_S3 {
+            let next = MOVES[id as usize].cancels.iter().find(|c| c.into & NEXT != 0).unwrap().from;
+            assert!(SCRIPT_BUFFER >= next as u32 * 2, "{}", MOVES[id as usize].name);
+        }
+    }
 
     fn action(r: Option<Request>) -> Option<(u32, u32)> {
         match r {

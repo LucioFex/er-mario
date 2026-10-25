@@ -140,10 +140,13 @@ fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
         Attack::Storm => Some((1, 0.8, false)),
         Attack::StormEnd => Some((8, 1.8, true)),
         // the sword: a short crisp hold on each cut (its pace is quick), its finishers a heavier one
-        Attack::SwordSlash(0..=2) | Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordSpin | Attack::SwordHurricane | Attack::SwordCross | Attack::SwordRave(0..=2) => Some((2, 1.0, false)),
+        // (the string's hold climbs with it: 2 / 3 / 3 / 6, the cut pose held through it)
+        Attack::SwordSlash(0) | Attack::SwordWhirl | Attack::SwordSpinJump | Attack::SwordSpin | Attack::SwordHurricane | Attack::SwordCross | Attack::SwordRave(0..=2) => Some((2, 1.0, false)),
+        Attack::SwordSlash(1 | 2) => Some((3, 1.1, false)),
         Attack::SwordStab | Attack::SwordFlurry | Attack::SwordBeam => Some((1, 0.7, false)),
         Attack::SwordWave | Attack::SwordWaveJust | Attack::SwordPogo | Attack::SwordDraw | Attack::SwordThrust | Attack::SwordRise | Attack::SwordBreaker => Some((3, 1.2, false)),
-        Attack::SwordSlash(_) | Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordCrossBurst | Attack::SwordFlurryEnd | Attack::SwordRave(_) | Attack::SwordIai | Attack::SwordLauncher | Attack::SwordGreatSpin(_) => Some((5, 1.4, true)),
+        Attack::SwordSlash(_) => Some((6, 1.5, true)),
+        Attack::SwordWhirlEnd | Attack::SwordStabEnd | Attack::SwordSpinJumpEnd | Attack::SwordHurricaneEnd | Attack::SwordCrossBurst | Attack::SwordFlurryEnd | Attack::SwordRave(_) | Attack::SwordIai | Attack::SwordLauncher | Attack::SwordGreatSpin(_) => Some((5, 1.4, true)),
         Attack::SwordCleave | Attack::SwordHelm | Attack::SwordHelmRing | Attack::SwordBreakerRing => Some((6, 1.6, true)),
         // the fists' new ones: the jabs a tick (they come every 3), the charged and beat blows heavy
         Attack::FistFlurry => Some((1, 0.7, false)),
@@ -1265,4 +1268,19 @@ pub fn rubble_chunks() -> Vec<crate::fx::Rock> {
             Some(crate::fx::Rock { pos, rot, size: c.size * fade, seed: c.seed })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The string's hit-stop rises with the blows: 2 / 3 / 3 / 6 ticks (the chop heavy), and the
+    /// first light cuts stay light for the sound (weight by stop, see `hit`).
+    #[test]
+    fn the_strings_hit_stop_climbs() {
+        let stops: Vec<u32> = (0..4).map(|i| feel(Attack::SwordSlash(i)).unwrap().0).collect();
+        assert_eq!(stops, [2, 3, 3, 6]);
+        assert!(feel(Attack::SwordSlash(3)).unwrap().2, "the chop shakes the camera");
+        assert!(!feel(Attack::SwordSlash(1)).unwrap().2);
+    }
 }

@@ -10,7 +10,7 @@
 use crate::combat::Attack;
 use crate::moves::{FX_BANG, FX_LAUNCH, FX_SLAM};
 use crate::script::Ease::*;
-use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, FX_BEAM, FX_CROSS, FX_SPARKLE, FX_WAVE, FX_WAVE3, FX_ZAP, JUMP, NEXT, SWAP};
+use crate::script::{k, Approach, Cancel, Clip, Move, Shape, Window, ALL, BASE, DASH, VOICE_LIGHT, FX_BEAM, FX_CROSS, FX_SPARKLE, FX_WAVE, FX_WAVE3, FX_ZAP, JUMP, NEXT, SWAP};
 use crate::sfx::{SWING, SWING_HEAVY, SWING_LIGHT};
 
 const FIRST_PUNCH: i32 = 0x67;
@@ -62,74 +62,79 @@ const fn still(from: u16, anim: i32) -> Clip {
 
 // ---- the string: X, X, X, X ------------------------------------------------------------------
 
-/// X: drawn up over his right shoulder (the wind-up, slow), then a diagonal cleave down to his
-/// left in two ticks, held low a moment (Rebellion's Combo A, 1)
+/// X: drawn up over his right shoulder from the ready pose (the wind-up, two ticks), then a
+/// diagonal cleave down to his left in two, held low a moment (Rebellion's Combo A, 1)
 pub const S1: Move = Move {
     name: "star slash",
-    len: 16,
-    clips: &[still(0, FIRST_PUNCH), clip(4, FIRST_PUNCH_FAST)],
-    twist: &[k(0, 0.0, Linear), k(4, -35.0, InOut), k(6, 28.0, Out), k(9, 24.0, Linear), k(15, 0.0, InOut)],
-    pitch: &[k(0, 0.0, Linear), k(4, -5.0, InOut), k(6, 10.0, Out), k(9, 9.0, Linear), k(15, 0.0, InOut)],
-    aim: &[0],
-    approach: Some(Approach { from: 2, to: 6, max: 1.6, gap: 1.0 }),
-    squash: &[k(0, 1.0, Linear), k(4, 0.92, InOut), k(6, 1.08, Out), k(9, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(4, 3.0, InOut), k(6, 8.0, Out), k(9, 7.0, Linear), k(14, 0.0, InOut)],
-    reach: &[k(0, 0.6, Linear), k(4, 1.0, InOut), k(10, 1.0, Linear), k(15, 0.5, InOut)],
-    blade_yaw: &[k(0, -30.0, Linear), k(4, -85.0, InOut), k(5, -10.0, Linear), k(6, 60.0, Out), k(9, 58.0, Linear), k(15, 20.0, InOut)],
-    blade_pitch: &[k(0, -10.0, Linear), k(4, 65.0, InOut), k(5, 20.0, Linear), k(6, -32.0, Out), k(9, -30.0, Linear), k(15, -20.0, InOut)],
-    blade_roll: &[k(0, 0.0, Linear), k(4, -40.0, InOut), k(15, 0.0, InOut)],
-    blade_held: (0, 16),
-    windows: &[w(4, 6, Shape::Weapon, Attack::SwordSlash(0), 0)],
-    cancels: &[c(NEXT, 9, 7), c(DJS, 9, 6)],
-    sounds: &[(4, SWING_LIGHT, 0.4)],
-    locked: (0, 4),
+    len: 14,
+    clips: &[still(0, FIRST_PUNCH), clip(2, FIRST_PUNCH_FAST)],
+    twist: &[k(0, 0.0, Linear), k(2, -35.0, InOut), k(4, 28.0, Out), k(7, 26.0, Linear), k(13, 0.0, InOut)],
+    pitch: &[k(0, 0.0, Linear), k(2, -5.0, InOut), k(4, 10.0, Out), k(7, 9.0, Linear), k(13, 0.0, InOut)],
+    aim: &[0, 6],
+    approach: Some(Approach { from: 1, to: 4, max: 1.6, gap: 1.0 }),
+    squash: &[k(0, 1.0, Linear), k(2, 0.9, InOut), k(4, 1.08, Out), k(7, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(2, 1.0, InOut), k(4, 4.0, Out), k(7, 3.0, Linear), k(12, 0.0, InOut)],
+    reach: &[k(0, 0.6, Linear), k(2, 1.0, InOut), k(8, 1.0, Linear), k(13, 0.5, InOut)],
+    // (from the ready pose, -25 / -35, to the draw)
+    blade_yaw: &[k(0, -25.0, Linear), k(2, -85.0, InOut), k(3, -10.0, Linear), k(4, 60.0, Out), k(7, 58.0, Linear), k(13, 20.0, InOut)],
+    blade_pitch: &[k(0, -35.0, Linear), k(2, 65.0, InOut), k(3, 20.0, Linear), k(4, -32.0, Out), k(7, -30.0, Linear), k(13, -20.0, InOut)],
+    blade_roll: &[k(0, 0.0, Linear), k(2, -40.0, InOut), k(4, -34.0, Out), k(7, -34.0, Linear), k(13, 0.0, InOut)],
+    blade_held: (0, 14),
+    windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(0), 0)],
+    cancels: &[c(NEXT, 6, 4), c(DJS, 6, 4)],
+    sounds: &[(0, VOICE_LIGHT, 0.25), (1, SWING_LIGHT, 0.4)],
+    follow: (5, 12),
+    locked: (0, 2),
     ..BASE
 };
 
 /// X, X: a dip with the blade low on his right, then a rising backhand up to his left, his back
-/// half turned to the camera, held up there a moment (Combo A, 2)
+/// half turned to the camera, held up there a moment (Combo A, 2); it starts where the slash was
 pub const S2: Move = Move {
     name: "star backhand",
-    len: 15,
-    clips: &[still(0, SECOND_PUNCH), clip(3, SECOND_PUNCH_FAST)],
-    twist: &[k(0, 10.0, Linear), k(3, 40.0, InOut), k(5, -35.0, Out), k(8, -32.0, Linear), k(14, 0.0, InOut)],
-    pitch: &[k(0, 0.0, Linear), k(3, 4.0, InOut), k(5, -6.0, Out), k(8, -5.0, Linear), k(14, 0.0, InOut)],
-    aim: &[0],
-    approach: Some(Approach { from: 1, to: 5, max: 1.2, gap: 1.0 }),
-    squash: &[k(0, 1.0, Linear), k(3, 0.92, InOut), k(5, 1.07, Out), k(9, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(3, 8.0, InOut), k(5, 0.0, Out)],
-    reach: &[k(0, 0.8, Linear), k(3, 1.0, InOut), k(10, 1.0, Linear), k(14, 0.5, InOut)],
-    blade_yaw: &[k(0, 40.0, Linear), k(3, 80.0, InOut), k(4, 10.0, Linear), k(5, -70.0, Out), k(8, -68.0, Linear), k(14, -35.0, InOut)],
-    blade_pitch: &[k(0, -10.0, Linear), k(3, -40.0, InOut), k(4, 5.0, Linear), k(5, 45.0, Out), k(8, 44.0, Linear), k(14, -10.0, InOut)],
-    blade_roll: &[k(0, 0.0, Linear), k(3, 30.0, InOut), k(14, 0.0, InOut)],
-    blade_held: (0, 15),
-    windows: &[w(3, 5, Shape::Weapon, Attack::SwordSlash(1), 0)],
-    cancels: &[c(NEXT, 8, 6), c(DJS, 8, 6)],
-    sounds: &[(3, SWING_LIGHT, 0.42)],
-    locked: (0, 3),
+    len: 13,
+    clips: &[still(0, SECOND_PUNCH), clip(2, SECOND_PUNCH_FAST)],
+    twist: &[k(0, 27.0, Linear), k(2, 40.0, InOut), k(4, -35.0, Out), k(6, -32.0, Linear), k(12, 0.0, InOut)],
+    pitch: &[k(0, 9.0, Linear), k(2, 4.0, InOut), k(4, -6.0, Out), k(6, -5.0, Linear), k(12, 0.0, InOut)],
+    aim: &[0, 5],
+    approach: Some(Approach { from: 1, to: 4, max: 1.2, gap: 1.0 }),
+    squash: &[k(0, 1.06, Linear), k(2, 0.92, InOut), k(4, 1.07, Out), k(7, 1.0, InOut)],
+    dip: &[k(0, 3.0, Linear), k(2, 4.0, InOut), k(4, 0.0, Out)],
+    reach: &[k(0, 1.0, Linear), k(9, 1.0, Linear), k(12, 0.5, InOut)],
+    blade_yaw: &[k(0, 59.0, Linear), k(2, 80.0, InOut), k(3, 10.0, Linear), k(4, -70.0, Out), k(6, -68.0, Linear), k(12, -35.0, InOut)],
+    blade_pitch: &[k(0, -31.0, Linear), k(2, -40.0, InOut), k(3, 5.0, Linear), k(4, 45.0, Out), k(6, 44.0, Linear), k(12, -10.0, InOut)],
+    blade_roll: &[k(0, -34.0, Linear), k(2, 30.0, InOut), k(12, 0.0, InOut)],
+    blade_held: (0, 13),
+    windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(1), 0)],
+    cancels: &[c(NEXT, 5, 4), c(DJS, 6, 4)],
+    sounds: &[(0, VOICE_LIGHT, 0.25), (1, SWING_LIGHT, 0.42)],
+    follow: (5, 11),
+    locked: (0, 2),
     ..BASE
 };
 
-/// X, X, X: the blade low on his right, a rising diagonal up to his left (Combo A, 3)
+/// X, X, X: the blade low on his right, a rising diagonal up to his left (Combo A, 3); it starts
+/// where the backhand was
 pub const S3: Move = Move {
     name: "star rising slash",
-    len: 16,
-    clips: &[still(0, FIRST_PUNCH), clip(4, FIRST_PUNCH_FAST)],
-    twist: &[k(0, -5.0, Linear), k(4, -38.0, InOut), k(6, 32.0, Out), k(9, 28.0, Linear), k(15, 0.0, InOut)],
-    pitch: &[k(0, 0.0, Linear), k(4, 8.0, InOut), k(6, -9.0, Out), k(9, -8.0, Linear), k(15, 0.0, InOut)],
-    aim: &[0],
-    approach: Some(Approach { from: 2, to: 6, max: 1.2, gap: 1.0 }),
-    squash: &[k(0, 1.0, Linear), k(4, 0.88, InOut), k(6, 1.1, Out), k(10, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(4, 10.0, InOut), k(6, 0.0, Out)],
-    reach: &[k(0, 0.7, Linear), k(4, 1.0, InOut), k(11, 1.0, Linear), k(15, 0.5, InOut)],
-    blade_yaw: &[k(0, -40.0, Linear), k(4, -72.0, InOut), k(5, -10.0, Linear), k(6, 50.0, Out), k(9, 48.0, Linear), k(15, 25.0, InOut)],
-    blade_pitch: &[k(0, -25.0, Linear), k(4, -48.0, InOut), k(5, 10.0, Linear), k(6, 72.0, Out), k(9, 70.0, Linear), k(15, 15.0, InOut)],
-    blade_roll: &[k(0, 0.0, Linear), k(4, 40.0, InOut), k(15, 0.0, InOut)],
-    blade_held: (0, 16),
-    windows: &[w(4, 6, Shape::Weapon, Attack::SwordSlash(2), 0)],
-    cancels: &[c(NEXT, 9, 7), c(DJS, 9, 7)],
-    sounds: &[(4, SWING, 0.45), (5, HOO, 0.0)],
-    locked: (0, 4),
+    len: 14,
+    clips: &[still(0, FIRST_PUNCH), clip(3, FIRST_PUNCH_FAST)],
+    twist: &[k(0, -33.0, Linear), k(3, -38.0, InOut), k(5, 32.0, Out), k(8, 28.0, Linear), k(13, 0.0, InOut)],
+    pitch: &[k(0, -5.0, Linear), k(3, 8.0, InOut), k(5, -9.0, Out), k(8, -8.0, Linear), k(13, 0.0, InOut)],
+    aim: &[0, 6],
+    approach: Some(Approach { from: 1, to: 5, max: 1.2, gap: 1.0 }),
+    squash: &[k(0, 1.05, Linear), k(3, 0.88, InOut), k(5, 1.1, Out), k(9, 1.0, InOut)],
+    dip: &[k(0, 3.0, Linear), k(3, 4.0, InOut), k(5, 0.0, Out)],
+    reach: &[k(0, 0.95, Linear), k(3, 1.0, InOut), k(10, 1.0, Linear), k(13, 0.5, InOut)],
+    blade_yaw: &[k(0, -68.0, Linear), k(3, -72.0, InOut), k(4, -10.0, Linear), k(5, 50.0, Out), k(8, 48.0, Linear), k(13, 25.0, InOut)],
+    blade_pitch: &[k(0, 44.0, Linear), k(3, -48.0, InOut), k(4, 10.0, Linear), k(5, 72.0, Out), k(8, 70.0, Linear), k(13, 15.0, InOut)],
+    blade_roll: &[k(0, 24.0, Linear), k(3, 40.0, InOut), k(13, 0.0, InOut)],
+    blade_held: (0, 14),
+    windows: &[w(3, 5, Shape::Weapon, Attack::SwordSlash(2), 0)],
+    cancels: &[c(NEXT, 6, 4), c(DJS, 6, 4)],
+    sounds: &[(1, SWING, 0.45), (4, HOO, 0.0)],
+    follow: (6, 12),
+    locked: (0, 3),
     ..BASE
 };
 
@@ -138,25 +143,26 @@ pub const S3: Move = Move {
 /// lunge, frozen there (it knocks them back; at full health a sword beam)
 pub const S4: Move = Move {
     name: "Rebellion chop",
-    len: 30,
-    clips: &[still(0, SECOND_PUNCH), clip(6, FIRST_PUNCH), clip(20, GENERAL_LAND)],
-    twist: &[k(0, 0.0, Linear), k(6, -45.0, InOut), k(8, 30.0, Out), k(18, 28.0, Linear), k(26, 0.0, InOut)],
-    pitch: &[k(0, 0.0, Linear), k(6, -8.0, InOut), k(8, 26.0, Out), k(18, 24.0, Linear), k(26, 0.0, InOut)],
-    aim: &[0, 5],
-    approach: Some(Approach { from: 5, to: 8, max: 1.8, gap: 1.0 }),
-    squash: &[k(0, 1.0, Linear), k(6, 0.86, InOut), k(8, 1.14, Out), k(12, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(6, 12.0, InOut), k(8, 16.0, Out), k(18, 15.0, Linear), k(26, 0.0, InOut)],
-    reach: &[k(0, 0.5, Linear), k(6, 0.8, InOut), k(8, 1.0, Out), k(18, 1.0, Linear), k(26, 0.4, InOut)],
+    len: 28,
+    clips: &[still(0, SECOND_PUNCH), clip(4, FIRST_PUNCH), clip(18, GENERAL_LAND)],
+    twist: &[k(0, 31.0, Linear), k(4, -45.0, InOut), k(6, 30.0, Out), k(16, 28.0, Linear), k(24, 0.0, InOut)],
+    pitch: &[k(0, -9.0, Linear), k(4, -8.0, InOut), k(6, 26.0, Out), k(16, 24.0, Linear), k(24, 0.0, InOut)],
+    aim: &[0, 2, 16],
+    approach: Some(Approach { from: 3, to: 6, max: 1.8, gap: 1.0 }),
+    squash: &[k(0, 1.08, Linear), k(4, 0.86, InOut), k(6, 1.14, Out), k(10, 1.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(4, 3.0, InOut), k(6, 4.0, Out), k(16, 4.0, Linear), k(24, 0.0, InOut)],
+    reach: &[k(0, 1.0, Linear), k(4, 0.8, InOut), k(6, 1.0, Out), k(16, 1.0, Linear), k(24, 0.4, InOut)],
     // (behind his head, level, both hands at his right shoulder; down across him in two ticks)
-    blade_yaw: &[k(0, -40.0, Linear), k(6, -120.0, InOut), k(7, -30.0, Linear), k(8, 55.0, Out), k(18, 52.0, Linear), k(27, 15.0, InOut)],
-    blade_pitch: &[k(0, -10.0, Linear), k(6, 90.0, InOut), k(7, 30.0, Linear), k(8, -45.0, Out), k(18, -42.0, Linear), k(27, -25.0, InOut)],
-    blade_roll: &[k(0, 0.0, Linear), k(6, -60.0, InOut), k(8, -20.0, Out), k(27, 0.0, InOut)],
-    blade_held: (0, 30),
-    windows: &[w(6, 8, Shape::Weapon, Attack::SwordSlash(3), FX_BANG)],
-    cancels: &[c(DJS, 18, 14), c(NEXT, 22, 18)],
-    sounds: &[(2, WAH, 0.0), (6, SWING_HEAVY, 0.55)],
-    fx: &[(8, FX_BEAM)],
-    locked: (0, 8),
+    blade_yaw: &[k(0, 50.0, Linear), k(4, -120.0, InOut), k(5, -30.0, Linear), k(6, 55.0, Out), k(16, 52.0, Linear), k(25, 15.0, InOut)],
+    blade_pitch: &[k(0, 72.0, Linear), k(4, 90.0, InOut), k(5, 30.0, Linear), k(6, -45.0, Out), k(16, -42.0, Linear), k(25, -25.0, InOut)],
+    blade_roll: &[k(0, 36.0, Linear), k(4, -60.0, InOut), k(6, -20.0, Out), k(25, 0.0, InOut)],
+    blade_held: (0, 28),
+    windows: &[w(4, 6, Shape::Weapon, Attack::SwordSlash(3), FX_BANG)],
+    cancels: &[c(DJS, 12, 9), c(NEXT, 16, 12)],
+    sounds: &[(0, WAH, 0.0), (1, SWING_HEAVY, 0.55)],
+    fx: &[(6, FX_BEAM)],
+    follow: (7, 24),
+    locked: (0, 6),
     ..BASE
 };
 
@@ -171,7 +177,7 @@ pub const CLEAVE: Move = Move {
     aim: &[0, 7],
     approach: Some(Approach { from: 2, to: 10, max: 2.0, gap: 1.0 }),
     squash: &[k(0, 1.0, Linear), k(6, 1.06, Out), k(10, 0.86, In), k(15, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(6, 0.0, Linear), k(10, 12.0, Out), k(20, 0.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(6, 0.0, Linear), k(10, 4.0, Out), k(20, 0.0, InOut)],
     reach: &[k(0, 0.5, Linear), k(5, 1.0, Out), k(18, 1.0, Linear), k(26, 0.4, InOut)],
     blade_yaw: &[k(0, -20.0, Linear), k(6, 0.0, Out), k(26, -20.0, InOut)],
     blade_pitch: &[k(0, -20.0, Linear), k(6, 125.0, Out), k(8, 125.0, Linear), k(12, -55.0, Out), k(20, -50.0, Linear), k(26, -30.0, InOut)],
@@ -204,7 +210,7 @@ pub const THRUST: Move = Move {
     approach: Some(Approach { from: 6, to: 14, max: 8.0, gap: 0.8 }),
     vel_y: &[(6, 12.0)],
     squash: &[k(0, 1.0, Linear), k(6, 0.84, InOut), k(8, 1.14, Out), k(13, 1.0, InOut), k(15, 0.88, Out), k(20, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(6, 12.0, InOut), k(8, 0.0, Out), k(15, 8.0, Out), k(22, 0.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(6, 4.0, InOut), k(8, 0.0, Out), k(15, 2.7, Out), k(22, 0.0, InOut)],
     // (the hand pulled in for the coil, then out with the point, held out past the stop)
     reach: &[k(0, 0.3, Linear), k(6, 0.15, InOut), k(9, 1.0, Out), k(22, 1.0, Linear), k(28, 0.4, InOut)],
     blade_yaw: &[k(0, -15.0, Linear), k(6, -25.0, InOut), k(9, 0.0, Out), k(22, 0.0, Linear), k(28, -15.0, InOut)],
@@ -325,7 +331,7 @@ pub const RISE: Move = Move {
     pitch: &[k(0, 0.0, Linear), k(5, 16.0, InOut), k(8, -14.0, Out), k(13, -12.0, Linear), k(18, 0.0, InOut)],
     aim: &[0],
     squash: &[k(0, 1.0, Linear), k(5, 0.82, InOut), k(8, 1.16, Out), k(14, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(5, 14.0, InOut), k(8, 0.0, Out)],
+    dip: &[k(0, 0.0, Linear), k(5, 4.0, InOut), k(8, 0.0, Out)],
     reach: &[k(0, 0.5, Linear), k(5, 0.8, InOut), k(8, 1.0, Out), k(18, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -25.0, Linear), k(5, -45.0, InOut), k(8, 10.0, Out), k(18, 0.0, Linear), k(24, -20.0, InOut)],
     blade_pitch: &[k(0, -35.0, Linear), k(5, -65.0, InOut), k(6, -10.0, Linear), k(8, 88.0, Out), k(16, 86.0, Linear), k(24, -10.0, InOut)],
@@ -359,7 +365,7 @@ pub const DRIVE: Move = Move {
     approach: Some(Approach { from: 0, to: 3, max: 1.0, gap: 1.0 }),
     aim: &[0],
     squash: &[k(0, 0.92, Linear), k(2, 1.1, Out), k(9, 1.0, InOut)],
-    dip: &[k(0, 4.0, Linear), k(2, 14.0, Out), k(10, 13.0, Linear), k(17, 0.0, InOut)],
+    dip: &[k(0, 1.1, Linear), k(2, 4.0, Out), k(10, 3.7, Linear), k(17, 0.0, InOut)],
     reach: &[k(0, 0.9, Linear), k(2, 1.0, Out), k(12, 1.0, Linear), k(20, 0.5, InOut)],
     blade_yaw: &[k(0, -150.0, Linear), k(1, -50.0, Linear), k(2, 35.0, Out), k(10, 32.0, Linear), k(20, -10.0, InOut)],
     blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -40.0, Out), k(10, -38.0, Linear), k(20, -25.0, InOut)],
@@ -379,7 +385,7 @@ pub const DRIVE_FULL: Move = Move {
     name: "Drive (full)",
     len: 26,
     windows: &[w(1, 3, Shape::Weapon, Attack::SwordSlash(3), FX_BANG)],
-    dip: &[k(0, 6.0, Linear), k(2, 18.0, Out), k(12, 16.0, Linear), k(20, 0.0, InOut)],
+    dip: &[k(0, 1.3, Linear), k(2, 4.0, Out), k(12, 3.6, Linear), k(20, 0.0, InOut)],
     squash: &[k(0, 0.88, Linear), k(2, 1.14, Out), k(10, 1.0, InOut)],
     cancels: &[c(DASH | SWAP, 8, 8), c(ALL, 14, 12)],
     sounds: &[(0, WAH, 0.0), (1, SWING_HEAVY, 0.55)],
@@ -395,7 +401,7 @@ pub const DRIVE_JUST: Move = Move {
     clips: &[clip(0, FIRST_PUNCH_FAST), clip(5, SECOND_PUNCH_FAST), clip(10, FIRST_PUNCH)],
     twist: &[k(0, -30.0, Linear), k(2, 30.0, Out), k(6, -28.0, Out), k(10, 0.0, Out), k(12, 25.0, Out), k(20, 0.0, InOut)],
     pitch: &[k(0, 6.0, Linear), k(10, -6.0, Out), k(12, 18.0, Out), k(20, 0.0, InOut)],
-    dip: &[k(0, 10.0, Linear), k(2, 6.0, Out), k(10, 0.0, Out), k(12, 14.0, Out), k(20, 0.0, InOut)],
+    dip: &[k(0, 2.9, Linear), k(2, 1.7, Out), k(10, 0.0, Out), k(12, 4.0, Out), k(20, 0.0, InOut)],
     reach: &[k(0, 0.8, Linear), k(2, 1.0, Out), k(16, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -150.0, Linear), k(1, -50.0, Linear), k(2, 40.0, Out), k(5, -10.0, InOut), k(6, -60.0, Out), k(9, -20.0, InOut), k(10, 0.0, Out), k(14, 0.0, Linear), k(22, -20.0, InOut)],
     blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -30.0, Out), k(5, 30.0, InOut), k(6, -25.0, Out), k(9, 70.0, InOut), k(10, 115.0, Out), k(11, 40.0, Linear), k(12, -40.0, Out), k(22, -30.0, InOut)],
@@ -442,7 +448,7 @@ pub const LAUNCHER: Move = Move {
     vel_y: &[(7, 50.0)],
     hold: (19, 25),
     squash: &[k(0, 1.0, Linear), k(3, 0.85, Out), k(7, 1.14, Out), k(12, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(3, 12.0, Out), k(7, 0.0, Out)],
+    dip: &[k(0, 0.0, Linear), k(3, 4.0, Out), k(7, 0.0, Out)],
     reach: &[k(0, 0.5, Linear), k(3, 0.8, Out), k(7, 1.0, Out), k(18, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -25.0, Linear), k(3, -50.0, Out), k(7, 10.0, Out), k(16, 0.0, Linear), k(24, -20.0, InOut)],
     blade_pitch: &[k(0, -35.0, Linear), k(3, -55.0, Out), k(7, 85.0, Out), k(14, 80.0, Linear), k(24, -10.0, InOut)],
@@ -469,7 +475,7 @@ pub const HELM: Move = Move {
     vel_y: &[(4, 38.0), (15, -55.0)],
     hold: (12, 15),
     squash: &[k(0, 1.0, Linear), k(3, 0.86, Out), k(6, 1.1, Out), k(12, 1.04, Linear), k(16, 1.12, Out), k(20, 0.88, Out), k(26, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(3, 10.0, Out), k(6, 0.0, Out), k(18, 0.0, Linear), k(20, 10.0, Out), k(28, 0.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(3, 4.0, Out), k(6, 0.0, Out), k(18, 0.0, Linear), k(20, 4.0, Out), k(28, 0.0, InOut)],
     reach: &[k(0, 0.6, Linear), k(4, 1.0, Out), k(30, 1.0, Linear), k(35, 0.5, InOut)],
     blade_yaw: &[k(0, -20.0, Linear), k(4, 0.0, Out), k(30, 0.0, Linear), k(34, -20.0, InOut)],
     blade_pitch: &[k(0, -20.0, Linear), k(4, 95.0, Out), k(12, 130.0, InOut), k(14, 130.0, Linear), k(17, -55.0, Out), k(26, -50.0, Linear), k(34, -30.0, InOut)],
@@ -498,7 +504,7 @@ pub const IAI: Move = Move {
     approach: Some(Approach { from: 2, to: 8, max: 6.0, gap: -1.6 }),
     invulnerable: (2, 9),
     squash: &[k(0, 0.92, Linear), k(2, 1.1, Out), k(8, 1.05, Linear), k(10, 0.9, Out), k(16, 1.0, InOut)],
-    dip: &[k(0, 10.0, Linear), k(2, 6.0, Out), k(9, 10.0, Out), k(16, 0.0, InOut)],
+    dip: &[k(0, 4.0, Linear), k(2, 2.4, Out), k(9, 4.0, Out), k(16, 0.0, InOut)],
     reach: &[k(0, 0.7, Linear), k(4, 1.0, Out), k(16, 1.0, Linear), k(22, 0.5, InOut)],
     // (out, then back down behind him, as if sheathed: the crack comes then)
     blade_yaw: &[k(0, -150.0, Linear), k(4, 60.0, Out), k(9, 60.0, Linear), k(12, -160.0, InOut), k(22, -30.0, InOut)],
@@ -712,7 +718,7 @@ pub const BREAKER: Move = Move {
     vel_y: &[(0, 0.0), (4, -70.0)],
     hold: (0, 4),
     squash: &[k(0, 1.0, Linear), k(3, 1.08, Out), k(7, 1.1, Linear), k(9, 0.82, Out), k(19, 0.86, Linear), k(24, 1.0, InOut)],
-    dip: &[k(0, 0.0, Linear), k(8, 0.0, Linear), k(10, 16.0, Out), k(19, 15.0, Linear), k(26, 0.0, InOut)],
+    dip: &[k(0, 0.0, Linear), k(8, 0.0, Linear), k(10, 4.0, Out), k(19, 3.8, Linear), k(26, 0.0, InOut)],
     reach: &[k(0, 0.7, Linear), k(3, 1.0, Out), k(24, 1.0, Linear), k(29, 0.5, InOut)],
     blade_yaw: &[k(0, -20.0, Linear), k(3, 0.0, Out), k(24, 0.0, Linear), k(29, -20.0, InOut)],
     blade_pitch: &[k(0, -10.0, Linear), k(3, 120.0, Out), k(7, -60.0, Out), k(20, -50.0, Linear), k(28, -30.0, InOut)],
@@ -856,24 +862,94 @@ mod tests {
         }
     }
 
-    /// Rebellion's feel: the string's cuts wind up longer than they swing, and hold the pose a
-    /// moment after (the next X can't cut it before three ticks past the swing; landed, a tick, its
-    /// hit-stop holding the rest).
+    /// Rebellion's feel (Part 12): the blows land fast (2 / 2 / 3 / 4 ticks to the hit, the pose
+    /// moving from the first tick, the swish at tick 1), then hold the cut pose; the next blow
+    /// and the dodge open soon (a landed blow sooner); the chop's frozen lunge lasts.
     #[test]
-    fn the_cuts_wind_up_and_hold() {
+    fn the_cuts_land_fast_and_chain_soon() {
+        let want = [(SW_S1, 2, 6, 4), (SW_S2, 2, 5, 4), (SW_S3, 3, 6, 4), (SW_S4, 4, 16, 12)];
+        for (id, hit, next, next_landed) in want {
+            let m = sword(id);
+            let w = m.windows[0];
+            assert_eq!(w.from, hit, "{}: ticks to the hit", m.name);
+            assert!(w.to - w.from <= 2, "{}", m.name);
+            // (moving from tick 0: the blade's pose differs from tick 0 to tick 1, and it starts
+            // from the ready pose or the blow before's)
+            let eval = |keys: &[Key], t: f32| crate::script::eval(keys, t, 0.0);
+            assert!(eval(m.blade_yaw, 0.0) != eval(m.blade_yaw, 1.0) || eval(m.blade_pitch, 0.0) != eval(m.blade_pitch, 1.0), "{}: still at the start", m.name);
+            // the swish at tick 1, with the voice (or the heavy cut's) before it
+            assert!(m.sounds.iter().any(|s| s.0 == 1 && crate::sfx::from_script(s.1).is_some()), "{}: the swish at tick 1", m.name);
+            let nexts = m.cancels.iter().find(|c| c.into & NEXT != 0).unwrap();
+            assert_eq!((nexts.from, nexts.on_hit), (next, next_landed), "{}: NEXT", m.name);
+            assert!(nexts.on_hit > w.from, "{}: not before the cut starts", m.name);
+        }
+        // (the dash, jump and swap: from 6, 4 landed after the string's three; the chop 12, 9)
+        for id in [SW_S1, SW_S2, SW_S3] {
+            let djs = sword(id).cancels.iter().find(|c| c.into & DASH != 0).unwrap();
+            assert_eq!((djs.from, djs.on_hit), (6, 4), "{}", sword(id).name);
+        }
+        let djs = sword(SW_S4).cancels.iter().find(|c| c.into & DASH != 0).unwrap();
+        assert_eq!((djs.from, djs.on_hit), (12, 9));
+        // (the finisher's frozen lunge: a few ticks past its cut still)
+        assert!(djs.from >= sword(SW_S4).windows[0].to + 6);
+    }
+
+    /// The string's blows re-aim as the next one's window opens (a chain re-faces a moved enemy).
+    #[test]
+    fn a_chain_re_aims_at_its_next_window() {
+        for id in [SW_S1, SW_S2, SW_S3, SW_S4] {
+            let m = sword(id);
+            let next = m.cancels.iter().find(|c| c.into & NEXT != 0).unwrap().from;
+            assert!(m.aim.contains(&0) && m.aim.contains(&next), "{}: aims {:?}, next at {next}", m.name, m.aim);
+        }
+    }
+
+    /// The knees do the crouch (pitch, squash), not the floor: the model sinks 4 units at most.
+    #[test]
+    fn no_sword_move_sinks_him_in_the_floor() {
+        for id in SW_S1..=SW_DRAW_AIR {
+            let m = sword(id);
+            let most = m.dip.iter().map(|k| k.v).fold(0.0f32, f32::max);
+            assert!(most <= 4.0, "{}: dip {most}", m.name);
+        }
+    }
+
+    /// Each blow of the string starts where the one before was when it let the next in (its
+    /// cancel ticks): the same twist, lean, blade and hand, so nothing pops.
+    #[test]
+    fn a_blow_starts_where_the_last_one_was() {
+        use crate::script::eval;
+        for (a, b) in [(SW_S1, SW_S2), (SW_S2, SW_S3), (SW_S3, SW_S4)] {
+            let (prev, next) = (sword(a), sword(b));
+            let nc = prev.cancels.iter().find(|c| c.into & NEXT != 0).unwrap();
+            // (a landed cancel inside the cut itself is mid-swing: the carry-in blends that one)
+            for t in [nc.on_hit.max(prev.windows[0].to), nc.from] {
+                let t = t as f32;
+                let diffs = [
+                    ("twist", eval(prev.twist, t, 0.0), eval(next.twist, 0.0, 0.0), 6.0),
+                    ("pitch", eval(prev.pitch, t, 0.0), eval(next.pitch, 0.0, 0.0), 4.0),
+                    ("blade yaw", eval(prev.blade_yaw, t, 0.0), eval(next.blade_yaw, 0.0, 0.0), 10.0),
+                    ("blade pitch", eval(prev.blade_pitch, t, 0.0), eval(next.blade_pitch, 0.0, 0.0), 10.0),
+                    ("blade roll", eval(prev.blade_roll, t, 0.0), eval(next.blade_roll, 0.0, 0.0), 12.0),
+                    ("squash", eval(prev.squash, t, 1.0) * 100.0, eval(next.squash, 0.0, 1.0) * 100.0, 8.0),
+                    ("reach", eval(prev.reach, t, 0.0) * 100.0, eval(next.reach, 0.0, 0.0) * 100.0, 15.0),
+                ];
+                for (what, x, y, tol) in diffs {
+                    assert!((x - y).abs() <= tol, "{} -> {}: {what} {x:.1} then {y:.1} (cancel at {t})", prev.name, next.name);
+                }
+            }
+        }
+    }
+
+    /// After the cut, the stick turns him and drifts him along it (not planted): the string's
+    /// blows say when.
+    #[test]
+    fn the_follow_through_follows_the_stick() {
         for id in [SW_S1, SW_S2, SW_S3, SW_S4] {
             let m = sword(id);
             let w = m.windows[0];
-            let swing = w.to - w.from;
-            assert!(w.from >= 3 && w.from >= swing + 1, "{}: wind-up {} for a {}-tick swing", m.name, w.from, swing);
-            let next = m.cancels.iter().filter(|c| c.into & NEXT != 0);
-            let (missed, landed) = (next.clone().map(|c| c.from).min().unwrap_or(m.len), next.map(|c| c.on_hit.min(c.from)).min().unwrap_or(m.len));
-            assert!(missed >= w.to + 3 && landed > w.to, "{}: cut at {missed} ({landed} landed), swing over at {}", m.name, w.to);
+            assert!(m.follow.0 > w.to && m.follow.1 > m.follow.0 && m.follow.1 <= m.len, "{}: {:?}", m.name, m.follow);
         }
-        // (the finisher's frozen lunge: ten ticks at least)
-        let m = sword(SW_S4);
-        let dash = m.cancels.iter().filter(|c| c.into & DASH != 0).map(|c| c.from).min().unwrap();
-        assert!(dash >= m.windows[0].to + 10);
     }
 
     /// The swings sound the mod's own (sfx.rs), not SM64's soft swish.

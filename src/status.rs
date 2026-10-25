@@ -13,7 +13,7 @@
 //! - a fire on him (a burn the game puts on the Tarnished): SM64's burning run, flames off him
 //! The stuns (frozen, asleep, shocked) take even in the middle of a blow on the ground, and in the
 //! air when he lands (before, only from a calm moment: in a fight it seldom came and they were
-//! lost). Deathblight stays off (its instant death isn't a wedge's worth).
+//! lost). Deathblight is the game's own (the user, 2026-10-25: instant death, as in Elden Ring).
 //! Poison and rot swamps (floor_kind) aren't lava: he wades in them, bubbles round his feet, and
 //! the swamp's own build-up does the rest.
 //! An ailment sets in when its gauge runs out: the game fills it back up, so a jump of most of it in
@@ -29,7 +29,7 @@ use glam::Vec3;
 
 use crate::{log, sm64, worker};
 
-/// the gauges in the order of the resistances (the resist module, see lib.rs no_ailments)
+/// the gauges in the order of the resistances (the resist module)
 pub const POISON: usize = 0;
 pub const ROT: usize = 1;
 pub const BLEED: usize = 2;
@@ -348,7 +348,7 @@ pub fn tick(player: &ChrIns, id: i32, feet: Vec3, calm: bool, hurt: bool) {
         if let Some((now, max)) = now_g {
             if let (Some(prev), false) = (s.gauges, stale) {
                 for i in 0..7 {
-                    if i != BLIGHT && sets_in(prev[i], now[i], max[i]) && !within(s.procs[i], 1.5) {
+                    if reacts_to(i) && sets_in(prev[i], now[i], max[i]) && !within(s.procs[i], 1.5) {
                         s.jumps[i] = Some(Instant::now());
                     }
                 }
@@ -408,6 +408,11 @@ pub fn tick(player: &ChrIns, id: i32, feet: Vec3, calm: bool, hurt: bool) {
         attempt(id);
     }
     flair(feet, calm);
+}
+
+/// Mario shows this ailment (all but deathblight: the game's own instant death takes it).
+fn reacts_to(i: usize) -> bool {
+    i != BLIGHT
 }
 
 /// What Mario does about an ailment: its flash now, his reaction when he's calm.
@@ -649,6 +654,17 @@ mod tests {
         // nothing: plain ground
         assert_eq!(floor_kind(&[]), Floor::Plain);
         assert_eq!(floor_kind(&[FloorEffect { id: 12, ..Default::default() }]), Floor::Plain);
+    }
+
+    /// Deathblight is vanilla's (the user, 2026-10-25): nothing of the mod's stands between it and
+    /// the game's instant death, and Mario has no reaction to it; the others he shows.
+    #[test]
+    fn deathblight_is_the_games_own() {
+        use super::{reacts_to, BLEED, BLIGHT, FROST, MADNESS, POISON, ROT, SLEEP};
+        assert!(!reacts_to(BLIGHT));
+        for i in [POISON, ROT, BLEED, FROST, SLEEP, MADNESS] {
+            assert!(reacts_to(i));
+        }
     }
 
     #[test]

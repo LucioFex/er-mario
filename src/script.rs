@@ -192,6 +192,9 @@ pub struct Move {
     pub land_ends: bool,
     /// the stick steers him (his facing toward it, a little speed): the Hurricane
     pub steer: bool,
+    /// ticks `from..to` (after the cut) the stick turns him (FOLLOW_TURN a tick) and drifts him
+    /// along it (FOLLOW_DRIFT m/s), when it's pushed: the sword's string isn't planted
+    pub follow: (u16, u16),
     /// a blow of it landing bounces him up this fast (SM64 units a tick) out of it: the pogo
     pub bounce: f32,
     /// X still held at this tick: he goes up at this vertical speed (with the enemy it launched)
@@ -236,6 +239,7 @@ pub const BASE: Move = Move {
     air: false,
     land_ends: false,
     steer: false,
+    follow: (0, 0),
     bounce: 0.0,
     held_rise: None,
     rise_on_y: false,
@@ -255,6 +259,35 @@ pub fn approach_step(a: &Approach, t: u16) -> f32 {
     let n = (a.to - a.from) as f32;
     let out = |p: f32| 1.0 - (1.0 - p) * (1.0 - p);
     out((t + 1 - a.from) as f32 / n) - out((t - a.from) as f32 / n)
+}
+
+/// A script move's voice that stands for one of a few (Mario's grunt on the light blows): which
+/// one this time (`n`: the moves started so far). Any other sound as it is.
+pub const VOICE_LIGHT: u32 = 0xE5E0_0001;
+
+pub fn voice_for(sound: u32, n: u32) -> u32 {
+    if sound != VOICE_LIGHT {
+        return sound;
+    }
+    const POOL: [u32; 3] = [SOUND_MARIO_UH, SOUND_MARIO_PUNCH_YAH, SOUND_MARIO_PUNCH_HOO];
+    // (a walk through the pool, its steps 1 or 2 by a hash of the count: never the same twice)
+    let step = |i: u32| 1 + (i.wrapping_mul(2_654_435_761) >> 20) % 2;
+    let at = (0..=n).fold(0, |at, i| (at + step(i)) % 3);
+    POOL[at as usize]
+}
+
+/// The follow-through's stick turn (degrees a tick) and drift (m/s).
+pub const FOLLOW_TURN: f32 = 7.0;
+pub const FOLLOW_DRIFT: f32 = 0.45;
+
+/// During a move's follow-through (`follow`), with the stick pushed (`stick_sq`: its length
+/// squared) `off_deg` away from his facing: how much he turns this tick (degrees) and how far he
+/// drifts along it (m a tick). None outside it or with the stick at rest.
+pub fn follow_through(m: &Move, t: u16, off_deg: f32, stick_sq: f32) -> Option<(f32, f32)> {
+    if t < m.follow.0 || t >= m.follow.1 || stick_sq < 0.04 {
+        return None;
+    }
+    Some((off_deg.clamp(-FOLLOW_TURN, FOLLOW_TURN), FOLLOW_DRIFT / 30.0))
 }
 
 // ---- the moves ------------------------------------------------------------------------------
@@ -564,6 +597,46 @@ pub struct Player {
     struck: Vec<(usize, u64)>,
     /// moves started so far (the same move twice in a row is a new one)
     starts: u32,
+    /// the pose the last frame of a move playing showed, and (once another move follows it) the
+    /// pose the new one blends in from over CARRY_TICKS
+    last: Option<Pose>,
+    carry: Option<Pose>,
+}
+
+/// The body values a move shows, for the blend from one move into the next.
+#[derive(Clone, Copy, Debug)]
+struct Pose {
+    twist: f32,
+    pitch: f32,
+    roll: f32,
+    squash: f32,
+    dip: f32,
+    reach: f32,
+    blade: Option<(f32, f32, f32)>,
+}
+
+/// A move that follows another blends in from the other's last pose over this many ticks (the
+/// share of the old pose left: 2/3, then 1/3).
+const CARRY_TICKS: u16 = 2;
+
+impl Pose {
+    /// `self` (the new move's) with `from` (the old one's) mixed in at tick `t`.
+    fn blended(self, from: Pose, t: u16) -> Pose {
+        let old = (CARRY_TICKS - t) as f32 / (CARRY_TICKS + 1) as f32;
+        let mix = |new: f32, was: f32| new + (was - new) * old;
+        Pose {
+            twist: mix(self.twist, from.twist),
+            pitch: mix(self.pitch, from.pitch),
+            roll: mix(self.roll, from.roll),
+            squash: mix(self.squash, from.squash),
+            dip: mix(self.dip, from.dip),
+            reach: mix(self.reach, from.reach),
+            blade: match (self.blade, from.blade) {
+                (Some(n), Some(o)) => Some((mix(n.0, o.0), mix(n.1, o.1), mix(n.2, o.2))),
+                _ => self.blade,
+            },
+        }
+    }
 }
 
 impl Player {
@@ -624,6 +697,8 @@ impl Player {
                 self.cur = None;
                 return None;
             };
+            // (another move playing as this one starts: its last pose carries in)
+            self.carry = if self.cur.is_some() { self.last } else { None };
             self.cur = Some(id);
             self.landed = false;
             self.ground_shown = 0;
@@ -636,6 +711,7 @@ impl Player {
             // (another action: a blow on him, a fall, a cancel; the move is over)
             if !is_script(action) || arg != id as u32 {
                 self.cur = None;
+                self.last = None;
                 return None;
             }
             (id, timer.clamp(0, u16::MAX as i32) as u16)
@@ -643,6 +719,7 @@ impl Player {
         let m = &moves[id as usize];
         if t >= m.len {
             self.cur = None;
+            self.last = None;
             let c = SM64ErScript { active: 1, end: 1, anim_id: -1, anim_frame: -1.0, squash: 1.0, ..Default::default() };
             return Some(Frame { id, t, c, window: None, reach: 0.0, reach_pitch: 0.0, blade: None, held: None, fx: 0 });
         }
@@ -652,7 +729,7 @@ impl Player {
         // (m a tick: its speed and its share of the lunge)
         let way = eval(m.speed, tf, 0.0) / 30.0 + m.approach.map_or(0.0, |a| approach_step(&a, t) * self.approach_m);
         let vel_y = m.vel_y.iter().find(|v| v.0 == t).map(|v| v.1);
-        let sound = m.sounds.iter().find(|s| s.0 == t);
+        let sound = m.sounds.iter().find(|s| s.0 == t).map(|s| (s.0, voice_for(s.1, self.starts), s.2));
         let window = m.windows.iter().enumerate().find(|(_, w)| w.from <= t && t <= w.to);
         // (a ground window's look once, as he's on the ground: the landing's ring)
         let window_fx = match window {
@@ -671,7 +748,7 @@ impl Player {
         let pulse = m.pulse.filter(|&(every, _)| every > 0 && t % every == 0).map_or(0, |p| p.1);
         let fx = m.fx.iter().filter(|f| f.0 == t).fold(window_fx | pulse, |a, f| a | f.1);
         let cancel = m.cancels.iter().filter(|c| t >= if self.landed { c.on_hit.min(c.from) } else { c.from }).fold(0, |a, c| a | c.into);
-        let c = SM64ErScript {
+        let mut c = SM64ErScript {
             active: 1,
             end: 0,
             anim_id,
@@ -694,9 +771,16 @@ impl Player {
             sound_volume: sound.map_or(0.0, |s| s.2),
         };
         self.cancel = cancel;
-        let blade = within(m.blade_held).then(|| (eval(m.blade_yaw, tf, 0.0), eval(m.blade_pitch, tf, 0.0), eval(m.blade_roll, tf, 0.0)));
+        let mut blade = within(m.blade_held).then(|| (eval(m.blade_yaw, tf, 0.0), eval(m.blade_pitch, tf, 0.0), eval(m.blade_roll, tf, 0.0)));
+        let mut reach = eval(m.reach, tf, 0.0);
+        // (the first ticks blend in from the move before's last pose: no pop between blows)
+        if let Some(from) = self.carry.filter(|_| t < CARRY_TICKS) {
+            let p = Pose { twist: c.twist, pitch: c.pitch, roll: c.roll, squash: c.squash, dip: c.dip, reach, blade }.blended(from, t);
+            (c.twist, c.pitch, c.roll, c.squash, c.dip, reach, blade) = (p.twist, p.pitch, p.roll, p.squash, p.dip, p.reach, p.blade);
+        }
+        self.last = Some(Pose { twist: c.twist, pitch: c.pitch, roll: c.roll, squash: c.squash, dip: c.dip, reach, blade });
         let held = within(m.blade_held).then(|| HeldPose { scale: eval(m.weapon_scale, tf, 1.0), out: eval(m.out, tf, 0.0), up: eval(m.up, tf, 0.0), bite: eval(m.bite, tf, 0.0) });
-        Some(Frame { id, t, c, window, reach: eval(m.reach, tf, 0.0), reach_pitch: m.reach_pitch, blade, held, fx })
+        Some(Frame { id, t, c, window, reach, reach_pitch: m.reach_pitch, blade, held, fx })
     }
 }
 
@@ -907,6 +991,95 @@ mod tests {
         let fx: Vec<u32> = (0..25).map(|t| p.frame_in(std::slice::from_ref(&M), if t == 0 { 0 } else { ACT_ER_SCRIPT }, 0, t, 100.0).unwrap().fx & 0x100).collect();
         assert!(fx[0] != 0 && fx[10] != 0 && fx[20] != 0);
         assert_eq!(fx.iter().filter(|f| **f != 0).count(), 3);
+    }
+
+    #[test]
+    fn the_stick_steers_the_follow_through() {
+        let m = Move { follow: (5, 12), ..BASE };
+        // (before and after it, or the stick at rest: nothing)
+        assert!(follow_through(&m, 4, 30.0, 1.0).is_none());
+        assert!(follow_through(&m, 12, 30.0, 1.0).is_none());
+        assert!(follow_through(&m, 6, 30.0, 0.01).is_none());
+        // (a far turn: 7 degrees a tick; a near one all of it; either way; the drift along it)
+        let (turn, drift) = follow_through(&m, 6, 90.0, 1.0).unwrap();
+        assert_eq!(turn, FOLLOW_TURN);
+        assert!((drift - FOLLOW_DRIFT / 30.0).abs() < 1e-6);
+        assert_eq!(follow_through(&m, 6, -90.0, 1.0).unwrap().0, -FOLLOW_TURN);
+        assert_eq!(follow_through(&m, 6, 3.0, 1.0).unwrap().0, 3.0);
+        // (a move with no follow-through: planted as before)
+        assert!(follow_through(&BASE, 0, 30.0, 1.0).is_none());
+    }
+
+    /// One blow into the next (a cancel): no pose jump across the join, however far apart the two
+    /// were left (the 2-tick carry-in).
+    #[test]
+    fn a_chain_joins_without_a_jump() {
+        for (a, b) in [(SW_S1, SW_S2), (SW_S2, SW_S3), (SW_S3, SW_S4), (SW_S4, SW_S1), (SW_S1, SW_THRUST), (SW_S2, SW_HELM), (SW_S3, SW_IAI)] {
+            let mut p = Player::default();
+            p.start(a, None);
+            let m = &MOVES[a as usize];
+            let from = m.cancels.iter().find(|c| c.into & NEXT != 0).map_or(m.len - 1, |c| c.from);
+            let mut last = p.frame(0, 0, 0, 100.0).unwrap();
+            for t in 1..=from {
+                last = p.frame(ACT_ER_SCRIPT, a as u32, t as i32, 100.0).unwrap();
+            }
+            p.start(b, None);
+            let mut prev = last;
+            // (the join: the carry-in's two ticks and the wind-up's peak; the cut itself is a jump on purpose)
+            for t in 0..3 {
+                let f = p.frame(ACT_ER_SCRIPT, b as u32, t as i32, 100.0).unwrap();
+                let (pb, fb) = (prev.blade.unwrap_or_default(), f.blade.unwrap_or_default());
+                let name = format!("{} -> {} at {t}", m.name, MOVES[b as usize].name);
+                assert!((f.c.twist - prev.c.twist).abs() <= 40.0, "{name}: twist {} then {}", prev.c.twist, f.c.twist);
+                assert!((f.c.pitch - prev.c.pitch).abs() <= 25.0, "{name}: lean");
+                assert!((fb.0 - pb.0).abs() <= 75.0 && (fb.1 - pb.1).abs() <= 75.0 && (fb.2 - pb.2).abs() <= 75.0, "{name}: blade {pb:?} then {fb:?}");
+                assert!((f.c.squash - prev.c.squash).abs() <= 0.12, "{name}: squash");
+                assert!((f.c.dip - prev.c.dip).abs() <= 4.0, "{name}: dip");
+                prev = f;
+            }
+        }
+    }
+
+    /// A move that begins from rest isn't blended with a stale pose.
+    #[test]
+    fn a_fresh_move_has_no_carry() {
+        let mut p = Player::default();
+        p.start(SW_S2, None);
+        let f = p.frame(0, 0, 0, 100.0).unwrap();
+        assert_eq!(f.c.twist, eval(MOVES[SW_S2 as usize].twist, 0.0, 0.0));
+        // (one that ended, then another: also fresh)
+        p.frame(ACT_ER_SCRIPT, SW_S2 as u32, 40, 100.0);
+        p.start(SW_S3, None);
+        let f = p.frame(0, 0, 0, 100.0).unwrap();
+        assert_eq!(f.c.twist, eval(MOVES[SW_S3 as usize].twist, 0.0, 0.0));
+    }
+
+    /// Mario's grunt on the light blows varies (the SM64 voices, low), never silent, never one
+    /// forever.
+    #[test]
+    fn the_light_blows_grunt_in_turn() {
+        let mut seen = std::collections::HashSet::new();
+        for n in 0..24u32 {
+            let v = voice_for(VOICE_LIGHT, n);
+            assert!([SOUND_MARIO_UH, SOUND_MARIO_PUNCH_YAH, SOUND_MARIO_PUNCH_HOO].contains(&v), "{v:#x}");
+            seen.insert(v);
+        }
+        assert!(seen.len() >= 3);
+        // (the same blow twice running: a different one)
+        for n in 0..24u32 {
+            assert_ne!(voice_for(VOICE_LIGHT, n), voice_for(VOICE_LIGHT, n + 1));
+        }
+        // (any other sound: as it is)
+        assert_eq!(voice_for(SOUND_MARIO_UH, 5), SOUND_MARIO_UH);
+        // (S1 and S2 carry it, softly)
+        for id in [SW_S1, SW_S2] {
+            let s = MOVES[id as usize].sounds.iter().find(|s| s.1 == VOICE_LIGHT).expect("a voice");
+            assert!((0.2..=0.3).contains(&s.2), "{}", s.2);
+        }
+        let mut p = Player::default();
+        p.start(SW_S1, None);
+        let f = p.frame(0, 0, 0, 100.0).unwrap();
+        assert!(f.c.sound != VOICE_LIGHT && f.c.sound != 0);
     }
 
     #[test]

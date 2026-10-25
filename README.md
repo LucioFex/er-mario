@@ -325,7 +325,7 @@ something of its own while it lasts:
 | Sleep | **Knocked out** up to 3 s (mash buttons to wake up sooner; a hit wakes him) |
 | Madness | **Shocked**, a yellow flash; his **style meter (and MAX) and a charge in his hand are lost** |
 | Fire on him | SM64's burning run (the burn's damage is Elden Ring's) |
-| Deathblight | Off |
+| Deathblight | The game's own: instant death, as in Elden Ring |
 
 The stuns (frozen, asleep, shocked) land even in the middle of a blow on the ground, and in the air
 as soon as he lands. Lava floors give SM64's lava boost; **poison and rot swamps are not lava**:

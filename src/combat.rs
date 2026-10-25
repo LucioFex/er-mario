@@ -1637,8 +1637,16 @@ pub fn new_tick() {
 }
 
 /// the sword's shove on a regular enemy (m), a heavy cut's
-const SHOVE: f32 = 0.25;
+const SHOVE: f32 = 0.2;
 const SHOVE_HEAVY: f32 = 0.6;
+
+/// How far the sword's `attack` shoves a regular enemy back (m): the blows that end a run, a
+/// heavy cut's more; None for the others (the many-hit ones' each blow, the launchers: they'd push
+/// the enemy out of the rest of it) and for what isn't the sword's.
+fn sword_shove(attack: Attack) -> Option<f32> {
+    let ends_run = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo);
+    ends_run.then(|| if crate::impact::stop(attack) >= 5 { SHOVE_HEAVY } else { SHOVE })
+}
 
 /// A regular enemy `h` (not a boss, not juggled, carried or flying) moved `dist` m straight away
 /// from Mario at `me` along the ground, if nothing's in its way.
@@ -3329,10 +3337,9 @@ impl Combat {
                 // heavy ones more
                 // (not the many-hit ones' each blow: the stabs, the Flurry's cuts, the air string's,
                 // nor the launchers: they'd push the enemy out of the rest of it)
-                let shoves = crate::impact::sword_blow(attack) && !matches!(attack, Attack::SwordStab | Attack::SwordFlurry | Attack::SwordRave(0..=2) | Attack::SwordRise | Attack::SwordLauncher | Attack::SwordPogo);
-                if shoves && !crate::coop::guest() {
+                if let (Some(dist), false) = (sword_shove(attack), crate::coop::guest()) {
                     if let Some(h) = target.handle.as_ref() {
-                        shove_back(h, glam::Vec3::new(me.0, me.1, me.2), if crate::impact::stop(attack) >= 5 { SHOVE_HEAVY } else { SHOVE });
+                        shove_back(h, glam::Vec3::new(me.0, me.1, me.2), dist);
                     }
                 }
                 if attack.finisher() && swing == 1.0 && target.handle.is_some() {
@@ -3703,6 +3710,22 @@ mod blade_tests {
 #[cfg(test)]
 mod tests {
     use super::{Attack, CODES};
+
+    /// The sword's blows that end a run shove (light 0.2 m, heavy more); the many-hit ones not.
+    #[test]
+    fn light_blows_shove_a_little_and_runs_not_at_all() {
+        let light = super::sword_shove(Attack::SwordSlash(0)).unwrap();
+        assert_eq!(light, 0.2);
+        assert_eq!(super::sword_shove(Attack::SwordSlash(1)), Some(0.2));
+        assert!(super::sword_shove(Attack::SwordSlash(3)).unwrap() > 0.5);
+        for runs in [Attack::SwordStab, Attack::SwordFlurry, Attack::SwordRave(0), Attack::SwordRave(2), Attack::SwordRise, Attack::SwordLauncher, Attack::SwordPogo] {
+            assert_eq!(super::sword_shove(runs), None, "{runs:?}");
+        }
+        // (the air string's last blow ends the run: it shoves)
+        assert!(super::sword_shove(Attack::SwordRave(3)).is_some());
+        // (not the sword's: not here)
+        assert_eq!(super::sword_shove(Attack::Punch), None);
+    }
 
     #[test]
     fn within_reach_flat_and_up() {
