@@ -45,6 +45,27 @@ pub struct State {
     pub pogos: u8,
     /// the Star Calibur was used in this jump (once an airtime)
     pub calibur_used: bool,
+    /// the gap (m, off its body) to the nearest enemy in front of him, if any
+    pub foe: Option<f32>,
+}
+
+/// The Calibur wants someone to thrust at: this far at most, this close at least (nearer, the
+/// string's X is what a jump at an enemy wants).
+pub const CALIBUR_RANGE: f32 = 6.0;
+pub const CALIBUR_NEAR: f32 = 1.8;
+
+/// The gap (m) to the nearest of `foes` (SM64 position, radius) in front of Mario (`me`, facing
+/// `face`; within 60 degrees), `scale` metres a unit.
+pub fn foe_gap(me: [f32; 3], face: f32, foes: &[([f32; 3], f32)], scale: f32) -> Option<f32> {
+    let (fx, fz) = (face.sin(), face.cos());
+    foes.iter()
+        .filter_map(|(p, r)| {
+            let (dx, dz) = (p[0] - me[0], p[2] - me[2]);
+            let d = (dx * dx + dz * dz).sqrt();
+            let cos = if d > 1.0 { (dx * fx + dz * fz) / d } else { 1.0 };
+            (cos > 0.5).then_some(((d - r) * scale).max(0.0))
+        })
+        .min_by(|a, b| a.total_cmp(b))
 }
 
 /// a beat after a string's blow ended: the pause strings' X (ticks)
@@ -74,8 +95,9 @@ pub fn choose(i: &Input, s: &State) -> Option<u16> {
             return Some(SW_POGO);
         }
         if i.x {
-            // (forward + X out of the string: the Star Calibur, once a jump)
-            if i.dir == Some(Dir::Forward) && !s.calibur_used && !is(&[SW_RAVE, SW_RAVE + 1, SW_RAVE + 2, SW_RAVE + 3]) {
+            // (forward + X out of the string, with an enemy ahead but not on him: the Star Calibur,
+            // once a jump)
+            if i.dir == Some(Dir::Forward) && !s.calibur_used && s.foe.is_some_and(|g| (CALIBUR_NEAR..=CALIBUR_RANGE).contains(&g)) && !is(&[SW_RAVE, SW_RAVE + 1, SW_RAVE + 2, SW_RAVE + 3]) {
                 return Some(SW_CALIBUR);
             }
             return Some(match playing {
@@ -157,7 +179,7 @@ pub struct Stars {
     n: u8,
     lit_at: u32,
     /// the bonus (a factor) the last spend gave, and when
-    spent: Option<(f32, u32)>,
+    spent: Option<(f32, u32, u32)>,
 }
 
 impl Stars {
@@ -184,20 +206,28 @@ impl Stars {
     /// A sword blow landed at `tick`, `heavy` or not: its damage factor (1 + 0.15 a star), and
     /// whether this blow spent the stars (the first hit of it). A heavy blow takes them all; a light
     /// one leaves them; a hit right after a spend (same blow, other enemy) gets the same factor.
-    pub fn blow(&mut self, tick: u32, heavy: bool) -> (f32, bool) {
+    pub fn blow(&mut self, tick: u32, heavy: bool, mv: u32) -> (f32, bool) {
+        let (f, n) = self.peek(tick, heavy, mv);
+        if n > 0 {
+            self.n = 0;
+            self.spent = Some((f, tick, mv));
+        }
+        (f, n > 0)
+    }
+
+    /// What `blow` would give: the factor, and how many stars it would spend (0: none). `mv`: the
+    /// move the blow is of (its start): only that move's other hits share a spend.
+    pub fn peek(&self, tick: u32, heavy: bool, mv: u32) -> (f32, u8) {
         if heavy {
-            if let Some((f, _)) = self.spent.filter(|(_, at)| tick.wrapping_sub(*at) <= STAR_HOLD) {
-                return (f, false);
+            if let Some((f, ..)) = self.spent.filter(|(_, at, m)| *m == mv && tick.wrapping_sub(*at) <= STAR_HOLD) {
+                return (f, 0);
             }
             let n = self.count(tick);
             if n > 0 {
-                let f = 1.0 + STAR_BONUS * n as f32;
-                self.n = 0;
-                self.spent = Some((f, tick));
-                return (f, true);
+                return (1.0 + STAR_BONUS * n as f32, n);
             }
         }
-        (1.0, false)
+        (1.0, 0)
     }
 
     /// Mario was hit, or put the sword away: they go out.
@@ -226,15 +256,27 @@ pub fn star_lit(tick: u32) {
     }
 }
 
-/// Game thread (combat.rs): a sword blow landed. Its factor, and the stars spent by it (0 if none).
+/// The scripted move playing began as this one (moves.rs): a heavy blow's spend is its own.
+static MOVE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_move(n: u32) {
+    MOVE.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Game thread (combat.rs): a sword blow is landing. Its factor, and the stars it would spend (0 if
+/// none); `star_spend` once it took something.
 pub fn star_blow(attack: Attack, tick: u32) -> (f32, u8) {
     if !crate::impact::sword_blow(attack) {
         return (1.0, 0);
     }
-    let mut s = stars();
-    let n = s.count(tick);
-    let (f, spent) = s.blow(tick, star_heavy(attack));
-    (f, if spent { n } else { 0 })
+    stars().peek(tick, star_heavy(attack), MOVE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The blow `star_blow` weighed took a share: the stars are spent.
+pub fn star_spend(attack: Attack, tick: u32) {
+    if crate::impact::sword_blow(attack) {
+        stars().blow(tick, star_heavy(attack), MOVE.load(std::sync::atomic::Ordering::Relaxed));
+    }
 }
 
 /// The stars to draw on the blade now.
@@ -266,19 +308,43 @@ mod tests {
         // (a fourth: still three)
         assert_eq!(s.light(80), 3);
         // a light cut leaves them
-        assert_eq!(s.blow(90, false), (1.0, false));
+        assert_eq!(s.blow(90, false, 0), (1.0, false));
         assert_eq!(s.count(90), 3);
         // the chop takes the three: +45%
-        let (f, spent) = s.blow(100, true);
+        let (f, spent) = s.blow(100, true, 0);
         assert!(spent);
         assert!((f - 1.45).abs() < 1e-5, "{f}");
         assert_eq!(s.count(100), 0);
         // (the next heavy one has none)
-        assert_eq!(s.blow(200, true), (1.0, false));
+        assert_eq!(s.blow(200, true, 0), (1.0, false));
         // one star: +15%
         let mut s = Stars::new();
         s.light(0);
-        assert!((s.blow(5, true).0 - 1.15).abs() < 1e-5);
+        assert!((s.blow(5, true, 0).0 - 1.15).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_different_blow_inside_the_hold_does_not_get_the_bonus() {
+        let mut s = Stars::new();
+        s.light(0);
+        let (f, first) = s.blow(20, true, 1);
+        assert!(first && f > 1.0);
+        // (the same move's other hit)
+        assert_eq!(s.blow(21, true, 1), (f, false));
+        // (the next heavy move 3 ticks later: it has no stars)
+        assert_eq!(s.blow(23, true, 2), (1.0, false));
+    }
+
+    #[test]
+    fn stars_are_not_spent_when_nothing_was_taken() {
+        // (an immune enemy: the share is 0; the stars stay for the next)
+        let mut s = Stars::new();
+        s.light(0);
+        s.light(5);
+        assert_eq!(s.peek(10, true, 1), (1.3, 2));
+        assert_eq!(s.count(10), 2);
+        assert_eq!(s.blow(11, true, 1), (1.3, true));
+        assert_eq!(s.count(11), 0);
     }
 
     #[test]
@@ -286,15 +352,15 @@ mod tests {
         let mut s = Stars::new();
         s.light(0);
         s.light(10);
-        let (f, first) = s.blow(20, true);
+        let (f, first) = s.blow(20, true, 0);
         assert!(first && (f - 1.3).abs() < 1e-5);
         // (the chop's sweep reaching another enemy a tick later, the Leap Splitter's wave after its cleave)
-        assert_eq!(s.blow(21, true), (f, false));
-        assert_eq!(s.blow(20 + STAR_HOLD, true), (f, false));
+        assert_eq!(s.blow(21, true, 0), (f, false));
+        assert_eq!(s.blow(20 + STAR_HOLD, true, 0), (f, false));
         // (but not a whole blow later)
-        assert_eq!(s.blow(20 + STAR_HOLD + 1, true), (1.0, false));
+        assert_eq!(s.blow(20 + STAR_HOLD + 1, true, 0), (1.0, false));
         // and not on a light cut
-        assert_eq!(s.blow(21, false), (1.0, false));
+        assert_eq!(s.blow(21, false, 0), (1.0, false));
     }
 
     #[test]
@@ -305,14 +371,14 @@ mod tests {
         // 6 s (180 ticks) after the last one they're out
         assert_eq!(s.count(100 + STAR_IDLE), 2);
         assert_eq!(s.count(100 + STAR_IDLE + 1), 0);
-        assert_eq!(s.blow(100 + STAR_IDLE + 1, true), (1.0, false));
+        assert_eq!(s.blow(100 + STAR_IDLE + 1, true, 0), (1.0, false));
         // (a new one after the lapse starts over from one)
         assert_eq!(s.light(400), 1);
         // hit, or the sword put away
         s.light(401);
         s.lose();
         assert_eq!(s.count(402), 0);
-        assert_eq!(s.blow(402, true), (1.0, false));
+        assert_eq!(s.blow(402, true, 0), (1.0, false));
     }
 
     #[test]
@@ -424,7 +490,7 @@ mod tests {
     /// Forward + X in the air: the Star Calibur, once a jump; X alone is still the air string.
     #[test]
     fn the_star_calibur_is_forward_x_in_the_air() {
-        let air = State { air: true, pogos: 3, ..Default::default() };
+        let air = State { air: true, pogos: 3, foe: Some(3.0), ..Default::default() };
         let fwd = Input { dir: Some(Dir::Forward), ..x() };
         assert_eq!(choose(&fwd, &air), Some(SW_CALIBUR));
         // (once a jump: then it is the air string's X)
@@ -438,6 +504,35 @@ mod tests {
         assert_eq!(choose(&Input { lt: true, dir: Some(Dir::Forward), ..Default::default() }, &air), Some(SW_POGO));
         // (on the ground forward + X is no Calibur)
         assert_eq!(choose(&fwd, &State::default()), Some(SW_S1));
+    }
+
+    /// Forward + X is the Calibur only with someone to thrust at: 1.8 to 6 m off, in front.
+    #[test]
+    fn the_calibur_wants_someone_ahead_and_not_too_close() {
+        let air = State { air: true, pogos: 3, ..Default::default() };
+        let fwd = Input { dir: Some(Dir::Forward), ..x() };
+        // (jumping at an enemy right there, or at no one: the string's first X)
+        assert_eq!(choose(&fwd, &State { foe: None, ..air }), Some(SW_RAVE));
+        assert_eq!(choose(&fwd, &State { foe: Some(1.0), ..air }), Some(SW_RAVE));
+        assert_eq!(choose(&fwd, &State { foe: Some(6.5), ..air }), Some(SW_RAVE));
+        assert_eq!(choose(&fwd, &State { foe: Some(3.0), ..air }), Some(SW_CALIBUR));
+        assert_eq!(choose(&fwd, &State { foe: Some(CALIBUR_NEAR), ..air }), Some(SW_CALIBUR));
+        assert_eq!(choose(&fwd, &State { foe: Some(CALIBUR_RANGE), ..air }), Some(SW_CALIBUR));
+    }
+
+    /// The nearest enemy in front of Mario, its gap off its body.
+    #[test]
+    fn the_foe_ahead_is_in_front_and_off_its_body() {
+        // (SM64 units, facing yaw 0: forward is +z; scale 0.01 m a unit)
+        let me = [0.0, 0.0, 0.0];
+        assert_eq!(foe_gap(me, 0.0, &[], 0.01), None);
+        let g = foe_gap(me, 0.0, &[([0.0, 0.0, 400.0], 50.0)], 0.01).expect("ahead");
+        assert!((g - 3.5).abs() < 1e-3, "{g}");
+        // behind him: not ahead
+        assert_eq!(foe_gap(me, 0.0, &[([0.0, 0.0, -400.0], 50.0)], 0.01), None);
+        // the nearest of two
+        let g = foe_gap(me, 0.0, &[([0.0, 0.0, 800.0], 50.0), ([100.0, 0.0, 300.0], 50.0)], 0.01).expect("ahead");
+        assert!(g < 3.0, "{g}");
     }
 
     #[test]

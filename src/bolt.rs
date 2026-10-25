@@ -222,6 +222,7 @@ pub struct Bolts {
     storm: Option<Storm>,
     looks: Vec<Look>,
     seed: u16,
+    epoch: u32,
 }
 
 /// What `looks` and `storm_looks` hand the HUD (the game thread publishes it every tick).
@@ -246,7 +247,16 @@ pub fn storm_looks() -> Vec<crate::fx::Storm> {
     LOOKS.lock().unwrap_or_else(|e| e.into_inner()).1.clone()
 }
 
+/// Bumped when the bolts still on their way must go (a weapon swap, a hit, a death): every `Bolts`
+/// drops its queued hits at its next tick.
+static EPOCH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn drop_pending() {
+    EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn clear() {
+    drop_pending();
     *LOOKS.lock().unwrap_or_else(|e| e.into_inner()) = (Vec::new(), Vec::new());
 }
 
@@ -298,6 +308,7 @@ impl Bolts {
     /// A cast lets go (the sword raised on the ground, thrown in the air): `level` 0-4, from his
     /// hand `hand` facing `facing` (Elden Ring world).
     pub fn cast(&mut self, level: u8, air: bool, hand: Vec3, facing: Vec3, origin: [f32; 3], tick: u32) {
+        self.sync();
         let near = enemies(hand, RANGE + 4.0, origin);
         let chests: Vec<Vec3> = near.iter().map(|n| n.1).collect();
         let target = pick(hand, facing, &chests, RANGE, CONE).map(|i| near[i]);
@@ -340,6 +351,7 @@ impl Bolts {
     /// at the first enemy ahead `facing` in sight (the cast's aim), then on from one to the next.
     /// `ray(from, to)`: where the map is in the way.
     pub fn ricochet(&mut self, tip: Vec3, facing: Vec3, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        self.sync();
         let near = enemies(tip, RANGE + 4.0, origin);
         // (in sight: nothing but the enemy's own side in the way)
         let seen: Vec<(FieldInsHandle, Vec3, Vec3)> = near.into_iter().filter(|(_, c, _)| sighted(ray, tip, *c)).collect();
@@ -359,6 +371,17 @@ impl Bolts {
     }
 
     /// The ricochets' hits landing and jumping on (`tick`'s due ones).
+    /// The queued hits gone if `drop_pending` was called since the last look.
+    fn sync(&mut self) {
+        let now = EPOCH.load(std::sync::atomic::Ordering::Relaxed);
+        if std::mem::replace(&mut self.epoch, now) != now {
+            self.strikes.clear();
+            self.ricochets.clear();
+            self.javelins.clear();
+            self.storm = None;
+        }
+    }
+
     fn bounce(&mut self, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
         let (due, wait): (Vec<Ricochet>, Vec<Ricochet>) = std::mem::take(&mut self.ricochets).into_iter().partition(|r| tick >= r.land);
         self.ricochets = wait;
@@ -433,6 +456,7 @@ impl Bolts {
     /// Game thread, every SM64 tick: the bolts falling, the javelins flying, the storm raining; the
     /// looks published for the HUD. `ray(from, to)`: where the map is in the way.
     pub fn tick(&mut self, player: &ChrIns, combat: &mut Combat, origin: [f32; 3], tick: u32, ray: &impl Fn(Vec3, Vec3) -> Option<Vec3>) {
+        self.sync();
         for (from, to, width) in std::mem::take(&mut *SLASHES.lock().unwrap_or_else(|e| e.into_inner())) {
             self.look(from, to, width, tick);
         }
@@ -716,6 +740,18 @@ mod tests {
     }
 
     /// Each hit is 0.85 of the one before.
+    #[test]
+    fn queued_hits_go_with_a_swap_or_a_hit() {
+        let h = unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&9u64) };
+        let mut b = Bolts::default();
+        b.sync();
+        b.ricochets.push(Ricochet { chain: Chain::new(9), target: h, at: Vec3::ZERO, land: 50, share: 1.0 });
+        // (nothing happened: they stay)
+        drop_pending();
+        b.sync();
+        assert!(b.ricochets.is_empty());
+    }
+
     #[test]
     fn each_hit_is_a_sixth_less() {
         assert_eq!(Chain::share(0), 1.0);

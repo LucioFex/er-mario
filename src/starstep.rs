@@ -66,7 +66,7 @@ type Ray<'a> = &'a dyn Fn(Vec3, Vec3) -> Option<Vec3>;
 /// Where the Phantom Cut lands (Elden Ring): behind the enemy at its radius + BEHIND_GAP, else at
 /// its sides. Each place needs a floor within 1 m below, sight from Mario and from the enemy's
 /// centre, and no wall right behind it. `ray(from, to)`: the first thing hit, if any.
-pub fn phantom_spot(me: Vec3, foe: Vec3, forward: Vec3, radius: f32, ray: Ray) -> Option<Vec3> {
+pub fn phantom_spot(me: Vec3, foe: Vec3, forward: Vec3, radius: f32, bodies: &[Body], ray: Ray) -> Option<Vec3> {
     let fwd = forward.with_y(0.0).normalize_or_zero();
     if fwd == Vec3::ZERO {
         return None;
@@ -79,6 +79,9 @@ pub fn phantom_spot(me: Vec3, foe: Vec3, forward: Vec3, radius: f32, ray: Ray) -
         let c = foe + dir * gap;
         // (a floor within a metre below, from a little above)
         let spot = ray(c + Vec3::Y * 0.6, c - Vec3::Y)?;
+        if crowded(spot, bodies) {
+            return None;
+        }
         let eye = Vec3::Y;
         let clear = ray(me + eye, spot + eye).is_none()
             && ray(foe + eye, spot + eye).is_none()
@@ -87,12 +90,34 @@ pub fn phantom_spot(me: Vec3, foe: Vec3, forward: Vec3, radius: f32, ray: Ray) -
     })
 }
 
-/// Where the Trick lands: BLINK_OVER over the enemy's head top, the ceiling there clear (an up-ray)
-/// and in sight of Mario.
-pub fn blink_spot(me: Vec3, head: Vec3, ray: Ray) -> Option<Vec3> {
+/// Where the Trick lands: BLINK_OVER over the enemy's head top, the ceiling there clear (an up-ray),
+/// in sight of Mario, a floor under it within GROUND_SLACK of the enemy's ground `ground` (the Trick
+/// ends in a drop: never over a chasm) and no other body there.
+pub fn blink_spot(me: Vec3, head: Vec3, ground: f32, bodies: &[Body], ray: Ray) -> Option<Vec3> {
     let spot = head + Vec3::Y * BLINK_OVER;
     let clear = ray(head, spot + Vec3::Y * 0.4).is_none() && ray(me + Vec3::Y * 0.8, spot).is_none();
-    clear.then_some(spot)
+    let floor = ray(spot, Vec3::new(spot.x, ground - GROUND_SLACK, spot.z)).is_some_and(|f| (f.y - ground).abs() <= GROUND_SLACK);
+    (clear && floor && !crowded(spot, bodies)).then_some(spot)
+}
+
+/// Another body's feet, radius and height (m).
+pub type Body = (Vec3, f32, f32);
+
+/// The Trick's floor may be this far (m) off the enemy's ground; a spot this close to another body
+/// (m, off its side) is in it.
+pub const GROUND_SLACK: f32 = 1.5;
+const BODY_GAP: f32 = 0.3;
+
+/// `spot` is inside one of `bodies`.
+pub fn crowded(spot: Vec3, bodies: &[Body]) -> bool {
+    bodies.iter().any(|(feet, r, h)| (spot - *feet).with_y(0.0).length() < r + BODY_GAP && spot.y > feet.y - 0.5 && spot.y < feet.y + h)
+}
+
+/// Whether the Trick can blink over an enemy `dist` m off whose head is `above` m over Mario's
+/// feet: any but a colossus (its head is a climb) or one the game's script holds. Bosses too, it is
+/// only a move.
+pub fn blinkable(colossus: bool, hands_off: bool, dist: f32, above: f32) -> bool {
+    !colossus && !hands_off && dist <= BLINK_RANGE && above <= 6.0
 }
 
 /// Mario thrown back from `foe` by the parry: SLIDE, less when a wall is in the way.
@@ -152,6 +177,11 @@ pub fn veiled() -> bool {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).veil.is_some_and(|t| Instant::now() < t)
 }
 
+/// A Phantom Cut's line is due yet.
+pub fn pending() -> bool {
+    STATE.lock().unwrap_or_else(|e| e.into_inner()).cut.is_some()
+}
+
 pub fn clear() {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.step = None;
@@ -182,9 +212,15 @@ pub struct Out {
     pub queue: Option<(u16, bool)>,
 }
 
-/// SM64's yaw toward `d` (Elden Ring axes, as odm.rs turns him)
+/// SM64's yaw that faces `d` (Elden Ring axes, x flipped: his forward is (-sin, 0, cos))
 fn yaw_of(d: Vec3) -> f32 {
-    d.x.atan2(-d.z)
+    (-d.x).atan2(d.z)
+}
+
+/// The other bodies near `at` (not `skip`'s): feet, radius and height (m).
+fn bodies_near(i: &In, at: Vec3, skip: u64) -> Vec<Body> {
+    let k = crate::scale();
+    i.targets.iter().filter(|t| t.key() != skip && (t.feet() - at).length() < 6.0).map(|t| (t.feet(), t.radius * k, t.height * k)).collect()
 }
 
 /// Mario to `to` (if any), facing `yaw`, still, in `action` with this vertical speed: after the
@@ -263,7 +299,7 @@ fn resolve(i: &In, combat: &mut Combat, player: &ChrIns, ray: Ray, f: crate::dod
         }
     };
     let (boss, hands) = (combat::boss_class(&f.handle, chr), combat::hands_off(&f.handle));
-    let spot = (class == Class::Small && !boss && !hands && !air).then(|| phantom_spot(i.feet, f.pos, f.forward, r_m, ray)).flatten();
+    let spot = (class == Class::Small && !boss && !hands && !air).then(|| phantom_spot(i.feet, f.pos, f.forward, r_m, &bodies_near(i, f.pos, key), ray)).flatten();
     let toward = (f.pos - i.feet).with_y(0.0);
     match verdict(class, boss, hands, spot.is_some()) {
         Verdict::Witch => {
@@ -275,6 +311,8 @@ fn resolve(i: &In, combat: &mut Combat, player: &ChrIns, ray: Ray, f: crate::dod
             log(format!("sword: phantom cut on c{:04}", f.id));
             crate::dodge::spend();
             crate::impact::phantom_streak(i.feet + Vec3::Y * 0.9, spot + Vec3::Y * 0.9);
+            // (BEHIND! from the landing: the cut, a moment on, has it already)
+            crate::odm::mark_behind(&f.handle, f.pos);
             put(i, Some(spot), yaw_of(f.pos - spot), crate::moves::ACT_IDLE, 0.0);
             veil(VEIL_CUT);
             STATE.lock().unwrap_or_else(|e| e.into_inner()).cut = Some(Cut { mob: f.handle, due: i.tick.wrapping_add(CUT_AFTER), radius: r_m });
@@ -303,7 +341,8 @@ fn resolve(i: &In, combat: &mut Combat, player: &ChrIns, ray: Ray, f: crate::dod
 fn cut_flash(i: &In, combat: &mut Combat, player: &ChrIns, cut: &Cut) {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return };
     let Some(chr) = wcm.chr_ins_by_handle(&cut.mob) else { return };
-    if chr.modules.data.hp <= 0 {
+    // (the sword put away meanwhile: no cut)
+    if chr.modules.data.hp <= 0 || crate::weapons::current() != crate::weapons::SWORD {
         return;
     }
     let p = chr.modules.physics.position;
@@ -314,7 +353,6 @@ fn cut_flash(i: &In, combat: &mut Combat, player: &ChrIns, cut: &Cut) {
     let slant = (Vec3::new(-way.z, 0.0, way.x) + Vec3::Y * 0.9).normalize();
     crate::impact::phantom_cut(chest, slant);
     strike(i, combat, player, &cut.mob, at, cut.radius, Attack::SwordPhantom);
-    crate::odm::mark_behind(&cut.mob, at);
 }
 
 /// The Star Trick with no blow coming: over the enemy he fights, if there is one near.
@@ -324,9 +362,8 @@ fn blink(i: &In, ray: Ray, out: &mut Out) {
     let pick = |t: &&combat::Target| {
         let Some(h) = t.shootable() else { return false };
         let (r_m, h_m) = (t.radius * k, t.height * k);
-        let near = (t.feet() - i.feet).length() <= BLINK_RANGE && t.feet().y + h_m <= i.feet.y + 6.0;
-        // (never a boss, nor one the game's script holds, nor a colossus: its head is a climb)
-        near && !t.is_prop() && !t.friendly() && !crate::colossus::is_colossus(r_m, h_m) && !combat::hands_off(h) && !wcm.chr_ins_by_handle(h).is_some_and(|c| combat::boss_class(h, c))
+        // (a boss too, it is only a move; never a colossus, nor one the game's script holds)
+        !t.is_prop() && !t.friendly() && blinkable(crate::colossus::is_colossus(r_m, h_m), combat::hands_off(h), (t.feet() - i.feet).length(), t.feet().y + h_m - i.feet.y)
     };
     let rank = |t: &combat::Target| (Some(t.key()) != i.focus, (t.feet() - i.feet).length());
     let target = i.targets.iter().filter(pick).min_by(|a, b| {
@@ -335,7 +372,7 @@ fn blink(i: &In, ray: Ray, out: &mut Out) {
     });
     let Some(t) = target else { return };
     let head = t.feet() + Vec3::Y * (t.height * k);
-    let Some(spot) = blink_spot(i.feet, head, ray) else { return };
+    let Some(spot) = blink_spot(i.feet, head, t.feet().y, &bodies_near(i, t.feet(), t.key()), ray) else { return };
     let id = t.shootable().and_then(|h| wcm.chr_ins_by_handle(h)).map_or(0, |c| c.character_id as i32);
     log(format!("sword: star trick blink on c{id:04}"));
     crate::impact::blink(i.feet + Vec3::Y * 0.9, spot);
@@ -385,7 +422,7 @@ mod tests {
         let w = world(None, true);
         let (me, foe) = (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
         // it faces +z, toward him: behind it is -z
-        let spot = phantom_spot(me, foe, Vec3::Z, 0.5, &w).expect("a spot");
+        let spot = phantom_spot(me, foe, Vec3::Z, 0.5, &[], &w).expect("a spot");
         assert!((spot - Vec3::new(0.0, 0.0, -1.3)).length() < 0.01, "{spot}");
     }
 
@@ -401,7 +438,7 @@ mod tests {
             w(a, b)
         };
         let (me, foe) = (Vec3::new(2.0, 0.0, 3.0), Vec3::ZERO);
-        let spot = phantom_spot(me, foe, Vec3::Z, 0.5, &walled).expect("a side");
+        let spot = phantom_spot(me, foe, Vec3::Z, 0.5, &[], &walled).expect("a side");
         assert!((spot.x.abs() - 1.3).abs() < 0.01 && spot.z.abs() < 0.01, "{spot}");
         // the side nearer Mario first
         assert!(spot.x > 0.0, "{spot}");
@@ -411,7 +448,7 @@ mod tests {
     fn the_phantom_cut_needs_a_floor_and_sight() {
         let (me, foe) = (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
         // no floor anywhere within a metre below: nowhere to land
-        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &world(None, false)).is_none());
+        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &[], &world(None, false)).is_none());
         // Mario's sight stopped everywhere
         let blind = |a: Vec3, b: Vec3| {
             let floor = world(None, true);
@@ -420,24 +457,82 @@ mod tests {
             }
             floor(a, b)
         };
-        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &blind).is_none());
+        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &[], &blind).is_none());
         // a ledge: the floor 3 m down is no floor
         let ledge = |a: Vec3, b: Vec3| if b.y < 0.0 && (a.y > -3.0) != (b.y > -3.0) { Some(Vec3::new(b.x, -3.0, b.z)) } else { None };
-        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &ledge).is_none());
+        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &[], &ledge).is_none());
     }
 
     #[test]
     fn the_trick_lands_over_the_head_with_a_clear_ceiling() {
         let me = Vec3::new(0.0, 3.0, 5.0);
         let head = Vec3::new(0.0, 2.0, 0.0);
-        let spot = blink_spot(me, head, &|_, _| None).expect("a spot");
+        let floor = |a: Vec3, b: Vec3| if a.y > 0.0 && b.y < 0.0 { Some(Vec3::new(b.x, 0.0, b.z)) } else { None };
+        let spot = blink_spot(me, head, 0.0, &[], &floor).expect("a spot");
         assert!((spot - Vec3::new(0.0, 3.5, 0.0)).length() < 0.01, "{spot}");
         // a ceiling 1.8 m over the head: no room for him
         let low = |a: Vec3, b: Vec3| if a.y < 3.8 && b.y > 3.8 { Some(Vec3::new(b.x, 3.8, b.z)) } else { None };
-        assert!(blink_spot(me, head, &low).is_none());
+        assert!(blink_spot(me, head, 0.0, &[], &low).is_none());
         // a wall between him and the spot
         let wall = |a: Vec3, b: Vec3| if a.z > 2.0 && b.z < 2.0 { Some(Vec3::new(a.x, a.y, 2.0)) } else { None };
-        assert!(blink_spot(me, head, &wall).is_none());
+        assert!(blink_spot(me, head, 0.0, &[], &wall).is_none());
+    }
+
+    #[test]
+    fn the_phantom_cut_never_lands_inside_another_body() {
+        let w = world(None, true);
+        let (me, foe) = (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
+        // a second enemy standing where behind it is: the side nearer Mario instead
+        let other = [(Vec3::new(0.0, 0.0, -1.3), 0.5, 1.8)];
+        let spot = phantom_spot(me, foe, Vec3::Z, 0.5, &other, &w).expect("a side");
+        assert!(spot.x.abs() > 1.0, "{spot}");
+        // all three places taken: no cut (the parry)
+        let all = [(Vec3::new(0.0, 0.0, -1.3), 0.5, 1.8), (Vec3::new(1.3, 0.0, 0.0), 0.5, 1.8), (Vec3::new(-1.3, 0.0, 0.0), 0.5, 1.8)];
+        assert!(phantom_spot(me, foe, Vec3::Z, 0.5, &all, &w).is_none());
+    }
+
+    #[test]
+    fn the_trick_needs_a_floor_near_the_enemys_and_no_body_there() {
+        let me = Vec3::new(0.0, 3.0, 5.0);
+        let head = Vec3::new(0.0, 2.0, 0.0);
+        // over a chasm: no floor below the spot at all
+        assert!(blink_spot(me, head, 0.0, &[], &|a: Vec3, b: Vec3| if a.y > b.y { None } else { None }).is_none());
+        // a floor 3 m under the enemy's feet is not its ground
+        let deep = |a: Vec3, b: Vec3| if a.y > b.y && b.y < -3.0 { Some(Vec3::new(b.x, -3.0, b.z)) } else { None };
+        assert!(blink_spot(me, head, 0.0, &[], &deep).is_none());
+        // its own ground: fine
+        let flat = |a: Vec3, b: Vec3| if a.y > 0.0 && b.y < 0.0 { Some(Vec3::new(b.x, 0.0, b.z)) } else { None };
+        assert!(blink_spot(me, head, 0.0, &[], &flat).is_some());
+        // another enemy standing under the spot
+        assert!(blink_spot(me, head, 0.0, &[(Vec3::new(0.2, 0.0, 0.0), 0.6, 4.0)], &flat).is_none());
+    }
+
+    #[test]
+    fn the_trick_blinks_over_bosses_but_not_colossi_or_held_ones() {
+        // (a boss is just an enemy here: no damage, only the move)
+        assert!(blinkable(false, false, 5.0, 2.0));
+        assert!(!blinkable(true, false, 5.0, 2.0));
+        assert!(!blinkable(false, true, 5.0, 2.0));
+        assert!(!blinkable(false, false, BLINK_RANGE + 0.1, 2.0));
+        assert!(!blinkable(false, false, 5.0, 6.1));
+    }
+
+    #[test]
+    fn a_pending_cut_goes_with_a_weapon_swap() {
+        STATE.lock().unwrap().cut = Some(Cut { mob: unsafe { std::mem::transmute_copy::<u64, FieldInsHandle>(&7u64) }, due: 5, radius: 0.5 });
+        assert!(pending());
+        crate::weapons::set(crate::weapons::HAMMER);
+        assert!(!pending());
+    }
+
+    /// SM64's forward in Elden Ring terms is (-sin a, 0, cos a): after `yaw_of(d)` he looks along `d`.
+    #[test]
+    fn mario_faces_the_way_he_is_asked_to() {
+        for d in [Vec3::Z, -Vec3::Z, Vec3::X, -Vec3::X, Vec3::new(1.0, 0.0, 2.0), Vec3::new(-3.0, 0.0, -0.5)] {
+            let a = yaw_of(d);
+            let face = Vec3::new(-a.sin(), 0.0, a.cos());
+            assert!(face.dot(d.normalize()) > 0.99, "{d}: faces {face}");
+        }
     }
 
     #[test]

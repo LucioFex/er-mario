@@ -3664,6 +3664,11 @@ fn frame(data: &FD4TaskData) {
         let home = combat::home(&m.state, &targets);
         lakitu::set_big(combat::big_bodies(&targets));
         let focus = combat::fight_focus(&m.state, &targets);
+        // (the Star Calibur wants someone ahead)
+        {
+            let foes: Vec<([f32; 3], f32)> = targets.iter().filter(|t| t.shootable().is_some() && !t.is_prop() && !t.friendly()).map(|t| (t.sm, t.radius)).collect();
+            m.moves.foe_ahead = swordplay::foe_gap(m.state.position, m.state.face_angle, &foes, scale());
+        }
         coop::set_fighting(focus.is_some());
         lakitu::set_fight(focus);
         lakitu::set_crowd(combat::crowd(&targets));

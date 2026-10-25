@@ -1917,6 +1917,11 @@ pub fn blowable(handle: &FieldInsHandle) -> bool {
     wcm.chr_ins_by_handle(handle).is_some_and(|c| !own_side(c.team_type) && !boss_class(handle, c))
 }
 
+/// Blows that slam a small enemy into the ground to bounce (juggle::ground_bounce).
+pub fn bounces_small(attack: Attack) -> bool {
+    matches!(attack, Attack::SwordLeapRing | Attack::SwordBreakerRing | Attack::CometRing | Attack::SwordPhantom)
+}
+
 pub(crate) fn liftable(handle: &FieldInsHandle) -> bool {
     if is_boss(handle) {
         return false;
@@ -3176,9 +3181,10 @@ impl Combat {
                     if !crate::juggle::try_launch(handle, me, radius_m, height_m, regular, stunned, high) && !crate::coop::guest() {
                         log_not_lifted(handle, radius_m, height_m, stunned);
                     }
-                } else if matches!(attack, Attack::SwordLeapRing | Attack::SwordBreakerRing | Attack::CometRing) && !hands_off(handle) {
-                    // (the Leap Splitter's wave, the Helm Breaker's and the hammer comet's rings: a
-                    // small one bounces off the ground, OTG; a bigger one just takes the blow)
+                } else if bounces_small(attack) && !hands_off(handle) {
+                    // (the Leap Splitter's wave, the Helm Breaker's and the hammer comet's rings, the
+                    // Phantom Cut: a small one bounces off the ground, OTG; a bigger one just takes
+                    // the blow)
                     let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
                     if !crate::juggle::ground_bounce(handle, radius_m, height_m, liftable(handle)) {
                         crate::juggle::hit(handle, me);
@@ -3277,12 +3283,8 @@ impl Combat {
                 };
                 // Star Charge (swordplay.rs): the heavy sword blow spends the stars a NICE! lit, +15%
                 // each, a gold burst where it lands and a soft zing
+                // (spent only if the blow took something: an immune enemy keeps them)
                 let (star_mult, spent) = crate::swordplay::star_blow(attack, tick);
-                if spent > 0 {
-                    let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
-                    crate::impact::star_spend(at, spent);
-                    log(format!("combat: {spent} stars spent on {attack:?} (x{star_mult:.2})"));
-                }
                 scale *= star_mult;
                 // one hammer swing landing on him again (a big body stays in its reach the whole
                 // swing, and each hit's hit-stop holds the swing while the cooldown runs out: Morgott
@@ -3337,6 +3339,12 @@ impl Combat {
                     crate::swing::add_stance(handle, attack.posture() * swing);
                 }
                 let took = take_share(handle, attack, scale * fade * critical_mult);
+                if spent > 0 && took.is_some() {
+                    crate::swordplay::star_spend(attack, tick);
+                    let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
+                    crate::impact::star_spend(at, spent);
+                    log(format!("combat: {spent} stars spent on {attack:?} (x{star_mult:.2})"));
+                }
                 // (a critical that took something: its show, its wait)
                 if let (Some(kind), Some(_)) = (critical, took) {
                     self.criticals.insert(target.key, tick);
@@ -3806,9 +3814,19 @@ mod blade_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{Attack, CODES};
+    use super::{bounces_small, Attack, CODES};
 
     /// The sword's blows that end a run shove (light 0.2 m, heavy more); the many-hit ones not.
+    #[test]
+    fn the_phantom_cut_knocks_a_small_one_down_like_the_waves() {
+        for a in [Attack::SwordPhantom, Attack::SwordLeapRing, Attack::SwordBreakerRing, Attack::CometRing] {
+            assert!(bounces_small(a), "{a:?}");
+        }
+        for a in [Attack::SwordParry, Attack::SwordCalibur, Attack::Punch] {
+            assert!(!bounces_small(a), "{a:?}");
+        }
+    }
+
     #[test]
     fn light_blows_shove_a_little_and_runs_not_at_all() {
         let light = super::sword_shove(Attack::SwordSlash(0)).unwrap();

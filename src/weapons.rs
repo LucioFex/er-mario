@@ -40,6 +40,9 @@ pub fn next(w: u8) -> u8 {
 pub fn set(w: u8) {
     // (the Star Sword's stars go out with it)
     crate::swordplay::stars_lose();
+    // (a Phantom Cut's line and the Ricochet's queued hits are the sword's: they go with it)
+    crate::starstep::clear();
+    crate::bolt::drop_pending();
     CURRENT.store(w % COUNT, Ordering::Relaxed);
     *SWITCHED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     crate::log(format!("weapons: {}", NAMES[(w % COUNT) as usize]));

@@ -209,6 +209,8 @@ fn cheer(extra: f32, at: Vec3, attack: Attack, tick: u32) {
 /// Mario was hurt: the streak of "NICE!"s is over.
 pub fn hurt() {
     crate::swordplay::stars_lose();
+    crate::starstep::clear();
+    crate::bolt::drop_pending();
     let mut s = state();
     s.streak = 0;
     s.streak_at = None;

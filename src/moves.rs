@@ -458,6 +458,8 @@ pub struct Moves {
     raves: u8,
     /// the Star Calibur was used in this jump (once an airtime)
     calibur_used: bool,
+    /// the gap to the enemy in front of him (swordplay::foe_gap), set by lib.rs each tick
+    pub foe_ahead: Option<f32>,
     /// the scripted move playing as moves were last read (by its start's count), and since when
     play_was: Option<u32>,
     play_since: u32,
@@ -596,6 +598,7 @@ impl Moves {
             sword_missing: false,
             raves: 0,
             calibur_used: false,
+            foe_ahead: None,
             play_was: None,
             play_since: 0,
             first_was: false,
@@ -942,6 +945,9 @@ impl Moves {
         if play_now != self.play_was {
             self.play_was = play_now;
             self.play_since = tick;
+            if let Some(n) = play_now {
+                crate::swordplay::set_move(n);
+            }
         }
         if a & ACT_FLAG_AIR == 0 {
             self.pogos = POGOS;
@@ -1469,6 +1475,7 @@ impl Moves {
                 countering: crate::dodge::flurry_ready(),
                 pogos: self.pogos,
                 calibur_used: self.calibur_used,
+                foe: self.foe_ahead,
             };
             let id = crate::swordplay::choose(&input, &sword_state)?;
             let Some(m) = crate::script::MOVES.get(id as usize) else {
