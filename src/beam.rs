@@ -39,6 +39,9 @@ const PUSH: f32 = 0.05;
 /// the Abyss beam's burst as it goes out: this far round its end (m), worth this many of its hits
 const BURST: f32 = 4.0;
 const BURST_WORTH: f32 = 6.0;
+/// its head shoots out this far a tick (m: 18 m in a quarter second), the Abyss beam's
+const GROW: f32 = 2.4;
+const ABYSS_GROW: f32 = 1.6;
 /// a hit's burst and sound on each enemy no more often than this (ticks)
 const HIT_HEARD: u32 = 6;
 /// the Abyss beam's charge level
@@ -46,6 +49,11 @@ pub const ABYSS: u8 = 4;
 /// (SM64's, soft: a rumble as it pours, the boom as it starts)
 const SOUND_HUM: i32 = 0x5073_4081;
 const SOUND_BOOM: i32 = 0x300C_8081;
+
+/// How far its head has got (m) `age` ticks after it began.
+fn grown(age: u32, abyss: bool) -> f32 {
+    0.5 + age as f32 * if abyss { ABYSS_GROW } else { GROW }
+}
 
 /// One tick of the beam's own swing (degrees off his facing) toward `want` (the enemy nearest its
 /// way, off his facing; none: his facing), AIM_RATE a tick at most, AIM_YAW at most.
@@ -195,10 +203,11 @@ impl Beam {
             b.pitch += (p.clamp(-PITCH_MAX, PITCH_MAX) - b.pitch).clamp(-AIM_RATE, AIM_RATE);
         }
         let dir = way(glam::Quat::from_rotation_y(b.yaw.to_radians()) * f, b.pitch);
-        let len = ray(hand, hand + dir * range).map_or(range, |p| (p - hand).length());
+        // (shot out of his hands: as far as its head has got, up to the first wall)
+        let age = tick.wrapping_sub(b.born);
+        let len = ray(hand, hand + dir * range).map_or(range, |p| (p - hand).length()).min(grown(age, b.level >= ABYSS));
         b.from = hand;
         b.to = hand + dir * len;
-        let age = tick.wrapping_sub(b.born);
         if age % HIT_EVERY == 0 {
             let mid = (b.from + b.to) * 0.5;
             let near = combat::nearby(&HavokPosition(mid.x, mid.y, mid.z, 0.0), len * 0.5 + radius + 3.0, origin);
@@ -342,6 +351,17 @@ mod tests {
             off = aim_step(off, None);
         }
         assert!(off.abs() < 1.0, "{off}");
+    }
+
+    /// A kamehameha: it shoots out of his hands and reaches its end in a moment (the user: it was
+    /// there whole at once), the Abyss beam a little slower; nothing past its head is hit.
+    #[test]
+    fn the_beam_shoots_out_of_his_hands() {
+        assert!(grown(0, false) < 1.0);
+        assert!(grown(4, false) > 6.0 && grown(4, false) < RANGE);
+        assert!(grown(8, false) >= RANGE);
+        assert!(grown(8, true) < grown(8, false) && grown(16, true) >= ABYSS_RANGE);
+        assert!((1..20).all(|t| grown(t, false) > grown(t - 1, false)));
     }
 
     /// A regular enemy in the beam is pushed back along it a little each tick (not a boss).

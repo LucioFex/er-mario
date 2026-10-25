@@ -50,6 +50,25 @@ fn pose_of(chr: usize) -> Option<(usize, usize, usize)> {
     (count > 0 && count <= 1024 && explore::readable(model, count * 0x30)).then_some((imp, model, count))
 }
 
+/// every blow's little give, Mario Kart's bump (the user: each blow should be felt), a heavy one's
+const JIGGLE: f32 = 0.07;
+const JIGGLE_HEAVY: f32 = 0.12;
+
+/// A new squash of `flat` takes the place of one of `old_flat` held `old_hold` s, `t` s along.
+fn replaces(old_flat: f32, old_hold: f32, t: f32, flat: f32) -> bool {
+    flat >= old_flat || t >= DOWN_FOR + old_hold + BACK_FOR
+}
+
+/// Any blow of Mario's on `h` (combat.rs): a quick little squash and its spring back, wider than
+/// tall; not over a bigger one still going.
+pub fn give(h: &FieldInsHandle, heavy: bool) {
+    let flat = if heavy { JIGGLE_HEAVY } else { JIGGLE };
+    let busy = LIVE.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|s| key(&s.who) == key(h) && !replaces(s.flat, s.hold, s.since.elapsed().as_secs_f32(), flat));
+    if !busy {
+        start(h, flat, 0.0);
+    }
+}
+
 /// Mario landed on `h`. `flat` 0..1: a stomp dents, a ground pound flattens and holds.
 pub fn start(h: &FieldInsHandle, flat: f32, hold: f32) {
     let Some(chr) = unsafe { WorldChrMan::instance() }.ok().and_then(|w| w.chr_ins_by_handle(h)) else { return };
@@ -119,5 +138,23 @@ pub fn apply() {
             unsafe { *at = out };
             s.wrote[b] = out;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A blow's little give doesn't cut short a stomp's dent or a ground pound's flattening still
+    /// going; once that's over, or for a stronger one, it does.
+    #[test]
+    fn a_small_give_waits_for_a_big_squash() {
+        // (a ground pound's: 0.8 flat, held 1 s; a hit's give 0.07)
+        assert!(!replaces(0.8, 1.0, 0.3, JIGGLE));
+        assert!(replaces(0.8, 1.0, DOWN_FOR + 1.0 + BACK_FOR + 0.01, JIGGLE));
+        assert!(!replaces(0.35, 0.0, 0.1, JIGGLE));
+        assert!(replaces(JIGGLE, 0.0, 0.05, 0.35));
+        // (one give after another: the new one)
+        assert!(replaces(JIGGLE, 0.0, 0.05, JIGGLE));
     }
 }

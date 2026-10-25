@@ -3152,6 +3152,9 @@ impl Combat {
                     Attack::Stomp => crate::squish::start(handle, 0.35, 0.0),
                     Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash | Attack::CannonPound if big => crate::squish::start(handle, 0.35, 0.0),
                     Attack::GroundPound | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::HammerSmash | Attack::CannonPound => crate::squish::start(handle, 0.8, 1.0),
+                    // every other blow, any weapon or element: a little give, a bump wider than
+                    // tall springing back (not the burns' and the beams' ticks)
+                    _ if !attack.continuous() => crate::squish::give(handle, crate::impact::stop(attack) >= 5),
                     _ => {}
                 }
                 // the full Super punch, the dropkick and the charged ice rocket send a regular enemy
