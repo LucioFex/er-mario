@@ -342,7 +342,7 @@ static BITS: Mutex<Vec<Flying>> = Mutex::new(Vec::new());
 static SWING: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
 /// the Star Sword's cut: its tip and the blade's lower part, a few ticks back
 static BLADE: Mutex<Vec<(Vec3, Vec3, Instant)>> = Mutex::new(Vec::new());
-const BLADE_TIME: f32 = 0.2;
+const BLADE_TIME: f32 = 0.26;
 const MAX_RINGS: usize = 8;
 const MAX_BITS: usize = 40;
 pub const BIT_TIME: f32 = 0.7;
@@ -1023,6 +1023,11 @@ pub fn blade_point(tip: Vec3, low: Vec3) {
     let mut blade = BLADE.lock().unwrap_or_else(|e| e.into_inner());
     blade.retain(|(_, _, t)| t.elapsed().as_secs_f32() < BLADE_TIME);
     blade.push((tip, low, Instant::now()));
+}
+
+/// Game thread: a finisher's cut (Part 12): two stars off the sword's tip.
+pub fn blade_stars(tip: Vec3) {
+    burst(tip, 2, Bit::Star);
 }
 
 /// The sword's ribbon, oldest first: tip, low on the blade, how faded (0-1).

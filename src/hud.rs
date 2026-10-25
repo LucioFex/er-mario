@@ -897,8 +897,8 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
         dl.add_polyline(pts, imgui::ImColor32::from_rgba_f32s(1.0, 0.97, 0.85, 0.35 * fade)).filled(true).build();
         dl.add_line(edge.0, edge.1, imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.8 * fade)).thickness(2.5).build();
     }
-    // the Star Sword's cut: a white-blue ribbon from low on the blade to its tip, the tip's edge
-    // white-hot, a fainter blue band past it (its light), fading fast
+    // the Star Sword's cut: a red-gold ribbon (Dry Bowser's) from low on the blade to its tip, the
+    // tip's edge white-hot, a fainter orange band past it (its light), fading fast
     for pair in fx.blade.windows(2) {
         let ((h0, m0, t0), (h1, m1, t1)) = (pair[0], pair[1]);
         // (two cuts: no ribbon across the gap between them)
@@ -909,9 +909,9 @@ fn draw_fx(dl: &imgui::draw_list::DrawListMut<'_>, textures: &[TextureId], size:
         let Some(pts) = pts else { continue };
         let fade = 1.0 - t0.max(t1);
         let glow = [lerp2(pts[3], pts[0], 1.25), lerp2(pts[2], pts[1], 1.25), pts[1], pts[0]];
-        dl.add_polyline(glow.to_vec(), imgui::ImColor32::from_rgba_f32s(0.55, 0.8, 1.0, 0.18 * fade)).filled(true).build();
-        dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(0.8, 0.92, 1.0, 0.4 * fade)).filled(true).build();
-        dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9 * fade)).thickness(2.5).build();
+        dl.add_polyline(glow.to_vec(), imgui::ImColor32::from_rgba_f32s(1.0, 0.4, 0.12, 0.2 * fade)).filled(true).build();
+        dl.add_polyline(pts.clone(), imgui::ImColor32::from_rgba_f32s(1.0, 0.78, 0.32, 0.42 * fade)).filled(true).build();
+        dl.add_line(pts[0], pts[1], imgui::ImColor32::from_rgba_f32s(1.0, 0.96, 0.75, 0.9 * fade)).thickness(2.5).build();
     }
     // the Chain Chomp's ribbon of fire (Blades of Chaos): a hot core over a wider red glow, its
     // older end cooling and thinning, flames licking along it; and the sparks off its chain

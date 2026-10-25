@@ -4939,7 +4939,11 @@ fn frame(data: &FD4TaskData) {
                     if let Some(s) = swing.filter(|s| s.blade && pointed) {
                         let turned = ((s.head - s.grip) - (s.prev - s.prev_grip)).length() * scale();
                         if turned > BLADE_CUT {
-                            impact::blade_point(er(s.head), er(s.grip.lerp(s.head, 0.25)));
+                            // (the ribbon from low on the 1.80 m blade; a finisher's cut throws stars)
+                            impact::blade_point(er(s.head), er(s.grip.lerp(s.head, 0.2)));
+                            if combo.fx & moves::FX_BANG != 0 {
+                                impact::blade_stars(er(s.head));
+                            }
                         }
                     }
                 }

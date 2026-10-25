@@ -6,6 +6,7 @@
 //! or three times the cut (the weight is in it and in the pose held after), the cut itself two
 //! ticks, the follow-through frozen a few ticks (longer on the finishers), a hard stop where a
 //! lunge meets its enemy. Its swings' sounds are the mod's own (sfx.rs), not SM64's swish.
+//! (Part 12: the blade is 1.80 m, so every lunge stops 0.2 m farther than it did at 1.45.)
 
 use crate::combat::Attack;
 use crate::moves::{FX_BANG, FX_LAUNCH, FX_SLAM};
@@ -71,13 +72,13 @@ pub const S1: Move = Move {
     twist: &[k(0, 0.0, Linear), k(2, -35.0, InOut), k(4, 28.0, Out), k(7, 26.0, Linear), k(13, 0.0, InOut)],
     pitch: &[k(0, 0.0, Linear), k(2, -5.0, InOut), k(4, 10.0, Out), k(7, 9.0, Linear), k(13, 0.0, InOut)],
     aim: &[0, 6],
-    approach: Some(Approach { from: 1, to: 4, max: 1.6, gap: 1.0 }),
+    approach: Some(Approach { from: 1, to: 4, max: 1.6, gap: 1.2 }),
     squash: &[k(0, 1.0, Linear), k(2, 0.9, InOut), k(4, 1.08, Out), k(7, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(2, 1.0, InOut), k(4, 4.0, Out), k(7, 3.0, Linear), k(12, 0.0, InOut)],
     reach: &[k(0, 0.6, Linear), k(2, 1.0, InOut), k(8, 1.0, Linear), k(13, 0.5, InOut)],
     // (from the ready pose, -25 / -35, to the draw)
     blade_yaw: &[k(0, -25.0, Linear), k(2, -85.0, InOut), k(3, -10.0, Linear), k(4, 60.0, Out), k(7, 58.0, Linear), k(13, 20.0, InOut)],
-    blade_pitch: &[k(0, -35.0, Linear), k(2, 65.0, InOut), k(3, 20.0, Linear), k(4, -32.0, Out), k(7, -30.0, Linear), k(13, -20.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(2, 65.0, InOut), k(3, 20.0, Linear), k(4, -19.0, Out), k(7, -19.0, Linear), k(13, -19.0, InOut)],
     blade_roll: &[k(0, 0.0, Linear), k(2, -40.0, InOut), k(4, -34.0, Out), k(7, -34.0, Linear), k(13, 0.0, InOut)],
     blade_held: (0, 14),
     windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(0), 0)],
@@ -97,12 +98,12 @@ pub const S2: Move = Move {
     twist: &[k(0, 27.0, Linear), k(2, 40.0, InOut), k(4, -35.0, Out), k(6, -32.0, Linear), k(12, 0.0, InOut)],
     pitch: &[k(0, 9.0, Linear), k(2, 4.0, InOut), k(4, -6.0, Out), k(6, -5.0, Linear), k(12, 0.0, InOut)],
     aim: &[0, 5],
-    approach: Some(Approach { from: 1, to: 4, max: 1.2, gap: 1.0 }),
+    approach: Some(Approach { from: 1, to: 4, max: 1.2, gap: 1.2 }),
     squash: &[k(0, 1.06, Linear), k(2, 0.92, InOut), k(4, 1.07, Out), k(7, 1.0, InOut)],
     dip: &[k(0, 3.0, Linear), k(2, 4.0, InOut), k(4, 0.0, Out)],
     reach: &[k(0, 1.0, Linear), k(9, 1.0, Linear), k(12, 0.5, InOut)],
     blade_yaw: &[k(0, 59.0, Linear), k(2, 80.0, InOut), k(3, 10.0, Linear), k(4, -70.0, Out), k(6, -68.0, Linear), k(12, -35.0, InOut)],
-    blade_pitch: &[k(0, -31.0, Linear), k(2, -40.0, InOut), k(3, 5.0, Linear), k(4, 45.0, Out), k(6, 44.0, Linear), k(12, -10.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(2, -19.0, InOut), k(3, 5.0, Linear), k(4, 45.0, Out), k(6, 44.0, Linear), k(12, -10.0, InOut)],
     blade_roll: &[k(0, -34.0, Linear), k(2, 30.0, InOut), k(12, 0.0, InOut)],
     blade_held: (0, 13),
     windows: &[w(2, 4, Shape::Weapon, Attack::SwordSlash(1), 0)],
@@ -122,12 +123,12 @@ pub const S3: Move = Move {
     twist: &[k(0, -33.0, Linear), k(3, -38.0, InOut), k(5, 32.0, Out), k(8, 28.0, Linear), k(13, 0.0, InOut)],
     pitch: &[k(0, -5.0, Linear), k(3, 8.0, InOut), k(5, -9.0, Out), k(8, -8.0, Linear), k(13, 0.0, InOut)],
     aim: &[0, 6],
-    approach: Some(Approach { from: 1, to: 5, max: 1.2, gap: 1.0 }),
+    approach: Some(Approach { from: 1, to: 5, max: 1.2, gap: 1.2 }),
     squash: &[k(0, 1.05, Linear), k(3, 0.88, InOut), k(5, 1.1, Out), k(9, 1.0, InOut)],
     dip: &[k(0, 3.0, Linear), k(3, 4.0, InOut), k(5, 0.0, Out)],
     reach: &[k(0, 0.95, Linear), k(3, 1.0, InOut), k(10, 1.0, Linear), k(13, 0.5, InOut)],
     blade_yaw: &[k(0, -68.0, Linear), k(3, -72.0, InOut), k(4, -10.0, Linear), k(5, 50.0, Out), k(8, 48.0, Linear), k(13, 25.0, InOut)],
-    blade_pitch: &[k(0, 44.0, Linear), k(3, -48.0, InOut), k(4, 10.0, Linear), k(5, 72.0, Out), k(8, 70.0, Linear), k(13, 15.0, InOut)],
+    blade_pitch: &[k(0, 44.0, Linear), k(3, -19.0, InOut), k(4, 10.0, Linear), k(5, 72.0, Out), k(8, 70.0, Linear), k(13, 15.0, InOut)],
     blade_roll: &[k(0, 24.0, Linear), k(3, 40.0, InOut), k(13, 0.0, InOut)],
     blade_held: (0, 14),
     windows: &[w(3, 5, Shape::Weapon, Attack::SwordSlash(2), 0)],
@@ -148,13 +149,13 @@ pub const S4: Move = Move {
     twist: &[k(0, 31.0, Linear), k(4, -45.0, InOut), k(6, 30.0, Out), k(16, 28.0, Linear), k(24, 0.0, InOut)],
     pitch: &[k(0, -9.0, Linear), k(4, -8.0, InOut), k(6, 26.0, Out), k(16, 24.0, Linear), k(24, 0.0, InOut)],
     aim: &[0, 2, 16],
-    approach: Some(Approach { from: 3, to: 6, max: 1.8, gap: 1.0 }),
+    approach: Some(Approach { from: 3, to: 6, max: 1.8, gap: 1.2 }),
     squash: &[k(0, 1.08, Linear), k(4, 0.86, InOut), k(6, 1.14, Out), k(10, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(4, 3.0, InOut), k(6, 4.0, Out), k(16, 4.0, Linear), k(24, 0.0, InOut)],
     reach: &[k(0, 1.0, Linear), k(4, 0.8, InOut), k(6, 1.0, Out), k(16, 1.0, Linear), k(24, 0.4, InOut)],
     // (behind his head, level, both hands at his right shoulder; down across him in two ticks)
     blade_yaw: &[k(0, 50.0, Linear), k(4, -120.0, InOut), k(5, -30.0, Linear), k(6, 55.0, Out), k(16, 52.0, Linear), k(25, 15.0, InOut)],
-    blade_pitch: &[k(0, 72.0, Linear), k(4, 90.0, InOut), k(5, 30.0, Linear), k(6, -45.0, Out), k(16, -42.0, Linear), k(25, -25.0, InOut)],
+    blade_pitch: &[k(0, 72.0, Linear), k(4, 90.0, InOut), k(5, 30.0, Linear), k(6, -19.0, Out), k(16, -19.0, Linear), k(25, -19.0, InOut)],
     blade_roll: &[k(0, 36.0, Linear), k(4, -60.0, InOut), k(6, -20.0, Out), k(25, 0.0, InOut)],
     blade_held: (0, 28),
     windows: &[w(4, 6, Shape::Weapon, Attack::SwordSlash(3), FX_BANG)],
@@ -175,12 +176,12 @@ pub const CLEAVE: Move = Move {
     twist: &[k(0, 0.0, Linear), k(6, -15.0, Out), k(10, 10.0, Out), k(18, 0.0, InOut)],
     pitch: &[k(0, 0.0, Linear), k(6, -10.0, Out), k(10, 18.0, Out), k(18, 12.0, Linear), k(24, 0.0, InOut)],
     aim: &[0, 7],
-    approach: Some(Approach { from: 2, to: 10, max: 2.0, gap: 1.0 }),
+    approach: Some(Approach { from: 2, to: 10, max: 2.0, gap: 1.2 }),
     squash: &[k(0, 1.0, Linear), k(6, 1.06, Out), k(10, 0.86, In), k(15, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(6, 0.0, Linear), k(10, 4.0, Out), k(20, 0.0, InOut)],
     reach: &[k(0, 0.5, Linear), k(5, 1.0, Out), k(18, 1.0, Linear), k(26, 0.4, InOut)],
     blade_yaw: &[k(0, -20.0, Linear), k(6, 0.0, Out), k(26, -20.0, InOut)],
-    blade_pitch: &[k(0, -20.0, Linear), k(6, 125.0, Out), k(8, 125.0, Linear), k(12, -55.0, Out), k(20, -50.0, Linear), k(26, -30.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(6, 125.0, Out), k(8, 125.0, Linear), k(12, -19.0, Out), k(20, -19.0, Linear), k(26, -19.0, InOut)],
     blade_held: (0, 28),
     windows: &[w(9, 12, Shape::Weapon, Attack::SwordCleave, 0)],
     cancels: &[c(DJS, 21, 16), c(NEXT, 23, 18)],
@@ -207,14 +208,14 @@ pub const THRUST: Move = Move {
     pitch: &[k(0, 0.0, Linear), k(6, -8.0, InOut), k(9, 6.0, Out), k(15, 4.0, Linear), k(20, 0.0, InOut)],
     aim: &[0, 6],
     speed: &[k(0, 0.0, Linear), k(14, 0.0, Linear), k(15, 2.0, Linear), k(19, 0.0, Out)],
-    approach: Some(Approach { from: 6, to: 14, max: 8.0, gap: 0.8 }),
+    approach: Some(Approach { from: 6, to: 14, max: 8.0, gap: 1.0 }),
     vel_y: &[(6, 12.0)],
     squash: &[k(0, 1.0, Linear), k(6, 0.84, InOut), k(8, 1.14, Out), k(13, 1.0, InOut), k(15, 0.88, Out), k(20, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(6, 4.0, InOut), k(8, 0.0, Out), k(15, 2.7, Out), k(22, 0.0, InOut)],
     // (the hand pulled in for the coil, then out with the point, held out past the stop)
     reach: &[k(0, 0.3, Linear), k(6, 0.15, InOut), k(9, 1.0, Out), k(22, 1.0, Linear), k(28, 0.4, InOut)],
     blade_yaw: &[k(0, -15.0, Linear), k(6, -25.0, InOut), k(9, 0.0, Out), k(22, 0.0, Linear), k(28, -15.0, InOut)],
-    blade_pitch: &[k(0, -15.0, Linear), k(6, -12.0, InOut), k(9, -4.0, Out), k(22, -4.0, Linear), k(28, -25.0, InOut)],
+    blade_pitch: &[k(0, -15.0, Linear), k(6, -12.0, InOut), k(9, -4.0, Out), k(22, -4.0, Linear), k(28, -19.0, InOut)],
     blade_roll: &[k(0, 90.0, Linear)],
     blade_held: (0, 30),
     windows: &[w(8, 15, Shape::Front { reach: 200.0 }, Attack::SwordThrust, 0)],
@@ -245,7 +246,7 @@ pub const STABS: Move = Move {
     twist: &[k(0, 0.0, Linear), k(36, 0.0, Linear), k(38, -25.0, Out), k(40, 10.0, Out), k(45, 0.0, InOut)],
     pitch: &[k(0, 4.0, Linear), k(36, 4.0, Linear), k(38, -4.0, Out), k(40, 10.0, Out), k(45, 0.0, InOut)],
     aim: &[0, 38],
-    approach: Some(Approach { from: 0, to: 6, max: 0.8, gap: 0.9 }),
+    approach: Some(Approach { from: 0, to: 6, max: 0.8, gap: 1.1 }),
     // (each stab: the arm out, back in)
     reach: &[
         k(0, 0.5, Linear),
@@ -297,7 +298,7 @@ pub const STABS: Move = Move {
         k(34, 0.0, Out),
         k(38, -5.0, Out),
         k(40, -2.0, Out),
-        k(45, -25.0, InOut),
+        k(45, -19.0, InOut),
     ],
     blade_roll: &[k(0, 90.0, Linear)],
     blade_held: (0, 46),
@@ -334,7 +335,7 @@ pub const RISE: Move = Move {
     dip: &[k(0, 0.0, Linear), k(5, 4.0, InOut), k(8, 0.0, Out)],
     reach: &[k(0, 0.5, Linear), k(5, 0.8, InOut), k(8, 1.0, Out), k(18, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -25.0, Linear), k(5, -45.0, InOut), k(8, 10.0, Out), k(18, 0.0, Linear), k(24, -20.0, InOut)],
-    blade_pitch: &[k(0, -35.0, Linear), k(5, -65.0, InOut), k(6, -10.0, Linear), k(8, 88.0, Out), k(16, 86.0, Linear), k(24, -10.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(5, -19.0, InOut), k(6, -10.0, Linear), k(8, 88.0, Out), k(16, 86.0, Linear), k(24, -10.0, InOut)],
     blade_roll: &[k(0, 0.0, Linear), k(5, 90.0, InOut), k(18, 90.0, Linear), k(24, 0.0, InOut)],
     blade_held: (0, 28),
     windows: &[w(6, 8, Shape::Weapon, Attack::SwordRise, 0)],
@@ -362,13 +363,13 @@ pub const DRIVE: Move = Move {
     clips: &[clip(0, FIRST_PUNCH_FAST), clip(12, GENERAL_LAND)],
     twist: &[k(0, -30.0, Linear), k(2, 30.0, Out), k(10, 28.0, Linear), k(16, 0.0, InOut)],
     pitch: &[k(0, -6.0, Linear), k(2, 20.0, Out), k(10, 18.0, Linear), k(16, 0.0, InOut)],
-    approach: Some(Approach { from: 0, to: 3, max: 1.0, gap: 1.0 }),
+    approach: Some(Approach { from: 0, to: 3, max: 1.0, gap: 1.2 }),
     aim: &[0],
     squash: &[k(0, 0.92, Linear), k(2, 1.1, Out), k(9, 1.0, InOut)],
     dip: &[k(0, 1.1, Linear), k(2, 4.0, Out), k(10, 3.7, Linear), k(17, 0.0, InOut)],
     reach: &[k(0, 0.9, Linear), k(2, 1.0, Out), k(12, 1.0, Linear), k(20, 0.5, InOut)],
     blade_yaw: &[k(0, -150.0, Linear), k(1, -50.0, Linear), k(2, 35.0, Out), k(10, 32.0, Linear), k(20, -10.0, InOut)],
-    blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -40.0, Out), k(10, -38.0, Linear), k(20, -25.0, InOut)],
+    blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -19.0, Out), k(10, -19.0, Linear), k(20, -19.0, InOut)],
     blade_roll: &[k(0, 90.0, Linear), k(10, 90.0, Linear), k(18, 0.0, InOut)],
     blade_held: (0, 22),
     windows: &[w(1, 3, Shape::Weapon, Attack::SwordWave, 0)],
@@ -404,7 +405,7 @@ pub const DRIVE_JUST: Move = Move {
     dip: &[k(0, 2.9, Linear), k(2, 1.7, Out), k(10, 0.0, Out), k(12, 4.0, Out), k(20, 0.0, InOut)],
     reach: &[k(0, 0.8, Linear), k(2, 1.0, Out), k(16, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -150.0, Linear), k(1, -50.0, Linear), k(2, 40.0, Out), k(5, -10.0, InOut), k(6, -60.0, Out), k(9, -20.0, InOut), k(10, 0.0, Out), k(14, 0.0, Linear), k(22, -20.0, InOut)],
-    blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -30.0, Out), k(5, 30.0, InOut), k(6, -25.0, Out), k(9, 70.0, InOut), k(10, 115.0, Out), k(11, 40.0, Linear), k(12, -40.0, Out), k(22, -30.0, InOut)],
+    blade_pitch: &[k(0, 110.0, Linear), k(1, 40.0, Linear), k(2, -19.0, Out), k(5, 30.0, InOut), k(6, -19.0, Out), k(9, 70.0, InOut), k(10, 115.0, Out), k(11, 40.0, Linear), k(12, -19.0, Out), k(22, -19.0, InOut)],
     blade_roll: &[k(0, 90.0, Linear), k(14, 0.0, InOut)],
     blade_held: (0, 26),
     windows: &[w(1, 3, Shape::Weapon, Attack::SwordWaveJust, 0)],
@@ -422,10 +423,10 @@ pub const CROSS: Move = Move {
     clips: &[clip(0, FIRST_PUNCH_FAST), clip(5, SECOND_PUNCH_FAST)],
     twist: &[k(0, 0.0, Linear), k(1, -25.0, Out), k(4, 25.0, Out), k(6, 25.0, Linear), k(9, -25.0, Out), k(16, 0.0, InOut)],
     aim: &[0],
-    approach: Some(Approach { from: 0, to: 4, max: 1.2, gap: 1.1 }),
+    approach: Some(Approach { from: 0, to: 4, max: 1.2, gap: 1.3 }),
     reach: &[k(0, 0.7, Linear), k(1, 1.0, Out), k(12, 1.0, Linear), k(18, 0.5, InOut)],
     blade_yaw: &[k(0, -40.0, Linear), k(1, -70.0, Out), k(4, 60.0, Out), k(6, 70.0, Out), k(9, -60.0, Out), k(16, -25.0, InOut)],
-    blade_pitch: &[k(0, -10.0, Linear), k(1, 55.0, Out), k(4, -40.0, Out), k(6, 55.0, Out), k(9, -40.0, Out), k(16, -30.0, InOut)],
+    blade_pitch: &[k(0, -10.0, Linear), k(1, 55.0, Out), k(4, -19.0, Out), k(6, 55.0, Out), k(9, -19.0, Out), k(16, -19.0, InOut)],
     blade_roll: &[k(0, 0.0, Linear), k(1, -45.0, Out), k(4, -45.0, Linear), k(6, 45.0, Out), k(9, 45.0, Linear), k(16, 0.0, InOut)],
     blade_held: (0, 20),
     windows: &[w(2, 9, Shape::Weapon, Attack::SwordCross, 0)],
@@ -451,7 +452,7 @@ pub const LAUNCHER: Move = Move {
     dip: &[k(0, 0.0, Linear), k(3, 4.0, Out), k(7, 0.0, Out)],
     reach: &[k(0, 0.5, Linear), k(3, 0.8, Out), k(7, 1.0, Out), k(18, 1.0, Linear), k(24, 0.5, InOut)],
     blade_yaw: &[k(0, -25.0, Linear), k(3, -50.0, Out), k(7, 10.0, Out), k(16, 0.0, Linear), k(24, -20.0, InOut)],
-    blade_pitch: &[k(0, -35.0, Linear), k(3, -55.0, Out), k(7, 85.0, Out), k(14, 80.0, Linear), k(24, -10.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(3, -19.0, Out), k(7, 85.0, Out), k(14, 80.0, Linear), k(24, -10.0, InOut)],
     blade_roll: &[k(0, 0.0, Linear), k(3, 90.0, Out), k(16, 90.0, Linear), k(24, 0.0, InOut)],
     blade_held: (0, 26),
     windows: &[w(4, 7, Shape::Weapon, Attack::SwordLauncher, 0)],
@@ -471,14 +472,14 @@ pub const HELM: Move = Move {
     twist: &[k(0, 0.0, Linear), k(12, -10.0, InOut), k(16, 10.0, Out), k(26, 0.0, InOut)],
     pitch: &[k(0, 0.0, Linear), k(3, 8.0, Out), k(6, -6.0, Out), k(12, -12.0, Out), k(16, 20.0, Out), k(26, 10.0, Linear), k(32, 0.0, InOut)],
     aim: &[0, 4, 12],
-    approach: Some(Approach { from: 4, to: 14, max: 7.0, gap: 0.7 }),
+    approach: Some(Approach { from: 4, to: 14, max: 7.0, gap: 0.9 }),
     vel_y: &[(4, 38.0), (15, -55.0)],
     hold: (12, 15),
     squash: &[k(0, 1.0, Linear), k(3, 0.86, Out), k(6, 1.1, Out), k(12, 1.04, Linear), k(16, 1.12, Out), k(20, 0.88, Out), k(26, 1.0, InOut)],
     dip: &[k(0, 0.0, Linear), k(3, 4.0, Out), k(6, 0.0, Out), k(18, 0.0, Linear), k(20, 4.0, Out), k(28, 0.0, InOut)],
     reach: &[k(0, 0.6, Linear), k(4, 1.0, Out), k(30, 1.0, Linear), k(35, 0.5, InOut)],
     blade_yaw: &[k(0, -20.0, Linear), k(4, 0.0, Out), k(30, 0.0, Linear), k(34, -20.0, InOut)],
-    blade_pitch: &[k(0, -20.0, Linear), k(4, 95.0, Out), k(12, 130.0, InOut), k(14, 130.0, Linear), k(17, -55.0, Out), k(26, -50.0, Linear), k(34, -30.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(4, 95.0, Out), k(12, 130.0, InOut), k(14, 130.0, Linear), k(17, -19.0, Out), k(26, -19.0, Linear), k(34, -19.0, InOut)],
     blade_held: (0, 36),
     windows: &[
         w(15, 17, Shape::Weapon, Attack::SwordHelm, 0),
@@ -508,7 +509,7 @@ pub const IAI: Move = Move {
     reach: &[k(0, 0.7, Linear), k(4, 1.0, Out), k(16, 1.0, Linear), k(22, 0.5, InOut)],
     // (out, then back down behind him, as if sheathed: the crack comes then)
     blade_yaw: &[k(0, -150.0, Linear), k(4, 60.0, Out), k(9, 60.0, Linear), k(12, -160.0, InOut), k(22, -30.0, InOut)],
-    blade_pitch: &[k(0, -20.0, Linear), k(4, 5.0, Out), k(9, 0.0, Linear), k(12, -25.0, InOut), k(22, -30.0, Linear)],
+    blade_pitch: &[k(0, -19.0, Linear), k(4, 5.0, Out), k(9, 0.0, Linear), k(12, -19.0, InOut), k(22, -19.0, Linear)],
     blade_roll: &[k(0, 90.0, Linear), k(9, 90.0, Linear), k(14, 0.0, InOut)],
     blade_held: (0, 24),
     windows: &[w(11, 12, Shape::Around { radius: 260.0, ahead: -120.0 }, Attack::SwordIai, 0)],
@@ -553,7 +554,7 @@ pub const FLURRY: Move = Move {
         k(38, 0.0, InOut),
     ],
     aim: &[0, 5, 29],
-    approach: Some(Approach { from: 0, to: 5, max: 9.0, gap: 0.9 }),
+    approach: Some(Approach { from: 0, to: 5, max: 9.0, gap: 1.1 }),
     invulnerable: (0, 34),
     reach: &[k(0, 1.0, Linear), k(36, 1.0, Linear), k(39, 0.5, InOut)],
     blade_yaw: &[
@@ -575,22 +576,22 @@ pub const FLURRY: Move = Move {
         k(38, -20.0, InOut),
     ],
     blade_pitch: &[
-        k(0, -20.0, Linear),
+        k(0, -19.0, Linear),
         k(4, 40.0, Out),
-        k(6, -20.0, Out),
+        k(6, -19.0, Out),
         k(8, 40.0, Out),
-        k(10, -20.0, Out),
+        k(10, -19.0, Out),
         k(12, 40.0, Out),
-        k(14, -20.0, Out),
+        k(14, -19.0, Out),
         k(16, 40.0, Out),
-        k(18, -20.0, Out),
+        k(18, -19.0, Out),
         k(20, 40.0, Out),
-        k(22, -20.0, Out),
+        k(22, -19.0, Out),
         k(24, 40.0, Out),
-        k(26, -20.0, Out),
+        k(26, -19.0, Out),
         k(29, 10.0, Out),
         k(32, 0.0, Out),
-        k(38, -30.0, InOut),
+        k(38, -19.0, InOut),
     ],
     blade_roll: &[k(0, 0.0, Linear), k(29, 0.0, Linear), k(31, 90.0, Out), k(36, 90.0, Linear), k(39, 0.0, InOut)],
     blade_held: (0, 40),
@@ -621,7 +622,7 @@ pub const RAVE: [Move; 4] = [
         clips: &[clip(0, FIRST_PUNCH_FAST)],
         twist: &[k(0, 0.0, Linear), k(2, -30.0, Out), k(5, 25.0, Out), k(12, 0.0, InOut)],
         aim: &[0],
-        approach: Some(Approach { from: 0, to: 4, max: 1.2, gap: 1.0 }),
+        approach: Some(Approach { from: 0, to: 4, max: 1.2, gap: 1.2 }),
         vel_y: &[(0, 0.0)],
         hold: (0, 11),
         reach: &[k(0, 0.7, Linear), k(2, 1.0, Out), k(9, 1.0, Linear), k(12, 0.6, InOut)],
@@ -642,7 +643,7 @@ pub const RAVE: [Move; 4] = [
         clips: &[clip(0, SECOND_PUNCH_FAST)],
         twist: &[k(0, 10.0, Linear), k(2, 35.0, Out), k(5, -30.0, Out), k(12, 0.0, InOut)],
         aim: &[0],
-        approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.0 }),
+        approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.2 }),
         vel_y: &[(0, 0.0)],
         hold: (0, 11),
         reach: &[k(0, 0.8, Linear), k(2, 1.0, Out), k(9, 1.0, Linear), k(12, 0.6, InOut)],
@@ -663,7 +664,7 @@ pub const RAVE: [Move; 4] = [
         clips: &[clip(0, FIRST_PUNCH_FAST)],
         twist: &[k(0, -5.0, Linear), k(2, -35.0, Out), k(6, 30.0, Out), k(13, 0.0, InOut)],
         aim: &[0],
-        approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.0 }),
+        approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.2 }),
         vel_y: &[(0, 0.0)],
         hold: (0, 12),
         reach: &[k(0, 0.8, Linear), k(2, 1.0, Out), k(10, 1.0, Linear), k(13, 0.6, InOut)],
@@ -714,7 +715,7 @@ pub const BREAKER: Move = Move {
     twist: &[k(0, 0.0, Linear), k(3, -15.0, Out), k(6, 10.0, Out), k(14, 0.0, InOut)],
     pitch: &[k(0, 0.0, Linear), k(3, -10.0, Out), k(6, 22.0, Out), k(14, 10.0, Linear), k(22, 0.0, InOut)],
     aim: &[0],
-    approach: Some(Approach { from: 0, to: 4, max: 1.5, gap: 0.8 }),
+    approach: Some(Approach { from: 0, to: 4, max: 1.5, gap: 1.0 }),
     vel_y: &[(0, 0.0), (4, -70.0)],
     hold: (0, 4),
     squash: &[k(0, 1.0, Linear), k(3, 1.08, Out), k(7, 1.1, Linear), k(9, 0.82, Out), k(19, 0.86, Linear), k(24, 1.0, InOut)],
@@ -766,10 +767,10 @@ pub const DRAW: Move = Move {
     clips: &[clip(0, FIRST_PUNCH_FAST)],
     twist: &[k(0, -30.0, Linear), k(3, 30.0, Out), k(10, 0.0, InOut)],
     aim: &[0],
-    approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.0 }),
+    approach: Some(Approach { from: 0, to: 4, max: 1.0, gap: 1.2 }),
     reach: &[k(0, 0.8, Linear), k(3, 1.0, Out), k(10, 1.0, Linear), k(15, 0.5, InOut)],
     blade_yaw: &[k(0, -160.0, Linear), k(4, 60.0, Out), k(10, 30.0, InOut), k(15, -20.0, InOut)],
-    blade_pitch: &[k(0, -30.0, Linear), k(4, 5.0, Out), k(15, -30.0, InOut)],
+    blade_pitch: &[k(0, -19.0, Linear), k(4, 5.0, Out), k(15, -19.0, InOut)],
     blade_roll: &[k(0, 90.0, Linear), k(10, 90.0, Linear), k(15, 0.0, InOut)],
     blade_held: (0, 16),
     windows: &[w(1, 5, Shape::Weapon, Attack::SwordDraw, 0)],
@@ -1055,6 +1056,37 @@ mod tests {
         assert!(sword(SW_POGO).bounce > 0.0);
         assert!(sword(SW_RISE).held_rise.is_some() && !sword(SW_RISE).rise_on_y);
         assert!(sword(SW_HIGH_TIME).held_rise.is_some() && sword(SW_HIGH_TIME).rise_on_y);
+    }
+
+    /// The blade (SWORD_TIP, 1.80 m) never goes into the ground under his feet: in every move at
+    /// every tick it's held, and in the ready pose between blows, its tip stays over the floor
+    /// (his hand where sword.rs puts it, his shoulder 0.9 m up, an arm of 0.5).
+    #[test]
+    fn the_blade_never_goes_into_the_ground() {
+        use crate::script::eval;
+        let (shoulder, arm) = (glam::Vec3::new(-0.15, 0.9, 0.0), 0.5);
+        let tip_of = |b: (f32, f32, f32)| {
+            let grip = crate::sword::hand_goal(shoulder, arm, 0.0, b, 0.0);
+            (grip + crate::sword::held_dir(0.0, b.0, b.1) * crate::assets::kit::SWORD_TIP).y
+        };
+        let mut low = Vec::new();
+        for id in SW_S1..=SW_DRAW_AIR {
+            let m = sword(id);
+            // (the air moves dive: the floor is far under them, their plunges meant)
+            if m.air {
+                continue;
+            }
+            for t in m.blade_held.0..=m.blade_held.1 {
+                let t = t as f32;
+                let y = tip_of((eval(m.blade_yaw, t, 0.0), eval(m.blade_pitch, t, 0.0), 0.0));
+                if y < 0.05 {
+                    low.push(format!("{} tick {t}: tip {y:.2}", m.name));
+                }
+            }
+        }
+        assert!(low.is_empty(), "tip under the ground: {low:#?}");
+        let ready = crate::sword::READY;
+        assert!(tip_of(ready) > 0.1, "ready: tip {}", tip_of(ready));
     }
 
     #[test]

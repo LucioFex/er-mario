@@ -18,10 +18,12 @@ const R_UPPER_ARM: usize = 7;
 const R_HAND: usize = 9;
 
 /// on his back: the grip this far up his spine from the shoulder and behind him (m); the blade
-/// down across to his left hip this much
+/// lies in the plane of his back, down toward his left at this angle from level (a 1.80 m
+/// greatsword on a 1.25 m Mario: steeper and its tip would be in the ground; it points at the
+/// camera if it sticks out behind)
 const BACK_UP: f32 = 0.25;
 const BACK_OUT: f32 = 0.13;
-const BACK_ACROSS: f32 = 1.25;
+const BACK_DROP: f32 = 35.0;
 /// to his hand and back (share a tick: the draw takes ~5 ticks, a flourish of a turn in it)
 const TO_HAND: f32 = 0.22;
 const TO_BACK: f32 = 0.18;
@@ -29,7 +31,7 @@ const FLOURISH: f32 = 360.0;
 /// ticks it stays in hand after its last blow
 const HOLD: u32 = 10;
 /// held between blows: down and out ahead of him (degrees round his facing, up from level)
-const READY: (f32, f32, f32) = (-25.0, -35.0, 0.0);
+pub const READY: (f32, f32, f32) = (-25.0, -15.0, 0.0);
 /// in a move the blade turns this far a tick at most (degrees): its cuts' fastest (the JUST's and
 /// the Flurry Rush's flicks, swordmoves.rs), so it never lags its own cut; a jump from one move's
 /// pose to the next's still takes a couple of ticks
@@ -135,8 +137,8 @@ fn across_of(dir: Vec3, roll: f32) -> Vec3 {
     Quat::from_axis_angle(dir, roll.to_radians()) * level
 }
 
-/// On his back (parts' axes, relative to him): the grip over his right shoulder, the blade down
-/// across to his left hip, its flat against his back. Grip, direction, across.
+/// On his back (parts' axes, relative to him): the grip over his right shoulder, the blade slung
+/// down across it toward his left (BACK_DROP), its flat toward his back. Grip, direction, across.
 fn slung(parts: &[PartPose; PARTS], fwd: Vec3) -> (Vec3, Vec3, Vec3) {
     let spine = (parts[HEAD].pos - parts[PELVIS].pos).normalize_or(Vec3::Y);
     let side = (parts[R_UPPER_ARM].pos - parts[L_UPPER_ARM].pos).normalize_or(fwd.cross(Vec3::Y));
@@ -146,7 +148,8 @@ fn slung(parts: &[PartPose; PARTS], fwd: Vec3) -> (Vec3, Vec3, Vec3) {
         back = -back;
     }
     let grip = parts[R_UPPER_ARM].pos + spine * BACK_UP + back * BACK_OUT;
-    let dir = (-spine - side * BACK_ACROSS).normalize();
+    let drop = BACK_DROP.to_radians();
+    let dir = (-side * drop.cos() - spine * drop.sin()).normalize();
     let across = dir.cross(back).normalize_or(side);
     (grip, dir, across)
 }
@@ -309,11 +312,20 @@ mod tests {
         let (grip, dir, across) = slung(&p, fwd);
         // behind him, its hilt up over his right shoulder, pointing down across toward his left
         assert!(grip.z < -0.05 && grip.x < 0.0 && grip.y > 1.05, "{grip:?}");
-        assert!(dir.y < -0.45 && dir.x > 0.5, "{dir:?}");
-        // (a greatsword: its tip clear of the ground he stands on)
+        assert!(dir.y < -0.5 && dir.z.abs() < 0.1 && dir.x > 0.7, "{dir:?}");
+        // (a greatsword lying in the plane of his back: ~35 degrees from level, its tip out to his
+        // left over the ground he stands on, no more than 25 cm behind his back plane, the whole
+        // blade behind his back and not in him)
         let tip = grip + dir * crate::assets::kit::SWORD_TIP;
-        assert!(tip.y > 0.15, "its tip at {tip:?}");
-        // its flat against his back
+        assert!(tip.y > 0.10, "its tip at {tip:?}");
+        let rise = (-dir.y).asin().to_degrees();
+        assert!(rise > 30.0 && rise < 40.0, "{rise} degrees from level");
+        assert!(tip.x > 0.5 && tip.z < -0.02 && tip.z > -0.25, "its tip at {tip:?}");
+        for k in 0..=18 {
+            let q = grip + dir * (0.1 * k as f32);
+            assert!(q.z < -0.04 && q.z > -0.25 && q.y > 0.05, "{q:?} in his body or the ground");
+        }
+        // its flat toward his back
         let flat = dir.cross(across.normalize());
         assert!(flat.z.abs() > 0.9, "{flat:?}");
     }
