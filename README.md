@@ -385,7 +385,12 @@ never spins him round: every cut winds up longer than it swings (the weight is t
 itself is two ticks, and the pose is held a moment after it (longer on the finishers); a lunge
 stops dead on its enemy. Its swings and hits sound its own (synthesized by the mod, `src/sfx.rs`:
 a whoosh through the air, a ring of steel over a thud, deeper on the heavy ones), and each cut
-shoves a regular enemy back a little (the heavy ones more). Its element is **lightning**. Every
+shoves a regular enemy back a little (the heavy ones more). Recorded swings and hits sound better
+still: put WAV files in a `sounds` folder in the mod's folder (`sword_swing_*.wav`,
+`sword_swing_heavy_*.wav`, `sword_hit_*.wav`, `sword_hit_heavy_*.wav`, any rate; one picked at
+random each time, a hit's over the synthesized thud); the log says
+`sfx: N sword recordings from ...`. The ones I use are CC0 packs from OpenGameArt (see
+[Credits](#credits)); they're not in this repository. Its element is **lightning**. Every
 blow that lands can be cut short into the dash, a jump or a swap; the stick is read against the
 enemy in front (not against where Mario faces).
 
@@ -951,16 +956,54 @@ runtime. The model code isn't part of this repository.
 
 ## Credits
 
+**The mod**
 - **[Delta (deltarooo)](https://github.com/deltarooo)**, author of [ER Mario](https://github.com/deltarooo/er-mario). Almost everything here is their work.
+- [BenjaminMassey](https://github.com/BenjaminMassey): controller direction fix and the Linux build script (upstream)
+- Combat, weapons, kart and everything else new in this fork: [Luciano Esteban (LucioFex)](https://github.com/LucioFex)
+
+**Nintendo.** Super Mario 64, Mario, Luigi, Yoshi, Lakitu, the Chain Chomp, Bullet Bill, the
+Koopa shells, the Bob-omb, the power-ups and caps, Bowser, the Power Star, Mario Kart (the kart, its
+drifts, mini-turbos, mushrooms, shells, bananas and the Thunder Cloud), Super Mario Odyssey's
+capture and Cappy, Super Smash Bros.' super jump punch coins, Paper Mario's action commands and The
+Legend of Zelda's Skyward Strike, Helm Splitter, spin attack, down-thrust, Mortal Draw and Breath of
+the Wild's Flurry Rush are Nintendo's (characters, names, designs, sounds and music). Mario's model,
+textures, animations, sounds and music are read at runtime from **your own** Super Mario 64 ROM:
+none of them is in this repository or its releases. Made by a fan, for fun; not affiliated with or
+endorsed by Nintendo.
+
+**FromSoftware / Bandai Namco.** Elden Ring and everything in it are theirs; nothing of the game is
+included here, the mod only runs inside your own copy.
+
+**Sounds**
+- The Star Sword's recorded swings and hits (optional files in `sounds/` of the mod's folder, never
+  in this repository):
+  [RPG Sound Pack](https://lpc.opengameart.org/node/5311) (OpenGameArt, CC0) and
+  [20 sword sound effects (attacks and clashes)](https://opengameart.org/content/20-sword-sound-effects-attacks-and-clashes)
+  by StarNinjas (OpenGameArt, CC0). Thank you!
+- Every other sound is Super Mario 64's (from your ROM) or synthesized by the mod itself
+  (`src/sfx.rs`, `src/kartengine.rs`: the thunder, the hook's gas, the beam's hits, the kart's
+  engine).
+
+**Inspirations (moves and ideas, no assets).** Capcom's Devil May Cry (Dante's Rebellion: Stinger,
+High Time, Million Stab, Helm Breaker, Aerial Rave, Drive; Vergil's Judgement Cut End; the style
+rank), Sony Santa Monica's God of War (the Blades of Chaos), PlatinumGames' Bayonetta (the Dodge
+Offset, witch time), FromSoftware's Sekiro (the Mikiri counter), Team Cherry's Hollow Knight (the
+parry), Team Ico's Shadow of the Colossus (the climbing), Hajime Isayama's Attack on Titan (the 3D
+maneuver gear), Akira Toriyama's Dragon Ball (the kamehameha), Blizzard's Overwatch (Doomfist's
+rocket punch), Spider-Man and Bionic Commando (the rope), Fist of the North Star and JoJo's Bizarre
+Adventure (the hundred-hand flurry), Psyonix's Rocket League (the kart's feel). Their names belong
+to their owners.
+
+**Code and tools**
 - [libsm64](https://github.com/libsm64/libsm64) (CC0) by the libsm64 contributors, built on the
   [Super Mario 64 decompilation](https://github.com/n64decomp/sm64) by the n64decomp team
 - [fromsoftware-rs](https://github.com/vswarte/fromsoftware-rs) (MIT / Apache-2.0) by Vincent
   Swarte and contributors
 - [me3](https://me3.help) by the me3 team
 - [hudhook](https://github.com/veeenu/hudhook) (MIT) by veeenu
-- [BenjaminMassey](https://github.com/BenjaminMassey): controller direction fix and the Linux build script (upstream)
+- Rust crates (MIT / Apache-2.0): glam, cpal, ilhook, windows, num-bigint, aes, base64, texpresso,
+  pelite, png, miniz_oxide
 - The Grand Archives' Elden Ring cheat table, for the item and inventory function patterns
-- Combat tuning in this fork: [Luciano Esteban (LucioFex)](https://github.com/LucioFex)
 
 ## License
 
@@ -969,5 +1012,6 @@ Elden Ring's content: Mario's model, textures, sounds and animations come from t
 and nothing of FromSoftware's is included. The `libsm64` folder keeps libsm64's own license, CC0
 ([libsm64/LICENSE.md](libsm64/LICENSE.md)).
 
-<sub>Super Mario 64 and Mario are Nintendo's. Elden Ring is FromSoftware's. This is a free fan mod,
-not affiliated with either.</sub>
+<sub>Super Mario 64, Mario and every Nintendo character, name and sound are Nintendo's. Elden Ring is
+FromSoftware's and Bandai Namco's. This is a free, non-commercial fan mod, not affiliated with or
+endorsed by any of them.</sub>
