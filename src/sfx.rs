@@ -16,6 +16,7 @@ pub const RATE: f32 = 32_000.0;
 const VOICES: usize = 12;
 /// the sword's sounds this much louder than asked (they were far under SM64's own), at most full
 const SWORD_GAIN: f32 = 1.8;
+const THUNDER_GAIN: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sfx {
@@ -332,6 +333,8 @@ pub fn play(kind: Sfx, volume: f32) {
     let samples = sound_of(kind, seed);
     let volume = match kind {
         Sfx::Swing(_) | Sfx::Hit(_) => volume * SWORD_GAIN,
+        // (the thunder too: far under SM64's own, the user said)
+        Sfx::Thunder(_) => volume * THUNDER_GAIN,
         _ => volume,
     };
     let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());

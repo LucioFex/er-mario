@@ -189,7 +189,7 @@ fn sound(id: i32, volume: f32) {
 /// A thunderclap (sfx.rs: synthesized, a crack and its rumble; louder ones roll on longer), a
 /// flash of the screen, the camera jolted.
 fn thunder(volume: f32) {
-    crate::sfx::play(crate::sfx::Sfx::Thunder(volume >= 0.35), (volume * 1.3).min(0.75));
+    crate::sfx::play(crate::sfx::Sfx::Thunder(volume >= 0.35), (volume * 1.6).min(1.0));
     crate::impact::flash([0.85, 0.9, 1.0], 0.08 + 0.25 * volume, 0.16);
     crate::lakitu::shake(0.15 + 0.5 * volume);
 }
@@ -258,6 +258,17 @@ impl Bolts {
             _ => (Attack::Bolt(3), None, 2),
         };
         self.strikes.push(Strike { land: tick + FALL_AFTER, target: target.map(|t| t.0), at, attack, blast, jumps, struck: Vec::new(), width: WIDTH[level as usize] });
+    }
+
+    /// The charge building (fireball.rs): a little bolt out of the sky onto `at` near him, its crack
+    /// (louder by `level`), a flicker of the screen; only a look.
+    pub fn crackle(&mut self, at: Vec3, level: u8, tick: u32) {
+        let s = self.seed.wrapping_add(17) as f32;
+        let from = at + Vec3::new((s * 0.53).sin() * 2.0, SKY * 0.7, (s * 0.29).cos() * 2.0);
+        self.look(from, at, WIDTH[0] * (0.5 + 0.12 * level.min(4) as f32), tick);
+        crate::sfx::play(crate::sfx::Sfx::Thunder(false), 0.3 + 0.08 * level.min(4) as f32);
+        crate::impact::flash([0.85, 0.9, 1.0], 0.04 + 0.02 * level.min(4) as f32, 0.1);
+        crate::impact::element_spark(at + Vec3::Y * 0.2, [1.0, 0.95, 0.6], 1.0);
     }
 
     /// A crack of lightning where the sword came down (its moves' FX_ZAP): a short bolt onto `at`,

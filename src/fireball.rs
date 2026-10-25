@@ -182,6 +182,12 @@ const CHARGE_SIZE: [[f32; 5]; 4] = [
     [0.3, 0.42, 0.55, 0.7, 1.1],
 ];
 
+/// Lightning's charge: a little bolt down round him every this many ticks at `level` (0.8 s to
+/// 0.2 s as it builds).
+fn crackle_every(level: u8) -> u32 {
+    [24, 18, 13, 9, 6][(level as usize).min(4)]
+}
+
 /// The charge in his hand (m across) at `level`, RB held `held` ticks: its level's size, growing
 /// toward the next one's as it's held.
 pub fn charge_size(el: Element, level: u8, held: u32) -> f32 {
@@ -626,6 +632,16 @@ impl Fire {
                 sound(SOUND_CHARGE[level as usize - 1]);
             }
             self.level = level;
+            // (lightning's charge: little bolts falling round him as it builds, a crack each)
+            if self.el == Element::Lightning && held >= SHOW_CHARGE_AFTER && held % crackle_every(level) == 0 {
+                let m = state.position;
+                let feet = er(origin, [m[0], m[1], m[2]]);
+                let a = tick as f32 * 2.399;
+                let r = 1.2 + 1.4 * ((tick as f32 * 0.37).sin() * 0.5 + 0.5);
+                let at = feet + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
+                let ground = ray(at + Vec3::Y * 3.0, at - Vec3::Y * 6.0).unwrap_or(at);
+                self.bolts.crackle(ground, level, tick);
+            }
         } else if self.held_since.take().is_some() {
             let level = std::mem::take(&mut self.level);
             if busy {
@@ -1283,6 +1299,15 @@ mod tests {
             let (small, one, three) = (charge_size(el, 0, SHOW_CHARGE_AFTER), charge_size(el, 1, CHARGE_TICKS[0]), charge_size(el, 3, CHARGE_TICKS[2]));
             assert!(one > small * 1.2 && three > one * 1.3, "{el:?}: {small} {one} {three}");
         }
+    }
+
+    /// Lightning's charge calls little bolts down round him as it builds (the user: it gives the
+    /// charge its impact), more often the higher it gets.
+    #[test]
+    fn lightnings_charge_calls_little_bolts() {
+        let every: Vec<u32> = (0..=GIANT).map(crackle_every).collect();
+        assert!(every.windows(2).all(|w| w[1] < w[0]), "{every:?}");
+        assert!(every[0] <= 30 && *every.last().unwrap() >= 4, "{every:?}");
     }
 
     /// Lightning's charge is a crackling ball in his hand, not fire's sun over his head.

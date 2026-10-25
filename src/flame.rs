@@ -179,7 +179,9 @@ fn flick(i: usize, t: f32) -> f32 {
 
 /// The i-th of n ways out spread evenly round a ball
 pub(crate) fn spread(i: usize, n: usize) -> Vec3 {
-    let y = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
+    // (past n it goes round again: y went past -1 and the way grew long and straight down)
+    let n = n.max(1);
+    let y = 1.0 - 2.0 * ((i % n) as f32 + 0.5) / n as f32;
     let r = (1.0 - y * y).max(0.0).sqrt();
     let a = i as f32 * 2.399_963;
     Vec3::new(a.cos() * r, y, a.sin() * r)
@@ -744,6 +746,18 @@ fn pool(look: &mut Look, e: &crate::fx::Pool, tick: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A way out of a ball is a way out of it whatever the index (the lightning charge's arcs
+    /// asked for the 120th of 23: a "way" ten times long, straight down: the line under his charge).
+    #[test]
+    fn every_spread_way_is_a_unit_way() {
+        for n in [5usize, 19, 23, 29] {
+            for i in 0..400 {
+                let v = spread(i, n);
+                assert!((v.length() - 1.0).abs() < 1e-3, "spread({i}, {n}) = {v}");
+            }
+        }
+    }
     use crate::fx::{Blast, Orb};
 
     fn eye() -> Eye {
