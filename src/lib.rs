@@ -3709,8 +3709,6 @@ fn frame(data: &FD4TaskData) {
             status::tick(&player_ref.chr_ins, m.id, glam::Vec3::new(p.0, p.1, p.2), calm, data.hp < data.max_hp);
             drop(_perf7);
         }
-        // (the hammer's guard made something of a blow: the verdict, who hit him; played out after his tick)
-        let mut guard_fx: Option<(guard::Verdict, Option<guard::Located>)> = None;
         let hurt = {
             let data = &player_ref.chr_ins.modules.data;
             // the enemy Mario holds (a boss by the tail, or a picked-up enemy) and one he just threw
@@ -3721,13 +3719,24 @@ fn frame(data: &FD4TaskData) {
             let (attacker, scale) = combat::last_attacker(&player_ref.chr_ins);
             // the hammer's guard (guard.rs): a blow from the front costs a quarter, the third breaks
             // it, one just after B (the Just Guard) costs nothing; behind him, or a colossus's, goes through
+            let by_fresh = guard::fresh(combat::handle_key(&player_ref.chr_ins.last_hit_by));
             let scale = if m.moves.guarding() && !m.dead && m.combat.lost_share(data.hp, data.max_hp) * scale >= combat::BLOW_MIN {
                 let facing = glam::Vec3::new(-m.state.face_angle.sin(), 0.0, m.state.face_angle.cos());
-                let at = guard::locate(&player_ref.chr_ins.last_hit_by, here, &targets);
-                let (front, passes) = at.as_ref().map_or((true, false), |l| (guard::frontal(facing, l.pos - here), l.colossus));
-                let verdict = m.moves.guard_judge(m.ticks, front, passes);
+                // (only an attack seen guards: a fresh "hit by", or an enemy in one; bleeding, falls, traps pass)
+                let at = guard::locate(&player_ref.chr_ins.last_hit_by, here, &targets, by_fresh);
+                let verdict = m.moves.guard_judge(m.ticks, status::procced_lately(), at.as_ref().map(|l| (guard::frontal(facing, l.pos - here), l.colossus)));
+                // (played out here: the clang and the counter, the break's stun, the block's spark)
                 if verdict != guard::Verdict::Through {
-                    guard_fx = Some((verdict, at));
+                    let feet = glam::Vec3::new(here.x, here.y, here.z);
+                    let sin = starstep::In { id: m.id, origin: m.origin, tick: m.ticks, action: m.state.action, feet, focus: m.focus.map(|f| f.0), targets: &targets };
+                    match verdict {
+                        guard::Verdict::Just => guard::just(&sin, &mut m.combat, &player_ref.chr_ins, at.as_ref()),
+                        guard::Verdict::Broken => {
+                            guard::broken(feet);
+                            m.moves.queue(moves::Request::Script { id: script::HAMMER_STUN, air: false, yaw: None }, m.ticks);
+                        }
+                        _ => guard::blocked(feet, facing),
+                    }
                 }
                 guard::scaled(verdict, scale)
             } else {
@@ -4562,7 +4571,7 @@ fn frame(data: &FD4TaskData) {
             Some(moves::Request::Slam { air }) => {
                 let feet = to_er(m.origin, m.state.position);
                 let feet = glam::Vec3::new(feet.0, feet.1, feet.2);
-                let sin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: m.state.face_angle, air, focus: m.focus.map(|f| f.0), targets: &targets };
+                let sin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: m.state.face_angle, air, focus: m.focus.map(|f| f.0), targets: &targets, yank_ok: m.moves.yank_ok(m.ticks) };
                 let havok = unsafe { eldenring::cs::CSHavokMan::instance() }.ok();
                 let ray = |from: glam::Vec3, to: glam::Vec3| {
                     let d = to - from;
@@ -4572,14 +4581,13 @@ fn frame(data: &FD4TaskData) {
                         .map(|h| glam::Vec3::new(h.0, h.1, h.2))
                 };
                 let started = chompslam::pick(&sin).and_then(|p| {
-                    let slam = p.plan == chompslam::Plan::Slam;
                     let me = m.state.position;
                     let yaw = targets.iter().find(|t| t.key() == p.key).map(|t| (t.sm[0] - me[0]).atan2(t.sm[2] - me[2]));
-                    chompslam::begin(&sin, &p, &mut m.combat, &player_ref.chr_ins, &ray).map(|id| (id, slam, yaw))
+                    chompslam::begin(&sin, &p, &mut m.combat, &player_ref.chr_ins, &ray).map(|(id, plan)| (id, plan, yaw))
                 });
                 match started {
-                    Some((id, slam, yaw)) => {
-                        m.moves.slam_started(m.ticks, slam);
+                    Some((id, plan, yaw)) => {
+                        m.moves.slam_started(m.ticks, plan);
                         log(format!("script: {} starts", script::named(id)));
                         m.moves.script.start(id, None);
                         Some(moves::Request::Script { id, air: script::MOVES.get(id as usize).is_some_and(|mv| mv.air), yaw })
@@ -5221,20 +5229,8 @@ fn frame(data: &FD4TaskData) {
                         if let Some((sid, air)) = out.queue {
                             m.moves.queue(moves::Request::Script { id: sid, air, yaw: None }, m.ticks);
                         }
-                        // the hammer's guard made something of a blow (guard.rs): the Just Guard's
-                        // clang and counter, the break's stun
-                        if let Some((verdict, at)) = guard_fx.take() {
-                            match verdict {
-                                guard::Verdict::Just => guard::just(&sin, &mut m.combat, &player_ref.chr_ins, at.as_ref()),
-                                guard::Verdict::Broken => {
-                                    guard::broken(feet);
-                                    m.moves.queue(moves::Request::Script { id: script::HAMMER_STUN, air: false, yaw: None }, m.ticks);
-                                }
-                                _ => {}
-                            }
-                        }
                         // the Chomp Slam landed (chompslam.rs, juggle.rs): the ground impact and its blast
-                        let cin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: state.face_angle, air: false, focus: m.focus.map(|f| f.0), targets: &targets };
+                        let cin = chompslam::In { origin: m.origin, tick: m.ticks, feet, face_angle: state.face_angle, air: false, focus: m.focus.map(|f| f.0), targets: &targets, yank_ok: true };
                         for (thrown, at) in juggle::take_landed() {
                             chompslam::landed(&cin, &mut m.combat, &player_ref.chr_ins, &thrown, at);
                         }

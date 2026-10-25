@@ -3186,7 +3186,8 @@ impl Combat {
                     // Phantom Cut: a small one bounces off the ground, OTG; a bigger one just takes
                     // the blow)
                     let (radius_m, height_m) = (target.radius * crate::scale(), target.height * crate::scale());
-                    if !crate::juggle::ground_bounce(handle, radius_m, height_m, liftable(handle)) {
+                    // (a refused second bounce does nothing: hit() would relaunch it off the bounce)
+                    if crate::juggle::ground_bounce(handle, radius_m, height_m, liftable(handle)).plain_hit() {
                         crate::juggle::hit(handle, me);
                     }
                 } else if matches!(attack, Attack::MeteorPunch | Attack::SwordBreaker | Attack::Comet) {
@@ -3423,7 +3424,7 @@ impl Combat {
             }
             let (bullet, ..) = attack.spec();
             if !target.is_prop() && swing == 1.0 && !attack.continuous() && attack != Attack::Trample {
-                crate::style::hit(attack, target.key);
+                crate::style::hit(attack, target.key, tick);
                 // (co-op: both on one enemy is a BROS!)
                 crate::coop::own_hit(target.key, glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.6, target.er.2));
             }

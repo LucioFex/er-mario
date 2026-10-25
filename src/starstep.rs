@@ -178,6 +178,7 @@ pub fn veiled() -> bool {
 }
 
 /// A Phantom Cut's line is due yet.
+#[cfg(test)]
 pub fn pending() -> bool {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).cut.is_some()
 }

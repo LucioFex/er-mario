@@ -164,6 +164,12 @@ pub fn just_set_in() -> bool {
     with(|s| [BLEED, FROST, MADNESS].iter().any(|&i| within(s.procs[i], 0.4)))
 }
 
+/// An ailment set in or its damage over time started a moment ago: the HP he just lost was not a
+/// blow's (the hammer's guard asks).
+pub fn procced_lately() -> bool {
+    with(|s| s.procs.iter().any(|&p| within(p, 0.5)) || within(s.new_dot, 0.5))
+}
+
 /// Blood loss set in a moment ago and its burst not paid yet: true once (its blow costs at least
 /// BLEED_COST; the next ones their own).
 pub fn take_bled() -> bool {

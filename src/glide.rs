@@ -44,9 +44,10 @@ pub struct Glide {
 }
 
 impl Glide {
-    /// The glide may start now (in the air, not used this airtime, not going).
-    pub fn ready(&self, air: bool) -> bool {
-        air && !self.used && self.since.is_none()
+    /// The glide may start now (in the air, not used this airtime, not going, a boomerang in hand
+    /// to hold up: `in_hand`).
+    pub fn ready(&self, air: bool, in_hand: u32) -> bool {
+        air && !self.used && self.since.is_none() && in_hand > 0
     }
 
     pub fn start(&mut self, tick: u32) {
@@ -135,22 +136,29 @@ mod tests {
     fn once_an_airtime_and_landing_gives_it_back() {
         let mut g = Glide::default();
         // (not on the ground)
-        assert!(!g.ready(false));
-        assert!(g.ready(true));
+        assert!(!g.ready(false, 3));
+        assert!(g.ready(true, 3));
         g.start(100);
         assert_eq!(g.age(105), Some(5));
-        assert!(!g.ready(true), "going");
+        assert!(!g.ready(true, 3), "going");
         g.end();
         assert_eq!(g.age(106), None);
-        assert!(!g.ready(true), "used up this airtime");
+        assert!(!g.ready(true, 3), "used up this airtime");
         // (an enemy step or the hook)
         g.give_back();
-        assert!(g.ready(true));
+        assert!(g.ready(true, 3));
         g.start(200);
         g.end();
         // (the ground: any tick on it gives it back)
-        assert!(!g.ready(true));
+        assert!(!g.ready(true, 3));
         g.landed();
-        assert!(g.ready(true));
+        assert!(g.ready(true, 3));
+    }
+
+    #[test]
+    fn no_glide_with_every_boomerang_out() {
+        let g = Glide::default();
+        assert!(!g.ready(true, 0), "nothing to hold up");
+        assert!(g.ready(true, 1));
     }
 }

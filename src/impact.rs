@@ -689,6 +689,13 @@ pub fn clash(at: Vec3) {
     crate::sfx::play(crate::sfx::Sfx::Hit(2), 0.7);
 }
 
+/// The hammer's guard takes a blow (guard.rs): a small white flash and star, a soft clang.
+pub fn block_spark(at: Vec3) {
+    spark(at, 0.9, WHITE);
+    burst(at, 2, Bit::Star);
+    crate::sfx::play(crate::sfx::Sfx::Hit(1), 0.4);
+}
+
 /// The hammer's guard breaks (guard.rs): a red-white flash and ring in front of him, a jolt, the
 /// heavy hit bank.
 pub fn guard_break(at: Vec3) {

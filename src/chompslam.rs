@@ -36,6 +36,14 @@ pub const STRING_TICKS: u32 = 15 + 36;
 /// the yank: a big one lurches this far toward him at most, and stops this far off him (m)
 pub const YANK: f32 = 1.2;
 pub const YANK_STOP: f32 = 1.2;
+/// yanks count in the string (they are slams of a kind) and wait this many ticks between them
+pub const YANK_COOLDOWN: u32 = 60;
+/// the chain takes an enemy no more than this far above or below his feet (m) on the ground
+pub const MAX_DY: f32 = 2.5;
+/// a low ceiling lowers the arc, to this high at least (m); the arc leaves this share of the body
+/// below the ceiling
+pub const MIN_APEX: f32 = 1.2;
+const CEILING_CLEAR: f32 = 0.5;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Plan {
@@ -79,13 +87,33 @@ impl Arc {
 
 /// The arc of an enemy at `start` heaved over Mario (his feet at `me`) to `end`: over his head at
 /// the middle.
+#[cfg(test)]
 pub fn arc(start: Vec3, me: Vec3, end: Vec3) -> Arc {
+    arc_with(start, me, end, APEX)
+}
+
+/// The same over his head at `apex` m.
+pub fn arc_with(start: Vec3, me: Vec3, end: Vec3, apex: f32) -> Arc {
     // (a quadratic arc's middle is a quarter of each end and half its control: the control that
     // puts the middle over his head)
-    Arc { start, ctrl: (me + Vec3::Y * APEX) * 2.0 - (start + end) * 0.5, end }
+    Arc { start, ctrl: (me + Vec3::Y * apex) * 2.0 - (start + end) * 0.5, end }
 }
 
 type Ray<'a> = &'a dyn Fn(Vec3, Vec3) -> Option<Vec3>;
+
+/// Whether the chain reaches the enemy at `foe` (its feet) from `me`: nothing of the map between
+/// his chest and its chest, and on the ground not more than MAX_DY above or below him.
+pub fn sight(me: Vec3, foe: Vec3, air: bool, ray: Ray) -> bool {
+    (air || (foe.y - me.y).abs() <= MAX_DY) && ray(me + Vec3::Y, foe + Vec3::Y * 0.9).is_none()
+}
+
+/// How high the arc may go over `me` with a body `body_h` m tall heaved along it: APEX, lower under
+/// a low ceiling, None when less than MIN_APEX fits.
+pub fn slam_apex(me: Vec3, body_h: f32, ray: Ray) -> Option<f32> {
+    let Some(roof) = ray(me + Vec3::Y, me + Vec3::Y * (APEX + 1.5)) else { return Some(APEX) };
+    let room = (roof.y - me.y - body_h * CEILING_CLEAR).min(APEX);
+    (room >= MIN_APEX).then_some(room)
+}
 
 /// Where the slam lands (Elden Ring): the far side of Mario from the enemy at `foe`, as far past
 /// him as it was before him (LAND_MIN..LAND_MAX), 70% of that if the full way is no good; each
@@ -157,9 +185,22 @@ pub fn grip_pose(mario: [f32; 3], face: f32, target: [f32; 3], keep: f32) -> (f3
 pub struct Slams {
     count: u8,
     last: Option<u32>,
+    /// no yank before this tick
+    yank_ready: u32,
 }
 
 impl Slams {
+    /// A yank started at `tick`: it counts in the string and the next waits.
+    pub fn yanked(&mut self, tick: u32) {
+        self.used(tick);
+        self.yank_ready = tick + YANK_COOLDOWN;
+    }
+
+    /// Another yank may start.
+    pub fn can_yank(&self, tick: u32) -> bool {
+        self.can(tick) && tick.wrapping_sub(self.yank_ready) < u32::MAX / 2
+    }
+
     /// Slams in the string going at `tick`.
     pub fn count(&self, tick: u32) -> u8 {
         match self.last {
@@ -215,6 +256,8 @@ pub struct In<'a> {
     /// the enemy he fights (combat focus), by key
     pub focus: Option<u64>,
     pub targets: &'a [combat::Target],
+    /// the yank is off cooldown (and the string has room)
+    pub yank_ok: bool,
 }
 
 /// The enemy B bites and what comes of it.
@@ -224,6 +267,8 @@ pub struct Picked {
     /// its feet (Elden Ring)
     pub pos: Vec3,
     pub plan: Plan,
+    /// its height (m)
+    pub height_m: f32,
     /// the yank may move it (not a boss, not one the game's script holds)
     pub movable: bool,
     pub key: u64,
@@ -263,7 +308,7 @@ pub fn pick(i: &In) -> Option<Picked> {
     let chr = wcm.chr_ins_by_handle(&h)?;
     let up = crate::juggle::is_juggled(&h) || t.feet().y > i.feet.y + 1.2;
     let plan = plan(crate::juggle::pull_size(&h, r_m, h_m), stunned(&h), i.air, up);
-    Some(Picked { handle: h, id: chr.character_id as i32, pos: t.feet(), plan, movable: combat::liftable(&h) && !combat::hands_off(&h), key: t.key() })
+    Some(Picked { handle: h, id: chr.character_id as i32, pos: t.feet(), plan, height_m: h_m, movable: combat::liftable(&h) && !combat::hands_off(&h), key: t.key() })
 }
 
 fn strike(i: &In, combat: &mut Combat, player: &ChrIns, p: &Picked, attack: Attack) {
@@ -273,13 +318,32 @@ fn strike(i: &In, combat: &mut Combat, player: &ChrIns, p: &Picked, attack: Atta
     }
 }
 
-/// B bites `p`: the move to play (None: nothing came of it, the dash). `ray(from, to)`: the map's
-/// first hit.
-pub fn begin(i: &In, p: &Picked, combat: &mut Combat, player: &ChrIns, ray: Ray) -> Option<u16> {
-    let id = match p.plan {
+/// B bites `p`: the move to play and what it came to (None: nothing came of it, the dash).
+/// `ray(from, to)`: the map's first hit. Not through a wall or from a far ledge; a low ceiling
+/// lowers the slam's arc, or makes it a yank.
+pub fn begin(i: &In, p: &Picked, combat: &mut Combat, player: &ChrIns, ray: Ray) -> Option<(u16, Plan)> {
+    if p.plan != Plan::Dash && !sight(i.feet, p.pos, i.air, ray) {
+        log(format!("chomp: c{:04} out of reach (a wall or a ledge)", p.id));
+        return None;
+    }
+    let mut plan = p.plan;
+    let mut apex = APEX;
+    if plan == Plan::Slam {
+        match slam_apex(i.feet, p.height_m, ray) {
+            Some(a) => apex = a,
+            None => {
+                log(format!("chomp: no room over him to heave c{:04}, a yank", p.id));
+                plan = Plan::Yank;
+            }
+        }
+    }
+    if plan == Plan::Yank && !i.yank_ok {
+        return None;
+    }
+    let id = match plan {
         Plan::Slam => {
             let end = landing(i.feet, p.pos, ray);
-            if !crate::juggle::sling(&p.handle, arc(p.pos, i.feet, end), false) {
+            if !crate::juggle::sling(&p.handle, arc_with(p.pos, i.feet, end, apex), false) {
                 return None;
             }
             log(format!("chomp: slam c{:04} ({:.1} m over to {:.1} m the other side)", p.id, (p.pos - i.feet).with_y(0.0).length(), (end - i.feet).with_y(0.0).length()));
@@ -308,7 +372,7 @@ pub fn begin(i: &In, p: &Picked, combat: &mut Combat, player: &ChrIns, ray: Ray)
         Plan::Dash => return None,
     };
     STATE.lock().unwrap_or_else(|e| e.into_inner()).held = Some((p.handle, i.tick + 22));
-    Some(id)
+    Some((id, plan))
 }
 
 /// A slam landed at `at` (Elden Ring): the one thrown takes the slam, everyone it landed beside the
@@ -523,5 +587,70 @@ mod tests {
         assert_eq!(s.count(160 + STRING_TICKS + 1), 0);
         s.used(160 + STRING_TICKS + 1);
         assert_eq!(s.count(160 + STRING_TICKS + 2), 1);
+    }
+
+    /// a ceiling at y = `c` over the floor y = 0, a wall at z = `wall`
+    fn room(c: f32, wall: Option<f32>) -> impl Fn(Vec3, Vec3) -> Option<Vec3> {
+        let w = world(wall, None);
+        move |a: Vec3, b: Vec3| {
+            let d = b - a;
+            if (a.y < c) != (b.y < c) && d.y != 0.0 {
+                return Some(a + d * ((c - a.y) / d.y));
+            }
+            w(a, b)
+        }
+    }
+
+    #[test]
+    fn a_wall_between_or_a_far_ledge_is_out_of_the_chains_reach() {
+        let (me, foe) = (Vec3::ZERO, Vec3::new(0.0, 0.0, 4.0));
+        assert!(sight(me, foe, false, &world(None, None)));
+        // a wall at 2 m: no
+        assert!(!sight(me, foe, false, &world(Some(2.0), None)));
+        // a ledge 3 m up or a pit 3 m down: no, 2 m: yes (on the ground only)
+        assert!(!sight(me, foe + Vec3::Y * 3.0, false, &world(None, None)));
+        assert!(!sight(me, foe - Vec3::Y * 3.0, false, &world(None, None)));
+        assert!(sight(me, foe + Vec3::Y * 2.0, false, &world(None, None)));
+        // (in the air the harpoon takes what is up high)
+        assert!(sight(me, foe + Vec3::Y * 5.0, true, &world(None, None)));
+        assert!(!sight(me, foe + Vec3::Y * 5.0, true, &world(Some(2.0), None)));
+    }
+
+    #[test]
+    fn a_low_ceiling_lowers_the_arc_or_there_is_no_slam() {
+        let me = Vec3::ZERO;
+        assert_eq!(slam_apex(me, 1.8, &world(None, None)), Some(APEX));
+        // a ceiling far up changes nothing
+        assert_eq!(slam_apex(me, 1.0, &room(6.0, None)), Some(APEX));
+        // 3 m with a 1.4 m body: 3 - 0.7 = 2.3 m of room, a lower arc
+        let a = slam_apex(me, 1.4, &room(3.0, None)).unwrap();
+        assert!(a < APEX && a >= MIN_APEX, "{a}");
+        // 1.8 m: nothing fits
+        assert_eq!(slam_apex(me, 1.4, &room(1.8, None)), None);
+    }
+
+    #[test]
+    fn the_arc_can_be_lower() {
+        let me = Vec3::ZERO;
+        let a = arc_with(Vec3::new(0.0, 0.0, 3.0), me, Vec3::new(0.0, 0.0, -3.0), 1.6);
+        assert!((a.at(0.5).y - 1.6).abs() < 1e-3);
+    }
+
+    #[test]
+    fn yanks_count_in_the_string_and_wait_a_second_or_two() {
+        let mut s = Slams::default();
+        assert!(s.can_yank(100));
+        s.yanked(100);
+        assert_eq!(s.count(101), 1);
+        assert!(!s.can_yank(100 + YANK_COOLDOWN - 1));
+        assert!(s.can_yank(100 + YANK_COOLDOWN));
+        // the cap of three covers yanks and slams together
+        let mut s = Slams::default();
+        s.used(100);
+        s.used(130);
+        s.yanked(160);
+        assert_eq!(s.count(161), 3);
+        assert!(!s.can(161) && !s.can_yank(190));
+        assert!(s.can_yank(160 + YANK_COOLDOWN));
     }
 }

@@ -398,14 +398,20 @@ is the end of him, as in Elden Ring.
 
 The fifth weapon (`src/sword.rs`; its moves are data in `src/swordmoves.rs`, picked from the
 buttons by `src/swordplay.rs`, played by the move engine `src/script.rs`): a real 3D sword built
-into the gauntlets with the trap kit: a greatsword, its broad silver blade (1.35 m, longer than
-Mario is tall to his shoulders) with a light-blue edge and a gold Power Star by the guard, two Wing
-Cap wings for a guard, a long red grip for both hands with gold rings and a star for a pommel. It
-rides across Mario's back with its hilt up over his right shoulder and comes out with a
-flourish at the first blow; his arm follows the blade (arm IK) and its cuts hit along the blade
-itself, leaving a white-blue trail. Its moveset is Dante's Rebellion (Devil May Cry 3), and it
-never spins him round: every cut winds up longer than it swings (the weight is there), the cut
-itself is two ticks, and the pose is held a moment after it (longer on the finishers); a lunge
+into the gauntlets with the trap kit, shaped after Dante's Rebellion in Mario's colours: a
+greatsword 1.8 m to its tip (longer than Mario is tall), its broad steel blade with light-blue
+edges, a dark-red fuller with five gold diamonds and two notches at its base; for a guard Dry
+Bowser's skull (horns tipped yellow, red glints in its eyes, its teeth on the blade) with two gold
+ribs sweeping down; a red grip for both hands with yellow rings and Bowser's spiked bracelet for a
+pommel. It rides across Mario's back, its hilt over his right shoulder and its tip out past his
+left side, and comes out with a flourish at the first blow; his arms follow the blade (arm IK), his
+legs step with each cut (leg IK, `src/footwork.rs`: a step toward the cut's side, round the enemy
+from side to side along a string, the feet planted, never through walls or into bodies), and its
+cuts hit along the blade itself, leaving a red-gold trail. Its moveset is Dante's Rebellion (Devil
+May Cry 3) with some of Nero's (Devil May Cry 5), and it never spins him round: every cut moves at
+once from the cocked pose (the hit in 2-4 ticks), chains or dodges out from 0.13-0.2 s, the stick
+steers the follow-through, the hit-stop grows along a string, and the pose is held a moment after
+it (longer on the finishers); a lunge
 stops dead on its enemy. Its swings and hits sound its own (synthesized by the mod, `src/sfx.rs`:
 a whoosh through the air, a ring of steel over a thud, deeper on the heavy ones), and each cut
 shoves a regular enemy back a little (the heavy ones more). Recorded swings and hits sound better
@@ -1024,7 +1030,8 @@ included here, the mod only runs inside your own copy.
   in this repository):
   [RPG Sound Pack](https://lpc.opengameart.org/node/5311) (OpenGameArt, CC0) and
   [20 sword sound effects (attacks and clashes)](https://opengameart.org/content/20-sword-sound-effects-attacks-and-clashes)
-  by StarNinjas (OpenGameArt, CC0). Thank you!
+  by StarNinjas (OpenGameArt, CC0: the heavy swings and, from its clashes, the heavy hits).
+  Thank you!
 - Every other sound is Super Mario 64's (from your ROM) or synthesized by the mod itself
   (`src/sfx.rs`, `src/kartengine.rs`: the thunder, the hook's gas, the beam's hits, the kart's
   engine).

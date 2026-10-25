@@ -323,6 +323,17 @@ pub fn air_count(n: u32, airborne: bool, blow: bool) -> u32 {
     }
 }
 
+/// `air_count` for one of several hits of the same blow (a sweep over five): only the first of a
+/// `tick` adds (`last`: the tick that counted).
+pub fn air_blow(n: u32, airborne: bool, blow: bool, last: &mut Option<u32>, tick: u32) -> u32 {
+    let fresh = blow && *last != Some(tick);
+    if fresh {
+        *last = Some(tick);
+    }
+    air_count(n, airborne, fresh)
+}
+
+static AIR_TICK: Mutex<Option<u32>> = Mutex::new(None);
 static AIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static AIRBORNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -399,7 +410,7 @@ fn weak(attack: Attack) -> bool {
 }
 
 /// Game thread: one of Mario's blows landed on the enemy `target`.
-pub fn hit(attack: Attack, target: u64) {
+pub fn hit(attack: Attack, target: u64, tick: u32) {
     crate::starpower::touch();
     let mut g = METER.lock().unwrap_or_else(|e| e.into_inner());
     let now = now();
@@ -413,7 +424,7 @@ pub fn hit(attack: Attack, target: u64) {
     if !weak(attack) {
         max_hit();
     }
-    let n = air_count(AIR.load(Relaxed), AIRBORNE.load(Relaxed), !weak(attack));
+    let n = air_blow(AIR.load(Relaxed), AIRBORNE.load(Relaxed), !weak(attack), &mut AIR_TICK.lock().unwrap_or_else(|e| e.into_inner()), tick);
     AIR.store(n, Relaxed);
     let points = m.blow(now, attack, target) * if weak(attack) { WEAK_SCALE } else { 1.0 } * air_mult(n);
     add(m, now, points);
@@ -658,6 +669,8 @@ pub fn mario_dt(game_dt: f32) -> f32 {
 }
 
 pub fn clear() {
+    AIR.store(0, Relaxed);
+    *AIR_TICK.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *HURT_AT.lock().unwrap_or_else(|e| e.into_inner()) = -100.0;
     *METER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CALLOUTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -670,7 +683,7 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
 
-    use super::{air_count, air_mult, AIR_CAP};
+    use super::{air_blow, air_count, air_mult, AIR_CAP};
 
     /// AIR xN: style x(1 + 0.05 (N - 1)), capped at x1.5; the first hit is plain.
     #[test]
@@ -682,6 +695,22 @@ mod tests {
         assert!((air_mult(11) - 1.5).abs() < 1e-6);
         assert_eq!(air_mult(50), AIR_CAP);
         assert!((1..60).map(air_mult).all(|m| m <= AIR_CAP));
+    }
+
+    /// A sweep over five enemies is one blow: one count, the next tick's blow another.
+    #[test]
+    fn a_blow_over_several_enemies_counts_once() {
+        let mut last = None;
+        let mut n = 0;
+        for _ in 0..5 {
+            n = air_blow(n, true, true, &mut last, 100);
+        }
+        assert_eq!(n, 1);
+        n = air_blow(n, true, true, &mut last, 105);
+        assert_eq!(n, 2);
+        // (the ground resets, and a landing blow next tick counts from none)
+        n = air_blow(n, false, false, &mut last, 106);
+        assert_eq!(air_blow(n, true, true, &mut last, 106), 1);
     }
 
     /// The count: blows in the air add one, the ground resets it, blows on the ground are plain.

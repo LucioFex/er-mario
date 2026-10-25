@@ -649,8 +649,8 @@ impl Moves {
     }
 
     /// A blow lands (lib.rs): what the guard makes of it.
-    pub fn guard_judge(&mut self, tick: u32, front: bool, passes: bool) -> crate::guard::Verdict {
-        self.guard.judge(tick, front, passes)
+    pub fn guard_judge(&mut self, tick: u32, procced: bool, at: Option<(bool, bool)>) -> crate::guard::Verdict {
+        self.guard.judge_source(tick, procced, at)
     }
 
     /// The glide's rule for this tick, if he is gliding: from his last state (SM64 units a tick),
@@ -671,13 +671,20 @@ impl Moves {
         self.glide.give_back();
     }
 
-    /// The Chomp's B really started something (lib.rs found the enemy): a slam counts in the
-    /// string (`slam`), the next B waits a breath either way.
-    pub fn slam_started(&mut self, tick: u32, slam: bool) {
-        if slam {
-            self.slams.used(tick);
+    /// The Chomp's B really started something (lib.rs found the enemy): a slam or a yank counts in
+    /// the string (a yank also waits), the next B waits a breath either way.
+    pub fn slam_started(&mut self, tick: u32, plan: crate::chompslam::Plan) {
+        match plan {
+            crate::chompslam::Plan::Slam => self.slams.used(tick),
+            crate::chompslam::Plan::Yank => self.slams.yanked(tick),
+            _ => {}
         }
         self.slam_ready = tick + SLAM_COOLDOWN;
+    }
+
+    /// A yank may start now.
+    pub fn yank_ok(&self, tick: u32) -> bool {
+        self.slams.can_yank(tick)
     }
 
     /// Dead or reset: the weapons' B moves start over.
@@ -995,7 +1002,7 @@ impl Moves {
         let air = a & ACT_FLAG_AIR != 0;
         // the hammer's guard stays up while B is held on his feet with the hammer
         if self.guard.up() && (!b || self.weapon != crate::weapons::HAMMER || sword_in_hand || !guard_stance(a) || crate::mega::active()) {
-            self.guard.release();
+            self.guard.release(tick);
         }
         // the boomerang's glide: the ground, an enemy step or the hook give it back; it is over
         // when the action isn't its own any more; X throws from the air
@@ -1007,6 +1014,11 @@ impl Moves {
         }
         if self.glide.age(tick).is_some_and(|age| age >= 3) && a != ACT_ER_GLIDE {
             self.glide.end();
+        }
+        if a == ACT_ER_GLIDE && self.weapon != crate::weapons::RANG {
+            self.glide.end();
+            crate::log("rang: glide ends (another weapon in hand)");
+            return Some(Request::Action(ACT_FREEFALL, 0));
         }
         if a == ACT_ER_GLIDE && x_pressed && allowed && self.weapon == crate::weapons::RANG && crate::boomerang::ready() > 0 {
             self.glide.end();
@@ -1144,7 +1156,7 @@ impl Moves {
                 // (the Chomp's slam again, back the other way; the boomerang's glide, out of a throw in the air)
                 match b_kind(if sword { crate::weapons::SWORD } else { self.weapon }) {
                     BKind::Slam if tick >= self.slam_ready && self.slams.can(tick) => return Some(Request::Slam { air }),
-                    BKind::Glide if air && a != ACT_ER_GLIDE && self.glide.ready(true) => {
+                    BKind::Glide if air && a != ACT_ER_GLIDE && self.glide.ready(true, crate::boomerang::ready()) => {
                         self.glide.start(tick);
                         crate::log("rang: glide out of the move");
                         return Some(Request::Glide);
@@ -1392,7 +1404,7 @@ impl Moves {
                     }
                     return None;
                 }
-                BKind::Glide if in_air && a != ACT_ER_GLIDE && self.glide.ready(true) => {
+                BKind::Glide if in_air && a != ACT_ER_GLIDE && self.glide.ready(true, crate::boomerang::ready()) => {
                     self.glide.start(tick);
                     crate::log("rang: glide");
                     return Some(Request::Glide);
@@ -1875,6 +1887,20 @@ mod tests {
         assert!(matches!(r, Some(Request::Glide)), "{r:?}");
     }
 
+    /// Another weapon in hand ends the glide (it would go on prop-less): he falls free.
+    #[test]
+    fn a_weapon_swap_ends_the_glide() {
+        const ACT_JUMP: u32 = 0x0300_0880;
+        let mut m = Moves::new();
+        w_step(&mut m, RANG, ACT_JUMP, false, 0.0, false, 130);
+        w_step(&mut m, RANG, ACT_JUMP, true, 0.0, false, 131);
+        w_step(&mut m, RANG, ACT_ER_GLIDE, false, 0.0, false, 132);
+        let r = w_step(&mut m, HAMMER, ACT_ER_GLIDE, false, 0.0, false, 133);
+        assert_eq!(action(r), Some((ACT_FREEFALL, 0)), "{r:?}");
+        let state = sm64::SM64MarioState { action: ACT_ER_GLIDE, ..Default::default() };
+        assert!(m.glide_params(&state, 0.0, 0.0, 134).is_none());
+    }
+
     #[test]
     fn x_in_the_glide_throws_the_boomerang_from_the_air() {
         const ACT_JUMP: u32 = 0x0300_0880;
@@ -1901,7 +1927,7 @@ mod tests {
             t += 1;
             let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, t);
             assert!(matches!(r, Some(Request::Slam { air: false })), "{n}: {r:?}");
-            m.slam_started(t, true);
+            m.slam_started(t, crate::chompslam::Plan::Slam);
         }
         t += 20;
         w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, t);

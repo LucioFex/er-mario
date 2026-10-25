@@ -1927,8 +1927,9 @@ s32 act_er_glide(struct MarioState *m) {
             return set_mario_action(m, ACT_FREEFALL_LAND, 0);
 
         case AIR_STEP_HIT_WALL:
+            // (a wall ends it: he'd only hug it, sailing into it, for the rest of the 3 s)
             mario_set_forward_vel(m, 0.0f);
-            break;
+            return set_mario_action(m, ACT_FREEFALL, 0);
 
         case AIR_STEP_HIT_LAVA_WALL:
             lava_boost_on_wall(m);
