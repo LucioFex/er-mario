@@ -120,7 +120,7 @@ enemy (a boss's body fills its whole reach) lands on him again, each time for ha
 | X, X, X | Donkey Kong's smash: a little hop and the hammer, grown with the swing, buried in the ground; the ground shakes 3 m around, regular enemies go down | 19% |
 | Y (hold to charge) | Bowser's quake: tapped 15%; a level up 21% and everyone around goes down; fully charged (1.2 s) the titan's blow, the hammer giant, 30% in 6 m | 15-30% |
 | X, X, Y | Donkey Kong's drum: three pounds, each shaking wider, then a giant hammer | 3 x 7% + 23% |
-| Y, X | Bowser spin: one blow all round each turn, the release flings them | 5% a turn + 13% |
+| Y, X | Golf Swing (King K. Rool): out of the slam the hammer is ripped out of the ground in one low drive where the stick points; a small enemy is flung ahead like a golf ball (FORE!) | 4% drag + 18% |
 | back + X (or X, Y) | Launcher (golf swing): they fly high for an air combo | 12% |
 | forward + Y | Hammer Bro's jump: a leap onto them into the plunge (lands a level up) | 21% |
 | X in the air | Somersault swing | 9% |

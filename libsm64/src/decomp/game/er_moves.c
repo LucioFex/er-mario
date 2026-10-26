@@ -3,7 +3,7 @@
  *
  * Bare-handed: the super jump punch (X, X, Y), its meteor dive (X in it) and the tornado (Y, X).
  * With the hammer (L1, er_hammer_mode): X's three swings, Y's slam (in the air: the plunge), the
- * Donkey Kong flurry (X, X, Y), the Bowser spin (Y, X) and a spinning swing in the air.
+ * Donkey Kong flurry (X, X, Y), the Golf Swing (Y, X) and a spinning swing in the air.
  *
  * Every tick each move says what it hits (er_move_hit: the mod measures who is in reach, around
  * Mario or along the hammer's head), what to show (er_move_fx) and, with the hammer, where it
@@ -34,8 +34,8 @@ enum ErHit {
     ER_HIT_QUAKE,
     ER_HIT_FLURRY,
     ER_HIT_FLURRY_END,
-    ER_HIT_GIRO,
-    ER_HIT_GIRO_END,
+    ER_HIT_GOLF_DRAG,
+    ER_HIT_GOLF,
     ER_HIT_HAMMER_AIR,
     ER_HIT_UPPERCUT,
     ER_HIT_UPPERCUT_TOP,
@@ -905,71 +905,113 @@ s32 act_er_hammer_flurry(struct MarioState *m) {
     return FALSE;
 }
 
-#define ER_GIRO_RELEASE 40
-#define ER_GIRO_END 58
+/* the Golf Swing (King K. Rool's, Monster Hunter's Big Bang finish), out of the slam: the hammer
+ * dragged back low, ripped out of the ground in one drive and swept up over his left shoulder.
+ * The head's yaw (degrees from his facing, + his left), pitch and his body's twist on the ticks of
+ * the sweep (5..9; the hit is at 7, most of the arc in three ticks) */
+#define ER_GOLF_BACK 5
+#define ER_GOLF_DRAG 3
+#define ER_GOLF_HIT 7
+#define ER_GOLF_SWEEP_END 9
+#define ER_GOLF_HOLD 18
+#define ER_GOLF_FREE 16
+#define ER_GOLF_END 26
+#define ER_GOLF_AIM 6
+#define ER_GOLF_SCALE 1.2f
+#define ER_GOLF_BACK_YAW -140.0f
+#define ER_GOLF_BACK_PITCH -22.0f
+#define ER_GOLF_BACK_TWIST -40.0f
+static const f32 sGolfYaw[5] = { -140.0f, -85.0f, -5.0f, 55.0f, 86.0f };
+static const f32 sGolfPitch[5] = { -22.0f, -14.0f, -8.0f, 50.0f, 112.0f };
+static const f32 sGolfTwist[5] = { -40.0f, -15.0f, 20.0f, 50.0f, 60.0f };
 
 /**
- * Y, X with the hammer: Mario spins with it held out like Bowser by the tail, slow to get going,
- * faster and faster, a blow all round each turn; the release flings the ones it hits.
+ * Y, X with the hammer: the head is dragged back low along the ground to his back right, then
+ * ripped out of it in a low drive toward where the stick points, up over his left shoulder; one
+ * heavy blow (the drag before it is a small one). His body coils back and follows through, never
+ * past a quarter turn.
  */
-s32 act_er_hammer_giro(struct MarioState *m) {
+s32 act_er_hammer_golf(struct MarioState *m) {
     s32 t = m->actionTimer;
-    s16 before = sErSpin;
+    f32 speed = 0.0f;
+    f32 twist;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
     f32 p;
+    f32 e;
 
     if (t == 0) {
-        sErSpin = 0;
-        before = 0;
-        er_sound(m, SOUND_MARIO_HOOHOO);
-        er_sound_soft(SOUND_OBJ_BOWSER_TAIL_PICKUP, 0.6f);
+        er_sound(m, SOUND_MARIO_YAH_WAH_HOO);
+        er_sound_soft(SOUND_OBJ_BOWSER_TAIL_PICKUP, 0.4f);
     }
-    er_move_locked = t < ER_GIRO_RELEASE + 8;
-    if (t < ER_GIRO_RELEASE) {
-        p = (f32) t / ER_GIRO_RELEASE;
-        set_mario_animation(m, t < 4 ? MARIO_ANIM_GRAB_BOWSER : MARIO_ANIM_SWINGING_BOWSER);
-        if (t == 0) {
-            // (a turn back the other way first: the wind-up)
-            sErSpin = -ER_COUNTER_TWIST;
-            before = sErSpin;
-        } else {
-            s16 step = (s16) er_lerp(0x0C00, 0x2C00, p * p);
-            sErSpin += t <= ER_SPIN_UP && sSpinUp[t - 1] < step ? sSpinUp[t - 1] : step;
+    // (the stick aims it while he winds up; once the head is on its way it flies true)
+    if (t < ER_GOLF_AIM && (m->input & INPUT_NONZERO_ANALOG)) {
+        m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x800, 0x800);
+    }
+    er_move_locked = t < ER_GOLF_FREE;
+    if (t >= ER_GOLF_FREE && (m->input & INPUT_A_PRESSED)) {
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+
+    if (t <= ER_GOLF_BACK) {
+        // the backswing: the head dragged back low (from where the slam left it in front), the body
+        // coiled, the knees bent
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x5000);
+        e = er_ease_out((f32)(t + 1) / (ER_GOLF_BACK + 1));
+        er_hammer(er_lerp(0.0f, ER_GOLF_BACK_YAW, e), er_lerp(-45.0f, ER_GOLF_BACK_PITCH, e), ER_GOLF_SCALE);
+        twist = ER_GOLF_BACK_TWIST * e;
+        squash = 1.0f - 0.05f * e;
+        dip = 3.5f * e;
+        if (t == ER_GOLF_DRAG) {
+            er_move_hit = ER_HIT_GOLF_DRAG;
+            er_move_fx |= ER_FX_GROUND;
+            er_sound_soft(SOUND_GENERAL_POUND_ROCK, 0.3f);
         }
-        // (past his front again: a turn done, its whoosh, its blow all round)
-        if ((u16) sErSpin < (u16) before && t > ER_SPIN_UP) {
-            er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.4f);
-            er_move_hit = ER_HIT_GIRO;
-            er_move_fx |= ER_FX_SPIN;
+        if (t == ER_GOLF_BACK) {
+            speed = 4.0f;
         }
-        er_hammer(sErSpin * 360.0f / 65536.0f, 8.0f, 1.3f);
-        if (!er_ground(m, 0.0f)) {
-            return TRUE;
+    } else if (t <= ER_GOLF_SWEEP_END) {
+        // the drive: from behind low, through the front low, up over his left shoulder
+        s32 k = t - ER_GOLF_BACK;
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x20000);
+        er_hammer(sGolfYaw[k], sGolfPitch[k], ER_GOLF_SCALE);
+        twist = sGolfTwist[k];
+        speed = 4.0f;
+        squash = 1.05f;
+        dip = 2.0f * (1.0f - (f32) k / 4.0f);
+        if (t == ER_GOLF_BACK + 1) {
+            er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.6f);
         }
-        er_twist(m, sErSpin * 360.0f / 65536.0f);
-        // (leaning back against the hammer's pull)
-        er_squash(m, 1.0f - 0.05f * p, 3.0f * p);
-    } else {
-        if (t == ER_GIRO_RELEASE) {
-            // he faces where he let go
-            m->faceAngle[1] += sErSpin;
-            sErSpin = 0;
-            set_mario_animation(m, MARIO_ANIM_RELEASE_BOWSER);
-            er_move_hit = ER_HIT_GIRO_END;
-            er_move_fx |= ER_FX_QUAKE;
+        if (t == ER_GOLF_HIT) {
+            er_move_hit = ER_HIT_GOLF;
+            er_move_fx |= ER_FX_BANG;
             er_cheer(m);
-            er_sound_soft(SOUND_OBJ_THWOMP, 0.5f);
         }
-        p = (f32)(t - ER_GIRO_RELEASE) / (ER_GIRO_END - ER_GIRO_RELEASE);
-        er_hammer(er_lerp(0.0f, -60.0f, er_ease_in_out(p)), er_lerp(0.0f, -30.0f, p), er_lerp(1.3f, 1.0f, p));
-        if (!er_ground(m, 0.0f)) {
-            return TRUE;
-        }
-        er_squash(m, er_lerp(0.92f, 1.0f, p), er_lerp(4.0f, 0.0f, p));
-        if (t >= ER_GIRO_RELEASE + 8 && (m->input & INPUT_A_PRESSED)) {
-            return set_jumping_action(m, ACT_JUMP, 0);
-        }
+    } else if (t < ER_GOLF_HOLD) {
+        // the follow-through held, the hammer high over his left shoulder, creeping on a little
+        p = (f32)(t - ER_GOLF_SWEEP_END) / (ER_GOLF_HOLD - ER_GOLF_SWEEP_END);
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x4000);
+        er_hammer(er_lerp(sGolfYaw[4], sGolfYaw[4] + 6.0f, p), er_lerp(sGolfPitch[4], sGolfPitch[4] + 6.0f, p), ER_GOLF_SCALE);
+        twist = sGolfTwist[4];
+        squash = er_lerp(1.05f, 0.95f, er_ease_out(p));
+        dip = 2.0f * er_ease_out(p);
+    } else {
+        // back to rest
+        p = (f32)(t - ER_GOLF_HOLD) / (ER_GOLF_END - ER_GOLF_HOLD);
+        e = er_ease_in_out(p);
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x6000);
+        er_hammer(er_lerp(sGolfYaw[4] + 6.0f, 0.0f, e), er_lerp(sGolfPitch[4] + 6.0f, 15.0f, e), er_lerp(ER_GOLF_SCALE, 1.0f, e));
+        twist = er_lerp(sGolfTwist[4], 0.0f, e);
+        squash = er_lerp(0.95f, 1.0f, e);
+        dip = er_lerp(2.0f, 0.0f, e);
     }
-    if (++m->actionTimer >= ER_GIRO_END) {
+
+    if (!er_ground(m, speed)) {
+        return TRUE;
+    }
+    er_twist(m, twist);
+    er_squash(m, squash, dip);
+    if (++m->actionTimer >= ER_GOLF_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;

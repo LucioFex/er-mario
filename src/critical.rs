@@ -41,7 +41,7 @@ fn launcher(a: Attack) -> bool {
 fn hammer_heavy(a: Attack) -> bool {
     matches!(
         a,
-        Attack::HammerSmash | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd | Attack::HammerChargeSlam | Attack::Comet | Attack::CometRing
+        Attack::HammerSmash | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf | Attack::HammerChargeSlam | Attack::Comet | Attack::CometRing
     )
 }
 

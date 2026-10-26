@@ -52,16 +52,16 @@ pub enum Attack {
     Tornado,
     TornadoEnd,
     /// with the hammer: its side swings, its overhead smash, the slam (and the plunge's landing),
-    /// the swing in the air (and the plunge), the flurry's blows and its giant one, the Bowser spin
-    /// and its release
+    /// the swing in the air (and the plunge), the flurry's blows and its giant one, the Golf Swing's
+    /// drag along the ground and its drive
     Hammer,
     HammerSmash,
     Quake,
     HammerAir,
     Flurry,
     FlurryEnd,
-    Giro,
-    GiroEnd,
+    GolfDrag,
+    Golf,
     /// the bare-handed string past the kick (and its whirlwind kick), the Koopa shell, the air string
     Chain,
     ChainEnd,
@@ -282,7 +282,7 @@ const CODES: [Attack; 199] = [
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
     Attack::Tornado, Attack::TornadoEnd, Attack::Hammer, Attack::HammerSmash, Attack::Quake,
-    Attack::HammerAir, Attack::Flurry, Attack::FlurryEnd, Attack::Giro, Attack::GiroEnd, Attack::Chain,
+    Attack::HammerAir, Attack::Flurry, Attack::FlurryEnd, Attack::GolfDrag, Attack::Golf, Attack::Chain,
     Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
     Attack::ChompLaunch, Attack::Hook, Attack::Tongue, Attack::Egg, Attack::YoshiStomp, Attack::Mikiri, Attack::Bonk,
@@ -360,11 +360,11 @@ impl Attack {
             Attack::Chain | Attack::Shell => Attack::Kick.spec(),
             Attack::ChainEnd | Attack::Launch => Attack::Stomp.spec(),
             Attack::Meteor => Attack::Stomp.spec(),
-            Attack::Giro | Attack::TornadoEnd => Attack::Sweep.spec(),
+            Attack::TornadoEnd => Attack::Sweep.spec(),
             // (the hammer's every blow staggers like a stomp at least, its heavy ones like a ground
             // pound)
-            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::Pound | Attack::HammerRise | Attack::Rise => Attack::Stomp.spec(),
-            Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd => {
+            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::Pound | Attack::HammerRise | Attack::Rise | Attack::GolfDrag => Attack::Stomp.spec(),
+            Attack::UppercutTop | Attack::MeteorLand | Attack::HammerSmash | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf => {
                 Attack::GroundPound.spec()
             }
             Attack::Rang | Attack::RangBig | Attack::ChompSpin | Attack::Hook | Attack::Tongue => Attack::Punch.spec(),
@@ -515,8 +515,8 @@ impl Attack {
             Attack::Pound => (11.5, "damage_hammer_pound"),
             Attack::Flurry => (4.0, "damage_hammer_flurry"),
             Attack::FlurryEnd => (38.5, "damage_hammer_giant"),
-            Attack::Giro => (8.5, "damage_hammer_spin"),
-            Attack::GiroEnd => (22.0, "damage_hammer_spin_end"),
+            Attack::GolfDrag => (6.0, "damage_hammer_golf_drag"),
+            Attack::Golf => (30.0, "damage_hammer_golf"),
             // the fists' rising spin kick: a punch and a bit, it's the air string's start
             Attack::Rise => (16.0, "damage_rise"),
             Attack::Chain => (12.0, "damage_string"),
@@ -760,12 +760,17 @@ impl Attack {
     }
 
     /// One swing of the hammer, one blow (its hits on the same enemy past the first fade:
-    /// SWING_FADE); the spin's turns and the drum's pounds are blows each.
+    /// SWING_FADE); the drum's pounds are blows each.
     fn one_swing(self) -> bool {
         matches!(
             self,
-            Attack::Hammer | Attack::HammerWide | Attack::HammerSmash | Attack::HammerAir | Attack::HammerRise | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd
+            Attack::Hammer | Attack::HammerWide | Attack::HammerSmash | Attack::HammerAir | Attack::HammerRise | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf
         )
+    }
+
+    /// The Golf Swing's drive (not its drag): it flings a small enemy away.
+    fn golf_drive(self) -> bool {
+        matches!(self, Attack::Golf)
     }
 
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
@@ -828,7 +833,7 @@ impl Attack {
             Attack::Rush => 1.6,
             Attack::RushKick => 1.9,
             Attack::Uppercut | Attack::Meteor | Attack::Flurry | Attack::HammerAir => 1.3,
-            Attack::Tornado | Attack::Giro => 1.2,
+            Attack::Tornado | Attack::GolfDrag => 1.2,
             Attack::UppercutTop => 1.7,
             Attack::MeteorLand => 1.8,
             Attack::TornadoEnd => 1.5,
@@ -837,7 +842,7 @@ impl Attack {
             Attack::HammerSmash | Attack::Quake => 1.3,
             Attack::QuakeBig | Attack::FlurryEnd => 1.1,
             Attack::Titan => 1.0,
-            Attack::Pound | Attack::HammerRise | Attack::GiroEnd => 1.2,
+            Attack::Pound | Attack::HammerRise | Attack::Golf => 1.2,
             Attack::Rise => 1.4,
             Attack::Chain => 1.5,
             Attack::ChainEnd => 1.8,
@@ -944,12 +949,12 @@ impl Attack {
             // the flurry's blows come 3 ticks apart, the spins' every few
             Attack::Uppercut | Attack::Flurry | Attack::AirHit => 3,
             Attack::Shell => 5,
-            Attack::Tornado | Attack::Giro => 5,
+            Attack::Tornado => 5,
             // a swing hits over 3 ticks, once; the next one comes 8 ticks later at the soonest
-            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Rise | Attack::Pound | Attack::Meteor => 6,
+            Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Rise | Attack::Pound | Attack::Meteor | Attack::GolfDrag => 6,
             Attack::HammerSmash => 4,
             // the finishers always land, right after the blows before them
-            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::GiroEnd | Attack::ChainEnd | Attack::ChompEnd => 1,
+            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf | Attack::ChainEnd | Attack::ChompEnd => 1,
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
@@ -1008,7 +1013,7 @@ impl Attack {
                 | Attack::QuakeBig
                 | Attack::Titan
                 | Attack::FlurryEnd
-                | Attack::GiroEnd
+                | Attack::Golf
                 | Attack::ChainEnd
                 | Attack::ChompEnd
                 | Attack::ChompLaunch
@@ -1060,7 +1065,7 @@ impl Attack {
             Attack::HammerAir | Attack::HammerRise | Attack::Launch => 5.0,
             Attack::Pound => 4.0,
             Attack::Quake => 9.0,
-            Attack::HammerSmash | Attack::GiroEnd => 12.0,
+            Attack::HammerSmash | Attack::Golf => 12.0,
             Attack::QuakeBig => 15.0,
             Attack::FlurryEnd => 20.0,
             Attack::Titan => 25.0,
@@ -2657,7 +2662,12 @@ const GIANT_RADIUS: f32 = 540.0;
 const POUND_RADIUS: f32 = 150.0;
 const RISE_AHEAD: f32 = 60.0;
 const RISE_RADIUS: f32 = 150.0;
-const GIRO_RADIUS: f32 = 300.0;
+/// the Golf Swing's drag along the ground and its drive, in front of him (by the hammer's size)
+const GOLF_DRAG_REACH: f32 = 200.0;
+const GOLF_REACH: f32 = 260.0;
+/// the drive flings a small enemy this fast and this high (m/s): a low shot, about 7 m
+const GOLF_SPEED: f32 = 14.0;
+const GOLF_UP: f32 = 2.5;
 const UPPERCUT_RADIUS: f32 = 150.0;
 const METEOR_RADIUS: f32 = 130.0;
 const METEOR_LAND_RADIUS: f32 = 340.0;
@@ -2682,6 +2692,31 @@ const ROCK_SLAM_RADIUS: f32 = 280.0;
 /// the home run's swing in front (a bat's reach), the swing kick's all round him
 const HOME_RUN_REACH: f32 = 230.0;
 const SWING_KICK_RADIUS: f32 = 140.0;
+
+/// SM64's facing (yaw) as the Golf Swing's drive lands: combo_hits notes it, the fling reads it.
+static GOLF_FACING: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// the tick FORE! was last called on
+static GOLF_FORE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX / 2);
+
+fn remember_golf_facing(yaw: f32) {
+    GOLF_FACING.store(yaw.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn golf_facing() -> f32 {
+    f32::from_bits(GOLF_FACING.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Whether FORE! is due: not twice in the same swing (the drive lands over a tick or two).
+fn fore_due(tick: u32) -> bool {
+    let last = GOLF_FORE.swap(tick, std::sync::atomic::Ordering::Relaxed);
+    tick.wrapping_sub(last) > 30
+}
+
+/// The drive of the Golf Swing: the direction (Elden Ring axes, x flipped: his forward is
+/// (-sin, 0, cos)) from SM64's `yaw`, with the speed and lift (m/s) of the low shot.
+fn golf_fling(yaw: f32) -> (glam::Vec3, f32, f32) {
+    (glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()), GOLF_SPEED, GOLF_UP)
+}
 
 /// The swept weapon's reach beyond its head (SM64 units): the hammer's, or the Chomp's.
 fn head_reach() -> f32 {
@@ -2804,8 +2839,11 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::HammerAir => (Attack::HammerAir, Reach::Sweep),
         Hit::Flurry => (Attack::Flurry, Reach::Sweep),
         Hit::FlurryEnd => (Attack::FlurryEnd, Reach::Around(head, GIANT_RADIUS)),
-        Hit::Giro => (Attack::Giro, Reach::Around(me, GIRO_RADIUS * size.max(1.0))),
-        Hit::GiroEnd => (Attack::GiroEnd, Reach::Around(me, GIRO_RADIUS + 30.0)),
+        Hit::GolfDrag => (Attack::GolfDrag, Reach::Front(GOLF_DRAG_REACH)),
+        Hit::Golf => {
+            remember_golf_facing(state.face_angle);
+            (Attack::Golf, Reach::Front(GOLF_REACH * size.max(1.0)))
+        }
         Hit::Uppercut => (Attack::Uppercut, Reach::Around(me, UPPERCUT_RADIUS)),
         Hit::UppercutTop => (Attack::UppercutTop, Reach::Around(me, UPPERCUT_RADIUS + 20.0)),
         Hit::Meteor => (Attack::Meteor, Reach::Around(me, METEOR_RADIUS)),
@@ -3268,10 +3306,14 @@ impl Combat {
                     let away = glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2);
                     crate::bat::throw(handle, away, FLING_SPEED, FLING_UP, FLING_LANDING);
                 }
-                // the Bowser spin's release flings regular enemies away, like the giant fireball
-                if matches!(attack, Attack::GiroEnd) && blowable(handle) {
-                    let me = player.modules.physics.position;
-                    crate::knock::launch(handle, glam::Vec3::new(target.er.0 - me.0, 0.0, target.er.2 - me.2));
+                // the Golf Swing's drive sends a regular enemy flying low along where he faces (the
+                // stick aimed it), like the dropkick; FORE! once a swing, however many fly
+                if attack.golf_drive() && blowable(handle) {
+                    let (dir, speed, up) = golf_fling(golf_facing());
+                    if crate::bat::throw(handle, dir, speed, up, FLING_LANDING) && fore_due(tick) {
+                        let feet = glam::Vec3::new(target.er.0, target.er.1, target.er.2);
+                        crate::style::callout("FORE!", Some(feet + glam::Vec3::Y * 2.0), [1.0, 0.85, 0.3], true, 4.0);
+                    }
                 }
                 // stomps in a row on the same body (the head stomp's ground pound too): each worth
                 // less until he's back on the ground (bouncing up a big one was a lot of free damage)
@@ -3841,6 +3883,41 @@ mod tests {
         assert!(super::sword_shove(Attack::SwordRave(3)).is_some());
         // (not the sword's: not here)
         assert_eq!(super::sword_shove(Attack::Punch), None);
+    }
+
+    /// The Golf Swing is a blow in front of him: a target ahead within its reach is hit, one behind
+    /// him, at his side or past the reach is not.
+    #[test]
+    fn the_golf_swing_reaches_only_in_front() {
+        use crate::moves::Hit;
+        let state = crate::sm64::SM64MarioState { position: [0.0, 0.0, 0.0], face_angle: 0.0, ..Default::default() };
+        let hits = |at: [f32; 3], hit: Hit| super::combo_hits(&state, &[(at, 30.0, 150.0, 0)], hit, None);
+        // (facing +z in SM64's axes)
+        assert_eq!(hits([0.0, 0.0, 250.0], Hit::Golf).len(), 1, "2.5 m ahead");
+        assert_eq!(hits([150.0, 0.0, 150.0], Hit::Golf).len(), 1, "ahead and a little to the side");
+        assert!(hits([0.0, 0.0, -150.0], Hit::Golf).is_empty(), "behind him");
+        assert!(hits([200.0, 0.0, 0.0], Hit::Golf).is_empty(), "at his side");
+        assert!(hits([0.0, 0.0, 400.0], Hit::Golf).is_empty(), "past the reach");
+        assert_eq!(hits([0.0, 0.0, 250.0], Hit::Golf)[0].1, Attack::Golf);
+        // (the drag along the ground is shorter)
+        assert_eq!(hits([0.0, 0.0, 180.0], Hit::GolfDrag)[0].1, Attack::GolfDrag);
+        assert!(hits([0.0, 0.0, 280.0], Hit::GolfDrag).is_empty());
+    }
+
+    /// The drive goes where he faces (the stick aimed it), low and long, not toward the target.
+    #[test]
+    fn the_golf_drive_goes_along_his_facing_and_low() {
+        use glam::Vec3;
+        // (SM64's yaw 0 faces +z; a quarter turn faces +x in SM64's axes, -x in Elden Ring's)
+        let (dir, speed, up) = super::golf_fling(0.0);
+        assert!((dir - Vec3::Z).length() < 1e-4, "{dir:?}");
+        assert_eq!((speed, up), (14.0, 2.5));
+        let (dir, ..) = super::golf_fling(std::f32::consts::FRAC_PI_2);
+        assert!((dir - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-4, "{dir:?}");
+        // low: much flatter than the dropkick's fling
+        assert!(up < super::FLING_UP && up / speed < 0.2);
+        // only the small, blowable ones: the Golf blow, nothing else
+        assert!(Attack::Golf.golf_drive() && !Attack::GolfDrag.golf_drive() && !Attack::Hammer.golf_drive());
     }
 
     #[test]

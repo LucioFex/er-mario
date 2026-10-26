@@ -150,7 +150,7 @@ fn counts(attack: Attack) -> bool {
     !attack.ranged()
         && !matches!(
             attack,
-            Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri | Attack::Tornado | Attack::Flurry | Attack::Giro | Attack::Rush | Attack::Uppercut | Attack::Shockwave | Attack::Shell | Attack::Rock | Attack::RockSlam | Attack::RideBlow | Attack::RideSmash | Attack::StarBlast
+            Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri | Attack::Tornado | Attack::Flurry | Attack::Rush | Attack::Uppercut | Attack::Shockwave | Attack::Shell | Attack::Rock | Attack::RockSlam | Attack::RideBlow | Attack::RideSmash | Attack::StarBlast
         )
 }
 

@@ -19,7 +19,7 @@
 //! L1 takes the next weapon (weapons.rs; held, back to the fists), and changes it all:
 //! - the hammer (hammer.rs): X swings it (two side swings and an overhead smash), Y slams it (held:
 //!   charged, in the air: the plunge), X, Y the launcher, X, X, Y the Donkey Kong flurry and Y, X
-//!   (X after the slam) the Bowser spin. Its X string is five swings long.
+//!   (X after the slam) the Golf Swing. Its X string is five swings long.
 //! - the boomerang (boomerang.rs): X throws one (three in the air at once at most), Y three in a
 //!   fan, held the big one, X, X, Y the launcher; in the air X and Y throw too, each holding him up
 //! - the Chain Chomp (chomp.rs): X lashes, sweeps, crashes it down; Y the cyclone, X, Y the bite
@@ -40,7 +40,7 @@ const ACT_ER_HAMMER_AIR: u32 = 0x0080_08BC;
 const ACT_ER_HAMMER: u32 = 0x0080_038B;
 const ACT_ER_HAMMER_SLAM: u32 = 0x0080_038C;
 const ACT_ER_HAMMER_FLURRY: u32 = 0x0080_038D;
-const ACT_ER_HAMMER_GIRO: u32 = 0x0080_038E;
+const ACT_ER_HAMMER_GOLF: u32 = 0x0080_038E;
 const ACT_ER_TORNADO: u32 = 0x0080_038F;
 const ACT_ER_METEOR_LAND: u32 = 0x0080_0393;
 const ACT_ER_CHAIN: u32 = 0x0080_0394;
@@ -80,7 +80,7 @@ const ACT_ER_LEAP: u32 = 0x0080_0897;
 pub const ACT_ER_RISE: u32 = 0x0080_089D;
 /// the combos' moves
 const COMBO_ACTIONS: [u32; 25] = [
-    ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO,
+    ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GOLF,
     ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
     ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN,
     ACT_ER_SWING_KICK, ACT_ER_LEAP, ACT_ER_RISE,
@@ -101,7 +101,7 @@ const STRING_OVER: u32 = 30;
 /// end (the move would go on with the wrong weapon in hand); the air string isn't one: it goes on
 /// with whatever is in hand (er_moves.c er_air_attack)
 const WEAPON_ACTIONS: [u32; 11] = [
-    ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GIRO, ACT_ER_HAMMER_LAUNCH, ACT_ER_HAMMER_AIR, ACT_ER_THROW, ACT_ER_AIR_THROW,
+    ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GOLF, ACT_ER_HAMMER_LAUNCH, ACT_ER_HAMMER_AIR, ACT_ER_THROW, ACT_ER_AIR_THROW,
     ACT_ER_CHOMP, ACT_ER_CHOMP_SPIN, ACT_ER_CHOMP_AIR,
 ];
 /// a switch that waited for a weapon's move to end is dropped after this many ticks
@@ -116,7 +116,7 @@ const ANIM_FIRST_PUNCH: i32 = 0x67;
 const ANIM_FIRST_PUNCH_FAST: i32 = 0x69;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
-/// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Bowser spin;
+/// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Golf Swing;
 /// Y this soon after a string of punches or swings (plus Y's own wait): the super jump punch, the
 /// flurry
 const COMBO_WINDOW: u32 = 12;
@@ -200,8 +200,8 @@ pub enum Hit {
     Quake,
     Flurry,
     FlurryEnd,
-    Giro,
-    GiroEnd,
+    GolfDrag,
+    Golf,
     HammerAir,
     Uppercut,
     UppercutTop,
@@ -237,7 +237,7 @@ impl Hit {
     pub fn from(v: i32) -> Option<Hit> {
         use Hit::*;
         [
-            Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, Giro, GiroEnd, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
+            Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, GolfDrag, Golf, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
             ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam, HomeRun, SwingKick,
             HammerWide, QuakeBig, Titan, Pound, Rise, HammerRise,
         ]
@@ -1565,8 +1565,9 @@ impl Moves {
         } else if a != ACT_ER_BONK {
             self.bonk_seen = false;
         }
-        // Y, X: the tornado out of the sweep; with the hammer, the Bowser spin out of the slam (once
-        // its blow has landed)
+        // Y, X: the tornado out of the sweep; with the hammer, the Golf Swing out of the slam (once
+        // its blow has landed): the hammer ripped out of the ground in a low drive
+        // where the stick points
         if x_late && ground && fists && (self.in_sweep || recent(self.sweep_end)) {
             self.sweep_end = None;
             self.x_buffer = None;
@@ -1577,8 +1578,8 @@ impl Moves {
         if x_late && ground && self.hammer() && after_slam {
             self.slam_end = None;
             self.x_buffer = None;
-            crate::log("moves: Bowser spin (hammer Y, X)");
-            return Some(Request::Action(ACT_ER_HAMMER_GIRO, 0));
+            crate::log("moves: Golf Swing (hammer Y, X)");
+            return Some(Request::Action(ACT_ER_HAMMER_GOLF, 0));
         }
         if pause && ground && fists {
             crate::log("moves: rush (pause combo)");
