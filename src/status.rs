@@ -56,8 +56,13 @@ const CONFIRM: f32 = 0.6;
 const REACT_FOR: f32 = 4.0;
 const BURN_MAX_LIFE: f32 = 20.0;
 const NOT_AN_AILMENT: f32 = 1.0;
-/// lava's burns (SM64's lava boost already answers them)
-pub const LAVA_BURNS: [i32; 2] = [4100, 4101];
+/// The floors' own effects (SpEffectParam, by Paramdex's names). Lava's, 4040 "Lava" (SM64's lava
+/// boost answers it). The swamps': 4001-4004 "Poison Swamp", 4050-4053 "Scarlet Rot Swamp",
+/// 4054-4055 "Lake of Rot". (4100/4101, "Forced Slow Walk/Jump", are every soft floor's, swamps'
+/// and lava's alike: taken for lava's burn before, they bounced him off Caelid's rot, 2026-10-26.)
+pub const LAVA_EFFECTS: [i32; 1] = [4040];
+const POISON_SWAMPS: std::ops::RangeInclusive<i32> = 4001..=4004;
+const ROT_SWAMPS: std::ops::RangeInclusive<i32> = 4050..=4055;
 /// what each costs while it lasts: poisoned, his stick's reach (his speed); rotting, the share of
 /// a coin's healing; frostbitten (this long, s), each blow this much dearer; blood loss, this much
 /// health at once (a wedge and a half, SM64's units)
@@ -241,34 +246,36 @@ pub struct FloorEffect {
     pub rot: i32,
 }
 
-/// What a floor is, by its effects: a build-up of poison or rot makes a swamp (whatever it also
-/// takes: the rot's swamps hurt too), lava's own burn (LAVA_BURNS) a lava floor. A floor that only
-/// hurts some other way is no lava. Caelid's rot ground lists lava's burns in its row too, yet only
-/// gives rot: the lava boost also needs the burn on him (lava_now).
+/// What a floor is, by its effects: a swamp's own effect (or a build-up of poison or rot read on
+/// one: theirs come chained) makes a swamp, lava's own (LAVA_EFFECTS) a lava floor; anything else,
+/// even one that hurts or slows, is plain ground.
 pub fn floor_kind(effects: &[FloorEffect]) -> Floor {
     let rot: i32 = effects.iter().map(|e| e.rot.max(0)).sum();
     let poison: i32 = effects.iter().map(|e| e.poison.max(0)).sum();
-    if rot > 0 || poison > 0 {
+    if effects.iter().any(|e| ROT_SWAMPS.contains(&e.id)) {
+        Floor::Swamp(ROT)
+    } else if effects.iter().any(|e| POISON_SWAMPS.contains(&e.id)) {
+        Floor::Swamp(POISON)
+    } else if rot > 0 || poison > 0 {
         Floor::Swamp(if rot >= poison { ROT } else { POISON })
-    } else if effects.iter().any(|e| LAVA_BURNS.contains(&e.id)) {
+    } else if effects.iter().any(|e| LAVA_EFFECTS.contains(&e.id)) {
         Floor::Lava
     } else {
         Floor::Plain
     }
 }
 
-/// How long after lava's burn was last on him its floor still answers with SM64's lava boost (s):
-/// he's bounced up off it meanwhile.
+/// How long after lava's effect was last on him its floor still answers with SM64's lava boost
+/// (s): he's bounced up off it meanwhile.
 pub const LAVA_KEEP: f32 = 0.5;
 
-/// Lava's own burn among the effects on him (their param ids).
+/// Lava's own effect among the effects on him (their param ids).
 pub fn burning(effects: impl IntoIterator<Item = i32>) -> bool {
-    effects.into_iter().any(|id| LAVA_BURNS.contains(&id))
+    effects.into_iter().any(|id| LAVA_EFFECTS.contains(&id))
 }
 
-/// Lava under him now: a lava floor (floor_kind) and its burn on him, or on him `since_burn`
-/// seconds ago. The floor's row alone isn't enough: Caelid's rot ground lists lava's burns too but
-/// only gives rot, and bounced him in SM64's lava boost non-stop (2026-10-26).
+/// Lava under him now: a lava floor (floor_kind) and lava's effect on him, or on him `since_burn`
+/// seconds ago: the game's own word that he stands in lava, not the floor's row alone.
 pub fn lava_now(lava_floor: bool, since_burn: Option<f32>) -> bool {
     lava_floor && since_burn.is_some_and(|s| s < LAVA_KEEP)
 }
@@ -578,7 +585,7 @@ fn burns(player: &ChrIns) {
 /// long (the rot from a Kindred of Rot, 4053: 180 s): before, only effects of 20 s at most counted,
 /// so poison and rot never took ("gauge refilled with no damage"). A burn is short.
 fn drain_kind(id: i32, hurts: bool, life: f32, vfx: i32, state: u16) -> (bool, bool) {
-    let dot = hurts && life > 0.0 && !LAVA_BURNS.contains(&id);
+    let dot = hurts && life > 0.0 && !LAVA_EFFECTS.contains(&id);
     (dot, dot && life <= BURN_MAX_LIFE && looks_like_fire(vfx, state))
 }
 
@@ -635,8 +642,9 @@ mod tests {
         assert_eq!(drain_kind(4053, true, 180.0, 5, 5), (true, false));
         // a burn: short, with flames on him
         assert_eq!(drain_kind(9999, true, 10.0, 6, 6), (true, true));
-        // lava's own burn, an effect for good, one that takes nothing: no
-        assert_eq!(drain_kind(4101, true, 5.0, 6, 6), (false, false));
+        // lava's own effect (4040: SM64's lava boost answers it), an effect for good, one that
+        // takes nothing: no
+        assert_eq!(drain_kind(4040, true, 5.0, 6, 6), (false, false));
         assert_eq!(drain_kind(100620, true, -1.0, -1, 323), (false, false));
         assert_eq!(drain_kind(505, false, 900.0, -1, 275), (false, false));
     }
@@ -668,10 +676,12 @@ mod tests {
     #[test]
     fn lava_only_while_its_burn_is_on_him() {
         use super::{burning, lava_now};
-        // Caelid's rot ground lists lava's burns in its row but puts only rot on him (2026-10-26)
+        // lava's own effect, 4040 (Paramdex: "Lava"); 4100/4101 are "Forced Slow Walk/Jump", on
+        // him in every swamp too: Caelid's rot ground bounced him with them on (2026-10-26)
+        assert!(burning([505, 4040]));
         assert!(!burning([4051, 505, 100620]));
-        assert!(burning([505, 4101]));
-        assert!(burning([4100]));
+        assert!(!burning([4051, 4101]));
+        assert!(!burning([4100]));
         // a lava floor with its burn on him (or a moment ago: bounced up off it): the boost
         assert!(lava_now(true, Some(0.0)));
         assert!(lava_now(true, Some(0.4)));
@@ -684,9 +694,14 @@ mod tests {
     #[test]
     fn swamps_are_no_lava() {
         use super::{floor_kind, Floor, FloorEffect, POISON, ROT};
-        // lava only by its own burns (4100, 4101)
-        assert_eq!(floor_kind(&[FloorEffect { id: 4101, ..Default::default() }]), Floor::Lava);
-        assert_eq!(floor_kind(&[FloorEffect { id: 4100, hurts: true, ..Default::default() }]), Floor::Lava);
+        // lava only by its own effect, 4040; the slow walk (4100, 4101) every soft floor shares isn't
+        assert_eq!(floor_kind(&[FloorEffect { id: 4040, hurts: true, ..Default::default() }, FloorEffect { id: 4101, ..Default::default() }]), Floor::Lava);
+        assert_eq!(floor_kind(&[FloorEffect { id: 4101, ..Default::default() }]), Floor::Plain);
+        assert_eq!(floor_kind(&[FloorEffect { id: 4100, hurts: true, ..Default::default() }]), Floor::Plain);
+        // the swamps by their own effects, whatever build-up is read (theirs comes chained)
+        assert_eq!(floor_kind(&[FloorEffect { id: 4050, hurts: true, ..Default::default() }, FloorEffect { id: 4101, ..Default::default() }]), Floor::Swamp(ROT));
+        assert_eq!(floor_kind(&[FloorEffect { id: 4055, ..Default::default() }]), Floor::Swamp(ROT));
+        assert_eq!(floor_kind(&[FloorEffect { id: 4002, ..Default::default() }, FloorEffect { id: 4100, ..Default::default() }]), Floor::Swamp(POISON));
         // a floor that hurts some other way isn't lava: Caelid's rot swamp (its build-up comes from
         // an effect of its effect, read as none here) bounced him in SM64's lava boost (2026-10-25)
         assert_eq!(floor_kind(&[FloorEffect { id: 7777, hurts: true, ..Default::default() }]), Floor::Plain);

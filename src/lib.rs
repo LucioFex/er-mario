@@ -243,8 +243,8 @@ fn is_lava(material: i32) -> bool {
     floors().lava.contains(&material)
 }
 
-/// Lava under the Tarnished now (status::lava_now): a lava floor with lava's own burn on him
-/// lately, not the floor's row alone (Caelid's rot ground lists the burns too).
+/// Lava under the Tarnished now (status::lava_now): a lava floor with lava's own effect on him
+/// lately, not the floor's row alone.
 fn lava_under(chr: &eldenring::cs::ChrIns) -> bool {
     static LAST_BURN: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let mut last = LAST_BURN.lock().unwrap_or_else(|e| e.into_inner());
@@ -254,16 +254,16 @@ fn lava_under(chr: &eldenring::cs::ChrIns) -> bool {
     let material = chr.modules.physics.material_info.hit_material;
     let floor = is_lava(material);
     let now = status::lava_now(floor, last.map(|t| t.elapsed().as_secs_f32()));
-    // once per floor (and per answer): which lava floors really burn
+    // once per floor (and per answer): which lava floors really put lava's effect on him
     static TOLD: Mutex<Vec<(i32, bool)>> = Mutex::new(Vec::new());
     if floor {
         let mut told = TOLD.lock().unwrap_or_else(|e| e.into_inner());
         if told.len() < 64 && !told.contains(&(material, now)) {
             told.push((material, now));
             log(if now {
-                format!("lava: floor material {material} burns him, the lava boost")
+                format!("lava: floor material {material} puts lava's effect on him, the lava boost")
             } else {
-                format!("lava: floor material {material} is listed as lava but doesn't burn him, walked on")
+                format!("lava: floor material {material} is listed as lava but lava's effect isn't on him, walked on")
             });
         }
     }
@@ -2147,7 +2147,7 @@ fn seat(mut parts: [engine_mario::PartPose; engine_mario::PARTS]) -> [engine_mar
 }
 
 /// Lava that does nothing, for the fights where the boss stands in it (`on`): the lava floors
-/// lose the effects they put on whoever stands on them (the burn among them, SpEffect 4101),
+/// lose the effects they put on whoever stands on them (lava's own among them, SpEffect 4040),
 /// and get them back when the fight is over. Returns `on`.
 fn safe_lava(on: bool) -> bool {
     type Effects = [i32; 7];

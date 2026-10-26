@@ -337,10 +337,10 @@ something of its own while it lasts:
 The stuns (frozen, asleep, shocked) land even in the middle of a blow on the ground, and in the air
 as soon as he lands. Lava floors give SM64's lava boost; **poison and rot swamps are not lava**:
 Mario wades in them with bubbles round his feet while the swamp builds the ailment up (each floor
-is told apart by the effects the game puts on whoever stands on it). Only lava's own burn, really on
-Mario, gives the lava boost: Caelid's rot ground lists that burn in its floor row too but only gives
-rot, and is walked on like ground (the log says once per floor `lava: floor material N burns him` or
-`... doesn't burn him, walked on`).
+is told apart by the game's own effect for it: lava's (4040) gives the lava boost, and only while the
+game really has it on Mario; the swamps' (poison 4001-4004, rot 4050-4055) make him wade. The slow
+walk every soft floor shares (4100/4101) counts for nothing (it once made every swamp lava). The log
+says once per floor `lava: floor material N puts lava's effect on him` or `... walked on`.
 
 **Giant fireball.** Held 10 s, RB throws a ball of fire that works like a kamehameha: regular
 enemies it runs into are swept along inside it, burning a little at a time; a boss or a big body
