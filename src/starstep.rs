@@ -120,6 +120,12 @@ pub fn blinkable(colossus: bool, hands_off: bool, dist: f32, above: f32) -> bool
     !colossus && !hands_off && dist <= BLINK_RANGE && above <= 6.0
 }
 
+/// Whether a foe whose floor is lava (`on_lava`, its own floor material: a ray tells no material)
+/// is no place for the Phantom Cut or the Trick to drop Mario; a lava boss's fight makes it harmless.
+pub fn molten(on_lava: bool, lava_fight: bool) -> bool {
+    on_lava && !lava_fight
+}
+
 /// Mario thrown back from `foe` by the parry: SLIDE, less when a wall is in the way.
 pub fn slide_back(me: Vec3, foe: Vec3, ray: Ray) -> Vec3 {
     let away = (me - foe).with_y(0.0).normalize_or_zero();
@@ -239,6 +245,11 @@ fn put(i: &In, to: Option<Vec3>, yaw: f32, action: u32, up: f32) {
     });
 }
 
+/// The enemy stands on lava that would burn Mario (its own floor material, as Mario's is read).
+fn on_lava(chr: &ChrIns) -> bool {
+    molten(crate::is_lava(chr.modules.physics.material_info.hit_material), combat::lava_fight())
+}
+
 /// `attack` on enemy `mob` (its radius `radius_m`).
 pub(crate) fn strike(i: &In, combat: &mut Combat, player: &ChrIns, mob: &FieldInsHandle, at: Vec3, radius_m: f32, attack: Attack) {
     let near = combat::nearby(&HavokPosition(at.x, at.y, at.z, 0.0), 4.0 + radius_m, i.origin);
@@ -300,7 +311,11 @@ fn resolve(i: &In, combat: &mut Combat, player: &ChrIns, ray: Ray, f: crate::dod
         }
     };
     let (boss, hands) = (combat::boss_class(&f.handle, chr), combat::hands_off(&f.handle));
-    let spot = (class == Class::Small && !boss && !hands && !air).then(|| phantom_spot(i.feet, f.pos, f.forward, r_m, &bodies_near(i, f.pos, key), ray)).flatten();
+    let lava = class == Class::Small && !boss && !hands && !air && on_lava(chr);
+    if lava {
+        log(format!("sword: phantom cut refused (lava under c{:04})", f.id));
+    }
+    let spot = (class == Class::Small && !boss && !hands && !air && !lava).then(|| phantom_spot(i.feet, f.pos, f.forward, r_m, &bodies_near(i, f.pos, key), ray)).flatten();
     let toward = (f.pos - i.feet).with_y(0.0);
     match verdict(class, boss, hands, spot.is_some()) {
         Verdict::Witch => {
@@ -364,7 +379,10 @@ fn blink(i: &In, ray: Ray, out: &mut Out) {
         let Some(h) = t.shootable() else { return false };
         let (r_m, h_m) = (t.radius * k, t.height * k);
         // (a boss too, it is only a move; never a colossus, nor one the game's script holds)
-        !t.is_prop() && !t.friendly() && blinkable(crate::colossus::is_colossus(r_m, h_m), combat::hands_off(h), (t.feet() - i.feet).length(), t.feet().y + h_m - i.feet.y)
+        !t.is_prop()
+            && !t.friendly()
+            && blinkable(crate::colossus::is_colossus(r_m, h_m), combat::hands_off(h), (t.feet() - i.feet).length(), t.feet().y + h_m - i.feet.y)
+            && !wcm.chr_ins_by_handle(h).is_some_and(on_lava)
     };
     let rank = |t: &combat::Target| (Some(t.key()) != i.focus, (t.feet() - i.feet).length());
     let target = i.targets.iter().filter(pick).min_by(|a, b| {
@@ -548,5 +566,14 @@ mod tests {
         // a wall right at his back: he stays
         let wall = |a: Vec3, b: Vec3| if a.z < 2.1 && b.z > 2.1 { Some(Vec3::new(a.x, a.y, 2.1)) } else { None };
         assert!((slide_back(me, foe, &wall) - me).length() < 0.01);
+    }
+
+    #[test]
+    fn a_foe_on_lava_is_no_place_to_land_unless_the_lava_is_harmless() {
+        assert!(molten(true, false));
+        // (a lava boss's fight: the lava does nothing to him then)
+        assert!(!molten(true, true));
+        assert!(!molten(false, false));
+        assert!(!molten(false, true));
     }
 }
