@@ -170,10 +170,10 @@ pub(crate) fn size_factor() -> f32 {
     scale() / BASE_SCALE
 }
 /// The floor materials once taken for lava (ChrPhysicsMaterialInfo::hit_material, a HitMtrlParam
-/// row): only if the rows can't be read. 47 among them is Caelid's rot swamp (log 2026-10-25: rot
-/// on him, the "lava damage" thrown away there): SM64's lava boost in a swamp. Now each floor is
-/// read from its row's effects (floors()).
-const LAVA_FALLBACK: [i32; 6] = [7, 24, 27, 39, 47, 62];
+/// row): only if the rows can't be read. 47, Caelid's rot swamp (log 2026-10-25: rot on him, the
+/// "lava damage" thrown away there), was among them and is out. Now each floor is read from its
+/// row's effects (floors()).
+const LAVA_FALLBACK: [i32; 5] = [7, 24, 27, 39, 62];
 
 /// The map's floor materials that aren't plain ground, from their HitMtrlParam rows' effects
 /// (status::floor_kind): lava, poison and rot swamps. Read once, the first time the params are
@@ -197,6 +197,8 @@ fn floors() -> std::sync::Arc<Floors> {
         Some(status::FloorEffect { id, hurts: p.change_hp_point() > 0 || p.change_hp_rate() > 0.0, poison: p.poizon_attack_power(), rot: p.disease_attack_power() })
     };
     let (mut lava, mut swamps, mut rows) = (Vec::new(), Vec::new(), 0);
+    // floors that hurt but aren't lava (a swamp whose build-up isn't read, ...): for the log
+    let mut hurting = Vec::new();
     for id in 0..1000u32 {
         let Some(row) = repo.get::<eldenring::cs::HitMtrlParam>(id) else { continue };
         rows += 1;
@@ -213,7 +215,11 @@ fn floors() -> std::sync::Arc<Floors> {
         match status::floor_kind(&effects) {
             status::Floor::Lava => lava.push(id as i32),
             status::Floor::Swamp(k) => swamps.push((id as i32, k)),
-            status::Floor::Plain => {}
+            status::Floor::Plain => {
+                if effects.iter().any(|e| e.hurts) {
+                    hurting.push((id as i32, effects.iter().map(|e| e.id).collect::<Vec<_>>()));
+                }
+            }
         }
     }
     if rows == 0 {
@@ -222,12 +228,12 @@ fn floors() -> std::sync::Arc<Floors> {
         *g = Some(f.clone());
         return f;
     }
-    // (none found burning at all: the rows aren't what they seem; the old list, less the swamps)
+    // (no lava burn among them: no lava boost anywhere, never the old list back; it bounced him off
+    // a rot swamp)
     if lava.is_empty() {
-        lava = LAVA_FALLBACK.iter().copied().filter(|m| !swamps.iter().any(|s| s.0 == *m)).collect();
-        log("floors: no lava found among the floor materials, the old list kept");
+        log("floors: no lava found among the floor materials");
     }
-    log(format!("floors: lava {lava:?}, swamps {swamps:?} (poison 0, rot 1; of {rows} floor materials; once taken for lava {LAVA_FALLBACK:?})"));
+    log(format!("floors: lava {lava:?}, swamps {swamps:?} (poison 0, rot 1; of {rows} floor materials), hurting but no lava (floor, effects) {hurting:?}"));
     let f = std::sync::Arc::new(Floors { lava, swamps });
     *g = Some(f.clone());
     f

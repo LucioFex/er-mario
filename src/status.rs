@@ -242,14 +242,15 @@ pub struct FloorEffect {
 }
 
 /// What a floor is, by its effects: a build-up of poison or rot makes a swamp (whatever it also
-/// takes: the rot's swamps hurt too), a burn with none a lava floor. (Before, a fixed list of six
-/// floors were all lava, Caelid's rot swamp, floor 47, among them: SM64's lava boost there.)
+/// takes: the rot's swamps hurt too), lava's own burn (LAVA_BURNS) a lava floor. A floor that only
+/// hurts some other way is no lava: Caelid's rot swamp gives its rot through an effect of its
+/// effect (no build-up read here) and took SM64's lava boost for any floor that took HP (2026-10-25).
 pub fn floor_kind(effects: &[FloorEffect]) -> Floor {
     let rot: i32 = effects.iter().map(|e| e.rot.max(0)).sum();
     let poison: i32 = effects.iter().map(|e| e.poison.max(0)).sum();
     if rot > 0 || poison > 0 {
         Floor::Swamp(if rot >= poison { ROT } else { POISON })
-    } else if effects.iter().any(|e| e.hurts || LAVA_BURNS.contains(&e.id)) {
+    } else if effects.iter().any(|e| LAVA_BURNS.contains(&e.id)) {
         Floor::Lava
     } else {
         Floor::Plain
@@ -651,9 +652,16 @@ mod tests {
     #[test]
     fn swamps_are_no_lava() {
         use super::{floor_kind, Floor, FloorEffect, POISON, ROT};
-        // a burn alone: lava (4101 by its id, or any that takes HP)
+        // lava only by its own burns (4100, 4101)
         assert_eq!(floor_kind(&[FloorEffect { id: 4101, ..Default::default() }]), Floor::Lava);
-        assert_eq!(floor_kind(&[FloorEffect { id: 7777, hurts: true, ..Default::default() }]), Floor::Lava);
+        assert_eq!(floor_kind(&[FloorEffect { id: 4100, hurts: true, ..Default::default() }]), Floor::Lava);
+        // a floor that hurts some other way isn't lava: Caelid's rot swamp (its build-up comes from
+        // an effect of its effect, read as none here) bounced him in SM64's lava boost (2026-10-25)
+        assert_eq!(floor_kind(&[FloorEffect { id: 7777, hurts: true, ..Default::default() }]), Floor::Plain);
+        assert_eq!(
+            floor_kind(&[FloorEffect { id: 7777, hurts: true, ..Default::default() }, FloorEffect { id: 12, ..Default::default() }]),
+            Floor::Plain
+        );
         // a build-up: a swamp, even one that hurts too
         assert_eq!(floor_kind(&[FloorEffect { id: 4550, poison: 8, ..Default::default() }]), Floor::Swamp(POISON));
         assert_eq!(floor_kind(&[FloorEffect { id: 4560, hurts: true, rot: 6, ..Default::default() }]), Floor::Swamp(ROT));
