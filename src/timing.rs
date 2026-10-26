@@ -145,12 +145,12 @@ fn nice_now(s: &mut State, tick: u32) -> Option<f32> {
 
 /// Blows the action command counts: Mario's own up close, one blow at a time (no shots from afar,
 /// no burn, no steps, no hook, and none of the spins' and flurries' many quick hits: tapping along
-/// with those was a sure thing).
+/// with those was a sure thing; nor the Golf Swing's drag, its wind-up's).
 fn counts(attack: Attack) -> bool {
     !attack.ranged()
         && !matches!(
             attack,
-            Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri | Attack::Flurry | Attack::Rush | Attack::Uppercut | Attack::Shockwave | Attack::Shell | Attack::Rock | Attack::RockSlam | Attack::RideBlow | Attack::RideSmash | Attack::StarBlast
+            Attack::GolfDrag | Attack::Trample | Attack::ChompSpin | Attack::Spin | Attack::Mikiri | Attack::Flurry | Attack::Rush | Attack::Uppercut | Attack::Shockwave | Attack::Shell | Attack::Rock | Attack::RockSlam | Attack::RideBlow | Attack::RideSmash | Attack::StarBlast
         )
 }
 
@@ -323,4 +323,17 @@ pub fn clear() {
     s.streak = 0;
     s.streak_at = None;
     s.mikiri_on = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_golf_swing_is_one_timed_blow_its_drag_none() {
+        // (the drag along the ground is only the wind-up's: tapping on it too gave two NICE!s a swing)
+        assert!(!counts(Attack::GolfDrag));
+        assert!(counts(Attack::Golf));
+        assert!(counts(Attack::Palm));
+    }
 }

@@ -926,6 +926,9 @@ static const f32 sGolfTwist[5] = { -40.0f, -15.0f, 20.0f, 50.0f, 60.0f };
  * heavy blow (the drag before it is a small one). His body coils back and follows through, never
  * past a quarter turn.
  */
+/* where the hammer was as the Golf Swing began (the slam's pose, wherever it had got to) */
+static f32 sGolfFrom[3] = { 0.0f, 15.0f, 1.0f };
+
 s32 act_er_hammer_golf(struct MarioState *m) {
     s32 t = m->actionTimer;
     f32 speed = 0.0f;
@@ -936,6 +939,9 @@ s32 act_er_hammer_golf(struct MarioState *m) {
     f32 e;
 
     if (t == 0) {
+        sGolfFrom[0] = er_hammer_yaw;
+        sGolfFrom[1] = er_hammer_pitch;
+        sGolfFrom[2] = er_hammer_scale;
         er_sound(m, SOUND_MARIO_YAH_WAH_HOO);
         er_sound_soft(SOUND_OBJ_BOWSER_TAIL_PICKUP, 0.4f);
     }
@@ -952,8 +958,9 @@ s32 act_er_hammer_golf(struct MarioState *m) {
         // the backswing: the head dragged back low (from where the slam left it in front), the body
         // coiled, the knees bent
         set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x5000);
-        e = er_ease_out((f32)(t + 1) / (ER_GOLF_BACK + 1));
-        er_hammer(er_lerp(0.0f, ER_GOLF_BACK_YAW, e), er_lerp(-45.0f, ER_GOLF_BACK_PITCH, e), ER_GOLF_SCALE);
+        // (from the slam's pose: no jump on the first tick)
+        e = er_ease_out((f32) t / ER_GOLF_BACK);
+        er_hammer(er_lerp(sGolfFrom[0], ER_GOLF_BACK_YAW, e), er_lerp(sGolfFrom[1], ER_GOLF_BACK_PITCH, e), er_lerp(sGolfFrom[2], ER_GOLF_SCALE, e));
         twist = ER_GOLF_BACK_TWIST * e;
         squash = 1.0f - 0.05f * e;
         dip = 3.5f * e;
@@ -972,8 +979,9 @@ s32 act_er_hammer_golf(struct MarioState *m) {
         er_hammer(sGolfYaw[k], sGolfPitch[k], ER_GOLF_SCALE);
         twist = sGolfTwist[k];
         speed = 4.0f;
-        squash = 1.05f;
-        dip = 2.0f * (1.0f - (f32) k / 4.0f);
+        // (the coil let go over the first ticks of the drive, not in one)
+        squash = k == 1 ? 1.0f : 1.05f;
+        dip = 3.5f * (1.0f - (f32) k / 4.0f);
         if (t == ER_GOLF_BACK + 1) {
             er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.6f);
         }

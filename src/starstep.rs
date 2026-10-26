@@ -247,7 +247,8 @@ fn put(i: &In, to: Option<Vec3>, yaw: f32, action: u32, up: f32) {
 
 /// The enemy stands on lava that would burn Mario (its own floor material, as Mario's is read).
 fn on_lava(chr: &ChrIns) -> bool {
-    molten(crate::is_lava(chr.modules.physics.material_info.hit_material), combat::lava_fight())
+    // (the boss list only looked at when it is lava: the Trick asks this of every enemy near)
+    crate::is_lava(chr.modules.physics.material_info.hit_material) && molten(true, combat::lava_fight())
 }
 
 /// `attack` on enemy `mob` (its radius `radius_m`).
