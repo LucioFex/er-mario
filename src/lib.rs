@@ -243,6 +243,33 @@ fn is_lava(material: i32) -> bool {
     floors().lava.contains(&material)
 }
 
+/// Lava under the Tarnished now (status::lava_now): a lava floor with lava's own burn on him
+/// lately, not the floor's row alone (Caelid's rot ground lists the burns too).
+fn lava_under(chr: &eldenring::cs::ChrIns) -> bool {
+    static LAST_BURN: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let mut last = LAST_BURN.lock().unwrap_or_else(|e| e.into_inner());
+    if status::burning(chr.special_effect.entries().map(|e| e.param_id)) {
+        *last = Some(std::time::Instant::now());
+    }
+    let material = chr.modules.physics.material_info.hit_material;
+    let floor = is_lava(material);
+    let now = status::lava_now(floor, last.map(|t| t.elapsed().as_secs_f32()));
+    // once per floor (and per answer): which lava floors really burn
+    static TOLD: Mutex<Vec<(i32, bool)>> = Mutex::new(Vec::new());
+    if floor {
+        let mut told = TOLD.lock().unwrap_or_else(|e| e.into_inner());
+        if told.len() < 64 && !told.contains(&(material, now)) {
+            told.push((material, now));
+            log(if now {
+                format!("lava: floor material {material} burns him, the lava boost")
+            } else {
+                format!("lava: floor material {material} is listed as lava but doesn't burn him, walked on")
+            });
+        }
+    }
+    now
+}
+
 fn swamp_of(material: i32) -> Option<usize> {
     floors().swamps.iter().find(|s| s.0 == material).map(|s| s.1)
 }
@@ -3758,7 +3785,7 @@ fn frame(data: &FD4TaskData) {
             // (also for a moment after: the burn keeps ticking while he's bounced up)
             static ON_LAVA: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let mut on_lava = ON_LAVA.lock().unwrap_or_else(|e| e.into_inner());
-            if is_lava(player_ref.chr_ins.modules.physics.material_info.hit_material) {
+            if lava_under(&player_ref.chr_ins) {
                 *on_lava = Some(std::time::Instant::now());
             }
             // (not in a boss fight: there's no telling the burn from his hits, and in an arena
@@ -4464,7 +4491,7 @@ fn frame(data: &FD4TaskData) {
         let tick_span = perf::span(perf::TICK);
         // lava under the Tarnished (he stands where Mario does): SM64's lava boost
         let material = player_ref.chr_ins.modules.physics.material_info.hit_material;
-        let lava = !safe_lava(combat::lava_fight()) && is_lava(material);
+        let lava = !safe_lava(combat::lava_fight()) && lava_under(&player_ref.chr_ins);
         // a poison or rot swamp: he wades (bubbles), the swamp's build-up does the rest
         {
             let feet = to_er(m.origin, m.state.position);

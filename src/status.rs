@@ -243,8 +243,8 @@ pub struct FloorEffect {
 
 /// What a floor is, by its effects: a build-up of poison or rot makes a swamp (whatever it also
 /// takes: the rot's swamps hurt too), lava's own burn (LAVA_BURNS) a lava floor. A floor that only
-/// hurts some other way is no lava: Caelid's rot swamp gives its rot through an effect of its
-/// effect (no build-up read here) and took SM64's lava boost for any floor that took HP (2026-10-25).
+/// hurts some other way is no lava. Caelid's rot ground lists lava's burns in its row too, yet only
+/// gives rot: the lava boost also needs the burn on him (lava_now).
 pub fn floor_kind(effects: &[FloorEffect]) -> Floor {
     let rot: i32 = effects.iter().map(|e| e.rot.max(0)).sum();
     let poison: i32 = effects.iter().map(|e| e.poison.max(0)).sum();
@@ -255,6 +255,22 @@ pub fn floor_kind(effects: &[FloorEffect]) -> Floor {
     } else {
         Floor::Plain
     }
+}
+
+/// How long after lava's burn was last on him its floor still answers with SM64's lava boost (s):
+/// he's bounced up off it meanwhile.
+pub const LAVA_KEEP: f32 = 0.5;
+
+/// Lava's own burn among the effects on him (their param ids).
+pub fn burning(effects: impl IntoIterator<Item = i32>) -> bool {
+    effects.into_iter().any(|id| LAVA_BURNS.contains(&id))
+}
+
+/// Lava under him now: a lava floor (floor_kind) and its burn on him, or on him `since_burn`
+/// seconds ago. The floor's row alone isn't enough: Caelid's rot ground lists lava's burns too but
+/// only gives rot, and bounced him in SM64's lava boost non-stop (2026-10-26).
+pub fn lava_now(lava_floor: bool, since_burn: Option<f32>) -> bool {
+    lava_floor && since_burn.is_some_and(|s| s < LAVA_KEEP)
 }
 
 /// Game thread, every frame: wading in a swamp of `kind` (none: out of it): bubbles round his feet
@@ -647,6 +663,22 @@ mod tests {
         assert_eq!(frail_change(None, 1.0), Some(1.0));
         assert_eq!(frail_change(Some(1.2), 1.0), Some(1.0));
         assert_eq!(frail_change(Some(1.0), 1.0), None);
+    }
+
+    #[test]
+    fn lava_only_while_its_burn_is_on_him() {
+        use super::{burning, lava_now};
+        // Caelid's rot ground lists lava's burns in its row but puts only rot on him (2026-10-26)
+        assert!(!burning([4051, 505, 100620]));
+        assert!(burning([505, 4101]));
+        assert!(burning([4100]));
+        // a lava floor with its burn on him (or a moment ago: bounced up off it): the boost
+        assert!(lava_now(true, Some(0.0)));
+        assert!(lava_now(true, Some(0.4)));
+        // the burn long gone, never had, or not on a lava floor: none
+        assert!(!lava_now(true, Some(0.8)));
+        assert!(!lava_now(true, None));
+        assert!(!lava_now(false, Some(0.0)));
     }
 
     #[test]
