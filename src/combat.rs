@@ -44,13 +44,13 @@ pub enum Attack {
     Rush,
     RushKick,
     /// the combos (moves.rs, er_moves.c), bare-handed: the super jump punch on the way up and at
-    /// its top, the meteor dive and its landing, the tornado and its last turn
+    /// its top, the meteor dive and its landing, the Fire Palm's contact and its burst
     Uppercut,
     UppercutTop,
     Meteor,
     MeteorLand,
-    Tornado,
-    TornadoEnd,
+    Palm,
+    PalmBurst,
     /// with the hammer: its side swings, its overhead smash, the slam (and the plunge's landing),
     /// the swing in the air (and the plunge), the flurry's blows and its giant one, the Golf Swing's
     /// drag along the ground and its drive
@@ -281,7 +281,7 @@ const CODES: [Attack; 199] = [
     Attack::Punch, Attack::Kick, Attack::Sweep, Attack::GroundPound, Attack::Stomp, Attack::Dash,
     Attack::FireSweep, Attack::Ember, Attack::Trample, Attack::Spin, Attack::Shockwave, Attack::Rush,
     Attack::RushKick, Attack::Uppercut, Attack::UppercutTop, Attack::Meteor, Attack::MeteorLand,
-    Attack::Tornado, Attack::TornadoEnd, Attack::Hammer, Attack::HammerSmash, Attack::Quake,
+    Attack::Palm, Attack::PalmBurst, Attack::Hammer, Attack::HammerSmash, Attack::Quake,
     Attack::HammerAir, Attack::Flurry, Attack::FlurryEnd, Attack::GolfDrag, Attack::Golf, Attack::Chain,
     Attack::ChainEnd, Attack::Shell, Attack::AirHit, Attack::Launch, Attack::Rang, Attack::RangBig,
     Attack::RangUpper, Attack::Chomp, Attack::ChompSpin, Attack::ChompEnd, Attack::ChompAir,
@@ -356,11 +356,11 @@ impl Attack {
             Attack::RushKick => Attack::GroundPound.spec(),
             // (a kick's weight: it sends them back a little)
             Attack::BulletPunch => Attack::Kick.spec(),
-            Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::AirHit => Attack::Punch.spec(),
+            Attack::Uppercut | Attack::Palm | Attack::Flurry | Attack::AirHit => Attack::Punch.spec(),
             Attack::Chain | Attack::Shell => Attack::Kick.spec(),
             Attack::ChainEnd | Attack::Launch => Attack::Stomp.spec(),
             Attack::Meteor => Attack::Stomp.spec(),
-            Attack::TornadoEnd => Attack::Sweep.spec(),
+            Attack::PalmBurst => Attack::Sweep.spec(),
             // (the hammer's every blow staggers like a stomp at least, its heavy ones like a ground
             // pound)
             Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::Pound | Attack::HammerRise | Attack::Rise | Attack::GolfDrag => Attack::Stomp.spec(),
@@ -499,8 +499,8 @@ impl Attack {
             Attack::UppercutTop => (8.0, "damage_uppercut_top"),
             Attack::Meteor => (10.5, "damage_meteor"),
             Attack::MeteorLand => (25.5, "damage_meteor_land"),
-            Attack::Tornado => (5.5, "damage_tornado"),
-            Attack::TornadoEnd => (18.0, "damage_tornado_end"),
+            Attack::Palm => (6.0, "damage_palm"),
+            Attack::PalmBurst => (20.0, "damage_palm_burst"),
             // the hammer: the heavy one, few blows and slow, each worth about two of the fists' (the
             // fists' finishers' worth at the least); the Chain Chomp's least of all, many at once
             // (15% off once it had frost on top: a regular enemy went in four swings)
@@ -773,6 +773,11 @@ impl Attack {
         matches!(self, Attack::Golf)
     }
 
+    /// The Fire Palm's burst: it pushes a small enemy away along where he faces.
+    fn palm_push(self) -> bool {
+        matches!(self, Attack::PalmBurst)
+    }
+
     /// A shot from afar (a fireball, a boomerang, a Yoshi egg), not a blow up close.
     pub fn ranged(self) -> bool {
         matches!(
@@ -833,10 +838,10 @@ impl Attack {
             Attack::Rush => 1.6,
             Attack::RushKick => 1.9,
             Attack::Uppercut | Attack::Meteor | Attack::Flurry | Attack::HammerAir => 1.3,
-            Attack::Tornado | Attack::GolfDrag => 1.2,
+            Attack::Palm | Attack::GolfDrag => 1.2,
             Attack::UppercutTop => 1.7,
             Attack::MeteorLand => 1.8,
-            Attack::TornadoEnd => 1.5,
+            Attack::PalmBurst => 1.5,
             // (the hammer's shares are big already: a boss loses a few % to its heaviest)
             Attack::Hammer | Attack::HammerWide => 1.4,
             Attack::HammerSmash | Attack::Quake => 1.3,
@@ -949,12 +954,12 @@ impl Attack {
             // the flurry's blows come 3 ticks apart, the spins' every few
             Attack::Uppercut | Attack::Flurry | Attack::AirHit => 3,
             Attack::Shell => 5,
-            Attack::Tornado => 5,
+            Attack::Palm => 5,
             // a swing hits over 3 ticks, once; the next one comes 8 ticks later at the soonest
             Attack::Hammer | Attack::HammerWide | Attack::HammerAir | Attack::HammerRise | Attack::Rise | Attack::Pound | Attack::Meteor | Attack::GolfDrag => 6,
             Attack::HammerSmash => 4,
             // the finishers always land, right after the blows before them
-            Attack::UppercutTop | Attack::MeteorLand | Attack::TornadoEnd | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf | Attack::ChainEnd | Attack::ChompEnd => 1,
+            Attack::UppercutTop | Attack::MeteorLand | Attack::PalmBurst | Attack::Quake | Attack::QuakeBig | Attack::Titan | Attack::FlurryEnd | Attack::Golf | Attack::ChainEnd | Attack::ChompEnd => 1,
             // (each boomerang hits an enemy once a pass: boomerang.rs)
             Attack::Rang | Attack::Egg => 2,
             Attack::Tongue => 6,
@@ -1007,7 +1012,7 @@ impl Attack {
             Attack::UppercutTop
                 | Attack::Launch
                 | Attack::MeteorLand
-                | Attack::TornadoEnd
+                | Attack::PalmBurst
                 | Attack::HammerSmash
                 | Attack::Quake
                 | Attack::QuakeBig
@@ -2671,7 +2676,15 @@ const GOLF_UP: f32 = 2.5;
 const UPPERCUT_RADIUS: f32 = 150.0;
 const METEOR_RADIUS: f32 = 130.0;
 const METEOR_LAND_RADIUS: f32 = 340.0;
-const TORNADO_RADIUS: f32 = 190.0;
+/// the chain's finisher all around him
+const CHAIN_END_RADIUS: f32 = 220.0;
+/// the Fire Palm: the contact in front of him, and its burst's centre ahead of him and radius
+const PALM_REACH: f32 = 170.0;
+const PALM_AHEAD: f32 = 150.0;
+const PALM_RADIUS: f32 = 160.0;
+/// its push flings a small enemy this fast and this high (m/s): a shove of a few metres
+const PALM_SPEED: f32 = 7.0;
+const PALM_UP: f32 = 2.0;
 /// the string past the kick and the air string reach in front of him like the punches, a bit
 /// further; the shell all around him as he rolls
 const STRING_REACH: f32 = 170.0;
@@ -2693,17 +2706,18 @@ const ROCK_SLAM_RADIUS: f32 = 280.0;
 const HOME_RUN_REACH: f32 = 230.0;
 const SWING_KICK_RADIUS: f32 = 140.0;
 
-/// SM64's facing (yaw) as the Golf Swing's drive lands: combo_hits notes it, the fling reads it.
-static GOLF_FACING: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// SM64's facing (yaw) as a drive lands (the Golf Swing's, the Fire Palm's push): combo_hits notes
+/// it, the fling reads it.
+static DRIVE_FACING: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// the tick FORE! was last called on
 static GOLF_FORE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX / 2);
 
-fn remember_golf_facing(yaw: f32) {
-    GOLF_FACING.store(yaw.to_bits(), std::sync::atomic::Ordering::Relaxed);
+fn remember_facing(yaw: f32) {
+    DRIVE_FACING.store(yaw.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
-fn golf_facing() -> f32 {
-    f32::from_bits(GOLF_FACING.load(std::sync::atomic::Ordering::Relaxed))
+fn drive_facing() -> f32 {
+    f32::from_bits(DRIVE_FACING.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether FORE! is due: not twice in the same swing (the drive lands over a tick or two).
@@ -2712,10 +2726,15 @@ fn fore_due(tick: u32) -> bool {
     tick.wrapping_sub(last) > 30
 }
 
-/// The drive of the Golf Swing: the direction (Elden Ring axes, x flipped: his forward is
-/// (-sin, 0, cos)) from SM64's `yaw`, with the speed and lift (m/s) of the low shot.
+/// A drive along his facing: the direction (Elden Ring axes, x flipped: his forward is
+/// (-sin, 0, cos)) from SM64's `yaw`, with the speed and lift (m/s) given.
+fn drive(yaw: f32, speed: f32, up: f32) -> (glam::Vec3, f32, f32) {
+    (glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()), speed, up)
+}
+
+/// The Golf Swing's drive: the low shot.
 fn golf_fling(yaw: f32) -> (glam::Vec3, f32, f32) {
-    (glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()), GOLF_SPEED, GOLF_UP)
+    drive(yaw, GOLF_SPEED, GOLF_UP)
 }
 
 /// The swept weapon's reach beyond its head (SM64 units): the hammer's, or the Chomp's.
@@ -2841,17 +2860,20 @@ fn combo_hits(state: &sm64::SM64MarioState, targets: &[([f32; 3], f32, f32, usiz
         Hit::FlurryEnd => (Attack::FlurryEnd, Reach::Around(head, GIANT_RADIUS)),
         Hit::GolfDrag => (Attack::GolfDrag, Reach::Front(GOLF_DRAG_REACH)),
         Hit::Golf => {
-            remember_golf_facing(state.face_angle);
+            remember_facing(state.face_angle);
             (Attack::Golf, Reach::Front(GOLF_REACH * size.max(1.0)))
         }
         Hit::Uppercut => (Attack::Uppercut, Reach::Around(me, UPPERCUT_RADIUS)),
         Hit::UppercutTop => (Attack::UppercutTop, Reach::Around(me, UPPERCUT_RADIUS + 20.0)),
         Hit::Meteor => (Attack::Meteor, Reach::Around(me, METEOR_RADIUS)),
         Hit::MeteorLand => (Attack::MeteorLand, Reach::Around(me, METEOR_LAND_RADIUS)),
-        Hit::Tornado => (Attack::Tornado, Reach::Around(me, TORNADO_RADIUS)),
-        Hit::TornadoEnd => (Attack::TornadoEnd, Reach::Around(me, TORNADO_RADIUS + 40.0)),
+        Hit::Palm => (Attack::Palm, Reach::Front(PALM_REACH)),
+        Hit::PalmBurst => {
+            remember_facing(state.face_angle);
+            (Attack::PalmBurst, Reach::Around(me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * PALM_AHEAD, PALM_RADIUS))
+        }
         Hit::Chain => (Attack::Chain, Reach::Front(STRING_REACH)),
-        Hit::ChainEnd => (Attack::ChainEnd, Reach::Around(me, TORNADO_RADIUS + 30.0)),
+        Hit::ChainEnd => (Attack::ChainEnd, Reach::Around(me, CHAIN_END_RADIUS)),
         Hit::Shell => (Attack::Shell, Reach::Around(me, SHELL_RADIUS)),
         Hit::Air => (Attack::AirHit, Reach::Front(STRING_REACH)),
         Hit::Launch => (Attack::Launch, Reach::Around(me + Vec3::new(state.face_angle.sin(), 0.0, state.face_angle.cos()) * LAUNCH_AHEAD, LAUNCH_RADIUS)),
@@ -3309,11 +3331,16 @@ impl Combat {
                 // the Golf Swing's drive sends a regular enemy flying low along where he faces (the
                 // stick aimed it), like the dropkick; FORE! once a swing, however many fly
                 if attack.golf_drive() && blowable(handle) {
-                    let (dir, speed, up) = golf_fling(golf_facing());
+                    let (dir, speed, up) = golf_fling(drive_facing());
                     if crate::bat::throw(handle, dir, speed, up, FLING_LANDING) && fore_due(tick) {
                         let feet = glam::Vec3::new(target.er.0, target.er.1, target.er.2);
                         crate::style::callout("FORE!", Some(feet + glam::Vec3::Y * 2.0), [1.0, 0.85, 0.3], true, 4.0);
                     }
+                }
+                // the Fire Palm's burst shoves a regular enemy a few metres along where he faces
+                if attack.palm_push() && blowable(handle) {
+                    let (dir, speed, up) = drive(drive_facing(), PALM_SPEED, PALM_UP);
+                    crate::bat::throw(handle, dir, speed, up, FLING_LANDING);
                 }
                 // stomps in a row on the same body (the head stomp's ground pound too): each worth
                 // less until he's back on the ground (bouncing up a big one was a lot of free damage)
@@ -3918,6 +3945,38 @@ mod tests {
         assert!(up < super::FLING_UP && up / speed < 0.2);
         // only the small, blowable ones: the Golf blow, nothing else
         assert!(Attack::Golf.golf_drive() && !Attack::GolfDrag.golf_drive() && !Attack::Hammer.golf_drive());
+    }
+
+    /// The Fire Palm's contact reaches in front of him (1.7 m); its burst is a ball 1.5 m ahead,
+    /// 1.6 m wide: a target there is hit, one behind him or past it is not.
+    #[test]
+    fn the_fire_palm_reaches_in_front_and_bursts_ahead() {
+        use crate::moves::Hit;
+        let state = crate::sm64::SM64MarioState { position: [0.0, 0.0, 0.0], face_angle: 0.0, ..Default::default() };
+        let hits = |at: [f32; 3], hit: Hit| super::combo_hits(&state, &[(at, 30.0, 150.0, 0)], hit, None);
+        assert_eq!(hits([0.0, 0.0, 150.0], Hit::Palm).len(), 1, "1.5 m ahead");
+        assert!(hits([0.0, 0.0, -100.0], Hit::Palm).is_empty(), "behind him");
+        assert!(hits([200.0, 0.0, 0.0], Hit::Palm).is_empty(), "at his side");
+        assert!(hits([0.0, 0.0, 350.0], Hit::Palm).is_empty(), "past the reach");
+        assert_eq!(hits([0.0, 0.0, 150.0], Hit::Palm)[0].1, Attack::Palm);
+        assert_eq!(hits([0.0, 0.0, 150.0], Hit::PalmBurst)[0].1, Attack::PalmBurst);
+        assert_eq!(hits([0.0, 0.0, 280.0], Hit::PalmBurst).len(), 1, "within 1.6 m of the point 1.5 m ahead");
+        assert!(hits([0.0, 0.0, -150.0], Hit::PalmBurst).is_empty(), "1.5 m behind him");
+        assert!(hits([0.0, 0.0, 500.0], Hit::PalmBurst).is_empty(), "past the burst");
+        // (the chain's finisher kept its reach)
+        assert_eq!(super::CHAIN_END_RADIUS, 220.0);
+    }
+
+    /// The Fire Palm's push goes along his facing at 7 m/s, up 2: the shared drive.
+    #[test]
+    fn the_palm_push_goes_along_his_facing() {
+        use glam::Vec3;
+        let (dir, speed, up) = super::drive(0.0, super::PALM_SPEED, super::PALM_UP);
+        assert!((dir - Vec3::Z).length() < 1e-4, "{dir:?}");
+        assert_eq!((speed, up), (7.0, 2.0));
+        let (dir, ..) = super::drive(std::f32::consts::FRAC_PI_2, 7.0, 2.0);
+        assert!((dir - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-4, "{dir:?}");
+        assert!(Attack::PalmBurst.palm_push() && !Attack::Palm.palm_push() && !Attack::Golf.palm_push());
     }
 
     #[test]

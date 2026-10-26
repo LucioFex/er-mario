@@ -1,7 +1,7 @@
 /**
  * er-mario: the combos' moves (moves.rs starts them, combat.rs and hammer.rs read what they do).
  *
- * Bare-handed: the super jump punch (X, X, Y), its meteor dive (X in it) and the tornado (Y, X).
+ * Bare-handed: the super jump punch (X, X, Y), its meteor dive (X in it) and the Fire Palm (Y, X).
  * With the hammer (L1, er_hammer_mode): X's three swings, Y's slam (in the air: the plunge), the
  * Donkey Kong flurry (X, X, Y), the Golf Swing (Y, X) and a spinning swing in the air.
  *
@@ -41,8 +41,8 @@ enum ErHit {
     ER_HIT_UPPERCUT_TOP,
     ER_HIT_METEOR,
     ER_HIT_METEOR_LAND,
-    ER_HIT_TORNADO,
-    ER_HIT_TORNADO_END,
+    ER_HIT_PALM,
+    ER_HIT_PALM_BURST,
     ER_HIT_CHAIN,
     ER_HIT_CHAIN_END,
     ER_HIT_SHELL,
@@ -143,11 +143,6 @@ static s32 sErBonkWait = 0;
 
 /** the spin of the spinning moves (only one Mario) */
 static s16 sErSpin = 0;
-/* a spin starts with a little turn back the other way (20 degrees, its wind-up), then speeds up
- * over its first ticks (each tick's turn at most this) instead of whirling at full speed at once */
-#define ER_COUNTER_TWIST 0x0E39
-#define ER_SPIN_UP 4
-static const s16 sSpinUp[ER_SPIN_UP] = { 0x800, 0x1400, 0x2000, 0x2800 };
 
 #define ER_PI 3.14159265f
 
@@ -1354,67 +1349,92 @@ s32 act_er_meteor_land(struct MarioState *m) {
     return FALSE;
 }
 
-#define ER_TORNADO_LAST 34
-#define ER_TORNADO_END 42
-#define ER_TORNADO_SLOW 3
+#define ER_PALM_HIT 5
+#define ER_PALM_BURST 6
+#define ER_PALM_AIM 5
+#define ER_PALM_FREE 12
+#define ER_PALM_HOLD 14
+#define ER_PALM_END 22
+#define ER_PALM_PREP 7
+
+/* the body's turn (degrees) over the wind-up and the push: drawn back, then through to the palms */
+static const f32 sPalmTwist[ER_PALM_PREP] = { -8.0f, -16.0f, -22.0f, -25.0f, -12.0f, 10.0f, 10.0f };
+/* the lunge of ticks 4 to 6 (units per tick: 0.8 m in all) */
+static const f32 sPalmLunge[3] = { 20.0f, 32.0f, 28.0f };
 
 /**
- * Y, X: Melee's Mario Tornado, a spin with his arms out that hits all around, steered with the
- * stick, ending with a harder last turn.
+ * Y, X: Smash Bros. Mario's forward smash, the Fire Palm. Out of the low sweep he rises into one
+ * step and pushes with both palms, which burst in a cone of fire in front of him (the mod draws it
+ * when the burst hit lands: impact.rs, fireball.rs).
  */
-s32 act_er_tornado(struct MarioState *m) {
+s32 act_er_fire_palm(struct MarioState *m) {
     s32 t = m->actionTimer;
     f32 speed = 0.0f;
+    f32 twist;
+    f32 squash = 1.0f;
+    f32 dip = 0.0f;
+    f32 p;
+    f32 e;
 
     if (t == 0) {
-        sErSpin = 0;
-        er_sound(m, SOUND_MARIO_HOOHOO);
+        er_shout(m);
     }
-    if (t < ER_TORNADO_LAST) {
-        set_mario_animation(m, MARIO_ANIM_TWIRL);
-        // (a turn back first, then up to speed over a few ticks)
-        sErSpin = t == 0 ? -ER_COUNTER_TWIST : sErSpin + (t <= ER_SPIN_UP ? sSpinUp[t - 1] : 0x3000);
-        if (t % 8 == 0) {
-            er_sound(m, SOUND_ACTION_TWIRL);
+    // (the stick aims it while he draws back; once the palms are on their way it goes true)
+    if (t < ER_PALM_AIM && (m->input & INPUT_NONZERO_ANALOG)) {
+        m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x800, 0x800);
+    }
+    er_move_locked = t < ER_PALM_FREE;
+    if (t >= ER_PALM_FREE && (m->input & INPUT_A_PRESSED)) {
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+
+    if (t < ER_PALM_HIT) {
+        // rising out of the crouch, both palms drawn back at the hip
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x3000);
+        e = er_ease_out((f32)(t + 1) / ER_PALM_HIT);
+        twist = sPalmTwist[t];
+        squash = 1.0f - 0.04f * e;
+        dip = 3.0f * (1.0f - 0.5f * e);
+        if (t == ER_PALM_HIT - 1) {
+            speed = sPalmLunge[0];
         }
-        if (t % 6 == 0) {
-            er_move_fx |= ER_FX_SPIN;
+    } else if (t <= ER_PALM_BURST) {
+        // the push: a lunge along his facing, the palms forward; the contact, then the burst
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x1C000);
+        twist = sPalmTwist[t];
+        speed = sPalmLunge[t - ER_PALM_HIT + 1];
+        squash = 1.04f;
+        dip = 1.0f;
+        if (t == ER_PALM_HIT) {
+            er_move_hit = ER_HIT_PALM;
+            er_sound_soft(SOUND_GENERAL_SWISH_AIR, 0.5f);
+        } else {
+            er_move_hit = ER_HIT_PALM_BURST;
+            er_sound_soft(SOUND_GENERAL_FLAME_OUT, 0.45f);
+            er_cheer(m);
         }
-        if (t >= 2) {
-            er_move_hit = ER_HIT_TORNADO;
-        }
-        if (m->input & INPUT_NONZERO_ANALOG) {
-            m->faceAngle[1] = m->intendedYaw - approach_s32((s16)(m->intendedYaw - m->faceAngle[1]), 0, 0x800, 0x800);
-            speed = 16.0f;
-        }
-    } else if (t == ER_TORNADO_LAST) {
-        sErSpin += 0x3000;
-        er_move_hit = ER_HIT_TORNADO_END;
-        er_move_fx |= ER_FX_SPIN | ER_FX_LAUNCH;
-        er_cheer(m);
-        er_sound(m, SOUND_ACTION_SPIN);
+    } else if (t < ER_PALM_HOLD) {
+        // the follow-through held, arms out
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x3000);
+        p = (f32)(t - ER_PALM_BURST) / (ER_PALM_HOLD - ER_PALM_BURST);
+        twist = 10.0f;
+        squash = er_lerp(1.04f, 0.98f, er_ease_out(p));
+        dip = er_lerp(1.0f, 0.0f, p);
     } else {
-        set_mario_animation(m, MARIO_ANIM_GENERAL_LAND);
-        // (the spin runs down over a few ticks, and he faces where it stopped: it snapped back
-        // to where he faced before)
-        if (t <= ER_TORNADO_LAST + ER_TORNADO_SLOW) {
-            static const s16 slow[ER_TORNADO_SLOW] = { 0x1800, 0x0A00, 0x0300 };
-            sErSpin += slow[t - ER_TORNADO_LAST - 1];
-            if (t == ER_TORNADO_LAST + ER_TORNADO_SLOW) {
-                m->faceAngle[1] += sErSpin;
-                sErSpin = 0;
-            }
-        }
-        if (t >= ER_TORNADO_LAST + 4 && (m->input & INPUT_A_PRESSED)) {
-            return set_jumping_action(m, ACT_JUMP, 0);
-        }
+        // back to rest
+        set_mario_anim_with_accel(m, MARIO_ANIM_SECOND_PUNCH, 0x5000);
+        p = (f32)(t - ER_PALM_HOLD) / (ER_PALM_END - ER_PALM_HOLD);
+        e = er_ease_in_out(p);
+        twist = er_lerp(10.0f, 0.0f, e);
+        squash = er_lerp(0.98f, 1.0f, e);
     }
 
     if (!er_ground(m, speed)) {
         return TRUE;
     }
-    er_twist(m, er_degrees(sErSpin));
-    if (++m->actionTimer >= ER_TORNADO_END) {
+    er_twist(m, twist);
+    er_squash(m, squash, dip);
+    if (++m->actionTimer >= ER_PALM_END) {
         return set_mario_action(m, ACT_IDLE, 0);
     }
     return FALSE;

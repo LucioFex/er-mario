@@ -13,7 +13,7 @@
 //! - X, X, Y: the super jump punch (Super Smash Bros.), and X in it: the meteor dive
 //! - X, X, Y also lifts small enemies (juggle.rs): X in the air goes on with an air string, Y ends
 //!   it with the meteor dive (Devil May Cry's launcher, air rave and helm breaker)
-//! - Y, X (X in the sweep): the Mario Tornado (Melee)
+//! - Y, X (X in the sweep): the Fire Palm (Smash Bros.' forward smash)
 //! - B, Y (Y in the dash): the Koopa shell, rolling into everyone
 //! - X past the combo's kick: the string goes on, a spinning backfist, two kicks, a whirlwind kick
 //! L1 takes the next weapon (weapons.rs; held, back to the fists), and changes it all:
@@ -41,7 +41,7 @@ const ACT_ER_HAMMER: u32 = 0x0080_038B;
 const ACT_ER_HAMMER_SLAM: u32 = 0x0080_038C;
 const ACT_ER_HAMMER_FLURRY: u32 = 0x0080_038D;
 const ACT_ER_HAMMER_GOLF: u32 = 0x0080_038E;
-const ACT_ER_TORNADO: u32 = 0x0080_038F;
+const ACT_ER_FIRE_PALM: u32 = 0x0080_038F;
 const ACT_ER_METEOR_LAND: u32 = 0x0080_0393;
 const ACT_ER_CHAIN: u32 = 0x0080_0394;
 const ACT_ER_SHELL: u32 = 0x0080_0395;
@@ -81,7 +81,7 @@ pub const ACT_ER_RISE: u32 = 0x0080_089D;
 /// the combos' moves
 const COMBO_ACTIONS: [u32; 25] = [
     ACT_ER_UPPERCUT, ACT_ER_METEOR, ACT_ER_HAMMER_AIR, ACT_ER_HAMMER, ACT_ER_HAMMER_SLAM, ACT_ER_HAMMER_FLURRY, ACT_ER_HAMMER_GOLF,
-    ACT_ER_TORNADO, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
+    ACT_ER_FIRE_PALM, ACT_ER_METEOR_LAND, ACT_ER_CHAIN, ACT_ER_SHELL, ACT_ER_AIR_COMBO, ACT_ER_HAMMER_LAUNCH, ACT_ER_THROW, ACT_ER_CHOMP,
     ACT_ER_CHOMP_SPIN, ACT_ER_AIR_THROW, ACT_ER_CHOMP_AIR, ACT_ER_MIKIRI, ACT_ER_BONK, crate::rock::ACT_ER_ROCK, ACT_ER_HOME_RUN,
     ACT_ER_SWING_KICK, ACT_ER_LEAP, ACT_ER_RISE,
 ];
@@ -116,7 +116,7 @@ const ANIM_FIRST_PUNCH: i32 = 0x67;
 const ANIM_FIRST_PUNCH_FAST: i32 = 0x69;
 /// SM64's breakdance (the sweep)
 const ANIM_BREAKDANCE: i32 = 0x71;
-/// X this soon (ticks) after the sweep or the hammer's slam ended: the tornado, the Golf Swing;
+/// X this soon (ticks) after the sweep or the hammer's slam ended: the Fire Palm, the Golf Swing;
 /// Y this soon after a string of punches or swings (plus Y's own wait): the super jump punch, the
 /// flurry
 const COMBO_WINDOW: u32 = 12;
@@ -207,8 +207,8 @@ pub enum Hit {
     UppercutTop,
     Meteor,
     MeteorLand,
-    Tornado,
-    TornadoEnd,
+    Palm,
+    PalmBurst,
     Chain,
     ChainEnd,
     Shell,
@@ -237,7 +237,7 @@ impl Hit {
     pub fn from(v: i32) -> Option<Hit> {
         use Hit::*;
         [
-            Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, GolfDrag, Golf, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Tornado, TornadoEnd, Chain,
+            Hammer, HammerSmash, SmashWave, Quake, Flurry, FlurryEnd, GolfDrag, Golf, HammerAir, Uppercut, UppercutTop, Meteor, MeteorLand, Palm, PalmBurst, Chain,
             ChainEnd, Shell, Air, Launch, Chomp, ChompSpin, ChompEnd, ChompAir, ChompLaunch, Mikiri, Bonk, Rock, RockSlam, HomeRun, SwingKick,
             HammerWide, QuakeBig, Titan, Pound, Rise, HammerRise,
         ]
@@ -1565,14 +1565,14 @@ impl Moves {
         } else if a != ACT_ER_BONK {
             self.bonk_seen = false;
         }
-        // Y, X: the tornado out of the sweep; with the hammer, the Golf Swing out of the slam (once
+        // Y, X: the Fire Palm out of the sweep (a step and a two-palm push, a cone of fire); with the hammer, the Golf Swing out of the slam (once
         // its blow has landed): the hammer ripped out of the ground in a low drive
         // where the stick points
         if x_late && ground && fists && (self.in_sweep || recent(self.sweep_end)) {
             self.sweep_end = None;
             self.x_buffer = None;
-            crate::log("moves: tornado (Y, X)");
-            return Some(Request::Action(ACT_ER_TORNADO, 0));
+            crate::log("moves: Fire Palm (Y, X)");
+            return Some(Request::Action(ACT_ER_FIRE_PALM, 0));
         }
         let after_slam = if a == ACT_ER_HAMMER_SLAM { move_timer > SLAM_IMPACT } else { recent(self.slam_end) };
         if x_late && ground && self.hammer() && after_slam {

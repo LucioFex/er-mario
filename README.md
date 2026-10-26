@@ -61,7 +61,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | X, X, (beat), X | Rush: two fast jabs and a flying kick |
 | X, X, Y | Super jump punch. Small or stunned enemies go up with Mario for an air combo (X in the air) |
 | Y in the air | Meteor dive |
-| Y, X | Mario Tornado |
+| Y, X | **Fire Palm** (Smash Bros. Mario's forward smash): out of the sweep, a step and a two-palm push that bursts in a cone of fire 1.5 m ahead (the weapon's element's colour); a small enemy is shoved a few metres along where he faces | 4% + 12% |
 | B, Y | Koopa shell slide |
 | B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below). With the weapons that have their own B: [Star Sword](#star-sword) Star Step, hammer guard / roll, boomerang glide in the air, Chain Chomp slam (see each weapon) |
 | back, forward + X (fists) | **Bullet Bill punch**: a coil back, then Mario flies fist first at the enemy, up to 7 m (the stick is read against the enemy, not against where he faces). Landed, it can be cut at once into the dash, a jump, the string (X goes on at the second punch) or a swap |

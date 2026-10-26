@@ -244,7 +244,7 @@ s32 act_er_script(struct MarioState *m);
 s32 act_er_hammer_slam(struct MarioState *m);
 s32 act_er_hammer_flurry(struct MarioState *m);
 s32 act_er_hammer_golf(struct MarioState *m);
-s32 act_er_tornado(struct MarioState *m);
+s32 act_er_fire_palm(struct MarioState *m);
 s32 act_er_meteor_land(struct MarioState *m);
 s32 act_er_chain(struct MarioState *m);
 s32 act_er_bonk(struct MarioState *m);
@@ -617,7 +617,7 @@ s32 mario_execute_object_action(struct MarioState *m) {
         case ACT_ER_HAMMER_SLAM:     cancel = act_er_hammer_slam(m);     break;
         case ACT_ER_HAMMER_FLURRY:   cancel = act_er_hammer_flurry(m);   break;
         case ACT_ER_HAMMER_GOLF:     cancel = act_er_hammer_golf(m);     break;
-        case ACT_ER_TORNADO:         cancel = act_er_tornado(m);         break;
+        case ACT_ER_FIRE_PALM:       cancel = act_er_fire_palm(m);       break;
         case ACT_ER_METEOR_LAND:     cancel = act_er_meteor_land(m);     break;
         case ACT_ER_CHAIN:           cancel = act_er_chain(m);           break;
         case ACT_ER_BONK:            cancel = act_er_bonk(m);            break;

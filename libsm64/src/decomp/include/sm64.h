@@ -435,13 +435,13 @@
 #define ACT_PUNCHING                   0x00800380 // (0x180 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 // er-mario: the pause combo's rush (two jabs and a flying kick)
 #define ACT_ER_RUSH                    0x0080038A // (0x18A | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
-// er-mario: the combos (er_moves.c): the hammer's swings, slam, flurry and spin, the tornado, the
+// er-mario: the combos (er_moves.c): the hammer's swings, slam, flurry and spin, the Fire Palm, the
 // meteor dive's landing
 #define ACT_ER_HAMMER                  0x0080038B // (0x18B | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_HAMMER_SLAM             0x0080038C // (0x18C | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_HAMMER_FLURRY           0x0080038D // (0x18D | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_HAMMER_GOLF             0x0080038E // (0x18E | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
-#define ACT_ER_TORNADO                 0x0080038F // (0x18F | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
+#define ACT_ER_FIRE_PALM               0x0080038F // (0x18F | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_METEOR_LAND             0x00800393 // (0x193 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_CHAIN                   0x00800394 // (0x194 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)
 #define ACT_ER_SHELL                   0x00800395 // (0x195 | ACT_FLAG_STATIONARY | ACT_FLAG_ATTACKING)

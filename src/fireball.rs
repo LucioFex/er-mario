@@ -313,6 +313,17 @@ struct Burst {
     vis_at: u32,
 }
 
+/// The Fire Palm's cone: three bursts growing along his facing (the biggest 2.2 m ahead, the whole
+/// 1.5 m ahead in the middle), at chest height, in `el`'s colour.
+fn palm_bursts(el: Element, state: &sm64::SM64MarioState, origin: [f32; 3], tick: u32) -> Vec<Burst> {
+    let m = state.position;
+    let (fx, fz) = (state.face_angle.sin(), state.face_angle.cos());
+    [(80.0, 1), (150.0, 2), (220.0, 3)]
+        .into_iter()
+        .map(|(ahead, level)| Burst::of(el, er(origin, [m[0] + fx * ahead, m[1] + 80.0, m[2] + fz * ahead]), level, tick))
+        .collect()
+}
+
 impl Burst {
     fn new(pos: Vec3, level: u8, born: u32) -> Self {
         Burst { pos, level, el: Element::Fire, born, ground: None, launch: false, vis: -1.0, vis_at: 0 }
@@ -660,6 +671,14 @@ impl Fire {
             if thrown || tick.wrapping_sub(asked) > 9 {
                 self.pending = None;
                 self.spawn(level, el, state, origin, tick);
+            }
+        }
+
+        // the Fire Palm's burst (er_moves.c): a cone of the fists' element 1.5 m ahead of him, landing
+        // on someone or not
+        if crate::moves::Hit::from(mv.hit) == Some(crate::moves::Hit::PalmBurst) {
+            for b in palm_bursts(crate::element::current(), state, origin, tick) {
+                self.bursts.push(b);
             }
         }
 
@@ -1285,6 +1304,18 @@ mod tests {
     fn level_at(el: Element, held: u32) -> u8 {
         let level = CHARGE_TICKS.iter().filter(|&&t| held >= t).count() as u8;
         if el == Element::Fire { level } else { level.min(GIANT) }
+    }
+
+    /// The Fire Palm's cone is three bursts of the element, growing, the middle one 1.5 m ahead.
+    #[test]
+    fn the_palm_cone_is_three_growing_bursts_ahead() {
+        let state = sm64::SM64MarioState { position: [0.0, 0.0, 0.0], face_angle: 0.0, ..Default::default() };
+        let bursts = palm_bursts(Element::Frost, &state, [0.0; 3], 7);
+        assert_eq!(bursts.len(), 3);
+        assert!(bursts.iter().all(|b| b.el == Element::Frost && b.born == 7));
+        assert!(bursts[0].level < bursts[1].level && bursts[1].level < bursts[2].level);
+        let d = |i: usize| (bursts[i].pos - bursts[0].pos).length();
+        assert!(d(1) > 0.0 && d(2) > d(1), "further and further along one line");
     }
 
     /// Every element's charge in his hand grows as RB is held (before: the Chomp's, the

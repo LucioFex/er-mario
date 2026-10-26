@@ -64,15 +64,15 @@ fn spark(pos: Vec3, size: f32, tint: [f32; 4]) {
 /// ticks running on), its burst's size, a heavy thud too; None: no hold, no burst (the shots').
 fn feel(attack: Attack) -> Option<(u32, f32, bool)> {
     match attack {
-        Attack::Uppercut | Attack::Tornado | Attack::Flurry | Attack::Shell | Attack::GolfDrag => Some((1, 0.8, false)),
-        Attack::Meteor | Attack::Chain | Attack::AirHit | Attack::Rise => Some((2, 1.0, false)),
+        Attack::Uppercut | Attack::Flurry | Attack::Shell | Attack::GolfDrag => Some((1, 0.8, false)),
+        Attack::Meteor | Attack::Palm | Attack::Chain | Attack::AirHit | Attack::Rise => Some((2, 1.0, false)),
         Attack::ChainEnd => Some((5, 1.4, true)),
         // the hammer: every blow stops the world a moment, its heavy ones longer (a titan's)
         Attack::HammerAir | Attack::HammerRise | Attack::Pound => Some((4, 1.2, false)),
         Attack::Hammer | Attack::HammerWide => Some((6, 1.4, false)),
         Attack::UppercutTop | Attack::Launch => Some((5, 1.4, true)),
         Attack::Quake => Some((6, 1.5, true)),
-        Attack::TornadoEnd => Some((4, 1.3, true)),
+        Attack::PalmBurst => Some((4, 1.3, true)),
         Attack::Golf => Some((6, 1.5, true)),
         Attack::HammerSmash | Attack::QuakeBig => Some((8, 1.7, true)),
         Attack::MeteorLand => Some((6, 1.6, true)),
