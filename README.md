@@ -63,7 +63,7 @@ On top of SM64's own moves, Mario gets a hack and slash move set (new libsm64 ac
 | Y in the air | Meteor dive |
 | Y, X | **Fire Palm** (Smash Bros. Mario's forward smash): out of the sweep, a step and a two-palm push that bursts in a cone of fire 1.5 m ahead (the weapon's element's colour); a small enemy is shoved a few metres along where he faces | 4% + 12% |
 | B, Y | Koopa shell slide |
-| B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below). With the weapons that have their own B: [Star Sword](#star-sword) Star Step, hammer guard / roll, boomerang glide in the air, Chain Chomp slam (see each weapon) |
+| B | Dash, invulnerable, where the stick points. Dashed just as a nearby enemy attacks: a **perfect dodge** (see below). With the weapons that have their own B: [Star Sword](#star-sword) Star Step, hammer guard / roll, boomerang glide in the air (see each weapon); the Chain Chomp keeps the dash |
 | back, forward + X (fists) | **Bullet Bill punch**: a coil back, then Mario flies fist first at the enemy, up to 7 m (the stick is read against the enemy, not against where he faces). Landed, it can be cut at once into the dash, a jump, the string (X goes on at the second punch) or a swap |
 | X held through a dash | **Dodge Offset** (Bayonetta's): keep X down while you dash out of a string, and the next X goes on with the string's next blow instead of starting over. Every weapon: the fists' punches, the hammer's three swings, the Chomp's lash / sweep / slam, the sword's four cuts, the boomerang's throws |
 | mash X as the Bullet Bill punch lands | **Hundred-hand flurry**: ten jabs in a second, then an uppercut off a little hop that launches small and medium enemies |
@@ -178,8 +178,6 @@ Chomp itself: it flies out on its chain, jaws open.
 | Y | Cyclone: Mario swings it around himself (steer with the stick), then lets it fly ahead |
 | X in the air | It swings once all the way around him |
 | Y in the air | Crash: Mario drops with it under him, shockwave on landing |
-| B | **Chomp Slam** (`src/chompslam.rs`, God of War's harpy swing): the Chomp bites the enemy he fights (or the nearest in front, within 5 m) and Mario heaves it over his head and slams it down on the other side, onto the ground and whoever stands there (8% to it, 6% to each it lands beside, a blast of 2.5 m); it bounces off the ground, ready for X or the launcher. B again within a beat slams it back the other way: 3 slams a string. Only small enemies, or stunned medium ones; a big one (or a boss) is only yanked: the Chomp bites, it lurches toward him a step, its stance cracks. No one to bite: the dash |
-| B in the air | **Harpoon** (Orion's): the Chomp bites an enemy that is up there (juggled or off the ground) and he drives it down, 8%; nothing up there: the air dash |
 
 **Mega Mushroom (D-pad right).** Mario grows to 4 times his height for 15 seconds (90 s
 recharge), in SM64 power-up steps with the power-up music. His whole SM64 world is scaled, so
@@ -845,7 +843,7 @@ replaces this fork's DLL with the original one.
 | A | L / right mouse | Jump (double, triple, wall kick, long jump) |
 | X | , / left mouse | Punch, punch, kick (auto-aimed combo, see [New moves](#new-moves)). Running: dive. A punch out of a run brakes him into the blow (no sliding past the enemy). Right on a blow's impact: NICE!. Back + X: launcher. X + A together: the weapon's rising blow. With the [Star Sword](#star-sword), X is only its moves (no punches, kicks or dives) |
 | Y | | Special move: breakdance sweep, slide kick (running), combos with X and B. Forward + Y: leap into the weapon's dive |
-| B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow. With the [Star Sword](#star-sword) it is the Star Step / Star Trick (parry, Phantom Cut, blink); with the hammer the guard (heavy roll with the stick pushed); with the boomerang the glide in the air; with the Chain Chomp the slam / harpoon |
+| B | | Dash: a quick lunge where the stick points (ahead without it), invulnerable; X at its end: dash strike; A out of it. Mid-string toward another enemy: freeflow. With the [Star Sword](#star-sword) it is the Star Step / Star Trick (parry, Phantom Cut, blink); with the hammer the guard (heavy roll with the stick pushed); with the boomerang the glide in the air; with the Chain Chomp the dash, as the fists' |
 | A just before an enemy's blow | | Mikiri stomp |
 | RB (hold) | | Fireball, charged 1 / 2 / 4 s; held 10 s, a giant one that sweeps enemies along and blows up; held 20 s, the sun, which leaves lava pools. With the hammer the ice rocket punch, the Chain Chomp the dark beam, the boomerang the poison sweep (each with its 10 s giant, see [Elements](#elements)); with the Star Sword its lightning (the skyward strike, the Zeus throw in the air, held 10 s the storm cloud) |
 | D-pad | | Left Rock Mushroom, up Wing cap (a tap; held 0.5 s, the [portable cannon](#portable-cannon)), right Mega Mushroom, down takes the cap off (and interact) |

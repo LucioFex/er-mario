@@ -510,7 +510,9 @@ pub enum BKind {
     Guard,
     /// the boomerang's glide in the air (glide.rs); the dash on foot
     Glide,
-    /// the Chain Chomp's slam (chompslam.rs)
+    /// the Chain Chomp's slam (chompslam.rs); not on B any more (the user, 2026-10-26: the Chomp's B
+    /// is the fists' dash again), kept for a later use
+    #[allow(dead_code)]
     Slam,
 }
 
@@ -519,7 +521,7 @@ pub fn b_kind(weapon: u8) -> BKind {
         crate::weapons::SWORD => BKind::Star,
         crate::weapons::HAMMER => BKind::Guard,
         crate::weapons::RANG => BKind::Glide,
-        crate::weapons::CHOMP => BKind::Slam,
+        // (the Chain Chomp: the dash, as the fists')
         _ => BKind::Dash,
     }
 }
@@ -1767,7 +1769,7 @@ mod tests {
         // (Part 12.6b: the others' own)
         assert_eq!(b_kind(HAMMER), BKind::Guard);
         assert_eq!(b_kind(RANG), BKind::Glide);
-        assert_eq!(b_kind(CHOMP), BKind::Slam);
+        assert_eq!(b_kind(CHOMP), BKind::Dash);
         let mut m = Moves::new();
         b_step(&mut m, ACT_IDLE, false, true, 100);
         let r = b_step(&mut m, ACT_IDLE, true, true, 101);
@@ -1916,33 +1918,18 @@ mod tests {
         assert!(m.glide_params(&state, 0.0, 0.0, 134).is_none());
     }
 
-    /// The Chomp's B asks for a slam, three a string; the fourth is the dash.
+    /// The Chomp's B is the fists' dash, on foot and in the air (once an airtime), never a slam.
     #[test]
-    fn the_chomps_b_is_a_slam_three_a_string() {
+    fn the_chomps_b_is_the_dash() {
         const ACT_JUMP: u32 = 0x0300_0880;
         let mut m = Moves::new();
-        let mut t = 100;
-        for n in 0..3 {
-            t += 20;
-            w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, t);
-            t += 1;
-            let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, t);
-            assert!(matches!(r, Some(Request::Slam { air: false })), "{n}: {r:?}");
-            m.slam_started(t, crate::chompslam::Plan::Slam);
-        }
-        t += 20;
-        w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, t);
-        t += 1;
-        let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, t);
+        w_step(&mut m, CHOMP, ACT_IDLE, false, 0.0, false, 100);
+        let r = w_step(&mut m, CHOMP, ACT_IDLE, true, 0.0, false, 101);
         assert_eq!(action(r), Some((ACT_ER_DASH, 0)), "{r:?}");
-        // (in the air: the harpoon's ask)
         let mut m = Moves::new();
         w_step(&mut m, CHOMP, ACT_JUMP, false, 0.0, false, 100);
         let r = w_step(&mut m, CHOMP, ACT_JUMP, true, 0.0, false, 101);
-        assert!(matches!(r, Some(Request::Slam { air: true })), "{r:?}");
-        // (nothing to bite: the dash, once in the air)
-        assert_eq!(action(m.slam_fallback(true, 101)), Some((ACT_ER_AIR_DASH, 0)));
-        assert!(m.slam_fallback(true, 102).is_none());
+        assert_eq!(action(r), Some((ACT_ER_AIR_DASH, 0)), "{r:?}");
     }
 
     #[test]
