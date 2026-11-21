@@ -467,10 +467,17 @@ s8 sTerrainSounds[7][6] = {
  * Computes a value that should be added to terrain sounds before playing them.
  * This depends on surfaces and terrain.
  */
+/** er-mario: Elden Ring's ground under him (libsm64.c sm64_er_set_terrain_sound), -1 none */
+int er_terrain_sound = -1;
+
 u32 mario_get_terrain_sound_addend(struct MarioState *m) {
     s16 floorSoundType;
     s32 ret = SOUND_TERRAIN_DEFAULT << 16;
     s32 floorType;
+
+    if (er_terrain_sound >= 0 && m->floor != NULL) {
+        return (u32) er_terrain_sound << 16;
+    }
 
     if (m->floor != NULL) {
         floorType = m->floor->type;

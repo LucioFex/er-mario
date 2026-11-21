@@ -246,6 +246,15 @@ SM64_LIB_FN void sm64_er_hitstop(int frames)
         er_hitstop = frames;
 }
 
+/** er-mario: the ground's sound under Mario's feet from Elden Ring's floor material (a
+ * SOUND_TERRAIN_*, -1: SM64's own, by the surface): steps, landings and jumps only, the ground's
+ * physics are untouched (snow and sand would bury him after a long fall) */
+extern int er_terrain_sound;
+SM64_LIB_FN void sm64_er_set_terrain_sound(int sound)
+{
+    er_terrain_sound = sound;
+}
+
 SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs *inputs, struct SM64MarioState *outState, struct SM64MarioGeometryBuffers *outBuffers )
 {
     if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )

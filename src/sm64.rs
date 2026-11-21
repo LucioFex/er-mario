@@ -198,6 +198,7 @@ unsafe extern "C" {
     pub fn sm64_er_set_music_volume(volume: f32);
     /// a blow landed: Mario (and his animation) hold still for this many ticks
     pub fn sm64_er_hitstop(frames: i32);
+    pub fn sm64_er_set_terrain_sound(sound: i32);
     pub fn sm64_er_set_cap_flags(id: i32, flags: u32);
     pub fn sm64_mario_interact_cap(id: i32, cap_flag: u32, cap_time: u16, play_music: u8);
     pub fn sm64_er_set_ladder(rate: f32);

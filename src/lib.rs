@@ -109,6 +109,7 @@ mod skillshot;
 mod stopwatch;
 mod hitfreeze;
 mod rumble;
+mod groundsound;
 mod bossride;
 mod style;
 mod update;
@@ -4510,6 +4511,8 @@ fn frame(data: &FD4TaskData) {
             let feet = to_er(m.origin, m.state.position);
             let on_ground = m.state.action & 0x800 == 0;
             status::wade(swamp_of(material).filter(|_| on_ground && !m.dead), glam::Vec3::new(feet.0, feet.1, feet.2), material);
+            // his steps sound like the floor (groundsound.rs)
+            groundsound::tick(material, on_ground);
         }
         let lift_k = size_factor();
         // a heavy blow from a boss or a big one: now and then he's sent flying (blown.rs)
