@@ -60,7 +60,10 @@ const NOT_AN_AILMENT: f32 = 1.0;
 /// boost answers it). The swamps': 4001-4004 "Poison Swamp", 4050-4053 "Scarlet Rot Swamp",
 /// 4054-4055 "Lake of Rot". (4100/4101, "Forced Slow Walk/Jump", are every soft floor's, swamps'
 /// and lava's alike: taken for lava's burn before, they bounced him off Caelid's rot, 2026-10-26.)
-pub const LAVA_EFFECTS: [i32; 1] = [4040];
+/// The DLC's lava (floor 62) is 20004041 (behaviour 280001; it was plain ground to Mario). Reforged
+/// (2.3.6.3 to 2.3.9.1) puts a 0.06 s 4040 on its lava floor (7) that sets off 4041, the burn
+/// (behaviour 280000), and on the DLC's 4045 that sets off 4046 (280001).
+pub const LAVA_EFFECTS: [i32; 5] = [4040, 4041, 4045, 4046, 20004041];
 const POISON_SWAMPS: std::ops::RangeInclusive<i32> = 4001..=4004;
 const ROT_SWAMPS: std::ops::RangeInclusive<i32> = 4050..=4055;
 /// what each costs while it lasts: poisoned, his stick's reach (his speed); rotting, the share of

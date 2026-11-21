@@ -1188,8 +1188,9 @@ const FIST_SHARE: u16 = 5;
 const BOSS_FACTOR: f32 = 0.13;
 /// On top of every share above: Mario still took too much (after the halving of X and Y)
 const DAMAGE_FACTOR: f32 = 0.6;
-/// Without Reforged (its enemies hold out on their own: REFORGED_DAMAGE), a little less still,
-/// and bosses a fifth less in all (Morgott went down in some 35 hammer blows)
+/// A little less still, and bosses a fifth less in all (Morgott went down in some 35 hammer
+/// blows). Tuned in the game without mods (Parts 9-13 played there); Reforged starts from here
+/// (REFORGED_TOUGHER).
 const VANILLA_DAMAGE: f32 = 0.95;
 const VANILLA_BOSS: f32 = 0.8 / VANILLA_DAMAGE;
 /// a light blow's bullet (the game's own hit) on the same enemy at most this often (ticks)
@@ -1661,6 +1662,28 @@ const SOFTER: [(u32, f32); 2] = [(3550, 0.6), (3560, 0.6)];
 /// is a blow; less is a poison, bleed or rot tick.
 pub const BLOW_MIN: f32 = 0.04;
 
+/// The blows' sizes (share of the Tarnished's max HP), every 12 logged: how often a blow costs a
+/// whole wedge (a quarter or more) where the regulation hits harder (Reforged's enemies' attacks
+/// are 1.44 times vanilla's at the median).
+fn blow_sizes(frac: f32) {
+    static SIZES: std::sync::Mutex<Vec<f32>> = std::sync::Mutex::new(Vec::new());
+    let mut s = SIZES.lock().unwrap_or_else(|e| e.into_inner());
+    s.push(frac);
+    if s.len() >= 12 {
+        s.sort_by(f32::total_cmp);
+        let whole = s.iter().filter(|&&f| f >= 0.25).count();
+        log(format!(
+            "hurt: last {} blows took {:.0}% to {:.0}% of the HP, median {:.0}%; {whole} a whole wedge{}",
+            s.len(),
+            s[0] * 100.0,
+            s[s.len() - 1] * 100.0,
+            s[s.len() / 2] * 100.0,
+            if reforged() { " (Reforged)" } else { "" }
+        ));
+        s.clear();
+    }
+}
+
 /// Who hit the player last (character id), and what's left of his hits (1 = all of it).
 pub fn last_attacker(player: &ChrIns) -> (Option<u32>, f32) {
     let Ok(wcm) = (unsafe { WorldChrMan::instance() }) else { return (None, 1.0) };
@@ -1955,7 +1978,13 @@ fn hp_scale() -> f32 {
     *SCALE.get_or_init(|| {
         let reforged = reforged();
         let scale = config_f32("enemy_hp_scale", if reforged { 2.0 } else { 1.0 }).clamp(0.5, 10.0);
-        log(format!("combat: enemies count as bosses from {:.0} HP (x{scale}{})", BOSS_MAX_HP * scale, if reforged { ", Reforged" } else { "" }));
+        let (factor, boss) = damage_factors(reforged);
+        log(format!(
+            "combat: enemies count as bosses from {:.0} HP (x{scale}{}); blows worth x{factor:.3}, on bosses x{:.4} more",
+            BOSS_MAX_HP * scale,
+            if reforged { ", Reforged" } else { "" },
+            boss
+        ));
         scale
     })
 }
@@ -1967,8 +1996,19 @@ fn reforged() -> bool {
 }
 
 /// Reforged's enemies are meant to hold out longer (1.7 times the health), but Mario's blows take a
-/// share of their health, so they fell as fast as in vanilla: his blows are worth this much less.
-const REFORGED_DAMAGE: f32 = 0.7;
+/// share of their health, so the health alone changes nothing: with Reforged every blow is worth
+/// this much of the vanilla-tuned one (ini `reforged_damage`), regular enemies and bosses alike.
+/// (It was 0.7 on the regular ones, set 2026-10-18 when every rationed blow still carried the
+/// whole bare fist, FIST_SHARE: once that went, Reforged's enemies took a third more blows than
+/// vanilla's, its bosses a seventh more.)
+const REFORGED_TOUGHER: f32 = 0.9;
+
+/// The share every blow is worth before the boss factor, and the boss factor: vanilla's, times
+/// REFORGED_TOUGHER with Reforged.
+fn damage_factors(reforged: bool) -> (f32, f32) {
+    let tougher = if reforged { config_f32("reforged_damage", REFORGED_TOUGHER).clamp(0.3, 2.0) } else { 1.0 };
+    (DAMAGE_FACTOR * VANILLA_DAMAGE * tougher, BOSS_FACTOR * VANILLA_BOSS)
+}
 
 /// Whether a character takes boss damage: a boss bar now or before, the strong-enemy team, or
 /// big / tough enough (a field boss hit before his bar showed took a regular enemy's 50%).
@@ -2353,13 +2393,11 @@ fn take_share(handle: &FieldInsHandle, attack: Attack, scale: f32) -> Option<boo
     }
     let boss = bar || boss_class(handle, chr);
     let (default, key) = attack.percent();
-    let reforged = reforged();
-    let factor = DAMAGE_FACTOR * if reforged { REFORGED_DAMAGE } else { VANILLA_DAMAGE };
+    let (factor, boss_factor) = damage_factors(reforged());
     let mut pct = config_f32(key, default) * scale * config_f32("damage_factor", factor);
     // (what it is on a regular enemy: Star Power drains by it, starpower.rs)
     let regular = pct;
     if boss {
-        let boss_factor = BOSS_FACTOR * if reforged { 1.0 } else { VANILLA_BOSS };
         pct *= config_f32("boss_damage_factor", boss_factor) * attack.boss_bonus();
     }
     // a counter, out of a perfect dodge (dodge.rs): blows up close, not shots from afar
@@ -3785,6 +3823,7 @@ impl Combat {
         // (Mega Mario shrugs off half of it)
         let frac = lost as f32 / max.max(1) as f32 * scale * if crate::mega::active() { crate::mega::HURT } else { 1.0 };
         if frac >= BLOW_MIN {
+            blow_sizes(frac);
             return Some(Hurt::Hit(if frac < 0.25 { 1 } else { 2 }));
         }
         self.drain += frac;
@@ -3885,6 +3924,18 @@ mod blade_tests {
 #[cfg(test)]
 mod tests {
     use super::{bounces_small, Attack, CODES};
+
+    /// The user (2026-11-21, back to Reforged 2.3.9.1): balanced as in vanilla, where it was tuned,
+    /// Reforged's enemies holding out a little longer; bosses by the same rule as the rest.
+    #[test]
+    fn reforged_is_vanilla_a_little_tougher() {
+        let (van, van_boss) = super::damage_factors(false);
+        let (err, err_boss) = super::damage_factors(true);
+        assert!((err / van - super::REFORGED_TOUGHER).abs() < 1e-6);
+        assert_eq!(err_boss, van_boss);
+        // (no longer the third more blows of the old 0.7 on regular enemies)
+        assert!(err / van > 0.8 && err / van < 1.0);
+    }
 
     /// The sword's blows that end a run shove (light 0.2 m, heavy more); the many-hit ones not.
     #[test]
