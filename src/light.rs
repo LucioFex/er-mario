@@ -69,8 +69,21 @@ fn lantern_effect() -> Option<i32> {
     let g = repo.get::<EquipParamGoods>(LANTERN)?;
     // (what kind of thing the reference is: to check by the log that it's a SpEffect)
     crate::log(format!("light: the Lantern's goods row refers to {} (category {})", g.ref_id_default(), g.ref_category()));
-    Some(g.ref_id_default())
+    let id = g.ref_id_default();
+    let glows = |id: i32| u32::try_from(id).ok().and_then(|id| repo.get::<eldenring::cs::SpEffectParam>(id)).is_some_and(|p| p.vfx_id() == LANTERN_GLOW);
+    if glows(id) {
+        return Some(id);
+    }
+    // Reforged (2.3.9.1) turns the Lantern into a switch: its goods row sets off 3241, a 0.1 s
+    // effect with no light (its scripts take it from there), and the light is one of 3246-3254
+    // (the same glow, 5400, in its colours). The first effect near the row's with the glow.
+    let found = (id.max(0)..id.max(0) + 40).find(|&i| glows(i));
+    crate::log(format!("light: {id} has no glow ({LANTERN_GLOW}): the light is {found:?}"));
+    found
 }
+
+/// The Lantern's glow (SpEffectParam vfxId, vanilla's 3245 and Reforged's 3246).
+const LANTERN_GLOW: i32 = 5400;
 
 /// Every frame in the world: the light on or off for the Tarnished `chr` (Mario on or not).
 pub fn tick(chr: &mut eldenring::cs::ChrIns, mario: bool) {
