@@ -290,6 +290,8 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     let (stop, size, heavy) = if mega { (self::stop(attack), size * 1.6, true) } else { (stop, size, heavy) };
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
+    // (the pad feels it: rumble.rs)
+    crate::rumble::blow(stop, heavy);
     // a finisher punches the camera in a little, the heavier the further
     if attack.finisher() {
         crate::lakitu::punch(0.18 + 0.08 * size);
@@ -1273,6 +1275,61 @@ pub fn dash_point(at: Vec3, start: bool) {
     dash.push((at, Instant::now()));
 }
 
+/// SM64's actions a landing or a skid shows in (decomp sm64.h)
+const ACT_FLAG_AIR: u32 = 0x800;
+const ACT_GROUND_POUND_LAND: u32 = 0x0080_023C;
+const ACT_TURNING_AROUND: u32 = 0x0000_0443;
+const ACT_BRAKING: u32 = 0x0400_0445;
+const ACT_DIVE_SLIDE: u32 = 0x0088_0456;
+const ACT_LONG_JUMP_LAND: u32 = 0x0000_0479;
+const ACT_TRIPLE_JUMP_LAND: u32 = 0x0400_0478;
+const ACT_HARD_BACKWARD_GROUND_KB: u32 = 0x0002_0460;
+/// a fall this fast (SM64 units a frame, down) lands with a puff; this fast, with all of it
+const LAND_SOFT: f32 = 38.0;
+const LAND_HARD: f32 = 70.0;
+/// a skid's puffs, every this many ticks, at this speed or more (SM64 units a frame)
+const SKID_EVERY: u32 = 3;
+const SKID_SPEED: f32 = 14.0;
+
+/// How hard a landing from `was_action` (falling `was_vy` a frame) into `now_action` is, 0..1:
+/// None, no landing to show (still in the air, on the ground already, a soft one).
+pub fn landing_weight(was_action: u32, was_vy: f32, now_action: u32) -> Option<f32> {
+    if was_action & ACT_FLAG_AIR == 0 || now_action & ACT_FLAG_AIR != 0 {
+        return None;
+    }
+    let heavy_land = matches!(now_action, ACT_GROUND_POUND_LAND | ACT_LONG_JUMP_LAND | ACT_TRIPLE_JUMP_LAND);
+    let fall = -was_vy;
+    if !heavy_land && fall < LAND_SOFT {
+        return None;
+    }
+    let k = ((fall - LAND_SOFT) / (LAND_HARD - LAND_SOFT)).clamp(0.0, 1.0);
+    Some(if now_action == ACT_GROUND_POUND_LAND { k.max(0.8) } else if heavy_land { k.max(0.35) } else { k * 0.8 + 0.1 })
+}
+
+/// Game thread, every SM64 tick: Mario's feet `feet` (Elden Ring) going from `was` to `now`
+/// (action, and vertical speed before / forward speed now, SM64 units a frame): dust where he
+/// lands hard, where he skids or slides on his belly, where a knockback drops him; the pad thuds
+/// with a landing.
+pub fn footwork(feet: Vec3, was: (u32, f32), now: (u32, f32), tick: u32) {
+    if let Some(k) = landing_weight(was.0, was.1, now.0) {
+        puffs(feet, 4 + (k * 4.0) as usize, 0.3 + 0.35 * k);
+        crate::rumble::land(k);
+        return;
+    }
+    let skid = matches!(now.0, ACT_TURNING_AROUND | ACT_BRAKING | ACT_DIVE_SLIDE) && now.1.abs() >= SKID_SPEED;
+    if skid && tick % SKID_EVERY == 0 {
+        // (a puff behind his heels)
+        let mut puffs = PUFFS.lock().unwrap_or_else(|e| e.into_inner());
+        puffs.retain(|(_, t)| t.elapsed().as_secs_f32() < PUFF_TIME);
+        if puffs.len() < 24 {
+            puffs.push((feet + Vec3::Y * 0.08, Instant::now()));
+        }
+    }
+    if now.0 == ACT_HARD_BACKWARD_GROUND_KB && was.0 != now.0 {
+        puffs(feet, 5, 0.4);
+    }
+}
+
 /// The dash's path to draw, oldest first, with how faded each point is (0-1).
 pub fn dash_trail() -> Vec<(Vec3, f32)> {
     let dash = DASH.lock().unwrap_or_else(|e| e.into_inner());
@@ -1421,5 +1478,25 @@ mod tests {
             assert_eq!(sword_weight(Attack::SwordSlash(i), feel(Attack::SwordSlash(i)).unwrap().0), 0, "slash {i}");
         }
         assert_eq!(sword_weight(Attack::SwordSlash(3), feel(Attack::SwordSlash(3)).unwrap().0), 2);
+    }
+}
+
+#[cfg(test)]
+mod landing_tests {
+    use super::landing_weight;
+
+    #[test]
+    fn only_a_hard_landing_shows() {
+        const JUMP: u32 = 0x0300_0880;
+        const JUMP_LAND: u32 = 0x0400_0470;
+        // a hop lands softly: nothing
+        assert_eq!(landing_weight(JUMP, -20.0, JUMP_LAND), None);
+        // still in the air, or already on the ground: nothing
+        assert_eq!(landing_weight(JUMP, -75.0, JUMP), None);
+        assert_eq!(landing_weight(JUMP_LAND, -75.0, JUMP_LAND), None);
+        // a long fall: all of it
+        assert!(landing_weight(JUMP, -75.0, JUMP_LAND).unwrap() > 0.85);
+        // a ground pound always thuds
+        assert!(landing_weight(0x0080_08A9, -5.0, 0x0080_023C).unwrap() >= 0.8);
     }
 }

@@ -1138,6 +1138,8 @@ const SHAKE_SIZE: f32 = 0.05;
 
 /// Shakes the camera (game thread, impact.rs); a weaker shake doesn't cut a stronger one short.
 pub fn shake(strength: f32) {
+    // (the pad shakes with it: rumble.rs)
+    crate::rumble::shake(strength);
     let mut s = SHAKE.lock().unwrap_or_else(|e| e.into_inner());
     if s.is_none_or(|(t, k)| shake_left(t, k) < strength) {
         *s = Some((std::time::Instant::now(), strength));

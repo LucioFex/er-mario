@@ -3540,6 +3540,10 @@ impl Combat {
                 let me = player.modules.physics.position;
                 let at = glam::Vec3::new(target.er.0, target.er.1 + (target.height * crate::scale()).min(3.0) * 0.5, target.er.2);
                 crate::impact::hit(at, glam::Vec3::new(me.0, me.1 + 0.6, me.2), attack);
+                // (the one struck holds still with Mario: hitfreeze.rs)
+                if let Some(h) = target.handle.as_ref() {
+                    crate::hitfreeze::struck(h, crate::impact::stop(attack));
+                }
                 // the Star Sword's cuts shove a regular enemy back a little (Rebellion's weight), the
                 // heavy ones more
                 // (not the many-hit ones' each blow: the stabs, the Flurry's cuts, the air string's,

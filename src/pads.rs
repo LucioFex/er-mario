@@ -31,6 +31,11 @@ static XINPUT_SEEN: AtomicU32 = AtomicU32::new(0);
 /// Each slot's last raw left stick (before hiding), for the debug report.
 static XINPUT_STICKS: Mutex<[Option<(i16, i16)>; 4]> = Mutex::new([None; 4]);
 
+/// Whether the game reads an XInput pad in slot 0 (Mario's: rumble.rs shakes it).
+pub fn xinput_pad() -> bool {
+    XINPUT_SEEN.load(Ordering::Relaxed) & 1 != 0
+}
+
 /// The game read controller `index` (0..3): note it (before its sticks are hidden).
 pub fn xinput_seen(index: u32, s: &XINPUT_STATE) {
     let bit = 1 << index;

@@ -107,6 +107,8 @@ mod bat;
 mod maxfin;
 mod skillshot;
 mod stopwatch;
+mod hitfreeze;
+mod rumble;
 mod bossride;
 mod style;
 mod update;
@@ -2650,6 +2652,8 @@ fn frame(data: &FD4TaskData) {
             rock::clear(id);
             // (nothing of his left behind: an enemy stopped in time, flights, a ride, the star music)
             stopwatch::clear();
+            hitfreeze::clear();
+            rumble::stop();
             bossride::clear();
             colossus::clear();
             odm::clear();
@@ -3114,6 +3118,8 @@ fn frame(data: &FD4TaskData) {
         // an enemy stopped in time (stopwatch.rs): its clock, and time running again
         let _perf4 = perf::span(perf::STOPWATCH);
         stopwatch::update();
+        // (the enemies a blow holds still with Mario run on)
+        hitfreeze::update();
         drop(_perf4);
         // enemies sent flying by the hook's moves (the home run, the tether)
         let _perf5 = perf::span(perf::BAT);
@@ -3300,6 +3306,8 @@ fn frame(data: &FD4TaskData) {
         brosattack::clear();
         skillshot::clear();
         stopwatch::clear();
+        hitfreeze::clear();
+        rumble::stop();
         bossride::clear();
         colossus::clear();
         odm::clear();
@@ -3319,6 +3327,8 @@ fn frame(data: &FD4TaskData) {
         let id = m.id;
         rock::clear(id);
         stopwatch::clear();
+        hitfreeze::clear();
+        rumble::stop();
         bossride::clear();
         colossus::clear();
         odm::clear();
@@ -3848,6 +3858,9 @@ fn frame(data: &FD4TaskData) {
             starpower::touch();
             let me = to_er(m.origin, m.state.position);
             impact::hurt(glam::Vec3::new(me.0, me.1 + 0.6, me.2));
+            if let Some(combat::Hurt::Hit(n)) = hurt {
+                rumble::hurt(n);
+            }
             if shrug {
                 log(if shrug_costs { "starpower: shrugged off a small hit" } else { "starpower: shrugged off a small hit (still guarded)" });
             } else {
@@ -5122,6 +5135,10 @@ fn frame(data: &FD4TaskData) {
                 {
                     let p = to_er(m.origin, state.position);
                     blown::tick(id, &state, glam::Vec3::new(p.0, p.1, p.2));
+                    // dust where he lands hard, skids, is knocked down (impact.rs)
+                    if !m.dead {
+                        impact::footwork(glam::Vec3::new(p.0, p.1, p.2), (m.state.action, m.state.velocity[1]), (state.action, state.forward_velocity), m.ticks);
+                    }
                     // the noise he makes, that the enemies hear (the game hears no steps of his)
                     const ACT_GROUND_POUND_LAND: u32 = 0x0080_023C;
                     const LOUD_FX: u32 = moves::FX_QUAKE | moves::FX_GIANT | moves::FX_METEOR | moves::FX_BANG | moves::FX_SLAM;
