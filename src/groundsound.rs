@@ -36,8 +36,9 @@ pub fn tick(material: i32, on_ground: bool) {
         return;
     }
     let sound = sound_of(material);
-    if LAST.swap(sound, Ordering::Relaxed) != sound {
-        crate::worker::call("ground sound", move |_| unsafe { crate::sm64::sm64_er_set_terrain_sound(sound) });
+    if LAST.load(Ordering::Relaxed) != sound && crate::worker::call("ground sound", move |_| unsafe { crate::sm64::sm64_er_set_terrain_sound(sound) }).is_some() {
+        // (only once it's set: a call the worker didn't answer is tried again)
+        LAST.store(sound, Ordering::Relaxed);
     }
 }
 

@@ -70,10 +70,12 @@ pub fn reapply() {
     // every camera of the set, at every step from the game's camera update to drawing: the game
     // copies its own camera back in between, and what it sets up there (culling, the sun shadow
     // area) should follow ours
-    let fov = FOV.lock().unwrap_or_else(|e| e.into_inner()).1;
+    let (base, fov) = *FOV.lock().unwrap_or_else(|e| e.into_inner());
     for cam in [&mut camera.pers_cam_1, &mut camera.pers_cam_2, &mut camera.pers_cam_3, &mut camera.pers_cam_4] {
-        // (the speed's wider view: the game's camera copied back carries the game's own)
-        if let Some(f) = fov {
+        // (the speed's wider view: the game's camera copied back carries the game's own; only on
+        // the cameras that share the render camera's own, a camera of another field of view is
+        // left as it is)
+        if let Some(f) = fov.filter(|_| (cam.fov - base).abs() < 1e-5 || fov.is_some_and(|w| (cam.fov - w).abs() < 1e-5)) {
             cam.fov = f;
         }
         let mm = &mut cam.matrix;
