@@ -61,6 +61,8 @@ pub fn reapply() {
     } else {
         if !GAP.swap(true, std::sync::atomic::Ordering::Relaxed) {
             crate::log(format!("lakitu: not updated for {:.2} s (the game's camera shows)", at.elapsed().as_secs_f32()));
+            // (the game's own field of view back for its camera)
+            restore_fov();
         }
         return;
     }
@@ -68,7 +70,12 @@ pub fn reapply() {
     // every camera of the set, at every step from the game's camera update to drawing: the game
     // copies its own camera back in between, and what it sets up there (culling, the sun shadow
     // area) should follow ours
+    let fov = FOV.lock().unwrap_or_else(|e| e.into_inner()).1;
     for cam in [&mut camera.pers_cam_1, &mut camera.pers_cam_2, &mut camera.pers_cam_3, &mut camera.pers_cam_4] {
+        // (the speed's wider view: the game's camera copied back carries the game's own)
+        if let Some(f) = fov {
+            cam.fov = f;
+        }
         let mm = &mut cam.matrix;
         (mm.0.0, mm.0.1, mm.0.2, mm.1.0, mm.1.1, mm.1.2) = (v[0], v[1], v[2], v[3], v[4], v[5]);
         (mm.2.0, mm.2.1, mm.2.2, mm.3.0, mm.3.1, mm.3.2) = (v[6], v[7], v[8], v[9], v[10], v[11]);
@@ -221,6 +228,12 @@ struct Cam {
     kart_cam: Option<crate::kartplay::ChaseCam>,
     kart_look: f32,
     kart_idle: f32,
+    /// how long Mario's stood still in the open with nobody about (s), and the scenic view's pull
+    /// back for it (m, eased)
+    still: f32,
+    scenic: f32,
+    /// the view widened for speed (a share of the game's field of view, eased)
+    fov_k: f32,
 }
 
 static CAM: Mutex<Option<Cam>> = Mutex::new(None);
@@ -376,6 +389,7 @@ const CLIMB_MAX: f32 = 11.0;
 const CLIMB_HOLD: f32 = 1.5;
 
 pub fn reset() {
+    restore_fov();
     FIRST_PERSON.store(false, std::sync::atomic::Ordering::Relaxed);
     *HEAD.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if CAM.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
@@ -468,6 +482,9 @@ pub fn update(
             kart_cam: None,
             kart_look: 0.0,
             kart_idle: 0.0,
+            still: 0.0,
+            scenic: 0.0,
+            fov_k: 0.0,
         }
     });
 
@@ -733,7 +750,11 @@ pub fn update(
         let along = cam.run_dir.dot(view);
         if along > CHASE_COS {
             let want = (-cam.run_dir.z).atan2(-cam.run_dir.x);
-            let k = ((along - CHASE_COS) / (1.0 - CHASE_COS)).clamp(0.0, 1.0) * speed_k * (1.0 - 0.5 * enc);
+            // (indoors half as eager, a room's walls all round; but along a corridor, its walls
+            // hiding the sides, twice as eager: the view down the corridor, SM64's halls)
+            let along_corridor = corridor(&cam.walls, ks).is_some_and(|axis| cam.run_dir.dot(axis).abs() > CORRIDOR_ALONG);
+            let indoors = if along_corridor { CORRIDOR_CHASE } else { 1.0 - 0.5 * enc };
+            let k = ((along - CHASE_COS) / (1.0 - CHASE_COS)).clamp(0.0, 1.0) * speed_k * indoors;
             cam.yaw += angle_diff(want, cam.yaw) * rate(CHASE_RATE * k);
         }
     }
@@ -911,6 +932,18 @@ pub fn update(
     cam.mate += (want_mate - cam.mate) * if want_mate > cam.mate { rate(1.2) } else { rate(0.5) };
     cam.mate_frame += (want_mate_frame - cam.mate_frame) * rate(1.5);
     let (dist, height) = (dist + cam.mate * (1.0 - 0.5 * enc), height + cam.mate * 0.3 * (1.0 - 0.5 * enc));
+    // the open country, Mario standing still a while with nobody about: Lakitu drifts back and up,
+    // the landscape in the picture (Elden Ring's vistas); he's back as soon as Mario moves
+    let calm = idle && !airborne && !fighting_now && fight.is_none() && group.is_empty() && !manual && flight.is_none() && enc < SCENIC_OPEN;
+    cam.still = if calm { cam.still + dt } else { 0.0 };
+    let want_scenic = if cam.still > SCENIC_AFTER { SCENIC_BACK * ks * (1.0 - enc / SCENIC_OPEN) } else { 0.0 };
+    cam.scenic += (want_scenic - cam.scenic) * if want_scenic > cam.scenic { rate(SCENIC_IN) } else { rate(SCENIC_OUT) };
+    let (dist, height) = (dist + cam.scenic, height + cam.scenic * SCENIC_RISE);
+    // speed widens the view a little (a long jump, the dash, a flight, a long fall): eased in and out
+    let fall = if dt > 1e-4 && jump.length() < 4.0 { -jump.y / dt / ks } else { 0.0 };
+    let want_fov = fov_widen(vel.length() / ks, fall, cam.fp.is_some());
+    cam.fov_k += (want_fov - cam.fov_k) * if want_fov > cam.fov_k { rate(2.5) } else { rate(1.4) };
+    FOV_K.store(cam.fov_k.to_bits(), std::sync::atomic::Ordering::Relaxed);
     let flat = Vec3::new(cam.yaw.cos() * dist, 0.0, cam.yaw.sin() * dist);
     // a slope ahead (in the view direction): uphill it looks up the slope from a little lower,
     // downhill it rises and looks down the way he goes
@@ -1227,6 +1260,99 @@ const UPHILL_MOST: f32 = 3.0;
 const DOWNHILL_LEAN: f32 = 2.2;
 const DOWNHILL_MOST: f32 = 1.6;
 
+/// a corridor: walls this close on both sides together (m), open this far along it one way at
+/// least (m); a run this much along it (cos) chases this eagerly
+const CORRIDOR_WIDE: f32 = 5.0;
+const CORRIDOR_OPEN: f32 = 6.0;
+const CORRIDOR_ALONG: f32 = 0.75;
+const CORRIDOR_CHASE: f32 = 2.0;
+
+/// The way a corridor round Mario runs (flat, unit), from the room's probes `walls` (m, the eight
+/// directions of `i` x 45 degrees from +x): walls close on both sides of one axis and open along
+/// it. None: no corridor (a room, the open).
+fn corridor(walls: &[f32; 8], ks: f32) -> Option<Vec3> {
+    (0..4)
+        .filter_map(|i| {
+            let across = walls[(i + 2) % 8] + walls[(i + 6) % 8];
+            let open = walls[i].max(walls[i + 4]);
+            (across < CORRIDOR_WIDE * ks && open > CORRIDOR_OPEN * ks).then_some((across, i))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, i)| {
+            let a = i as f32 * std::f32::consts::TAU / 8.0;
+            Vec3::new(a.cos(), 0.0, a.sin())
+        })
+}
+
+/// the scenic view: after standing still this long (s) in a place this open (enclosed below), it
+/// pulls back this far (m) and up this share of it, slowly in (a rate), quickly out
+const SCENIC_AFTER: f32 = 2.5;
+const SCENIC_OPEN: f32 = 0.3;
+const SCENIC_BACK: f32 = 2.2;
+const SCENIC_RISE: f32 = 0.45;
+const SCENIC_IN: f32 = 0.35;
+const SCENIC_OUT: f32 = 3.0;
+
+/// the view widened for speed: from this fast (m/s, flat) to this fast, by up to this share of the
+/// game's field of view; a fall from this fast to this fast, up to this share; never more than
+const FOV_FROM: f32 = 8.5;
+const FOV_FULL: f32 = 16.0;
+const FOV_SPEED: f32 = 0.08;
+const FOV_FALL_FROM: f32 = 9.0;
+const FOV_FALL_FULL: f32 = 20.0;
+const FOV_FALL: f32 = 0.06;
+const FOV_MOST: f32 = 0.11;
+
+/// How much wider the view is for Mario's flat speed `speed` and falling speed `fall` (m/s, down
+/// above 0): a share of the game's field of view. None in the first-person view.
+fn fov_widen(speed: f32, fall: f32, first_person: bool) -> f32 {
+    if first_person || !speed.is_finite() || !fall.is_finite() {
+        return 0.0;
+    }
+    let run = ((speed - FOV_FROM) / (FOV_FULL - FOV_FROM)).clamp(0.0, 1.0) * FOV_SPEED;
+    let drop = ((fall - FOV_FALL_FROM) / (FOV_FALL_FULL - FOV_FALL_FROM)).clamp(0.0, 1.0) * FOV_FALL;
+    (run + drop).min(FOV_MOST)
+}
+
+/// the view's widening now (f32 bits), and the game's own field of view with what was last written
+/// (to tell the game's from ours: what's there and isn't ours is the game's)
+static FOV_K: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static FOV: Mutex<(f32, Option<f32>)> = Mutex::new((0.0, None));
+
+/// The field of view to write over `current` (the camera's now).
+fn widened_fov(current: f32) -> Option<f32> {
+    let mut s = FOV.lock().unwrap_or_else(|e| e.into_inner());
+    if !current.is_finite() || !(0.1..3.0).contains(&current) {
+        return None;
+    }
+    if s.1.is_none_or(|w| (current - w).abs() > 1e-5) {
+        s.0 = current;
+    }
+    let k = f32::from_bits(FOV_K.load(std::sync::atomic::Ordering::Relaxed));
+    let new = s.0 * (1.0 + k.clamp(0.0, FOV_MOST));
+    s.1 = Some(new);
+    Some(new)
+}
+
+/// The game's own field of view back (Lakitu off, a reset).
+fn restore_fov() {
+    let mut s = FOV.lock().unwrap_or_else(|e| e.into_inner());
+    FOV_K.store(0, std::sync::atomic::Ordering::Relaxed);
+    let (base, written) = *s;
+    s.1 = None;
+    drop(s);
+    if written.is_none() || base <= 0.0 {
+        return;
+    }
+    if let Ok(camera) = unsafe { CSCamera::instance_mut() } {
+        for cam in [&mut camera.pers_cam_1, &mut camera.pers_cam_2, &mut camera.pers_cam_3, &mut camera.pers_cam_4] {
+            if written.is_some_and(|w| (cam.fov - w).abs() < 1e-5) {
+                cam.fov = base;
+            }
+        }
+    }
+}
+
 /// Writes the render camera: rows right, up, forward, position (keeping the game's handedness).
 fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
     let m = &render.matrix;
@@ -1255,8 +1381,42 @@ fn write(render: &mut eldenring::cs::CSPersCam, fwd: Vec3, pos: Vec3) {
     (mm.1.0, mm.1.1, mm.1.2) = (up.x, up.y, up.z);
     (mm.2.0, mm.2.1, mm.2.2) = (fwd.x, fwd.y, fwd.z);
     (mm.3.0, mm.3.1, mm.3.2) = (pos.x, pos.y, pos.z);
+    if let Some(fov) = widened_fov(render.fov) {
+        render.fov = fov;
+    }
     *LAST.lock().unwrap_or_else(|e| e.into_inner()) =
         Some(([right.x, right.y, right.z, up.x, up.y, up.z, fwd.x, fwd.y, fwd.z, pos.x, pos.y, pos.z], std::time::Instant::now()));
+}
+
+#[cfg(test)]
+mod fov_tests {
+    use super::*;
+
+    #[test]
+    fn a_corridor_is_narrow_across_and_open_along() {
+        // walls 1.5 m off on +-z (directions 2 and 6), open along x
+        let mut w = [9.0; 8];
+        (w[1], w[2], w[3], w[5], w[6], w[7]) = (2.1, 1.5, 2.1, 2.1, 1.5, 2.1);
+        let axis = corridor(&w, 1.0).expect("a corridor");
+        assert!(axis.x.abs() > 0.99);
+        // a room: walls all round
+        assert!(corridor(&[2.5; 8], 1.0).is_none());
+        // the open
+        assert!(corridor(&[9.0; 8], 1.0).is_none());
+    }
+
+    #[test]
+    fn the_view_widens_only_past_a_run_and_never_too_much() {
+        // a run, standing: the game's own
+        assert_eq!(fov_widen(6.0, 0.0, false), 0.0);
+        assert_eq!(fov_widen(0.0, 0.0, false), 0.0);
+        // a long jump or the dash: a little wider
+        assert!(fov_widen(14.0, 0.0, false) > 0.03);
+        // flat out and falling fast: capped
+        assert!((fov_widen(40.0, 40.0, false) - FOV_MOST).abs() < 1e-6);
+        // never in the first-person view
+        assert_eq!(fov_widen(40.0, 40.0, true), 0.0);
+    }
 }
 
 #[cfg(test)]

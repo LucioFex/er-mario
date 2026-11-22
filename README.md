@@ -727,6 +727,22 @@ risky close ones.) Any one enemy is knocked down at most every 3.5 s, whatever d
 
 The ground pound is slow and leaves Mario open, so it's worth the risk.
 
+### Feel and camera polish
+
+- **Blows hold the enemy too.** A blow's hit-stop froze only Mario while the enemy slid on through
+  it; now the one struck holds still with him for the same few frames (bosses less, and only a
+  taste of it), then runs on: the crunch of Devil May Cry's and God of War's hits
+  (`src/hitfreeze.rs`).
+- **The pad rumbles.** Mario's blows (by their weight), his hurts, hard landings and every camera
+  shake now rumble an XInput pad, as strong as the game's own Vibration option says
+  (`rumble = 0` in er_mario.ini turns it off; `src/rumble.rs`).
+- **Dust.** Hard landings, ground pounds, skids, belly slides and knockdowns raise puffs of dust.
+- **Steps sound like the ground.** Stone, wood, sand, water and the swamps each sound like
+  themselves (Elden Ring's floor material, SM64's terrain sounds; the ground's physics untouched).
+- **Camera.** Speed widens the view a little (long jumps, the dash, flights, long falls); standing
+  still in the open with nobody about, Lakitu drifts back and up to show the landscape; along a
+  dungeon's corridor he swings behind Mario twice as eagerly (indoors elsewhere he stays calm).
+
 ### Fixes and quality of life
 
 - **Mario never switches himself off.** A slow call into SM64 used to switch Mario off for the
