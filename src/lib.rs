@@ -559,6 +559,14 @@ fn xinput_filter(index: u32, state: *mut XINPUT_STATE, rc: u32) -> u32 {
 }
 
 unsafe fn install_xinput_hooks() {
+    // the pad's rumble goes through the game's own XInputSetState, mixed with the game's (rumble.rs)
+    match unsafe { patch_import(c"XInputSetState", 3, rumble::game_set_state as *const () as usize) } {
+        Some((dll, previous)) => {
+            rumble::set_original(previous);
+            log(format!("hooked XInputSetState through the game's import table ({dll}): Mario's rumble mixed with the game's"));
+        }
+        None => log("XInputSetState not in the game's import table: Mario's rumble calls xinput1_4's directly"),
+    }
     // Swap the game's own import table entry for XInputGetState. Patching xinput's code instead
     // (an inline hook) clashed with Steam's overlay on Windows, which hooks the same function's
     // first bytes: the game crashed inside XINPUT1_4.dll. Through the import table, Steam's hook
@@ -943,6 +951,7 @@ fn boss_star() -> bool {
     }
     *last = Some(std::time::Instant::now());
     stats::update(|s| s.stars += 1);
+    rumble::rumble(1.0);
     REST.store(true, Ordering::Relaxed);
     log("star collected");
     true
@@ -3904,6 +3913,9 @@ fn frame(data: &FD4TaskData) {
             // (held up on his own floor with no map under him isn't standing anywhere)
             coins::here(&player_ref.chr_ins, m.state.action & 0x0800 == 0 && m.no_ground_since.is_none() && (!karting::holds() || karting::grounded()));
             let n = coins::collect(glam::Vec3::new(me.0, me.1, me.2));
+            if n > 0 {
+                rumble::coin();
+            }
             karting::coins(n);
             if let Some(amount) = coins::collect_bag(glam::Vec3::new(me.0, me.1, me.2)) {
                 log(format!("coins: {amount} coins recovered"));

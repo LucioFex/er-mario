@@ -733,9 +733,12 @@ The ground pound is slow and leaves Mario open, so it's worth the risk.
   it; now the one struck holds still with him for the same few frames (bosses less, and only a
   taste of it), then runs on: the crunch of Devil May Cry's and God of War's hits
   (`src/hitfreeze.rs`).
-- **The pad rumbles.** Mario's blows (by their weight), his hurts, hard landings and every camera
-  shake now rumble an XInput pad, as strong as the game's own Vibration option says
-  (`rumble = 0` in er_mario.ini turns it off; `src/rumble.rs`).
+- **The pad rumbles.** Mario's blows (light jabs buzz, heavy blows thud, finishers longer), his
+  hurts (half a wedge or a whole one), hard landings, every camera shake, perfect dodges and
+  parries (a crisp tick), blocks, a broken guard, Mega Mario, coins, a boss's star and his death,
+  each with its own weight. Through the game's own XInputSetState, mixed with the game's rumble
+  (so Steam Input's PlayStation pads get it too), as strong as the game's Vibration option says
+  (at 0 there, er_mario.ini's alone; `rumble = 0` turns it off; `src/rumble.rs`).
 - **Dust.** Hard landings, ground pounds, skids, belly slides and knockdowns raise puffs of dust.
 - **Steps sound like the ground.** Stone, wood, sand, water and the swamps each sound like
   themselves (Elden Ring's floor material, SM64's terrain sounds; the ground's physics untouched).

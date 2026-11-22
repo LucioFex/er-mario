@@ -148,6 +148,7 @@ pub fn update(alive: bool) -> bool {
         let mut died = DIED_AT.lock().unwrap_or_else(|e| e.into_inner());
         if !alive && died.is_none() {
             *died = Some(Instant::now());
+            crate::rumble::death();
         } else if alive && state.is_none() {
             *died = None;
         }

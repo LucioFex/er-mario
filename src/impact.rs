@@ -291,7 +291,7 @@ pub fn hit(at: Vec3, from: Vec3, attack: Attack) {
     // on the near side of the target, a little towards Mario
     spark(at + (from - at).normalize_or_zero() * 0.35, size, WHITE);
     // (the pad feels it: rumble.rs)
-    crate::rumble::blow(stop, heavy);
+    crate::rumble::blow(stop, heavy, attack.finisher());
     // a finisher punches the camera in a little, the heavier the further
     if attack.finisher() {
         crate::lakitu::punch(0.18 + 0.08 * size);
@@ -615,6 +615,7 @@ pub fn hook_latch(at: Vec3) {
 
 /// A projectile turned back (parry.rs): a blue-white ring, a flash of stars where it was.
 pub fn parry(at: Vec3) {
+    crate::rumble::tick(true);
     ring(at, 1.8, 0.3, [0.55, 0.85, 1.0, 0.95]);
     ring(at, 1.0, 0.22, WHITE);
     burst(at, 5, Bit::Star);
@@ -623,6 +624,7 @@ pub fn parry(at: Vec3) {
 /// The Mega Mushroom (mega.rs): a burst of puffs all over him, golden rings, stars, as he grows
 /// (`grow`) or shrinks back. `feet`: Elden Ring.
 pub fn mega_change(feet: Vec3, grow: bool) {
+    crate::rumble::rumble(if grow { 0.8 } else { 0.3 });
     let k = if grow { crate::mega::SIZE * 0.75 } else { 1.8 };
     for up in [0.0, 0.8, 1.6, 2.6] {
         puffs(feet + Vec3::Y * up * k * 0.5, 5, 0.5 * k);
@@ -674,6 +676,7 @@ pub fn mega_step(feet: Vec3, heavy: bool) {
 
 /// A perfect dodge (dodge.rs): a ring, a glint and stars on Mario, nothing over the screen. `feet`: Elden Ring.
 pub fn perfect_dodge(feet: Vec3) {
+    crate::rumble::tick(false);
     // (all on Mario, nothing over the screen: a thin ring at his waist, a glint, a few stars)
     ring(feet + Vec3::Y * 0.9, 1.1, 0.28, [0.55, 0.8, 1.0, 0.8]);
     spark(feet + Vec3::Y * 0.9, 1.2, [0.6, 0.85, 1.0, 0.8]);
@@ -683,6 +686,7 @@ pub fn perfect_dodge(feet: Vec3) {
 /// The Star Step's parry (starstep.rs): the blades clash at `at` (Elden Ring): a white-gold flash,
 /// a ring, stars, a small camera jolt and the heavy hit bank, louder than a hit but not harsh.
 pub fn clash(at: Vec3) {
+    crate::rumble::tick(true);
     spark(at, 1.7, WHITE);
     spark(at, 1.0, GOLD);
     ring(at, 1.3, 0.28, GOLD);
@@ -693,6 +697,7 @@ pub fn clash(at: Vec3) {
 
 /// The hammer's guard takes a blow (guard.rs): a small white flash and star, a soft clang.
 pub fn block_spark(at: Vec3) {
+    crate::rumble::pulse(0.35, 0.4, 0.09);
     spark(at, 0.9, WHITE);
     burst(at, 2, Bit::Star);
     crate::sfx::play(crate::sfx::Sfx::Hit(1), 0.4);
@@ -701,6 +706,7 @@ pub fn block_spark(at: Vec3) {
 /// The hammer's guard breaks (guard.rs): a red-white flash and ring in front of him, a jolt, the
 /// heavy hit bank.
 pub fn guard_break(at: Vec3) {
+    crate::rumble::rumble(0.4);
     spark(at, 1.5, WHITE);
     ring(at, 1.2, 0.3, [1.0, 0.35, 0.25, 0.9]);
     burst(at, 4, Bit::Star);
